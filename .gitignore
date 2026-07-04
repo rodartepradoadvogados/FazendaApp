@@ -1,0 +1,32 @@
+# Ignorar banco local e ambientes virtuais
+backend/fazenda.db
+backend/*.db
+backend/.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Node
+frontend/node_modules/
+frontend/.next/
+frontend/.env.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Logs e temporários
+*.log
