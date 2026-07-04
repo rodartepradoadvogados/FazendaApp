@@ -1,0 +1,15 @@
+Lote;Categoria;Qtde Silagem (kg);Qtde de Teck Milk 24% (kg);Qtde de Milk Proteico (kg);Qtde de Ração Pré-parto (kg);Qtde de Ração Bezerro 1 (kg);Qtde de Ração Bezerro 2 (kg);Qtde de Corte 21 (kg);Qtde de Leite (L)
+1;Novilhas Alta;30;8;2;0;0;0;0;0
+2;Vacas Alta;30;8;2;0;0;0;0;0
+3;Média;30;5;1;0;0;0;0;0
+4;Pré-parto;30;0;0;3,5;0;0;0;0
+5;Secas;30;0;0,5;0;0;0;0;0
+6;Bez 1 (0-30d);0;0;0;0;2;0;0;6
+7;Bez 2 (31-60d);0;0;0;0;2;0;0;6
+8;Bez 3 (61-90d);0;0;0;0;2;0;0;6
+9;Desmama;4;0;0;0;0;2;0;0
+10;Recria 1 (160-250kg);11;0;0;0;0;0;2;0
+11;Recria 2 (300-350kg);20;0;1;0;0;0;0;0
+12;Novilhas Gestantes;25;0;1;0;0;0;0;0
+13;Novilhas Holandesas;25;0;1;0;0;0;0;0
+14;Novilhas 7/8;25;0;1;0;0;0;0;0
