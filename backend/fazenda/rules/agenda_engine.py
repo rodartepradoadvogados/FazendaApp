@@ -1,0 +1,346 @@
+"""
+Motor da Agenda — orquestra todas as regras e produz a lista de eventos do dia.
+
+AgendaEngine.calcular(data_referencia) → AgendaResult com:
+  - candidatas_iatf: lista com doses calculadas
+  - checagem_hormonios: estoque × necessidade
+  - bst_elegiveis / bst_excluidos
+  - contas_a_pagar: próximos 10 dias
+  - eventos: lista cronológica de todos os eventos
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import date, timedelta
+from typing import Any
+
+from fazenda.rules.bst import ResultadoBST, avaliar_bst
+from fazenda.rules.dry_off import calcular_secagem
+from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.iatf import (
+    CandidataIATF,
+    NecessidadeHormonios,
+    calcular_necessidade_hormonios,
+    selecionar_candidatas_iatf,
+)
+from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
+
+DIAS_CONTAS_A_PAGAR = 10  # janela de contas a pagar
+
+
+@dataclass
+class AgendaItem:
+    data: date
+    categoria: str   # Reprodutivo / Sanidade / Produção / Gestão/Financeiro / Atividades
+    descricao: str
+    numero_animal: str | None = None
+    observacao: str | None = None
+    fonte: str = "auto"  # "auto" ou "manual"
+
+    @property
+    def cor(self) -> str:
+        cores = {
+            "Reprodutivo": "#D4EDDA",
+            "Sanidade": "#FFF3CD",
+            "Produção": "#D1ECF1",
+            "Gestão/Financeiro": "#F8D7DA",
+            "Atividades": "#E2E3E5",
+        }
+        return cores.get(self.categoria, "#FFFFFF")
+
+
+@dataclass
+class CheckHormonio:
+    nome: str
+    estoque_atual: float
+    necessidade: float
+    unidade: str
+    suficiente: bool
+    falta: float
+
+
+@dataclass
+class AgendaResult:
+    data_referencia: date
+    candidatas_iatf: list[CandidataIATF] = field(default_factory=list)
+    necessidade_iatf: NecessidadeHormonios | None = None
+    hormonios_check: list[CheckHormonio] = field(default_factory=list)
+    bst_elegiveis: list[ResultadoBST] = field(default_factory=list)
+    bst_excluidos: list[ResultadoBST] = field(default_factory=list)
+    contas_a_pagar: list[dict] = field(default_factory=list)
+    eventos: list[AgendaItem] = field(default_factory=list)
+
+
+class AgendaEngine:
+    """
+    Motor de cálculo da agenda preditiva.
+    Recebe os dados do banco (já carregados) e aplica todas as regras da Seção 5.
+    """
+
+    def calcular(
+        self,
+        data_referencia: date,
+        animais: list[dict],
+        servicos: list[dict],
+        partos: list[dict],
+        estoque: list[dict],
+        contas: list[dict],
+        eventos_manuais: list[dict],
+    ) -> AgendaResult:
+        """
+        Calcula toda a agenda para uma data de referência.
+
+        Args:
+            data_referencia: Data de referência (geralmente hoje).
+            animais: Lista de dicts com campos do modelo Animal.
+            servicos: Lista de dicts com campos do modelo Servico (ÚLT_OCORR filtrado).
+            partos: Lista de dicts com campos do modelo Parto.
+            estoque: Lista de dicts com campos do modelo Estoque.
+            contas: Lista de dicts com campos do modelo ContaGerencial.
+            eventos_manuais: Lista de dicts com campos do modelo AgendaManual.
+
+        Returns:
+            AgendaResult com todos os blocos da agenda calculados.
+        """
+        result = AgendaResult(data_referencia=data_referencia)
+        eventos: list[AgendaItem] = []
+
+        # Índices auxiliares
+        servico_por_animal: dict[str, dict] = {
+            s["numero_matriz"]: s for s in servicos if s.get("ult_ocorrencia") == 1
+        }
+        parto_por_animal: dict[str, dict] = {}
+        for p in sorted(partos, key=lambda x: x.get("ordem_parto") or 0, reverse=True):
+            n = p["numero_matriz"]
+            if n not in parto_por_animal:
+                parto_por_animal[n] = p
+
+        # 1. CANDIDATAS IATF
+        iatf_input = [
+            {
+                "numero_matriz": a["numero"],
+                "sit_rep": a.get("sit_rep"),
+                "del_dias": a.get("del_dias"),
+                "diagnostico_ultimo": servico_por_animal.get(a["numero"], {}).get("diagnostico"),
+            }
+            for a in animais
+            if a.get("ativo", True)
+        ]
+        candidatas = selecionar_candidatas_iatf(iatf_input)
+        result.candidatas_iatf = candidatas
+        if candidatas:
+            result.necessidade_iatf = calcular_necessidade_hormonios(len(candidatas))
+
+        # 2. CHECAGEM DE HORMÔNIOS
+        if result.necessidade_iatf:
+            nec = result.necessidade_iatf
+            estoque_map: dict[str, float] = {}
+            for item in estoque:
+                nome_lower = item["nome"].lower()
+                for chave in ("sincrogest", "cidr", "sincrodiol", "sincroforte", "estron", "sincrocp", "lactotropin"):
+                    if chave in nome_lower:
+                        estoque_map[chave] = estoque_map.get(chave, 0) + (item.get("quantidade") or 0)
+
+            checks = [
+                CheckHormonio(
+                    nome="Implante (Sincrogest/CIDR)",
+                    estoque_atual=estoque_map.get("sincrogest", 0) + estoque_map.get("cidr", 0),
+                    necessidade=nec.implantes,
+                    unidade="unidade",
+                    suficiente=(estoque_map.get("sincrogest", 0) + estoque_map.get("cidr", 0)) >= nec.implantes,
+                    falta=max(0, nec.implantes - estoque_map.get("sincrogest", 0) - estoque_map.get("cidr", 0)),
+                ),
+                CheckHormonio(
+                    nome="Sincrodiol (Benzoato)",
+                    estoque_atual=estoque_map.get("sincrodiol", 0),
+                    necessidade=nec.sincrodiol_ml,
+                    unidade="ml",
+                    suficiente=estoque_map.get("sincrodiol", 0) >= nec.sincrodiol_ml,
+                    falta=max(0, nec.sincrodiol_ml - estoque_map.get("sincrodiol", 0)),
+                ),
+                CheckHormonio(
+                    nome="Sincroforte (Buserelina)",
+                    estoque_atual=estoque_map.get("sincroforte", 0),
+                    necessidade=nec.sincroforte_ml,
+                    unidade="ml",
+                    suficiente=estoque_map.get("sincroforte", 0) >= nec.sincroforte_ml,
+                    falta=max(0, nec.sincroforte_ml - estoque_map.get("sincroforte", 0)),
+                ),
+                CheckHormonio(
+                    nome="Estron (Cloprostenol)",
+                    estoque_atual=estoque_map.get("estron", 0),
+                    necessidade=nec.estron_ml,
+                    unidade="ml",
+                    suficiente=estoque_map.get("estron", 0) >= nec.estron_ml,
+                    falta=max(0, nec.estron_ml - estoque_map.get("estron", 0)),
+                ),
+                CheckHormonio(
+                    nome="SincroCP (Cipionato)",
+                    estoque_atual=estoque_map.get("sincrocp", 0),
+                    necessidade=nec.sincrocp_ml,
+                    unidade="ml",
+                    suficiente=estoque_map.get("sincrocp", 0) >= nec.sincrocp_ml,
+                    falta=max(0, nec.sincrocp_ml - estoque_map.get("sincrocp", 0)),
+                ),
+            ]
+            result.hormonios_check = checks
+
+        # 3. EVENTOS POR ANIMAL (gestação, secagem, scratch, PEV, BST, desmama)
+        bst_elegiveis: list[ResultadoBST] = []
+        bst_excluidos: list[ResultadoBST] = []
+
+        for animal in animais:
+            if not animal.get("ativo", True):
+                continue
+
+            numero = animal["numero"]
+            raca = animal.get("raca")
+            sit_rep = animal.get("sit_rep") or ""
+            del_dias = animal.get("del_dias")
+            grupo = animal.get("grupo_primario") or ""
+
+            servico = servico_por_animal.get(numero, {})
+            parto = parto_por_animal.get(numero, {})
+
+            data_parto_real = parto.get("data_parto")
+            data_servico = servico.get("data_servico")
+            diagnostico = (servico.get("diagnostico") or "").upper()
+            ordem_parto = parto.get("ordem_parto") or servico.get("ordem_parto") or 0
+
+            # ── PARTO PROVÁVEL (só para prenhes com serviço positivo)
+            data_parto_provavel = None
+            if diagnostico == "POSITIVO" and data_servico:
+                res_gest = calcular_parto_provavel(data_servico, raca)
+                data_parto_provavel = res_gest.data_parto_provavel
+                eventos.append(AgendaItem(
+                    data=data_parto_provavel,
+                    categoria="Reprodutivo",
+                    descricao=f"Parto provável ({raca or 'raça?'})",
+                    numero_animal=numero,
+                ))
+
+                # ── PRÉ-PARTO (35 dias antes)
+                data_pre_parto = data_parto_provavel - timedelta(days=35)
+                if data_pre_parto >= data_referencia:
+                    eventos.append(AgendaItem(
+                        data=data_pre_parto,
+                        categoria="Reprodutivo",
+                        descricao="Separar p/ pré-parto (35 dias)",
+                        numero_animal=numero,
+                    ))
+
+                # ── SECAGEM (60 dias antes, somente vacas)
+                em_lactacao = bool(del_dias and del_dias > 0)
+                res_sec = calcular_secagem(numero, data_parto_provavel, ordem_parto, em_lactacao)
+                if res_sec.deve_secar and res_sec.data_secagem >= data_referencia:
+                    eventos.append(AgendaItem(
+                        data=res_sec.data_secagem,
+                        categoria="Produção",
+                        descricao="Secar (60 dias antes do parto)",
+                        numero_animal=numero,
+                    ))
+
+            # ── SCRATCH (14 dias após último serviço)
+            if data_servico and diagnostico != "POSITIVO":
+                res_scratch = calcular_scratch(numero, data_servico, servico.get("diagnostico"))
+                if res_scratch.ativo and res_scratch.data_scratch >= data_referencia:
+                    eventos.append(AgendaItem(
+                        data=res_scratch.data_scratch,
+                        categoria="Reprodutivo",
+                        descricao="Scratch / Diagnóstico (14 dias pós-IA)",
+                        numero_animal=numero,
+                    ))
+
+            # ── PEV (45 dias após parto)
+            if data_parto_real and sit_rep not in ("Ges.", "Ins."):
+                res_pev = calcular_pev(numero, data_parto_real, data_referencia)
+                if not res_pev.liberado:
+                    eventos.append(AgendaItem(
+                        data=res_pev.data_pev,
+                        categoria="Reprodutivo",
+                        descricao=f"PEV encerra — liberar p/ inseminar (faltam {res_pev.dias_restantes}d)",
+                        numero_animal=numero,
+                    ))
+
+            # ── DESMAMA (90 dias)
+            grupo_num = grupo.strip().split(" ")[0] if grupo else ""
+            if grupo_num in ("06", "07", "08", "09"):
+                data_nasc = animal.get("data_nasc")
+                if data_nasc:
+                    data_desmama = data_nasc + timedelta(days=90)
+                    if data_desmama >= data_referencia:
+                        eventos.append(AgendaItem(
+                            data=data_desmama,
+                            categoria="Produção",
+                            descricao="Desmama (90 dias)",
+                            numero_animal=numero,
+                        ))
+
+            # ── BST
+            res_bst = avaliar_bst(
+                numero_matriz=numero,
+                grupo_primario=grupo,
+                del_dias=del_dias,
+                data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
+                data_referencia=data_referencia,
+            )
+            if res_bst.elegivel:
+                bst_elegiveis.append(res_bst)
+            else:
+                bst_excluidos.append(res_bst)
+
+        result.bst_elegiveis = bst_elegiveis
+        result.bst_excluidos = bst_excluidos
+
+        # 4. PESAGENS RECORRENTES
+        # Terça mais próxima (bezerros, a cada 15 dias)
+        # Quinta mais próxima (leite, toda quinta)
+        dias_ate_quinta = (3 - data_referencia.weekday()) % 7 or 7
+        proxima_quinta = data_referencia + timedelta(days=dias_ate_quinta)
+        eventos.append(AgendaItem(
+            data=proxima_quinta,
+            categoria="Produção",
+            descricao="Pesagem de leite (controle leiteiro)",
+        ))
+
+        dias_ate_terca = (1 - data_referencia.weekday()) % 7 or 7
+        proxima_terca = data_referencia + timedelta(days=dias_ate_terca)
+        eventos.append(AgendaItem(
+            data=proxima_terca,
+            categoria="Produção",
+            descricao="Pesagem de bezerros / recria",
+        ))
+
+        # 5. CONTAS A PAGAR (próximos 10 dias)
+        limite_contas = data_referencia + timedelta(days=DIAS_CONTAS_A_PAGAR)
+        contas_proximas = [
+            c for c in contas
+            if c.get("data_vencimento")
+            and data_referencia <= c["data_vencimento"] <= limite_contas
+            and (c.get("valor_pago") or 0) < (c.get("valor_total") or 0)
+        ]
+        result.contas_a_pagar = sorted(contas_proximas, key=lambda c: c["data_vencimento"])
+        for conta in result.contas_a_pagar:
+            eventos.append(AgendaItem(
+                data=conta["data_vencimento"],
+                categoria="Gestão/Financeiro",
+                descricao=f"Conta a pagar: {conta.get('descricao', '')} — R$ {conta.get('valor_total', 0):,.2f}",
+                observacao=conta.get("fornecedor_cliente"),
+            ))
+
+        # 6. EVENTOS MANUAIS
+        for ev in eventos_manuais:
+            data_ev = ev.get("data_evento")
+            if data_ev and data_ev >= data_referencia:
+                eventos.append(AgendaItem(
+                    data=data_ev,
+                    categoria=ev.get("categoria", "Gestão/Financeiro"),
+                    descricao=ev.get("descricao", ""),
+                    numero_animal=ev.get("numero_animal"),
+                    observacao=ev.get("observacao"),
+                    fonte="manual",
+                ))
+
+        # Ordena todos os eventos por data
+        result.eventos = sorted(eventos, key=lambda e: e.data)
+        return result
