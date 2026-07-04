@@ -1,9 +1,3 @@
 {
-  "version": 2,
-  "buildCommand": "npm run build",
-  "outputDirectory": ".next",
-  "framework": "nextjs",
-  "env": {
-    "NEXT_PUBLIC_API_URL": "@fazenda-api-url"
-  }
+  "framework": "nextjs"
 }
