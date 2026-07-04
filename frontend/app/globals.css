@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/* ── Design system tokens ── */
+:root {
+  --vinho:       #5E1A2E;
+  --vinho-light: #7A2340;
+  --vinho-dark:  #3D1120;
+  --dourado:     #B8860B;
+  --dourado-light: #D4A017;
+  --bg:          #0F0A0C;
+  --surface:     #1C1218;
+  --surface-2:   #261820;
+  --border:      #3D2535;
+  --text:        #F0E8EC;
+  --text-muted:  #9B8A91;
+  --green:       #2E7D52;
+  --green-light: #4CAF80;
+  --red:         #C0392B;
+  --amber:       #D97706;
+  --blue:        #1E6FA8;
+}
+
+/* ── Tailwind custom colors via CSS vars ── */
+@theme {
+  --color-fazenda-bg:       var(--bg);
+  --color-fazenda-surface:  var(--surface);
+  --color-fazenda-surface2: var(--surface-2);
+  --color-fazenda-vinho:    var(--vinho);
+  --color-fazenda-vinho-l:  var(--vinho-light);
+  --color-fazenda-dourado:  var(--dourado);
+  --color-fazenda-border:   var(--border);
+  --color-fazenda-text:     var(--text);
+  --color-fazenda-muted:    var(--text-muted);
+  --color-fazenda-green:    var(--green-light);
+  --color-fazenda-red:      var(--red);
+  --color-fazenda-amber:    var(--amber);
+  --color-fazenda-blue:     var(--blue);
+}
+
+/* ── Base ── */
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', sans-serif;
+}
+
+/* ── Scrollbar personalizada ── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--surface); }
+::-webkit-scrollbar-thumb { background: var(--vinho); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--vinho-light); }
+
+/* ── Cards ── */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+}
+
+.card-header {
+  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  border-radius: 8px 8px 0 0;
+  padding: 0.75rem 1rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  color: var(--dourado-light);
+}
+
+/* ── Badges de categoria ── */
+.badge-reprodutivo  { background: #1a3d1a; color: #4CAF80; border: 1px solid #2E7D52; }
+.badge-sanidade     { background: #3d3300; color: #D4A017; border: 1px solid #B8860B; }
+.badge-producao     { background: #1a2d3d; color: #5BA8E0; border: 1px solid #1E6FA8; }
+.badge-financeiro   { background: #3d1a1a; color: #E07070; border: 1px solid #C0392B; }
+.badge-atividades   { background: #2a2a2a; color: #aaa;    border: 1px solid #555; }
+
+/* ── Tabelas ── */
+.fazenda-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+.fazenda-table thead tr {
+  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+}
+.fazenda-table thead th {
+  padding: 0.6rem 0.875rem;
+  text-align: left;
+  color: var(--dourado-light);
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+.fazenda-table tbody tr {
+  border-bottom: 1px solid var(--border);
+  transition: background 0.15s;
+}
+.fazenda-table tbody tr:hover { background: var(--surface-2); }
+.fazenda-table tbody td {
+  padding: 0.55rem 0.875rem;
+  color: var(--text);
+}
+.fazenda-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+
+/* ── Botões ── */
+.btn-primary {
+  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  color: var(--dourado-light);
+  border: 1px solid var(--vinho-light);
+  padding: 0.5rem 1.25rem;
+  border-radius: 8px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.btn-primary:hover {
+  background: linear-gradient(135deg, var(--vinho-light), var(--vinho));
+  transform: translateY(-1px);
+  box-shadow: 0 4px 15px rgba(94, 26, 46, 0.4);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.btn-ghost:hover { background: var(--surface-2); color: var(--text); }
+
+/* ── KPI cards ── */
+.kpi-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 1.25rem;
+  position: relative;
+  overflow: hidden;
+  transition: transform 0.2s;
+}
+.kpi-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, var(--vinho), var(--dourado));
+}
+.kpi-card:hover { transform: translateY(-2px); }
+.kpi-value {
+  font-size: 2rem;
+  font-weight: 800;
+  color: var(--dourado-light);
+  line-height: 1;
+}
+.kpi-label {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-top: 0.25rem;
+}
+
+/* ── Alerta crítico ── */
+.alert-critico {
+  background: rgba(192, 57, 43, 0.15);
+  border: 1px solid var(--red);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: #E07070;
+  font-size: 0.875rem;
+}
+
+/* ── Upload dropzone ── */
+.dropzone {
+  border: 2px dashed var(--border);
+  border-radius: 12px;
+  padding: 3rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--surface);
+}
+.dropzone:hover, .dropzone.active {
+  border-color: var(--vinho-light);
+  background: rgba(94, 26, 46, 0.1);
+}
+
+/* ── Animações ── */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-in { animation: fadeIn 0.3s ease-out; }
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+.pulse-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--green-light);
+  animation: pulse-dot 2s infinite;
+}
