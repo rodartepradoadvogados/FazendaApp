@@ -14,6 +14,7 @@ import {
   LineChart,
   Milk,
   Wheat,
+  PieChart,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
@@ -22,6 +23,7 @@ const links = [
   { href: "/indicadores", label: "Indicadores",  icon: LineChart },
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
+  { href: "/analise-reprodutiva", label: "Análise Repr.", icon: PieChart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
   { href: "/producao",    label: "Produção",     icon: Milk },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat },

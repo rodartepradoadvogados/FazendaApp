@@ -47,6 +47,12 @@ export async function fetchIndicadores(data?: string) {
   return res.json();
 }
 
+export async function fetchServicosAnalise() {
+  const res = await fetch(`${API}/reproducao/servicos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Análise error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchAlimentacao() {
   const res = await fetch(`${API}/alimentacao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);

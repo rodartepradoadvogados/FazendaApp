@@ -328,3 +328,38 @@ class TestProducao:
         r = calcular_producao([])
         assert r["totais"]["vacas"] == 0
         assert r["serie_temporal"] == []
+
+
+# ============================================================
+# ANÁLISE REPRODUTIVA
+# ============================================================
+
+class TestAnaliseReprodutiva:
+    def test_achata_servicos_com_dimensoes(self):
+        from fazenda.rules.reproducao_analise import analisar_servicos
+        servicos = [
+            {"numero_matriz": "1", "raca_matriz": "Girolando", "data_servico": date(2026, 3, 10),
+             "data_ult_parto": date(2026, 1, 1), "diagnostico": "POSITIVO", "reprodutor": "ROBO",
+             "tipo_servico": "Inseminação Artificial", "ordem_parto": 2, "ordem_tentativa": 1,
+             "data_perda_prenhez": None},
+            {"numero_matriz": "2", "raca_matriz": "Holandês", "data_servico": date(2026, 3, 20),
+             "data_ult_parto": None, "diagnostico": "NEGATIVO", "reprodutor": "TOURO",
+             "tipo_servico": "Cobertura", "ordem_parto": 0, "ordem_tentativa": 2,
+             "data_perda_prenhez": date(2026, 5, 1)},
+            {"numero_matriz": "3", "raca_matriz": "Girolando", "data_servico": date(2026, 4, 1),
+             "data_ult_parto": None, "diagnostico": "ABERTO", "reprodutor": None,
+             "tipo_servico": None, "ordem_parto": None, "ordem_tentativa": 1,
+             "data_perda_prenhez": None},
+        ]
+        r = analisar_servicos(servicos)
+        assert len(r) == 3
+        r0 = r[0]
+        assert r0["ano"] == 2026 and r0["mes"] == "2026-03"
+        assert r0["del_servico"] == (date(2026, 3, 10) - date(2026, 1, 1)).days
+        assert r0["diagnosticado"] and r0["positivo"]
+        # ABERTO não conta como diagnosticado
+        assert r[2]["diagnosticado"] is False and r[2]["positivo"] is False
+        # perda de prenhez detectada pela data
+        assert r[1]["perda"] is True
+        # inseminador vazio vira rótulo
+        assert r[2]["inseminador"] == "(sem inseminador)"
