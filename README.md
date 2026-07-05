@@ -63,6 +63,21 @@ Use o Swagger em `/docs` ou a tela `/upload` do frontend.
 3. `ESTOQUE.csv` → POST /upload/estoque
 4. `CONTA_GERENCIAL.csv` → POST /upload/conta_gerencial
 
+### 4.1. Sincronização automática (sem upload manual)
+
+`sync_agent.py` vigia uma pasta local e envia os CSV sozinho — elimina o
+arrastar-e-soltar e resolve o problema de cache do Google Drive (Seção 7 do
+`CONTEXTO_PROJETO_FAZENDA.md`). Só usa a biblioteca padrão do Python.
+
+```powershell
+# No Ideagri: agendar a exportação diária dos relatórios para uma pasta, ex. C:\FazendaApp\ideagri
+python sync_agent.py --dir C:\FazendaApp\ideagri --api https://SEU-BACKEND.up.railway.app
+```
+
+Ele detecta cada arquivo pelo nome, espera terminar de ser escrito, envia na
+ordem correta e só reenvia quando o conteúdo muda (hash em `.sync_state.json`).
+Use `--once` para rodar uma vez ou deixe rodando (varre a cada `--intervalo` s).
+
 ### 5. Consultar a agenda
 ```
 GET http://localhost:8000/agenda/
