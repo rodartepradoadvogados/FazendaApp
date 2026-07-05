@@ -274,3 +274,57 @@ class TestIndicadores:
         assert r["rebanho"]["total"] == 0
         assert r["reproducao"]["taxa_prenhez_pct"] is None
         assert r["reproducao"]["iep_dias"] is None
+
+
+# ============================================================
+# ALIMENTAÇÃO
+# ============================================================
+
+class TestAlimentacao:
+    def test_consumo_total_cruza_dieta_com_efetivo(self):
+        from fazenda.rules.alimentacao import calcular_consumo
+        dietas = [
+            {"lote": 1, "categoria": "Novilhas Alta", "ingrediente": "Silagem", "quantidade": 30.0, "unidade": "kg"},
+            {"lote": 2, "categoria": "Vacas Alta", "ingrediente": "Silagem", "quantidade": 30.0, "unidade": "kg"},
+        ]
+        animais = [
+            {"grupo_primario": "01 - NOV. ALTA"},
+            {"grupo_primario": "01 - NOV. ALTA"},
+            {"grupo_primario": "02 - VACAS ALTA"},
+        ]
+        r = calcular_consumo(dietas, animais)
+        # lote 1 tem 2 animais, lote 2 tem 1 → 30*2 + 30*1 = 90 kg
+        total = {x["ingrediente"]: x["consumo_dia"] for x in r["consumo_total"]}
+        assert total["Silagem"] == 90.0
+        lote1 = next(l for l in r["por_lote"] if l["lote"] == 1)
+        assert lote1["efetivo"] == 2
+        assert lote1["itens"][0]["consumo_dia"] == 60.0
+
+
+# ============================================================
+# PRODUÇÃO
+# ============================================================
+
+class TestProducao:
+    def test_serie_curva_e_ranking(self):
+        from fazenda.rules.producao import calcular_producao
+        controles = [
+            {"numero_matriz": "100", "data_controle": date(2026, 6, 1), "producao_kg": 20.0, "del_no_controle": 40},
+            {"numero_matriz": "100", "data_controle": date(2026, 6, 8), "producao_kg": 24.0, "del_no_controle": 47},
+            {"numero_matriz": "200", "data_controle": date(2026, 6, 1), "producao_kg": 30.0, "del_no_controle": 100},
+        ]
+        r = calcular_producao(controles)
+        assert r["totais"]["vacas"] == 2
+        assert r["totais"]["controles"] == 3
+        # série: 2026-06-01 tem 2 vacas (20 e 30) média 25
+        s0 = next(s for s in r["serie_temporal"] if s["data"] == "2026-06-01")
+        assert s0["vacas"] == 2 and s0["media_kg"] == 25.0
+        # curva: faixa 31-60 tem controle de 20; ranking encabeçado pela 200 (média 30)
+        assert r["por_animal"][0]["numero_matriz"] == "200"
+        assert r["por_animal"][0]["pico_kg"] == 30.0
+
+    def test_sem_controles_nao_quebra(self):
+        from fazenda.rules.producao import calcular_producao
+        r = calcular_producao([])
+        assert r["totais"]["vacas"] == 0
+        assert r["serie_temporal"] == []

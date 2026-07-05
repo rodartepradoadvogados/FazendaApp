@@ -62,10 +62,12 @@ def main():
         sys.exit(1)
 
     csvs = [
-        ("geral",           BASE_DIR / "GERAL.csv"),
-        ("reprodutivo",     BASE_DIR / "1 - Consulta_SQL_Dados_Reprodutivos_e_Produtivos_Versao_8.csv"),
-        ("estoque",         BASE_DIR / "ESTOQUE.csv"),
-        ("conta_gerencial", BASE_DIR / "CONTA_GERENCIAL.csv"),
+        ("geral",             BASE_DIR / "GERAL.csv"),
+        ("reprodutivo",       BASE_DIR / "1 - Consulta_SQL_Dados_Reprodutivos_e_Produtivos_Versao_8.csv"),
+        ("estoque",           BASE_DIR / "ESTOQUE.csv"),
+        ("conta_gerencial",   BASE_DIR / "CONTA_GERENCIAL.csv"),
+        ("dieta",             BASE_DIR / "DIETA.csv"),
+        ("controle_leiteiro", BASE_DIR / "Lista_de_controles_leiteiros_e_data_do_ultimo_parto_para_matrizes_ativas_e_baixadas_com_possibilidade_de_filtrar_periodo.csv"),
     ]
 
     ok = 0

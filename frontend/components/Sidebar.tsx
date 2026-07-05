@@ -12,6 +12,8 @@ import {
   Home,
   Beef,
   LineChart,
+  Milk,
+  Wheat,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
@@ -21,6 +23,8 @@ const links = [
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
+  { href: "/producao",    label: "Produção",     icon: Milk },
+  { href: "/alimentacao", label: "Alimentação",  icon: Wheat },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
   { href: "/estoque",     label: "Estoque",      icon: Package },
   { href: "/upload",      label: "Upload CSV",   icon: Upload },

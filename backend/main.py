@@ -8,7 +8,15 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fazenda.database import create_db_and_tables
-from fazenda.api.routers import agenda, animais, financeiro, indicadores, upload
+from fazenda.api.routers import (
+    agenda,
+    alimentacao,
+    animais,
+    financeiro,
+    indicadores,
+    producao,
+    upload,
+)
 
 
 @asynccontextmanager
@@ -50,6 +58,8 @@ app.include_router(upload.router)
 app.include_router(agenda.router)
 app.include_router(financeiro.router)
 app.include_router(indicadores.router)
+app.include_router(alimentacao.router)
+app.include_router(producao.router)
 
 
 @app.get("/")

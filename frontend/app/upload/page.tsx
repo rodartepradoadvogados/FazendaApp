@@ -8,6 +8,8 @@ const TIPOS = [
   { id: "reprodutivo",      label: "Consulta_SQL_Reprodutivo.csv",    desc: "Serviços (IA/IATF/Cobertura) + partos" },
   { id: "conta_gerencial",  label: "CONTA_GERENCIAL.csv",            desc: "Movimentações financeiras desde 12/2025" },
   { id: "estoque",          label: "ESTOQUE.csv",                    desc: "Inventário de insumos e hormônios" },
+  { id: "controle_leiteiro",label: "Controle_Leiteiro.csv",          desc: "Histórico de pesagens de leite por vaca" },
+  { id: "dieta",            label: "DIETA.csv",                      desc: "Plano alimentar por lote (kg/cabeça/dia)" },
 ];
 
 type Status = "idle" | "uploading" | "ok" | "error";
