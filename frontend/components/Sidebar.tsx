@@ -11,11 +11,13 @@ import {
   Upload,
   Home,
   Beef,
+  LineChart,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
 const links = [
   { href: "/",            label: "Capa",        icon: Home },
+  { href: "/indicadores", label: "Indicadores",  icon: LineChart },
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },

@@ -40,6 +40,13 @@ export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }
   return res.json();
 }
 
+export async function fetchIndicadores(data?: string) {
+  const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;

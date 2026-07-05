@@ -12,6 +12,7 @@ from fazenda.rules.bst import avaliar_bst
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel, dias_gestacao
 from fazenda.rules.iatf import calcular_necessidade_hormonios, selecionar_candidatas_iatf
+from fazenda.rules.indicadores import calcular_indicadores
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
 
@@ -224,3 +225,52 @@ class TestBST:
         )
         assert res.elegivel is False
         assert "secar" in res.motivo_exclusao.lower()
+
+
+# ============================================================
+# INDICADORES
+# ============================================================
+
+class TestIndicadores:
+    def _dados(self):
+        animais = [
+            {"grupo_primario": "01 - NOV. ALTA", "sit_rep": "Ges.", "del_dias": 120, "ult_cl_kg": 25.0},
+            {"grupo_primario": "02 - VACAS ALTA", "sit_rep": "Vaz. apt.", "del_dias": 80, "ult_cl_kg": 30.0},
+            {"grupo_primario": "05 - SECAS", "sit_rep": "Ges.", "del_dias": None, "ult_cl_kg": None},
+            {"grupo_primario": "12 - NOV. PRENHES", "sit_rep": "Ins.", "del_dias": None, "ult_cl_kg": None},
+        ]
+        servicos = [
+            {"diagnostico": "POSITIVO", "data_servico": date(2026, 6, 1), "raca_matriz": "Holandês"},
+            {"diagnostico": "NEGATIVO", "data_servico": date(2026, 5, 1), "raca_matriz": "Girolando"},
+        ]
+        partos = [
+            {"numero_matriz": "100", "data_parto": date(2024, 1, 1)},
+            {"numero_matriz": "100", "data_parto": date(2025, 1, 1)},  # intervalo 366d
+        ]
+        return animais, servicos, partos
+
+    def test_composicao_e_reproducao(self):
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5))
+        assert r["rebanho"]["total"] == 4
+        assert r["rebanho"]["vacas_lactacao"] == 2  # grupos 01 e 02
+        assert r["rebanho"]["vacas_secas"] == 1
+        assert r["reproducao"]["prenhes"] == 2
+        assert r["reproducao"]["vazias"] == 1
+        assert r["reproducao"]["inseminadas"] == 1
+        assert r["reproducao"]["taxa_prenhez_pct"] == 50.0  # 2/4
+        assert r["reproducao"]["taxa_concepcao_pct"] == 50.0  # 1 pos / (1+1)
+
+    def test_iep_e_producao(self):
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 5))
+        assert r["reproducao"]["iep_dias"] == 366
+        assert r["producao"]["vacas_com_producao"] == 2
+        assert r["producao"]["producao_total_dia_kg"] == 55.0
+        assert r["producao"]["del_medio"] == 100.0  # (120 + 80) / 2
+
+    def test_rebanho_vazio_nao_quebra(self):
+        r = calcular_indicadores([], [], [], data_ref=date(2026, 7, 5))
+        assert r["rebanho"]["total"] == 0
+        assert r["reproducao"]["taxa_prenhez_pct"] is None
+        assert r["reproducao"]["iep_dias"] is None
