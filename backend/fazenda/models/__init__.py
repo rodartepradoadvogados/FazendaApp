@@ -159,6 +159,30 @@ class Estoque(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Sanidade (medicamentos aplicados nos animais)
+# ---------------------------------------------------------------------------
+class Sanidade(SQLModel, table=True):
+    """Uma aplicação de medicamento/vacina por linha — do SANIDADE.csv (Ideagri)."""
+
+    __tablename__ = "sanidade"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    nome: Optional[str] = None
+    data_nasc: Optional[date] = None
+    sexo: Optional[str] = None
+    raca: Optional[str] = None
+    data_aplicacao: Optional[date] = Field(default=None, index=True)
+    produto: str
+    categoria: Optional[str] = None  # derivada (Vacina, Antiparasitário, ...)
+    dose: Optional[float] = None
+    lote: Optional[str] = None
+    atividade: Optional[str] = None
+    obs: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Dieta (plano alimentar por lote)
 # ---------------------------------------------------------------------------
 class Dieta(SQLModel, table=True):

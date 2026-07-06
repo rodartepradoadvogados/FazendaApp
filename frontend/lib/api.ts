@@ -53,6 +53,12 @@ export async function fetchServicosAnalise() {
   return res.json();
 }
 
+export async function fetchSanidade() {
+  const res = await fetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchEstoque() {
   const res = await fetch(`${API}/estoque/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Estoque error: ${res.status}`);

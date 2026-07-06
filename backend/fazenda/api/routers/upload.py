@@ -8,17 +8,18 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, Dieta, Estoque, Servico, Parto
+from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, Dieta, Estoque, Sanidade, Servico, Parto
 from fazenda.parsers.conta_gerencial import parse_conta_gerencial
 from fazenda.parsers.controle_leiteiro import parse_controle_leiteiro
 from fazenda.parsers.dieta import parse_dieta
 from fazenda.parsers.estoque import parse_estoque
 from fazenda.parsers.geral import parse_geral
 from fazenda.parsers.reprodutivo import parse_reprodutivo
+from fazenda.parsers.sanidade import parse_sanidade
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-TIPOS_VALIDOS = ("geral", "reprodutivo", "conta_gerencial", "estoque", "dieta", "controle_leiteiro")
+TIPOS_VALIDOS = ("geral", "reprodutivo", "conta_gerencial", "estoque", "dieta", "controle_leiteiro", "sanidade")
 
 
 @router.post("/{tipo}")
@@ -57,6 +58,8 @@ async def upload_csv(
             return await _upsert_dieta(content, session)
         elif tipo == "controle_leiteiro":
             return await _upsert_controle_leiteiro(content, session)
+        elif tipo == "sanidade":
+            return await _upsert_sanidade(content, session)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -160,6 +163,22 @@ async def _upsert_dieta(content: bytes, session: Session) -> dict:
     session.commit()
     lotes = len({i.lote for i in itens if i.lote is not None})
     return {"tipo": "dieta", "registros": len(itens), "lotes": lotes}
+
+
+async def _upsert_sanidade(content: bytes, session: Session) -> dict:
+    registros = parse_sanidade(content)
+
+    # Re-importação completa (histórico é sempre reenviado atualizado do Ideagri).
+    for s in session.exec(select(Sanidade)).all():
+        session.delete(s)
+    session.commit()
+
+    for reg in registros:
+        session.add(reg)
+
+    session.commit()
+    animais = len({r.numero_matriz for r in registros})
+    return {"tipo": "sanidade", "registros": len(registros), "animais": animais}
 
 
 async def _upsert_controle_leiteiro(content: bytes, session: Session) -> dict:
