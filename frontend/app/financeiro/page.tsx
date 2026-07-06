@@ -114,7 +114,18 @@ export default function FinanceiroPage() {
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o CONTA_GERENCIAL</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {regs && <>
+      {regs && regs.length === 0 && !error && (
+        <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+          <BarChart3 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+          <p style={{ color: "var(--text-muted)" }}>Nenhum lançamento financeiro no banco.</p>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
+            Suba o <strong>CONTA_GERENCIAL.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+            Se você já subiu e sumiu, o banco de produção não está persistindo — confira o Postgres no Railway.
+          </p>
+        </div>
+      )}
+
+      {regs && regs.length > 0 && <>
         {/* Seletor de relatório */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
           {RELATORIOS.map((r) => {
