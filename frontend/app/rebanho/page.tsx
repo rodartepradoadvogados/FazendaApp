@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 
@@ -24,6 +24,8 @@ export default function RebanhoPage() {
   const [fSit, setFSit] = useState("");
   const [fRaca, setFRaca] = useState("");
   const [busca, setBusca] = useState("");
+  const [abertos, setAbertos] = useState<Set<string>>(new Set());
+  const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
 
   useEffect(() => {
     fetchAnimais().then(setRegs).catch((e) => setError(e.message));
@@ -60,6 +62,12 @@ export default function RebanhoPage() {
     const by = new Map<string, number>();
     filtrados.forEach((a) => { const s = a.sit_rep || "(sem)"; by.set(s, (by.get(s) ?? 0) + 1); });
     return Array.from(by.entries()).map(([sit, n]) => ({ sit, n }));
+  }, [filtrados]);
+
+  const grupoLista = useMemo(() => {
+    const by = new Map<string, Animal[]>();
+    filtrados.forEach((a) => { const g = a.grupo_primario || "(sem grupo)"; (by.get(g) ?? by.set(g, []).get(g)!).push(a); });
+    return Array.from(by.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtrados]);
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -128,27 +136,48 @@ export default function RebanhoPage() {
 
           <div className="card">
             <div className="card-header mb-3 flex items-center justify-between">
-              <span>Animais</span>
-              <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
+              <span>Animais por Grupo</span>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
+                <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
+                  onClick={() => setAbertos((p) => p.size === grupoLista.length ? new Set() : new Set(grupoLista.map(([g]) => g)))}>
+                  {abertos.size === grupoLista.length && grupoLista.length ? "Recolher tudo" : "Expandir tudo"}
+                </button>
+              </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="fazenda-table">
-                <thead><tr><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th></tr></thead>
-                <tbody>
-                  {filtrados.slice(0, 200).map((a) => (
-                    <tr key={a.numero}>
-                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                      <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
-                      <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-              {total > 200 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 200 de {total} — refine os filtros.</p>}
+            <div className="space-y-2">
+              {grupoLista.map(([grupo, lista]) => {
+                const aberto = abertos.has(grupo);
+                return (
+                  <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+                    <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                      {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                      <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
+                      <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>
+                    </button>
+                    {aberto && (
+                      <div className="overflow-x-auto">
+                        <table className="fazenda-table" style={{ margin: 0 }}>
+                          <thead><tr><th>Nº</th><th>Categoria</th><th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th></tr></thead>
+                          <tbody>
+                            {lista.map((a) => (
+                              <tr key={a.numero}>
+                                <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+                                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
+                                <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                                <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                                <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+              {!grupoLista.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</p>}
             </div>
           </div>
         </>
