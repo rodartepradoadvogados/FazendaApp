@@ -68,6 +68,7 @@ def main():
         ("conta_gerencial",   BASE_DIR / "CONTA_GERENCIAL.csv"),
         ("dieta",             BASE_DIR / "DIETA.csv"),
         ("controle_leiteiro", BASE_DIR / "Lista_de_controles_leiteiros_e_data_do_ultimo_parto_para_matrizes_ativas_e_baixadas_com_possibilidade_de_filtrar_periodo.csv"),
+        ("sanidade",          BASE_DIR / "SANIDADE.csv"),
     ]
 
     ok = 0

@@ -15,6 +15,7 @@ import {
   Milk,
   Wheat,
   PieChart,
+  Syringe,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
@@ -27,6 +28,7 @@ const links = [
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
   { href: "/producao",    label: "Produção",     icon: Milk },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat },
+  { href: "/sanidade",    label: "Sanidade",     icon: Syringe },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
   { href: "/estoque",     label: "Estoque",      icon: Package },
   { href: "/upload",      label: "Upload CSV",   icon: Upload },
