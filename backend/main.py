@@ -45,9 +45,14 @@ ALLOWED_ORIGINS = [
     *_extra,
 ]
 
+# Libera também as URLs de preview do Vercel (fazenda-app-*.vercel.app,
+# incluindo os deploys de branch: <projeto>-git-<hash>-<time>.vercel.app).
+_VERCEL_PREVIEW_REGEX = r"^https://fazenda-?app[a-z0-9-]*\.vercel\.app$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
