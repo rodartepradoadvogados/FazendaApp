@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
+import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
 type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
@@ -26,6 +27,7 @@ export default function RebanhoPage() {
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
+  const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
   useEffect(() => {
     fetchAnimais().then(setRegs).catch((e) => setError(e.message));
@@ -117,7 +119,8 @@ export default function RebanhoPage() {
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="grupo" tick={{ fill: "var(--text-muted)", fontSize: 9 }} width={150} />
                   <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="n" name="Animais" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} />
+                  <Bar dataKey="n" name="Animais" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
+                    onClick={(e: any) => e?.grupo && setModal({ title: e.grupo, list: filtrados.filter((a) => (a.grupo_primario || "(sem grupo)") === e.grupo) })} />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -125,7 +128,9 @@ export default function RebanhoPage() {
               <div className="card-header mb-3">Situação Reprodutiva</div>
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
-                  <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}>
+                  <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}
+                    style={{ cursor: "pointer" }}
+                    onClick={(e: any) => { const sit = e?.sit; if (!sit) return; setModal({ title: `Situação: ${sit}`, list: filtrados.filter((a) => (a.sit_rep || "(sem)") === sit) }); }}>
                     {porSit.map((s, i) => <Cell key={i} fill={SIT_CORES[s.sit] || "var(--text-muted)"} />)}
                   </Pie>
                   <Tooltip contentStyle={tip} />
@@ -182,6 +187,8 @@ export default function RebanhoPage() {
           </div>
         </>
       )}
+
+      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
   );
 }

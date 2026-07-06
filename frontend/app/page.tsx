@@ -2,14 +2,20 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse } from "lucide-react";
 import {
-  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, formatBRL,
+  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, formatBRL,
 } from "@/lib/api";
 import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
 const SIT_CORES: Record<string, string> = { Prenhes: "var(--green-light)", Vazias: "var(--red)", Inseminadas: "var(--dourado-light)" };
 
+const LACTACAO = ["01", "02", "03"];
+const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
+
 export default function Home() {
   const [d, setD] = useState<any>(null);
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
   useEffect(() => {
     Promise.allSettled([
@@ -23,7 +29,10 @@ export default function Home() {
         est: est.status === "fulfilled" ? est.value.itens : null,
       });
     });
+    fetchAnimais().then(setAnimais).catch(() => {});
   }, []);
+
+  const abrir = (title: string, filtro: (a: AnimalRow) => boolean) => { if (animais.length) setModal({ title, list: animais.filter(filtro) }); };
 
   if (!d) return <div className="p-6"><p style={{ color: "var(--text-muted)" }}>Carregando painel…</p></div>;
 
@@ -56,9 +65,13 @@ export default function Home() {
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
-  const KPI = ({ v, l, c }: { v: any; l: string; c?: string }) => (
-    <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>
+  const KPI = ({ v, l, c, onClick }: { v: any; l: string; c?: string; onClick?: () => void }) => (
+    <div className="kpi-card" onClick={onClick} style={onClick && animais.length ? { cursor: "pointer" } : undefined}>
+      <p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p>
+      <p className="kpi-label">{l}{onClick && animais.length ? " ›" : ""}</p>
+    </div>
   );
+  const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
 
   return (
     <div className="p-6 animate-in">
@@ -82,13 +95,16 @@ export default function Home() {
 
       {/* KPIs executivos */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <KPI v={reb?.total ?? "—"} l="Animais no rebanho" />
-        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" />
+        <KPI v={reb?.total ?? "—"} l="Animais no rebanho" onClick={() => abrir("Animais no rebanho", () => true)} />
+        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
         <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Taxa de prenhez" c="var(--green-light)" />
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
         <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" c="var(--green-light)" />
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
-        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" c="var(--dourado-light)" />
+        <div className="kpi-card" onClick={() => candidatasList.length && setModal({ title: "Candidatas IATF", list: candidatasList })} style={candidatasList.length ? { cursor: "pointer" } : undefined}>
+          <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--dourado-light)" }}>{d.ag?.totais?.candidatas_iatf ?? "—"}</p>
+          <p className="kpi-label">Candidatas IATF{candidatasList.length ? " ›" : ""}</p>
+        </div>
         <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
       </div>
 
@@ -111,7 +127,13 @@ export default function Home() {
           {donutRep.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
-                <Pie data={donutRep} dataKey="v" nameKey="nome" cx="50%" cy="50%" innerRadius={45} outerRadius={75} label={(e: any) => `${e.nome} (${e.v})`} labelLine={false} fontSize={10}>
+                <Pie data={donutRep} dataKey="v" nameKey="nome" cx="50%" cy="50%" innerRadius={45} outerRadius={75} label={(e: any) => `${e.nome} (${e.v})`} labelLine={false} fontSize={10}
+                  style={{ cursor: animais.length ? "pointer" : undefined }}
+                  onClick={(e: any) => {
+                    const nome = e?.name; if (!nome) return;
+                    const f = nome === "Prenhes" ? (a: AnimalRow) => a.sit_rep === "Ges." : nome === "Vazias" ? (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") : (a: AnimalRow) => a.sit_rep === "Ins.";
+                    abrir(nome, f);
+                  }}>
                   {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}
                 </Pie>
                 <Tooltip contentStyle={tip} />
@@ -139,6 +161,8 @@ export default function Home() {
           ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento nos próximos 7 dias.</p>;
         })()}
       </div>
+
+      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
   );
 }
