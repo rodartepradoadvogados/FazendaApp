@@ -71,6 +71,12 @@ export async function fetchControles() {
   return res.json();
 }
 
+export async function fetchLancamentos() {
+  const res = await fetch(`${API}/financeiro/lancamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Financeiro error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;
