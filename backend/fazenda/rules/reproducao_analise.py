@@ -38,6 +38,7 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "inseminador": s.get("reprodutor") or "(sem inseminador)",
             "ano": ano,
             "mes": mes,
+            "data": ds.isoformat() if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
             "diagnosticado": diagnosticado,

@@ -7,7 +7,7 @@ type Reg = {
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
   tipo_servico: string; protocolo: string; inseminador: string;
-  ano: number | null; mes: string | null; del_servico: number | null;
+  ano: number | null; mes: string | null; data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
 };
 
@@ -81,6 +81,8 @@ export default function AnaliseReprodutivaPage() {
   const [error, setError] = useState<string | null>(null);
   const [filtros, setFiltros] = useState<Record<string, string>>({});
   const [dimensao, setDimensao] = useState<keyof Reg>("raca");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
 
   useEffect(() => {
     fetchServicosAnalise()
@@ -90,11 +92,14 @@ export default function AnaliseReprodutivaPage() {
 
   const filtrados = useMemo(() => {
     if (!regs) return [];
-    return regs.filter((r) => DIMENSOES.every(({ key }) => {
-      const f = filtros[key as string];
-      return !f || String(r[key]) === f;
-    }));
-  }, [regs, filtros]);
+    return regs.filter((r) =>
+      (!ini || (r.data ? r.data >= ini : false)) &&
+      (!fim || (r.data ? r.data <= fim : false)) &&
+      DIMENSOES.every(({ key }) => {
+        const f = filtros[key as string];
+        return !f || String(r[key]) === f;
+      }));
+  }, [regs, filtros, ini, fim]);
 
   const kpi = taxa(filtrados);
   const perdas = filtrados.filter((r) => r.perda).length;
@@ -151,6 +156,14 @@ export default function AnaliseReprodutivaPage() {
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+              <div>
+                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Período — de</label>
+                <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>até</label>
+                <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} />
+              </div>
               {DIMENSOES.map(({ key, label }) => (
                 <div key={key as string}>
                   <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>{label}</label>

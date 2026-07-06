@@ -287,7 +287,11 @@ class AgendaEngine:
             if res_bst.elegivel:
                 bst_elegiveis.append(res_bst)
             else:
-                bst_excluidos.append(res_bst)
+                # Excluídos do BST: apenas lactantes (01/02/03) que não cumprem os
+                # requisitos — não faz sentido listar a fazenda inteira.
+                cod = (grupo or "").strip()[:2]
+                if cod in ("01", "02", "03"):
+                    bst_excluidos.append(res_bst)
 
         result.bst_elegiveis = bst_elegiveis
         result.bst_excluidos = bst_excluidos

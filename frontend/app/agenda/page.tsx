@@ -22,6 +22,8 @@ export default function AgendaPage() {
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", numero_animal: "", observacao: "" });
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
+  const [datasAbertas, setDatasAbertas] = useState<Set<string>>(new Set());
+  const toggleData = (d: string) => setDatasAbertas(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -161,40 +163,41 @@ export default function AgendaPage() {
         {loading ? (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
         ) : eventosFiltrados.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead>
-                <tr>
-                  <th>Data</th>
-                  <th>Categoria</th>
-                  <th>Nº Animal</th>
-                  <th>Descrição</th>
-                  <th>Obs.</th>
-                  <th>Origem</th>
-                </tr>
-              </thead>
-              <tbody>
-                {eventosFiltrados.map((e: any, i: number) => (
-                  <tr key={i}>
-                    <td style={{ whiteSpace: "nowrap", fontWeight: 600 }}>
-                      {new Date(e.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "2-digit" })}
-                    </td>
-                    <td>
-                      <span className={BADGE_CLASS[e.categoria] || "badge-atividades"}
-                        style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>
-                        {e.categoria}
-                      </span>
-                    </td>
-                    <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || "—"}</td>
-                    <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
-                    <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
-                    <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>
-                      {e.fonte === "manual" ? "manual" : "auto"}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+          <div className="space-y-2">
+            {(() => {
+              const porData = new Map<string, any[]>();
+              eventosFiltrados.forEach((e: any) => { (porData.get(e.data) ?? porData.set(e.data, []).get(e.data)!).push(e); });
+              return Array.from(porData.keys()).sort().map((data) => {
+                const evs = porData.get(data)!; const aberto = datasAbertas.has(data);
+                return (
+                  <div key={data} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+                    <button onClick={() => toggleData(data)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                      <span style={{ color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</span>
+                      <span style={{ fontWeight: 700, minWidth: "6rem" }}>{new Date(data + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span>
+                      <span style={{ flex: 1, fontSize: "0.78rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+                    </button>
+                    {aberto && (
+                      <div className="overflow-x-auto">
+                        <table className="fazenda-table" style={{ margin: 0 }}>
+                          <thead><tr><th>Categoria</th><th>Nº Animal</th><th>Descrição</th><th>Obs.</th><th>Origem</th></tr></thead>
+                          <tbody>
+                            {evs.map((e: any, i: number) => (
+                              <tr key={i}>
+                                <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
+                                <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || "—"}</td>
+                                <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
+                                <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                                <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                );
+              });
+            })()}
           </div>
         ) : (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>
