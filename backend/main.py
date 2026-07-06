@@ -8,7 +8,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from fazenda.database import create_db_and_tables
-from fazenda.api.routers import agenda, animais, financeiro, upload
+from fazenda.api.routers import (
+    agenda,
+    alimentacao,
+    animais,
+    financeiro,
+    indicadores,
+    producao,
+    reproducao,
+    upload,
+)
 
 
 @asynccontextmanager
@@ -36,9 +45,14 @@ ALLOWED_ORIGINS = [
     *_extra,
 ]
 
+# Libera também as URLs de preview do Vercel (fazenda-app-*.vercel.app,
+# incluindo os deploys de branch: <projeto>-git-<hash>-<time>.vercel.app).
+_VERCEL_PREVIEW_REGEX = r"^https://fazenda-?app[a-z0-9-]*\.vercel\.app$"
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=_VERCEL_PREVIEW_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -49,6 +63,10 @@ app.include_router(animais.router)
 app.include_router(upload.router)
 app.include_router(agenda.router)
 app.include_router(financeiro.router)
+app.include_router(indicadores.router)
+app.include_router(alimentacao.router)
+app.include_router(producao.router)
+app.include_router(reproducao.router)
 
 
 @app.get("/")

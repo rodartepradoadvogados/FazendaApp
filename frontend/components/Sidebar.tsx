@@ -2,22 +2,31 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   Calendar,
   Heart,
   BarChart3,
   Package,
-  Users,
   Upload,
   Home,
   Beef,
+  LineChart,
+  Milk,
+  Wheat,
+  PieChart,
 } from "lucide-react";
+import { checkHealth } from "@/lib/api";
 
 const links = [
   { href: "/",            label: "Capa",        icon: Home },
+  { href: "/indicadores", label: "Indicadores",  icon: LineChart },
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
+  { href: "/analise-reprodutiva", label: "Análise Repr.", icon: PieChart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
+  { href: "/producao",    label: "Produção",     icon: Milk },
+  { href: "/alimentacao", label: "Alimentação",  icon: Wheat },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
   { href: "/estoque",     label: "Estoque",      icon: Package },
   { href: "/upload",      label: "Upload CSV",   icon: Upload },
@@ -25,6 +34,23 @@ const links = [
 
 export function Sidebar() {
   const path = usePathname();
+  const [online, setOnline] = useState<boolean | null>(null);
+
+  useEffect(() => {
+    let ativo = true;
+    const ping = () => checkHealth().then((ok) => ativo && setOnline(ok));
+    ping();
+    const id = setInterval(ping, 30000);
+    return () => {
+      ativo = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const statusLabel =
+    online === null ? "Verificando..." : online ? "API conectada" : "API offline";
+  const statusColor =
+    online === null ? "var(--text-muted)" : online ? "var(--green-light)" : "var(--red)";
 
   return (
     <aside
@@ -79,9 +105,16 @@ export function Sidebar() {
         className="p-4 border-t text-center"
         style={{ borderColor: "var(--border)", fontSize: "0.65rem", color: "var(--text-muted)" }}
       >
-        <div className="flex items-center justify-center gap-1.5">
-          <span className="pulse-dot" />
-          API conectada
+        <div className="flex items-center justify-center gap-1.5" style={{ color: statusColor }}>
+          <span
+            className={online === false ? "" : "pulse-dot"}
+            style={
+              online === false
+                ? { width: 8, height: 8, borderRadius: "50%", background: "var(--red)", display: "inline-block" }
+                : undefined
+            }
+          />
+          {statusLabel}
         </div>
         <p className="mt-1">v1.0.0 · Sprint 1</p>
       </div>

@@ -158,6 +158,23 @@ class Estoque(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Dieta (plano alimentar por lote)
+# ---------------------------------------------------------------------------
+class Dieta(SQLModel, table=True):
+    """Uma linha por (lote, ingrediente) do DIETA.csv — quantidade por cabeça/dia."""
+
+    __tablename__ = "dieta"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lote: Optional[int] = Field(default=None, index=True)
+    categoria: Optional[str] = None
+    ingrediente: str
+    quantidade: Optional[float] = None
+    unidade: Optional[str] = None  # kg ou L, por cabeça/dia
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Agenda Manual
 # ---------------------------------------------------------------------------
 class AgendaManual(SQLModel, table=True):

@@ -1,5 +1,28 @@
 // Funções de comunicação com o backend FastAPI
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+// Traduz o "Failed to fetch" (erro de rede do navegador) numa mensagem acionável.
+// Esse erro NÃO é HTTP — significa que a requisição não chegou a receber resposta:
+// API fora do ar, NEXT_PUBLIC_API_URL não configurada/errada, ou CORS bloqueado.
+function netError(e: unknown): Error {
+  if (e instanceof TypeError) {
+    return new Error(
+      `Sem conexão com a API (${API}). ` +
+        `Verifique se o backend está no ar e se NEXT_PUBLIC_API_URL aponta para ele (e se o CORS libera este site).`
+    );
+  }
+  return e instanceof Error ? e : new Error(String(e));
+}
+
+// Verifica se o backend responde. Usado pelo indicador de status.
+export async function checkHealth(): Promise<boolean> {
+  try {
+    const res = await fetch(`${API}/health`, { cache: "no-store" });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
 
 export async function fetchAgenda(data?: string) {
   const url = data ? `${API}/agenda/?data=${data}` : `${API}/agenda/`;
@@ -14,6 +37,31 @@ export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }
   if (params?.sit_rep) qs.set("sit_rep", params.sit_rep);
   const res = await fetch(`${API}/animais/?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Animais error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchIndicadores(data?: string) {
+  const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchServicosAnalise() {
+  const res = await fetch(`${API}/reproducao/servicos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Análise error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAlimentacao() {
+  const res = await fetch(`${API}/alimentacao/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchProducao() {
+  const res = await fetch(`${API}/producao/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Produção error: ${res.status}`);
   return res.json();
 }
 
@@ -37,10 +85,15 @@ export async function fetchDRE(params: {
 export async function uploadCSV(tipo: string, file: File) {
   const form = new FormData();
   form.append("file", file);
-  const res = await fetch(`${API}/upload/${tipo}`, {
-    method: "POST",
-    body: form,
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API}/upload/${tipo}`, {
+      method: "POST",
+      body: form,
+    });
+  } catch (e) {
+    throw netError(e);
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || "Erro no upload");
