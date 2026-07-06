@@ -1,171 +1,259 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { BarChart3, TrendingUp, TrendingDown, Filter } from "lucide-react";
+import { BarChart3, TrendingUp, TrendingDown, Filter, Wallet, BookOpen, FileText } from "lucide-react";
 import { fetchLancamentos, formatBRL } from "@/lib/api";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell,
+  ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 
 type Lanc = {
-  tipo: string; valor: number; centro_custo: string; codigo_conta: string;
+  tipo: string; valor: number; centro_custo: string; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string;
-  mes_competencia: string | null; ano_competencia: number | null;
-  mes_caixa: string | null; ano_caixa: number | null;
+  data_competencia: string | null; data_pagamento: string | null;
+  mes_competencia: string | null; mes_caixa: string | null;
 };
 
+type Rel = "fluxo" | "dre" | "livro";
+const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
+  { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
+  { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
+  { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
+];
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
+const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+const fmtMes = (m: string) => m?.slice(2) ?? "";
+const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+
+function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
+  return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
+}
 
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [regime, setRegime] = useState<"competencia" | "caixa">("competencia");
-  const [ano, setAno] = useState("");
+  const [rel, setRel] = useState<Rel>("fluxo");
+  const [inicio, setInicio] = useState("");
+  const [fim, setFim] = useState("");
   const [centro, setCentro] = useState("");
 
+  useEffect(() => { fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message)); }, []);
+
   useEffect(() => {
-    fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
-  }, []);
+    if (regs && !inicio) {
+      const ds = regs.flatMap((r) => [r.data_pagamento, r.data_competencia]).filter(Boolean).sort() as string[];
+      if (ds.length) { setInicio(ds[0]); setFim(ds[ds.length - 1]); }
+    }
+  }, [regs, inicio]);
 
-  const mesDe = (r: Lanc) => (regime === "competencia" ? r.mes_competencia : r.mes_caixa);
-  const anoDe = (r: Lanc) => (regime === "competencia" ? r.ano_competencia : r.ano_caixa);
+  const centros = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo))).sort(), [regs]);
 
-  const anos = useMemo(() => {
-    if (!regs) return [];
-    const s = new Set<string>();
-    regs.forEach((r) => { const a = anoDe(r); if (a) s.add(String(a)); });
-    return Array.from(s).sort();
-  }, [regs, regime]);
-  const centros = useMemo(() => {
-    if (!regs) return [];
-    return Array.from(new Set(regs.map((r) => r.centro_custo))).sort();
-  }, [regs]);
+  // Data relevante ao relatório: DRE = competência; fluxo/livro = pagamento.
+  const campoData = (r: Lanc) => (rel === "dre" ? r.data_competencia : r.data_pagamento);
+  const campoMes = (r: Lanc) => (rel === "dre" ? r.mes_competencia : r.mes_caixa);
 
   const filtrados = useMemo(() => {
-    if (!regs) return [];
-    return regs.filter((r) =>
-      (!ano || String(anoDe(r)) === ano) &&
-      (!centro || r.centro_custo === centro) &&
-      mesDe(r) !== null
-    );
-  }, [regs, regime, ano, centro]);
+    if (!regs || !inicio || !fim) return [];
+    return regs.filter((r) => {
+      const d = campoData(r);
+      return d && d >= inicio && d <= fim && (!centro || r.centro_custo === centro);
+    });
+  }, [regs, rel, inicio, fim, centro]);
 
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
   const resultado = receitas - despesas;
-  const margem = receitas > 0 ? Math.round((1000 * resultado) / receitas) / 10 : null;
 
-  const porMes = useMemo(() => {
-    const by = new Map<string, { mes: string; receita: number; despesa: number }>();
+  // Fluxo de caixa mensal (com saldo acumulado)
+  const fluxoMensal = useMemo(() => {
+    const by = new Map<string, { mes: string; entradas: number; saidas: number }>();
     filtrados.forEach((r) => {
-      const m = mesDe(r)!;
-      const e = by.get(m) ?? { mes: m, receita: 0, despesa: 0 };
-      if (r.tipo === "receita") e.receita += r.valor; else e.despesa += r.valor;
+      const m = campoMes(r); if (!m) return;
+      const e = by.get(m) ?? { mes: m, entradas: 0, saidas: 0 };
+      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
       by.set(m, e);
     });
-    return Array.from(by.values()).sort((a, b) => (a.mes < b.mes ? -1 : 1)).slice(-18);
-  }, [filtrados, regime]);
+    let acc = 0;
+    return Array.from(by.values()).sort((a, b) => a.mes.localeCompare(b.mes)).map((x) => {
+      acc += x.entradas - x.saidas;
+      return { ...x, saldo: x.entradas - x.saidas, acumulado: Math.round(acc) };
+    });
+  }, [filtrados, rel]);
 
-  const porCentro = useMemo(() => {
-    const by = new Map<string, number>();
-    filtrados.filter((r) => r.tipo === "despesa").forEach((r) => by.set(r.centro_custo, (by.get(r.centro_custo) ?? 0) + r.valor));
-    return Array.from(by.entries()).map(([centro, valor]) => ({ centro, valor })).sort((a, b) => b.valor - a.valor);
+  // DRE por conta gerencial (nível 1)
+  const dreContas = useMemo(() => {
+    const by = new Map<string, { conta: string; receitas: number; despesas: number }>();
+    filtrados.forEach((r) => {
+      const k = r.codigo_conta || "(sem conta)";
+      const e = by.get(k) ?? { conta: k, receitas: 0, despesas: 0 };
+      if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+      by.set(k, e);
+    });
+    return Array.from(by.values()).map((x) => ({ ...x, saldo: x.receitas - x.despesas })).sort((a, b) => (b.receitas + b.despesas) - (a.receitas + a.despesas));
   }, [filtrados]);
 
-  const topCategorias = useMemo(() => {
-    const by = new Map<string, number>();
-    filtrados.filter((r) => r.tipo === "despesa").forEach((r) => { const k = r.descricao || "(sem descrição)"; by.set(k, (by.get(k) ?? 0) + r.valor); });
-    return Array.from(by.entries()).map(([desc, valor]) => ({ desc, valor })).sort((a, b) => b.valor - a.valor).slice(0, 10);
+  // Livro caixa (cronológico com saldo acumulado)
+  const livro = useMemo(() => {
+    let acc = 0;
+    return [...filtrados].filter((r) => r.data_pagamento).sort((a, b) => (a.data_pagamento! < b.data_pagamento! ? -1 : 1)).map((r) => {
+      const entrada = r.tipo === "receita" ? r.valor : 0;
+      const saida = r.tipo === "despesa" ? r.valor : 0;
+      acc += entrada - saida;
+      return { data: r.data_pagamento, descricao: r.descricao, fornecedor: r.fornecedor, entrada, saida, saldo: Math.round(acc) };
+    });
   }, [filtrados]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
-  const tooltipStyle = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
+  const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2">
-          <BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Financeiro
-        </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Receitas, despesas e resultado — filtre por regime, ano e centro de custo.</p>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado)" }} /> Financeiro</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Escolha o relatório, o período e o centro de custo — indicadores, consolidado e gráfico.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o CONTA_GERENCIAL</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
-      {regs && (
-        <>
-          <div className="card mb-4">
-            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Regime</label>
-                <select style={selStyle} value={regime} onChange={(e) => setRegime(e.target.value as any)}>
-                  <option value="competencia">Competência</option><option value="caixa">Caixa</option>
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
-                <select style={selStyle} value={ano} onChange={(e) => setAno(e.target.value)}>
-                  <option value="">Todos</option>{anos.map((a) => <option key={a}>{a}</option>)}
-                </select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Centro de custo</label>
-                <select style={selStyle} value={centro} onChange={(e) => setCentro(e.target.value)}>
-                  <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
-                </select></div>
-            </div>
-          </div>
+      {regs && <>
+        {/* Seletor de relatório */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          {RELATORIOS.map((r) => {
+            const ativo = rel === r.id; const Icon = r.icon;
+            return (
+              <button key={r.id} onClick={() => setRel(r.id)} className="card" style={{ textAlign: "left", cursor: "pointer", border: ativo ? "1px solid var(--dourado)" : "1px solid var(--border)", background: ativo ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
+                <div className="flex items-center gap-2" style={{ color: ativo ? "var(--dourado-light)" : "var(--text)" }}><Icon size={18} /><span style={{ fontWeight: 700 }}>{r.label}</span></div>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>{r.desc}</p>
+              </button>
+            );
+          })}
+        </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="kpi-card"><div className="flex items-center gap-2"><TrendingUp size={15} style={{ color: "var(--green-light)" }} /><p className="kpi-label">Receitas</p></div><p className="kpi-value" style={{ fontSize: "1.25rem", color: "var(--green-light)" }}>{formatBRL(receitas)}</p></div>
-            <div className="kpi-card"><div className="flex items-center gap-2"><TrendingDown size={15} style={{ color: "var(--red)" }} /><p className="kpi-label">Despesas</p></div><p className="kpi-value" style={{ fontSize: "1.25rem", color: "var(--red)" }}>{formatBRL(despesas)}</p></div>
-            <div className="kpi-card"><p className="kpi-label">Resultado</p><p className="kpi-value" style={{ fontSize: "1.25rem", color: resultado >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(resultado)}</p></div>
-            <div className="kpi-card"><p className="kpi-label">Margem</p><p className="kpi-value" style={{ fontSize: "1.25rem", color: (margem ?? 0) >= 0 ? "var(--green-light)" : "var(--amber)" }}>{margem === null ? "—" : `${margem}%`}</p></div>
+        {/* Filtros */}
+        <div className="card mb-4">
+          <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+          <div className="flex flex-wrap gap-3 items-end">
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
+              <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
+              Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · {filtrados.length} lançamentos
+            </span>
           </div>
+        </div>
 
-          <div className="card mb-4">
-            <div className="card-header mb-3">Evolução Mensal (receita × despesa)</div>
-            <ResponsiveContainer width="100%" height={260}>
-              <BarChart data={porMes} barGap={2}>
-                <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 10 }} tickFormatter={(m) => m.slice(2)} />
+        {/* Indicadores consolidados */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          {rel === "fluxo" && <>
+            <KPI v={formatBRL(receitas)} l="Entradas" c="var(--green-light)" />
+            <KPI v={formatBRL(despesas)} l="Saídas" c="var(--red)" />
+            <KPI v={formatBRL(resultado)} l="Saldo do período" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+            <KPI v={fluxoMensal.length ? formatBRL(fluxoMensal[fluxoMensal.length - 1].acumulado) : "—"} l="Saldo acumulado" c="var(--dourado-light)" />
+          </>}
+          {rel === "dre" && <>
+            <KPI v={formatBRL(receitas)} l="Receita" c="var(--green-light)" />
+            <KPI v={formatBRL(despesas)} l="Despesa" c="var(--red)" />
+            <KPI v={formatBRL(resultado)} l="Resultado" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+            <KPI v={receitas > 0 ? `${Math.round((1000 * resultado) / receitas) / 10}%` : "—"} l="Margem" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+          </>}
+          {rel === "livro" && <>
+            <KPI v={formatBRL(receitas)} l="Entradas" c="var(--green-light)" />
+            <KPI v={formatBRL(despesas)} l="Saídas" c="var(--red)" />
+            <KPI v={formatBRL(resultado)} l="Saldo final" c={resultado >= 0 ? "var(--green-light)" : "var(--amber)"} />
+            <KPI v={String(livro.length)} l="Lançamentos" />
+          </>}
+        </div>
+
+        {/* Gráfico do consolidado */}
+        <div className="card mb-4">
+          <div className="card-header mb-3">{rel === "fluxo" ? "Fluxo de Caixa (entradas × saídas × acumulado)" : rel === "dre" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
+          {rel === "fluxo" && (
+            <ResponsiveContainer width="100%" height={280}>
+              <ComposedChart data={fluxoMensal}>
+                <CartesianGrid stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="mes" tickFormatter={fmtMes} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tip} />
                 <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
-                <Bar dataKey="receita" name="Receita" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
-                <Bar dataKey="despesa" name="Despesa" fill="var(--red)" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="entradas" name="Entradas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="saidas" name="Saídas" fill="var(--red)" radius={[2, 2, 0, 0]} />
+                <Line type="monotone" dataKey="acumulado" name="Acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+          {rel === "dre" && (
+            <ResponsiveContainer width="100%" height={260}>
+              <BarChart data={[{ n: "Receita", v: receitas, f: "var(--green-light)" }, { n: "Despesa", v: despesas, f: "var(--red)" }, { n: "Resultado", v: Math.abs(resultado), f: resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
+                <XAxis dataKey="n" tick={{ fill: "var(--text-muted)", fontSize: 11 }} />
+                <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                <Bar dataKey="v" barSize={70}>{[0, 1, 2].map((i) => <Cell key={i} fill={["var(--green-light)", "var(--red)", resultado >= 0 ? "var(--dourado)" : "var(--amber)"][i]} />)}</Bar>
               </BarChart>
             </ResponsiveContainer>
-          </div>
+          )}
+          {rel === "livro" && (
+            <ResponsiveContainer width="100%" height={260}>
+              <LineChart data={livro.filter((_, i) => i % Math.ceil(livro.length / 150 || 1) === 0)}>
+                <CartesianGrid stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="data" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
+                <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Line type="monotone" dataKey="saldo" name="Saldo acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="card">
-              <div className="card-header mb-3">Despesas por Centro de Custo</div>
-              <ResponsiveContainer width="100%" height={Math.max(160, porCentro.length * 48)}>
-                <BarChart data={porCentro} layout="vertical" margin={{ left: 8 }}>
-                  <XAxis type="number" tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
-                  <YAxis type="category" dataKey="centro" tick={{ fill: "var(--text-muted)", fontSize: 11 }} width={64} />
-                  <Tooltip formatter={(v: any) => formatBRL(Number(v))} contentStyle={tooltipStyle} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="valor" name="Despesa" radius={[0, 3, 3, 0]}>
-                    {porCentro.map((_, i) => <Cell key={i} fill={["var(--vinho-light, #8B3A56)", "var(--amber)", "var(--blue)"][i % 3]} />)}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-
-            <div className="card">
-              <div className="card-header mb-3">Top 10 Categorias de Despesa</div>
+        {/* Detalhamento do relatório */}
+        <div className="card">
+          <div className="card-header mb-3">{rel === "fluxo" ? "Fluxo Mensal" : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}</div>
+          <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : undefined }}>
+            {rel === "fluxo" && (
               <table className="fazenda-table">
-                <thead><tr><th>Descrição</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
-                <tbody>
-                  {topCategorias.map((c) => (
-                    <tr key={c.desc}>
-                      <td style={{ fontSize: "0.8rem" }}>{c.desc}</td>
-                      <td style={{ textAlign: "right", color: "var(--red)", fontWeight: 600 }}>{formatBRL(c.valor)}</td>
-                    </tr>
-                  ))}
-                  {!topCategorias.length && <tr><td colSpan={2} style={{ color: "var(--text-muted)" }}>Sem despesas no filtro.</td></tr>}
-                </tbody>
+                <thead><tr><th>Mês</th><th style={{ textAlign: "right" }}>Entradas</th><th style={{ textAlign: "right" }}>Saídas</th><th style={{ textAlign: "right" }}>Saldo</th><th style={{ textAlign: "right" }}>Acumulado</th></tr></thead>
+                <tbody>{fluxoMensal.map((m) => (
+                  <tr key={m.mes}>
+                    <td style={{ fontWeight: 600 }}>{m.mes}</td>
+                    <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
+                    <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(m.acumulado)}</td>
+                  </tr>
+                ))}</tbody>
               </table>
-            </div>
+            )}
+            {rel === "dre" && (
+              <table className="fazenda-table">
+                <thead><tr><th>Conta (nível 1)</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <tbody>{dreContas.map((c) => (
+                  <tr key={c.conta}>
+                    <td style={{ fontWeight: 600 }}>{c.conta}</td>
+                    <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
+                    <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+            {rel === "livro" && (
+              <table className="fazenda-table">
+                <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <tbody>{livro.slice(0, 500).map((l, i) => (
+                  <tr key={i}>
+                    <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{fmtDia(l.data)}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{l.descricao}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{l.fornecedor}</td>
+                    <td style={{ textAlign: "right", color: "var(--green-light)" }}>{l.entrada ? formatBRL(l.entrada) : ""}</td>
+                    <td style={{ textAlign: "right", color: "var(--red)" }}>{l.saida ? formatBRL(l.saida) : ""}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600, color: l.saldo >= 0 ? "var(--dourado-light)" : "var(--amber)" }}>{formatBRL(l.saldo)}</td>
+                  </tr>
+                ))}</tbody>
+              </table>
+            )}
+            {rel === "livro" && livro.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {livro.length} — refine o período.</p>}
           </div>
-        </>
-      )}
+        </div>
+      </>}
     </div>
   );
 }
