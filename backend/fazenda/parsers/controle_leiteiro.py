@@ -32,6 +32,7 @@ def parse_controle_leiteiro(content: bytes) -> list[ControleLeiteiro]:
         registros.append(
             ControleLeiteiro(
                 numero_matriz=numero,
+                raca=(row.get("RACA", "") or "").strip() or None,
                 data_controle=data_controle,
                 producao_kg=producao,
                 del_no_controle=del_controle,

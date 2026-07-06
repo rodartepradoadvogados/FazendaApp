@@ -65,6 +65,12 @@ export async function fetchProducao() {
   return res.json();
 }
 
+export async function fetchControles() {
+  const res = await fetch(`${API}/producao/controles`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Controles error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;
