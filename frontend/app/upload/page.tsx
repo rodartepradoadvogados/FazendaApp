@@ -10,6 +10,7 @@ const TIPOS = [
   { id: "estoque",          label: "ESTOQUE.csv",                    desc: "Inventário de insumos e hormônios" },
   { id: "controle_leiteiro",label: "Controle_Leiteiro.csv",          desc: "Histórico de pesagens de leite por vaca" },
   { id: "dieta",            label: "DIETA.csv",                      desc: "Plano alimentar por lote (kg/cabeça/dia)" },
+  { id: "sanidade",         label: "SANIDADE.csv",                   desc: "Medicamentos aplicados nos animais" },
 ];
 
 type Status = "idle" | "uploading" | "ok" | "error";
