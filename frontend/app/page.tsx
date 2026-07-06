@@ -1,210 +1,144 @@
-// Capa — Dashboard principal (Server Component)
-import { fetchAgenda, fetchAnimais, formatBRL, today, firstDayOfMonth, fetchDRE } from "@/lib/api";
-import { AlertTriangle, TrendingDown, Syringe, MilkOff, Activity } from "lucide-react";
+"use client";
+import { useEffect, useState } from "react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse } from "lucide-react";
+import {
+  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, formatBRL,
+} from "@/lib/api";
+import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 
-async function getData() {
-  try {
-    const [agenda, animais] = await Promise.all([
-      fetchAgenda(today()),
-      fetchAnimais(),
-    ]);
-    return { agenda, animais, error: null };
-  } catch (e: any) {
-    return { agenda: null, animais: [], error: e.message };
+const SIT_CORES: Record<string, string> = { Prenhes: "var(--green-light)", Vazias: "var(--red)", Inseminadas: "var(--dourado-light)" };
+
+export default function Home() {
+  const [d, setD] = useState<any>(null);
+
+  useEffect(() => {
+    Promise.allSettled([
+      fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchLancamentos(), fetchEstoque(),
+    ]).then(([ind, ag, prod, lanc, est]) => {
+      setD({
+        ind: ind.status === "fulfilled" ? ind.value : null,
+        ag: ag.status === "fulfilled" ? ag.value : null,
+        prod: prod.status === "fulfilled" ? prod.value : null,
+        lanc: lanc.status === "fulfilled" ? lanc.value.lancamentos : null,
+        est: est.status === "fulfilled" ? est.value.itens : null,
+      });
+    });
+  }, []);
+
+  if (!d) return <div className="p-6"><p style={{ color: "var(--text-muted)" }}>Carregando painel…</p></div>;
+
+  const reb = d.ind?.rebanho, rep = d.ind?.reproducao, prod = d.ind?.producao;
+  const semDados = !d.ind && !d.ag;
+
+  // Resultado do mês mais recente (competência)
+  let resultadoMes: number | null = null, mesLabel = "";
+  if (d.lanc?.length) {
+    const meses = Array.from(new Set(d.lanc.map((l: any) => l.mes_competencia).filter(Boolean))).sort() as string[];
+    const ultimo = meses[meses.length - 1];
+    if (ultimo) {
+      mesLabel = ultimo;
+      const doMes = d.lanc.filter((l: any) => l.mes_competencia === ultimo);
+      const r = doMes.filter((l: any) => l.tipo === "receita").reduce((a: number, l: any) => a + l.valor, 0);
+      const de = doMes.filter((l: any) => l.tipo === "despesa").reduce((a: number, l: any) => a + l.valor, 0);
+      resultadoMes = r - de;
+    }
   }
-}
 
-export default async function Home() {
-  const { agenda, animais, error } = await getData();
+  const abaixoMin = d.est ? d.est.filter((i: any) => i.abaixo_minimo === true).length : null;
+  const implante = d.ag?.hormonios_check?.find((h: any) => h.nome?.toLowerCase().includes("implante") || h.nome?.toLowerCase().includes("sincrogest"));
+  const implanteFalta = implante && !implante.suficiente;
+  const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
 
-  const totalAnimais = animais?.length ?? "—";
-  const gestantes = animais?.filter((a: any) => a.sit_rep === "Ges.").length ?? "—";
-  const lactantes = animais?.filter((a: any) => ["01 - NOV. ALTA", "02 - VACAS ALTA", "03 - MÉDIA"]
-    .some((g: string) => (a.grupo_primario || "").includes(g.split(" ")[0]))).length ?? "—";
+  const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({ mes: s.data?.slice(5) ?? "", kg: s.media_kg }));
+  const donutRep = rep ? [
+    { nome: "Prenhes", v: rep.prenhes }, { nome: "Vazias", v: rep.vazias }, { nome: "Inseminadas", v: rep.inseminadas },
+  ].filter((x) => x.v > 0) : [];
 
-  const candidatasIATF = agenda?.totais?.candidatas_iatf ?? "—";
-  const bstElegiveis = agenda?.totais?.bst_elegiveis ?? "—";
+  const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
-  // Implante é o gargalo — verifica estoque
-  const implantCheck = agenda?.hormonios_check?.find((h: any) => h.nome?.includes("Implante"));
-  const implanteFalta = implantCheck && !implantCheck.suficiente;
-  const implanteFaltaQtd = implantCheck ? Math.ceil(implantCheck.falta) : 0;
+  const KPI = ({ v, l, c }: { v: any; l: string; c?: string }) => (
+    <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>
+  );
 
   return (
     <div className="p-6 animate-in">
-      {/* Header */}
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>
-          Fazenda Estreito Ponte de Pedra
-        </h1>
+      <div className="mb-5">
+        <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Pecuária leiteira · Girolando / Holandês ·{" "}
-          {new Date().toLocaleDateString("pt-BR", { weekday: "long", year: "numeric", month: "long", day: "numeric" })}
+          Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
         </p>
       </div>
 
-      {/* Alerta implante */}
-      {implanteFalta && (
-        <div className="alert-critico mb-4">
-          <AlertTriangle size={18} />
-          <span>
-            <strong>ALERTA:</strong> Estoque de implantes insuficiente para o protocolo IATF.
-            Faltam <strong>{implanteFaltaQtd}</strong> implante(s) para {candidatasIATF} candidata(s).
-          </span>
-        </div>
+      {semDados && (
+        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>
       )}
 
-      {error && (
-        <div className="alert-critico mb-4">
-          <AlertTriangle size={18} />
-          <span>Backend offline ou sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span>
-        </div>
-      )}
+      {/* Alertas */}
+      <div className="flex flex-wrap gap-3 mb-5">
+        {implanteFalta && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.15)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Syringe size={15} style={{ color: "var(--red)" }} /> Implante em falta: {Math.ceil(implante.falta)} p/ IATF</div>}
+        {contasPagar > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><TrendingDown size={15} style={{ color: "var(--amber)" }} /> {contasPagar} conta(s) a pagar (10 dias)</div>}
+        {!!abaixoMin && abaixoMin > 0 && <div className="flex items-center gap-2" style={{ background: "rgba(192,57,43,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.5rem 0.9rem", fontSize: "0.82rem" }}><Package size={15} style={{ color: "var(--red)" }} /> {abaixoMin} item(ns) abaixo do mínimo</div>}
+      </div>
 
-      {/* KPIs */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-        <div className="kpi-card">
-          <p className="kpi-value">{totalAnimais}</p>
-          <p className="kpi-label">Total de animais</p>
-          <Activity size={20} style={{ color: "var(--text-muted)", marginTop: "0.5rem" }} />
+      {/* KPIs executivos */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+        <KPI v={reb?.total ?? "—"} l="Animais no rebanho" />
+        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" />
+        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Taxa de prenhez" c="var(--green-light)" />
+        <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
+        <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" c="var(--green-light)" />
+        <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
+        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" c="var(--dourado-light)" />
+        <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+      </div>
+
+      {/* Gráficos */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
+        <div className="card">
+          <div className="card-header mb-2">Produção do Rebanho (média kg/vaca)</div>
+          {serieProd.length ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={serieProd}>
+                <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 9 }} />
+                <Tooltip contentStyle={tip} formatter={(v: any) => `${v} kg`} />
+                <Line type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2} dot={{ r: 2 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem controle leiteiro — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a>.</p>}
         </div>
-        <div className="kpi-card">
-          <p className="kpi-value" style={{ color: "var(--green-light)" }}>{gestantes}</p>
-          <p className="kpi-label">Gestantes</p>
-        </div>
-        <div className="kpi-card">
-          <p className="kpi-value" style={{ color: "var(--blue)" }}>{candidatasIATF}</p>
-          <p className="kpi-label">Candidatas IATF</p>
-          <Syringe size={20} style={{ color: "var(--text-muted)", marginTop: "0.5rem" }} />
-        </div>
-        <div className="kpi-card">
-          <p className="kpi-value" style={{ color: "var(--amber)" }}>{bstElegiveis}</p>
-          <p className="kpi-label">BST hoje</p>
-          <MilkOff size={20} style={{ color: "var(--text-muted)", marginTop: "0.5rem" }} />
+        <div className="card">
+          <div className="card-header mb-2 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva</div>
+          {donutRep.length ? (
+            <ResponsiveContainer width="100%" height={200}>
+              <PieChart>
+                <Pie data={donutRep} dataKey="v" nameKey="nome" cx="50%" cy="50%" innerRadius={45} outerRadius={75} label={(e: any) => `${e.nome} (${e.v})`} labelLine={false} fontSize={10}>
+                  {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}
+                </Pie>
+                <Tooltip contentStyle={tip} />
+              </PieChart>
+            </ResponsiveContainer>
+          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados reprodutivos.</p>}
         </div>
       </div>
 
-      {/* Bloco 2 */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-        {/* Próximos eventos */}
-        <div className="card">
-          <div className="card-header mb-3">Próximos Eventos (7 dias)</div>
-          {agenda?.eventos && agenda.eventos.length > 0 ? (
+      {/* Próximos eventos */}
+      <div className="card">
+        <div className="card-header mb-3">Próximos Eventos (7 dias)</div>
+        {(() => {
+          const limite = new Date(); limite.setDate(limite.getDate() + 7);
+          const evs = (d.ag?.eventos || []).filter((e: any) => new Date(e.data + "T00:00:00") <= limite).slice(0, 10);
+          return evs.length ? (
             <div className="space-y-2">
-              {agenda.eventos
-                .filter((e: any) => {
-                  const d = new Date(e.data);
-                  const limite = new Date();
-                  limite.setDate(limite.getDate() + 7);
-                  return d <= limite;
-                })
-                .slice(0, 8)
-                .map((ev: any, i: number) => (
-                  <div key={i} className="flex items-start gap-3 py-1">
-                    <span style={{
-                      fontSize: "0.7rem",
-                      color: "var(--text-muted)",
-                      minWidth: "4.5rem",
-                      paddingTop: "0.15rem"
-                    }}>
-                      {new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}
-                    </span>
-                    <span
-                      className={`badge-${ev.categoria?.toLowerCase().split("/")[0] || "atividades"}`}
-                      style={{ fontSize: "0.65rem", padding: "0.15rem 0.4rem", borderRadius: "4px", whiteSpace: "nowrap", flexShrink: 0 }}
-                    >
-                      {ev.categoria?.split("/")[0]}
-                    </span>
-                    <span style={{ fontSize: "0.8rem", color: "var(--text)" }}>
-                      {ev.numero_animal ? <strong>{ev.numero_animal}</strong> : null}
-                      {ev.numero_animal ? " · " : ""}
-                      {ev.descricao}
-                    </span>
-                  </div>
-                ))}
-            </div>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-              {error ? "Sem dados — faça o upload dos CSV." : "Nenhum evento nos próximos 7 dias."}
-            </p>
-          )}
-        </div>
-
-        {/* Checagem de hormônios */}
-        <div className="card">
-          <div className="card-header mb-3">Checagem de Hormônios (IATF)</div>
-          {agenda?.hormonios_check && agenda.hormonios_check.length > 0 ? (
-            <table className="fazenda-table">
-              <thead>
-                <tr>
-                  <th>Hormônio</th>
-                  <th>Estoque</th>
-                  <th>Necessário</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agenda.hormonios_check.map((h: any, i: number) => (
-                  <tr key={i}>
-                    <td style={{ fontSize: "0.78rem" }}>{h.nome}</td>
-                    <td style={{ fontWeight: 600 }}>
-                      {h.estoque_atual?.toFixed(1)} {h.unidade}
-                    </td>
-                    <td>{h.necessidade?.toFixed(1)} {h.unidade}</td>
-                    <td>
-                      {h.suficiente ? (
-                        <span style={{ color: "var(--green-light)", fontWeight: 700 }}>OK</span>
-                      ) : (
-                        <span style={{ color: "var(--red)", fontWeight: 700 }}>
-                          FALTA {Math.ceil(h.falta)}
-                        </span>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-              Sem candidatas IATF ou dados de estoque.
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Contas a pagar */}
-      {agenda?.contas_a_pagar && agenda.contas_a_pagar.length > 0 && (
-        <div className="card">
-          <div className="card-header mb-3 flex items-center gap-2">
-            <TrendingDown size={14} />
-            Contas a Pagar (próximos 10 dias)
-          </div>
-          <table className="fazenda-table">
-            <thead>
-              <tr>
-                <th>Vencimento</th>
-                <th>Descrição</th>
-                <th>Fornecedor</th>
-                <th>Valor</th>
-              </tr>
-            </thead>
-            <tbody>
-              {agenda.contas_a_pagar.map((c: any, i: number) => (
-                <tr key={i}>
-                  <td style={{ color: "var(--red)", fontWeight: 600 }}>
-                    {new Date(c.data_vencimento + "T00:00:00").toLocaleDateString("pt-BR")}
-                  </td>
-                  <td>{c.descricao}</td>
-                  <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.fornecedor_cliente}</td>
-                  <td style={{ fontWeight: 700, color: "var(--amber)" }}>
-                    {formatBRL(c.valor_total || 0)}
-                  </td>
-                </tr>
+              {evs.map((ev: any, i: number) => (
+                <div key={i} className="flex items-start gap-3 py-1">
+                  <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: "4.5rem" }}>{new Date(ev.data + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}</span>
+                  <span style={{ fontSize: "0.82rem", color: "var(--text)" }}>{ev.numero_animal ? <strong>{ev.numero_animal} · </strong> : null}{ev.descricao}</span>
+                </div>
               ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </div>
+          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento nos próximos 7 dias.</p>;
+        })()}
+      </div>
     </div>
   );
 }

@@ -12,6 +12,7 @@ from fazenda.api.routers import (
     agenda,
     alimentacao,
     animais,
+    estoque,
     financeiro,
     indicadores,
     producao,
@@ -67,6 +68,7 @@ app.include_router(indicadores.router)
 app.include_router(alimentacao.router)
 app.include_router(producao.router)
 app.include_router(reproducao.router)
+app.include_router(estoque.router)
 
 
 @app.get("/")

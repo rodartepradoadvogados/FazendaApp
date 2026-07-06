@@ -104,6 +104,7 @@ class ControleLeiteiro(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
     numero_matriz: str = Field(index=True)
+    raca: Optional[str] = None
     data_controle: Optional[date] = None
     producao_kg: Optional[float] = None
     del_no_controle: Optional[int] = None

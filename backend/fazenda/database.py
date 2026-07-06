@@ -2,6 +2,7 @@
 Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
+from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.config import settings
@@ -29,9 +30,30 @@ else:
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 
+# Migração leve: colunas adicionadas a tabelas que já podem existir em produção.
+# O create_all não altera tabelas existentes, então adicionamos manualmente.
+_COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
+    "controle_leiteiro": [("raca", "VARCHAR")],
+}
+
+
+def _migrar_colunas() -> None:
+    insp = inspect(engine)
+    tabelas = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for tabela, colunas in _COLUNAS_NOVAS.items():
+            if tabela not in tabelas:
+                continue  # create_all já criou com o schema completo
+            existentes = {c["name"] for c in insp.get_columns(tabela)}
+            for nome, tipo in colunas:
+                if nome not in existentes:
+                    conn.execute(text(f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}'))
+
+
 def create_db_and_tables() -> None:
-    """Cria todas as tabelas (idempotente — usa CREATE TABLE IF NOT EXISTS)."""
+    """Cria as tabelas (idempotente) e aplica migrações leves de colunas."""
     SQLModel.metadata.create_all(engine)
+    _migrar_colunas()
 
 
 def get_session():

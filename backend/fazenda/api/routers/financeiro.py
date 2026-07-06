@@ -64,6 +64,31 @@ def dre(
     }
 
 
+@router.get("/lancamentos")
+def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
+    """
+    Movimentações achatadas para o dashboard financeiro interativo.
+    O front filtra por regime (competência/caixa), ano e centro de custo.
+    """
+    registros = []
+    for c in session.exec(select(ContaGerencial)).all():
+        dc = c.data_competencia
+        dp = c.data_pagamento
+        registros.append({
+            "tipo": c.tipo,
+            "valor": c.valor_total or 0.0,
+            "centro_custo": c.centro_custo or "(sem centro)",
+            "codigo_conta": (c.codigo_conta or "").split(".")[0] or "(sem conta)",
+            "descricao": c.descricao or "",
+            "fornecedor": c.fornecedor_cliente or "",
+            "mes_competencia": f"{dc.year}-{dc.month:02d}" if dc else None,
+            "ano_competencia": dc.year if dc else None,
+            "mes_caixa": f"{dp.year}-{dp.month:02d}" if dp else None,
+            "ano_caixa": dp.year if dp else None,
+        })
+    return {"lancamentos": registros, "total": len(registros)}
+
+
 @router.get("/contas-a-pagar")
 def contas_a_pagar(
     dias: int = Query(10, description="Janela em dias"),
