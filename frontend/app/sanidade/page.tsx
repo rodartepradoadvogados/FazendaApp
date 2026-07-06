@@ -16,7 +16,8 @@ export default function SanidadePage() {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
-  const [fAno, setFAno] = useState("");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
   const [buscaProd, setBuscaProd] = useState("");
   const [buscaAnimal, setBuscaAnimal] = useState("");
 
@@ -31,11 +32,12 @@ export default function SanidadePage() {
     if (!regs) return [];
     return regs.filter((a) =>
       (!fCat || a.categoria === fCat) &&
-      (!fAno || String(a.ano) === fAno) &&
+      (!ini || (a.data ? a.data >= ini : false)) &&
+      (!fim || (a.data ? a.data <= fim : false)) &&
       (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
       (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase()))
     );
-  }, [regs, fCat, fAno, buscaProd, buscaAnimal]);
+  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal]);
 
   const porCategoria = useMemo(() => {
     const by = new Map<string, number>();
@@ -73,11 +75,13 @@ export default function SanidadePage() {
       {regs && <>
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
               <select style={selStyle} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">Todas</option>{opc((a) => a.categoria).map((o) => <option key={o}>{o}</option>)}</select></div>
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
-              <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opc((a) => a.ano === null ? null : String(a.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+              <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+              <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
               <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaProd} onChange={(e) => setBuscaProd(e.target.value)} placeholder="ex.: Ivermectina" /></div></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>

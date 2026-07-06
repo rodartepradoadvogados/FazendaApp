@@ -51,6 +51,7 @@ export default function ProducaoPage() {
   const [error, setError] = useState<string | null>(null);
   const [fRaca, setFRaca] = useState("");
   const [fAno, setFAno] = useState("");
+  const [fMes, setFMes] = useState("");
   const [fFaixa, setFFaixa] = useState("");
 
   useEffect(() => {
@@ -62,9 +63,10 @@ export default function ProducaoPage() {
     return regs.filter((r) =>
       (!fRaca || r.raca === fRaca) &&
       (!fAno || String(r.ano) === fAno) &&
+      (!fMes || (r.data ? r.data.slice(0, 7) === fMes : false)) &&
       (!fFaixa || (() => { const fx = FAIXAS.find((f) => f[2] === fFaixa); return fx && r.del !== null && r.del >= fx[0] && r.del <= fx[1]; })())
     );
-  }, [regs, fRaca, fAno, fFaixa]);
+  }, [regs, fRaca, fAno, fMes, fFaixa]);
 
   const comProd = useMemo(() => filtrados.filter((r) => r.producao_kg !== null && r.producao_kg > 0), [filtrados]);
 
@@ -109,11 +111,13 @@ export default function ProducaoPage() {
         <>
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Raça</label>
                 <select style={selStyle} value={fRaca} onChange={(e) => setFRaca(e.target.value)}><option value="">Todas</option>{opcoes(regs, (r) => r.raca).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
                 <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.ano === null ? null : String(r.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Mês</label>
+                <select style={selStyle} value={fMes} onChange={(e) => setFMes(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.data ? r.data.slice(0, 7) : null).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Faixa de DEL</label>
                 <select style={selStyle} value={fFaixa} onChange={(e) => setFFaixa(e.target.value)}><option value="">Todas</option>{FAIXAS.map((f) => <option key={f[2]}>{f[2]}</option>)}</select></div>
             </div>

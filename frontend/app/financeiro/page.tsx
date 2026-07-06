@@ -35,6 +35,8 @@ export default function FinanceiroPage() {
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
   const [centro, setCentro] = useState("");
+  const [exp, setExp] = useState<Set<string>>(new Set());
+  const toggleExp = (k: string) => setExp((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   useEffect(() => { fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message)); }, []);
 
@@ -217,33 +219,65 @@ export default function FinanceiroPage() {
 
         {/* Detalhamento do relatório */}
         <div className="card">
-          <div className="card-header mb-3">{rel === "fluxo" ? "Fluxo Mensal" : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}</div>
+          <div className="card-header mb-3">
+            {rel === "fluxo" ? "Fluxo Mensal" : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
+            {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+          </div>
           <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : undefined }}>
             {rel === "fluxo" && (
               <table className="fazenda-table">
-                <thead><tr><th>Mês</th><th style={{ textAlign: "right" }}>Entradas</th><th style={{ textAlign: "right" }}>Saídas</th><th style={{ textAlign: "right" }}>Saldo</th><th style={{ textAlign: "right" }}>Acumulado</th></tr></thead>
-                <tbody>{fluxoMensal.map((m) => (
-                  <tr key={m.mes}>
-                    <td style={{ fontWeight: 600 }}>{m.mes}</td>
-                    <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
-                    <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(m.acumulado)}</td>
-                  </tr>
-                ))}</tbody>
+                <thead><tr><th></th><th>Mês</th><th style={{ textAlign: "right" }}>Entradas</th><th style={{ textAlign: "right" }}>Saídas</th><th style={{ textAlign: "right" }}>Saldo</th><th style={{ textAlign: "right" }}>Acumulado</th></tr></thead>
+                <tbody>{fluxoMensal.map((m) => {
+                  const aberto = exp.has("fluxo:" + m.mes);
+                  const itens = aberto ? filtrados.filter((r) => campoMes(r) === m.mes).sort((a, b) => ((a.data_pagamento || "") < (b.data_pagamento || "") ? -1 : 1)) : [];
+                  return (
+                    <>
+                      <tr key={m.mes} onClick={() => toggleExp("fluxo:" + m.mes)} style={{ cursor: "pointer" }}>
+                        <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
+                        <td style={{ fontWeight: 600 }}>{m.mes}</td>
+                        <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
+                        <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(m.acumulado)}</td>
+                      </tr>
+                      {aberto && itens.map((r, i) => (
+                        <tr key={m.mes + ":" + i} style={{ background: "var(--surface-2)" }}>
+                          <td></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento)} · {r.descricao}</td>
+                          <td colSpan={2} style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.fornecedor}</td>
+                          <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
+                        </tr>
+                      ))}
+                    </>
+                  );
+                })}</tbody>
               </table>
             )}
             {rel === "dre" && (
               <table className="fazenda-table">
-                <thead><tr><th>Conta (nível 1)</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
-                <tbody>{dreContas.map((c) => (
-                  <tr key={c.conta}>
-                    <td style={{ fontWeight: 600 }}>{c.conta}</td>
-                    <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
-                    <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
-                    <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
-                  </tr>
-                ))}</tbody>
+                <thead><tr><th></th><th>Conta (nível 1)</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <tbody>{dreContas.map((c) => {
+                  const aberto = exp.has("dre:" + c.conta);
+                  const itens = aberto ? filtrados.filter((r) => (r.codigo_conta || "(sem conta)") === c.conta).sort((a, b) => b.valor - a.valor) : [];
+                  return (
+                    <>
+                      <tr key={c.conta} onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
+                        <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
+                        <td style={{ fontWeight: 600 }}>{c.conta}</td>
+                        <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
+                        <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
+                      </tr>
+                      {aberto && itens.map((r, i) => (
+                        <tr key={c.conta + ":" + i} style={{ background: "var(--surface-2)" }}>
+                          <td></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{r.descricao} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor}</span></td>
+                          <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
+                        </tr>
+                      ))}
+                    </>
+                  );
+                })}</tbody>
               </table>
             )}
             {rel === "livro" && (
