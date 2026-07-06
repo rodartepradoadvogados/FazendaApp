@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Calendar, Filter, Plus, RefreshCw } from "lucide-react";
 import { fetchAgenda, addEventoManual, today, formatDate } from "@/lib/api";
+import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
 const CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro", "Atividades"];
 const BADGE_CLASS: Record<string, string> = {
@@ -20,6 +21,7 @@ export default function AgendaPage() {
   const [filtro, setFiltro] = useState("");
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({ data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", numero_animal: "", observacao: "" });
+  const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -77,16 +79,22 @@ export default function AgendaPage() {
       {agenda && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
           {[
-            { label: "Candidatas IATF", value: agenda.totais?.candidatas_iatf, color: "var(--blue)" },
-            { label: "BST Elegíveis", value: agenda.totais?.bst_elegiveis, color: "var(--amber)" },
+            { label: "Candidatas IATF", value: agenda.totais?.candidatas_iatf, color: "var(--blue)",
+              list: (agenda.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias })) },
+            { label: "BST Elegíveis", value: agenda.totais?.bst_elegiveis, color: "var(--amber)",
+              list: (agenda.bst_elegiveis || []).map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "Contas (10d)", value: agenda.totais?.contas_a_pagar, color: "var(--red)" },
             { label: "Total Eventos", value: agenda.totais?.eventos, color: "var(--dourado-light)" },
-          ].map(k => (
-            <div key={k.label} className="kpi-card" style={{ padding: "0.9rem" }}>
-              <p className="kpi-value" style={{ fontSize: "1.6rem", color: k.color }}>{k.value ?? "—"}</p>
-              <p className="kpi-label">{k.label}</p>
-            </div>
-          ))}
+          ].map((k: any) => {
+            const clic = k.list && k.list.length;
+            return (
+              <div key={k.label} className="kpi-card" style={{ padding: "0.9rem", cursor: clic ? "pointer" : undefined }}
+                onClick={() => clic && setModal({ title: k.label, list: k.list })}>
+                <p className="kpi-value" style={{ fontSize: "1.6rem", color: k.color }}>{k.value ?? "—"}</p>
+                <p className="kpi-label">{k.label}{clic ? " ›" : ""}</p>
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -235,6 +243,8 @@ export default function AgendaPage() {
           </div>
         </div>
       )}
+
+      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
   );
 }
