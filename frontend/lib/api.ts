@@ -15,6 +15,46 @@ export function logout() {
     location.href = "/login";
   }
 }
+// Mapa rota → módulo (para menu e bloqueio de páginas).
+export const ROTA_MODULO: Record<string, string> = {
+  "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
+  "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/rebanho": "rebanho",
+  "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade",
+  "/financeiro": "financeiro", "/estoque": "estoque", "/parametros": "parametros", "/upload": "upload",
+};
+
+// Permissão de módulo para o usuário logado (admin tem tudo).
+export function podeModulo(mod: string): boolean {
+  const u = getUsuario();
+  if (!u) return false;
+  if (u.papel === "admin") return true;
+  return Array.isArray(u.permissoes) && u.permissoes.includes(mod);
+}
+export function ehAdmin(): boolean {
+  return getUsuario()?.papel === "admin";
+}
+export async function fetchUsuarios() {
+  const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
+  if (!res.ok) throw new Error(`Usuários error: ${res.status}`);
+  return res.json();
+}
+export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[] }) {
+  const res = await fetch(`${API}/auth/usuarios`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar usuário"); }
+  return res.json();
+}
+export async function atualizarUsuario(id: number, dados: any) {
+  const res = await fetch(`${API}/auth/usuarios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar"); }
+  return res.json();
+}
+
 export async function login(username: string, senha: string) {
   const res = await fetch(`${API}/auth/login`, {
     method: "POST", headers: { "Content-Type": "application/json" },

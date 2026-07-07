@@ -99,6 +99,30 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
     return user
 
 
+# Módulos do sistema (chaves usadas nas permissões dos operadores).
+MODULOS = [
+    "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise",
+    "rebanho", "producao", "alimentacao", "sanidade", "financeiro", "estoque",
+    "parametros", "upload",
+]
+
+
+def tem_modulo(user: Usuario, modulo: str) -> bool:
+    if user.papel == "admin":
+        return True
+    liberados = {m.strip() for m in (user.permissoes or "").split(",") if m.strip()}
+    return modulo in liberados
+
+
+def exigir_modulo(modulo: str):
+    """Dependência: exige que o usuário logado tenha acesso ao módulo."""
+    def _dep(user: Usuario = Depends(get_current_user)) -> Usuario:
+        if not tem_modulo(user, modulo):
+            raise HTTPException(status_code=403, detail=f"Sem acesso ao módulo '{modulo}'")
+        return user
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Seed do administrador inicial
 # ---------------------------------------------------------------------------

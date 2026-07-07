@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getToken } from "@/lib/api";
+import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
 
 /**
@@ -15,8 +15,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (path === "/login") { setEstado("deslogado"); return; }
-    if (getToken()) { setEstado("logado"); }
-    else { setEstado("deslogado"); router.replace("/login"); }
+    if (!getToken()) { setEstado("deslogado"); router.replace("/login"); return; }
+    // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
+    const mod = ROTA_MODULO[path];
+    if (path === "/usuarios" && !ehAdmin()) { router.replace("/"); return; }
+    if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
+    setEstado("logado");
   }, [path, router]);
 
   if (path === "/login") return <>{children}</>;

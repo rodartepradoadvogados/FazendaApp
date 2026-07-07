@@ -252,6 +252,8 @@ class Usuario(SQLModel, table=True):
     username: str = Field(index=True, unique=True)
     nome: Optional[str] = None
     senha_hash: str
-    papel: str = "admin"          # admin | operador | leitura
+    papel: str = "admin"          # admin (tudo + gerencia usuários) | operador
+    # Módulos liberados p/ operador, separados por vírgula. Admin ignora (tem tudo).
+    permissoes: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

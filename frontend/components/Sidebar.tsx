@@ -18,10 +18,11 @@ import {
   Syringe,
   SlidersHorizontal,
   ClipboardList,
+  Users,
   Menu,
   X,
 } from "lucide-react";
-import { checkHealth, getUsuario, logout } from "@/lib/api";
+import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut } from "lucide-react";
 
 const links = [
@@ -45,6 +46,14 @@ export function Sidebar() {
   const path = usePathname();
   const [online, setOnline] = useState<boolean | null>(null);
   const [aberto, setAberto] = useState(false); // drawer no mobile
+  const [visiveis, setVisiveis] = useState(links);
+  const [admin, setAdmin] = useState(false);
+
+  useEffect(() => {
+    // Filtra o menu conforme as permissões do usuário logado.
+    setVisiveis(links.filter((l) => podeModulo(ROTA_MODULO[l.href] || l.href)));
+    setAdmin(ehAdmin());
+  }, [path]);
 
   useEffect(() => {
     let ativo = true;
@@ -114,8 +123,8 @@ export function Sidebar() {
       </div>
 
       {/* Nav links */}
-      <nav className="flex-1 p-3 space-y-1">
-        {links.map(({ href, label, icon: Icon }) => {
+      <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
+        {[...visiveis, ...(admin ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : [])].map(({ href, label, icon: Icon }) => {
           const active = path === href || (href !== "/" && path.startsWith(href));
           return (
             <Link
