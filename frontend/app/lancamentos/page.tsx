@@ -4,7 +4,7 @@ import {
   ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
@@ -327,13 +327,15 @@ function FormServico({ animais }: { animais: AnimalRow[] }) {
   );
 }
 
-function FormDiagnostico({ animais }: { animais: AnimalRow[] }) {
+function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
   // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar).
   const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
   const [matriz, setMatriz] = useState("");
   const [data, setData] = useState("");
-  const [ultimoServico, setUltimoServico] = useState("");
   const [resultado, setResultado] = useState("");
+  // Data da última IA/cobertura vem automaticamente do histórico da matriz.
+  const ultimoServico = matriz ? ultServico[matriz] || "" : "";
+  const ultimoLabel = ultimoServico ? new Date(ultimoServico + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
   const aviso30 = useMemo(() => {
     if (!data || !ultimoServico) return false;
@@ -347,7 +349,7 @@ function FormDiagnostico({ animais }: { animais: AnimalRow[] }) {
         <Campo label="Matriz / novilha (servidas)">
           <SelectAnimal animais={servidas} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz servida…" />
         </Campo>
-        <Campo label="Data da última IA / cobertura"><input type="date" style={inputStyle} value={ultimoServico} onChange={(e) => setUltimoServico(e.target.value)} /></Campo>
+        <Campo label="Última IA / cobertura (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={ultimoLabel} readOnly /></Campo>
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
         <Campo label="Método"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option></select></Campo>
         <Campo label="Resultado" full>
@@ -390,6 +392,14 @@ function classeColostro(brix: number): { txt: string; cor: string } {
   return { txt: "Bronze (ruim — descartar 1ª mamada)", cor: "var(--red)" };
 }
 
+// Brix do soro (teste de IgG): >=8,4 sucesso; 8,1-8,3 alerta; <=8,0 falha.
+function classeSoro(brix: number): { txt: string; cor: string } {
+  if (brix >= 8.4) return { txt: "Sucesso — bezerra protegida", cor: "var(--green-light)" };
+  if (brix >= 8.1) return { txt: "Alerta — monitorar, revisar colostro", cor: "var(--amber)" };
+  return { txt: "Falha — bezerra desprotegida (ação urgente)", cor: "var(--red)" };
+}
+const OPCOES_SORO = Array.from({ length: 13 }, (_, i) => (6 + i * 0.5).toFixed(1)); // 6,0 … 12,0
+
 function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [matriz, setMatriz] = useState("");
   const [tomouColostro, setTomou] = useState("");
@@ -398,9 +408,12 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [alvo, setAlvo] = useState("25");
   const [manualAberto, setManualAberto] = useState(false);
 
+  const [soro, setSoro] = useState("");
   const brixN = brix ? Number(brix) : null;
   const litrosN = litros ? Number(litros) : 0;
   const cls = brixN != null ? classeColostro(brixN) : null;
+  const soroN = soro ? Number(soro) : null;
+  const clsSoro = soroN != null ? classeSoro(soroN) : null;
   const enriquecer = brixN != null && brixN < 25;
   const medidasPorL = enriquecer ? Math.max(0, Number(alvo) - brixN!) : 0;
   const totalMedidas = medidasPorL * (litrosN || 1);
@@ -457,6 +470,7 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
                 </p>
               </div>
             )}
+            <button onClick={() => setManualAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.72rem", marginTop: "0.5rem" }}><BookOpen size={12} /> Manual: quantidade, qualidade e enriquecimento</button>
           </div>
         )}
 
@@ -466,6 +480,15 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
             Colher entre <strong>24h e 48h</strong> após o nascimento. Meta: Brix do soro &gt; 8,4%
             (≥ 8,4% sucesso · 8,1–8,3% alerta · ≤ 8,0% falha).
           </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+            <Campo label="Brix do soro (%)">
+              <select style={inputStyle} value={soro} onChange={(e) => setSoro(e.target.value)}>
+                <option value="" disabled>Selecione…</option>
+                {OPCOES_SORO.map((v) => <option key={v} value={v}>{v.replace(".", ",")}%</option>)}
+              </select>
+            </Campo>
+            {clsSoro && <div style={{ display: "flex", alignItems: "flex-end" }}><p style={{ fontSize: "0.82rem" }}>Resultado: <strong style={{ color: clsSoro.cor }}>{clsSoro.txt}</strong></p></div>}
+          </div>
           <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
             <button onClick={() => setManualAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Ver manual na tela</button>
             <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-1" style={{ color: "var(--dourado-light)", fontSize: "0.75rem" }}><ExternalLink size={13} /> Tabela oficial (PDF)</a>
@@ -560,7 +583,7 @@ function EstoqueRestante({ estoque, produto, quantidade }: { estoque: EstoqueIte
   );
 }
 
-function FormSanidade({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
+function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
   const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
@@ -568,7 +591,10 @@ function FormSanidade({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes
   const [qtd, setQtd] = useState("");
   const [unid, setUnid] = useState("ml");
   const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
-  const produtos = estoque.filter((e) => (e.categoria || "").toLowerCase().match(/vacina|antibi|verm|horm|medic|sanid|suplemento|vitamina/) || true);
+  // Lista de produtos vem do relatório de sanidade (medicamentos já aplicados),
+  // complementada pelos itens do estoque que ainda não apareceram na sanidade.
+  const nomesEstoque = estoque.map((e) => e.nome);
+  const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).sort();
 
   return (
     <>
@@ -584,10 +610,13 @@ function FormSanidade({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes
                 {lotes.map((l) => <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}><input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}</label>)}
               </div>
             </Campo>}
-        <Campo label="Produto / medicamento (estoque)">
+        <Campo label="Produto / medicamento (relatório de sanidade)">
           <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
             <option value="" disabled>Selecione…</option>
-            {produtos.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
+            {listaProdutos.map((nome) => {
+              const est = estoque.find((e) => e.nome === nome);
+              return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
+            })}
           </select>
         </Campo>
         <Campo label="Via"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{["Intramuscular", "Subcutânea", "Oral", "Intravenosa", "Tópica"].map((o) => <option key={o}>{o}</option>)}</select></Campo>
@@ -675,12 +704,33 @@ export default function LancamentosPage() {
   const [sel, setSel] = useState("animal");
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
+  const [servicos, setServicos] = useState<any[]>([]);
+  const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
   useEffect(() => {
     fetchAnimais().then(setAnimais).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+    fetchServicosAnalise().then((d) => setServicos(d.servicos || [])).catch(() => {});
+    fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
   }, []);
 
-  const lotes = useMemo(() => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean) as string[])).sort(), [animais]);
+  // Última IA/cobertura por matriz (para o diagnóstico puxar automático).
+  const ultServico = useMemo(() => {
+    const m: Record<string, string> = {};
+    servicos.forEach((s) => { if (s.numero && s.data && (!m[s.numero] || s.data > m[s.numero])) m[s.numero] = s.data; });
+    return m;
+  }, [servicos]);
+
+  // Lotes: remove duplicados que diferem só por maiúscula/minúscula (ex.: "03 - Média"
+  // e "03 - MÉDIA"), mantendo a versão em caixa-alta.
+  const lotes = useMemo(() => {
+    const porChave = new Map<string, string>();
+    (animais.map((a) => a.grupo_primario).filter(Boolean) as string[]).forEach((l) => {
+      const chave = l.toUpperCase();
+      const atual = porChave.get(chave);
+      if (!atual || l === l.toUpperCase()) porChave.set(chave, l === l.toUpperCase() ? l : atual || l);
+    });
+    return Array.from(porChave.values()).sort();
+  }, [animais]);
   const lotesLact = useMemo(() => lotes.filter((l) => LACT.includes(cod(l))), [lotes]);
   // Fêmeas aptas a serviço: idade >= 13 meses (mantém as sem idade informada, por segurança).
   const aptasServico = useMemo(() => animais.filter((a) => {
@@ -726,10 +776,10 @@ export default function LancamentosPage() {
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
           {sel === "animal" && <FormAnimal lotes={lotes} />}
           {sel === "servico" && <FormServico animais={aptasServico} />}
-          {sel === "diagnostico" && <FormDiagnostico animais={animais} />}
+          {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "producao" && <FormControle animais={animais} lotesLact={lotesLact} />}
-          {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} />}
+          {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "financeiro" && <FormFinanceiro />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
         </div>

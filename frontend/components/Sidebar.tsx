@@ -21,7 +21,8 @@ import {
   Menu,
   X,
 } from "lucide-react";
-import { checkHealth } from "@/lib/api";
+import { checkHealth, getUsuario, logout } from "@/lib/api";
+import { LogOut } from "lucide-react";
 
 const links = [
   { href: "/",            label: "Capa",        icon: Home },
@@ -150,9 +151,24 @@ export function Sidebar() {
           />
           {statusLabel}
         </div>
+        <UsuarioLogado />
         <p className="mt-1">v1.0.0 · Sprint 1</p>
       </div>
       </aside>
     </>
+  );
+}
+
+function UsuarioLogado() {
+  const [nome, setNome] = useState<string | null>(null);
+  useEffect(() => { const u = getUsuario(); setNome(u?.nome || u?.username || null); }, []);
+  if (!nome) return null;
+  return (
+    <div className="mt-2 flex items-center justify-center gap-2" style={{ fontSize: "0.68rem" }}>
+      <span style={{ color: "var(--text)" }}>{nome}</span>
+      <button onClick={logout} title="Sair" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", display: "inline-flex" }}>
+        <LogOut size={13} />
+      </button>
+    </div>
   );
 }

@@ -4,14 +4,17 @@ Ponto de entrada principal.
 """
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlmodel import Session
 
-from fazenda.database import create_db_and_tables
+from fazenda.auth import get_current_user, seed_admin
+from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
     alimentacao,
     animais,
+    auth,
     estoque,
     financeiro,
     indicadores,
@@ -25,8 +28,10 @@ from fazenda.api.routers import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria tabelas ao iniciar (idempotente)."""
+    """Cria tabelas e garante o admin inicial (idempotente)."""
     create_db_and_tables()
+    with Session(engine) as session:
+        seed_admin(session)
     yield
 
 
@@ -61,18 +66,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Routers
-app.include_router(animais.router)
-app.include_router(upload.router)
-app.include_router(agenda.router)
-app.include_router(financeiro.router)
-app.include_router(indicadores.router)
-app.include_router(parametros.router)
-app.include_router(alimentacao.router)
-app.include_router(producao.router)
-app.include_router(reproducao.router)
-app.include_router(estoque.router)
-app.include_router(sanidade.router)
+# Auth (aberto) + rotas de dados (exigem login).
+app.include_router(auth.router)
+
+_protegido = [Depends(get_current_user)]
+app.include_router(animais.router, dependencies=_protegido)
+app.include_router(upload.router, dependencies=_protegido)
+app.include_router(agenda.router, dependencies=_protegido)
+app.include_router(financeiro.router, dependencies=_protegido)
+app.include_router(indicadores.router, dependencies=_protegido)
+app.include_router(parametros.router, dependencies=_protegido)
+app.include_router(alimentacao.router, dependencies=_protegido)
+app.include_router(producao.router, dependencies=_protegido)
+app.include_router(reproducao.router, dependencies=_protegido)
+app.include_router(estoque.router, dependencies=_protegido)
+app.include_router(sanidade.router, dependencies=_protegido)
 
 
 @app.get("/")
