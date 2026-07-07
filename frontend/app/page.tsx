@@ -4,7 +4,7 @@ import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse } fr
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, formatBRL,
 } from "@/lib/api";
-import { LineChart, Line, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis } from "recharts";
+import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
 const SIT_CORES: Record<string, string> = { Prenhes: "var(--green-light)", Vazias: "var(--red)", Inseminadas: "var(--dourado-light)" };
@@ -58,7 +58,13 @@ export default function Home() {
   const implanteFalta = implante && !implante.suficiente;
   const contasPagar = d.ag?.totais?.contas_a_pagar ?? 0;
 
-  const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({ mes: s.data?.slice(5) ?? "", kg: s.media_kg }));
+  const serieProd = (d.prod?.serie_temporal || []).slice(-12).map((s: any) => ({
+    mes: s.data ? new Date(s.data + "T00:00:00").toLocaleDateString("pt-BR", { month: "short", year: "2-digit" }).replace(".", "") : "",
+    kg: s.media_kg,
+  }));
+  const kgs = serieProd.map((s: any) => s.kg).filter((v: any) => v != null) as number[];
+  const kgMin = kgs.length ? Math.floor(Math.min(...kgs) - 1) : 0;
+  const kgMax = kgs.length ? Math.ceil(Math.max(...kgs) + 1) : 30;
   const donutRep = rep ? [
     { nome: "Prenhes", v: rep.prenhes }, { nome: "Vazias", v: rep.vazias }, { nome: "Inseminadas", v: rep.inseminadas },
   ].filter((x) => x.v > 0) : [];
@@ -95,7 +101,7 @@ export default function Home() {
 
       {/* KPIs executivos */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <KPI v={reb?.total ?? "—"} l="Animais no rebanho" onClick={() => abrir("Animais no rebanho", () => true)} />
+        <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
         <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
         <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Taxa de prenhez" c="var(--green-light)" />
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
@@ -111,14 +117,22 @@ export default function Home() {
       {/* Gráficos */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-5">
         <div className="card">
-          <div className="card-header mb-2">Produção do Rebanho (média kg/vaca)</div>
+          <div className="card-header mb-2">Produção do Rebanho (média kg/vaca por mês)</div>
           {serieProd.length ? (
-            <ResponsiveContainer width="100%" height={200}>
-              <LineChart data={serieProd}>
-                <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 9 }} />
-                <Tooltip contentStyle={tip} formatter={(v: any) => `${v} kg`} />
-                <Line type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2} dot={{ r: 2 }} />
-              </LineChart>
+            <ResponsiveContainer width="100%" height={220}>
+              <AreaChart data={serieProd} margin={{ top: 8, right: 12, left: -8, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="gradProd" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="var(--green-light)" stopOpacity={0.45} />
+                    <stop offset="100%" stopColor="var(--green-light)" stopOpacity={0.02} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 10 }} tickMargin={6} axisLine={false} tickLine={false} />
+                <YAxis width={38} domain={[kgMin, kgMax]} tick={{ fill: "var(--text-muted)", fontSize: 10 }} axisLine={false} tickLine={false} unit=" kg" />
+                <Tooltip contentStyle={tip} formatter={(v: any) => [`${v} kg`, "Média/vaca"]} labelStyle={{ color: "var(--text-muted)" }} />
+                <Area type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2.5} fill="url(#gradProd)" dot={{ r: 3, fill: "var(--green-light)", strokeWidth: 0 }} activeDot={{ r: 5 }} />
+              </AreaChart>
             </ResponsiveContainer>
           ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem controle leiteiro — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a>.</p>}
         </div>
@@ -147,8 +161,9 @@ export default function Home() {
       <div className="card">
         <div className="card-header mb-3">Próximos Eventos (7 dias)</div>
         {(() => {
-          const limite = new Date(); limite.setDate(limite.getDate() + 7);
-          const evs = (d.ag?.eventos || []).filter((e: any) => new Date(e.data + "T00:00:00") <= limite).slice(0, 10);
+          const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+          const limite = new Date(hoje); limite.setDate(limite.getDate() + 7);
+          const evs = (d.ag?.eventos || []).filter((e: any) => { const dt = new Date(e.data + "T00:00:00"); return dt >= hoje && dt <= limite; }).slice(0, 10);
           return evs.length ? (
             <div className="space-y-2">
               {evs.map((ev: any, i: number) => (

@@ -17,6 +17,7 @@ def listar_animais(
     grupo: str | None = Query(None, description="Filtrar por grupo primário"),
     sit_rep: str | None = Query(None, description="Filtrar por situação reprodutiva"),
     ativo: bool = Query(True),
+    incluir_machos: bool = Query(False, description="Incluir machos e sêmen (padrão: só fêmeas)"),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     query = select(Animal).where(Animal.ativo == ativo)
@@ -26,6 +27,10 @@ def listar_animais(
         query = query.where(Animal.sit_rep == sit_rep)
 
     animais = session.exec(query).all()
+    if not incluir_machos:
+        # Rebanho = só fêmeas. Exclui sêmen/reprodutores e machos. Registros
+        # antigos (sem o campo) permanecem até o próximo upload do GERAL.
+        animais = [a for a in animais if not a.eh_semen and a.sexo != "M"]
     return [a.model_dump() for a in animais]
 
 

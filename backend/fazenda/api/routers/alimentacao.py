@@ -18,5 +18,5 @@ router = APIRouter(prefix="/alimentacao", tags=["alimentacao"])
 def obter_alimentacao(session: Session = Depends(get_session)) -> dict:
     """Plano de dieta por lote cruzado com o efetivo atual → consumo/dia por ingrediente."""
     dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
-    animais = [a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()]
+    animais = [a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
     return calcular_consumo(dietas, animais)
