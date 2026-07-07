@@ -275,6 +275,28 @@ class TestIndicadores:
         assert r["reproducao"]["taxa_prenhez_pct"] is None
         assert r["reproducao"]["iep_dias"] is None
 
+    def test_iep_ignora_partos_duplicados(self):
+        # Registros de parto separados por menos que uma gestação são o mesmo
+        # evento (duplicidade) e não podem contar como intervalo entre partos.
+        animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
+        partos = [
+            {"numero_matriz": "100", "data_parto": date(2024, 1, 1)},
+            {"numero_matriz": "100", "data_parto": date(2024, 1, 15)},  # duplicidade
+            {"numero_matriz": "100", "data_parto": date(2025, 1, 1)},   # 366d do 1º
+        ]
+        r = calcular_indicadores(animais, [], partos, data_ref=date(2026, 7, 5))
+        # Sem o filtro, a média cairia para ~190d (366 e 14). Com o filtro: 366d.
+        assert r["reproducao"]["iep_dias"] == 366
+
+    def test_iep_so_duplicidades_fica_none(self):
+        animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
+        partos = [
+            {"numero_matriz": "100", "data_parto": date(2025, 1, 1)},
+            {"numero_matriz": "100", "data_parto": date(2025, 1, 10)},  # só duplicidade
+        ]
+        r = calcular_indicadores(animais, [], partos, data_ref=date(2026, 7, 5))
+        assert r["reproducao"]["iep_dias"] is None
+
 
 # ============================================================
 # ALIMENTAÇÃO

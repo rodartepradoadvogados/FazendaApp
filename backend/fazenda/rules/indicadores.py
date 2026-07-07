@@ -23,6 +23,15 @@ GRUPO_SECAS = "05"
 # Taxa de concepção considerada sempre a partir desta data.
 CONCEPCAO_DESDE = date(2026, 1, 1)
 
+# Piso biológico do intervalo entre partos (IEP).
+# Uma nova cria exige, no mínimo, a gestação (~9 meses) somada ao período de
+# espera voluntária (PEV) até a matriz emprenhar de novo. Dois registros de
+# parto mais próximos que isso são o mesmo evento (duplicidade na fonte) e não
+# representam um intervalo real — são descartados para não distorcer a média.
+GESTACAO_MINIMA_DIAS = 280  # Holandês (menor gestação entre as raças)
+PEV_DIAS = 45               # período de espera voluntária mínimo
+IEP_MINIMO_DIAS = GESTACAO_MINIMA_DIAS + PEV_DIAS  # 325 dias (~10,7 meses)
+
 
 def _codigo_grupo(grupo: Optional[str]) -> Optional[str]:
     """Extrai o código de 2 dígitos do início do grupo (ex.: '01 - NOV. ALTA' -> '01')."""
@@ -125,8 +134,14 @@ def calcular_indicadores(
 
     intervalos: list[int] = []
     for datas in partos_por_matriz.values():
-        datas_ord = sorted(datas)
-        for anterior, atual in zip(datas_ord, datas_ord[1:]):
+        # Colapsa registros do mesmo parto (mais próximos que o piso biológico),
+        # ancorando sempre no parto distinto mais antigo, e mede o intervalo
+        # apenas entre partos efetivamente distintos.
+        distintos: list[date] = []
+        for d in sorted(set(datas)):
+            if not distintos or (d - distintos[-1]).days >= IEP_MINIMO_DIAS:
+                distintos.append(d)
+        for anterior, atual in zip(distintos, distintos[1:]):
             intervalos.append((atual - anterior).days)
 
     iep_dias = round(sum(intervalos) / len(intervalos)) if intervalos else None

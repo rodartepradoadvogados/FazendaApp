@@ -34,7 +34,8 @@ export default function IndicadoresPage() {
   };
   const clickable: React.CSSProperties = animais.length ? { cursor: "pointer" } : {};
   const dica = animais.length ? " (clique para ver as fêmeas)" : "";
-  const legenda: React.CSSProperties = { fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.35rem" };
+  // Observação/subtítulo do KPI: fonte menor que o título (kpi-label = 0.75rem).
+  const legenda: React.CSSProperties = { fontSize: "0.6rem", color: "var(--text-muted)", marginTop: "0.3rem", textTransform: "none", letterSpacing: 0, opacity: 0.85 };
   const desdeLabel = rep?.concepcao_desde
     ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "01/01/2026";
@@ -58,7 +59,7 @@ export default function IndicadoresPage() {
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{pct(rep?.taxa_prenhez_pct)}</p><p className="kpi-label">Taxa de prenhez</p><p style={legenda}>fêmeas prenhes agora</p></div>
+          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{pct(rep?.taxa_prenhez_pct)}</p><p className="kpi-label">Fêmeas prenhas</p><p style={legenda}>% das fêmeas aptas, hoje</p></div>
           <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{pct(rep?.taxa_concepcao_pct)}</p><p className="kpi-label">Concepção / serviço</p><p style={legenda}>serviços desde {desdeLabel}</p></div>
           <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{num(rep?.iep_meses, " m")}</p><p className="kpi-label">IEP médio</p><p style={legenda}>todo o histórico</p></div>
           <div className="kpi-card"><p className="kpi-value">{pct(rep?.perc_vazias_pct)}</p><p className="kpi-label">Vazias</p><p style={legenda}>situação atual</p></div>
