@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import get_current_user, seed_admin
+from fazenda.auth import exigir_modulo, get_current_user, seed_admin
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -73,7 +73,8 @@ _protegido = [Depends(get_current_user)]
 app.include_router(animais.router, dependencies=_protegido)
 app.include_router(upload.router, dependencies=_protegido)
 app.include_router(agenda.router, dependencies=_protegido)
-app.include_router(financeiro.router, dependencies=_protegido)
+# Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
+app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
 app.include_router(indicadores.router, dependencies=_protegido)
 app.include_router(parametros.router, dependencies=_protegido)
 app.include_router(alimentacao.router, dependencies=_protegido)

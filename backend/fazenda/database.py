@@ -35,6 +35,7 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "controle_leiteiro": [("raca", "VARCHAR")],
     "animal": [("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN")],
+    "usuario": [("permissoes", "VARCHAR")],
 }
 
 
