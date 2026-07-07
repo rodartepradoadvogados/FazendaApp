@@ -1,6 +1,48 @@
 // Funções de comunicação com o backend FastAPI
 export const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
+// ── Autenticação ──
+export function getToken(): string | null {
+  return typeof window === "undefined" ? null : localStorage.getItem("token");
+}
+export function getUsuario(): any | null {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
+}
+export function logout() {
+  if (typeof window !== "undefined") {
+    localStorage.removeItem("token"); localStorage.removeItem("usuario");
+    location.href = "/login";
+  }
+}
+export async function login(username: string, senha: string) {
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, senha }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || "Usuário ou senha inválidos");
+  }
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  localStorage.setItem("usuario", JSON.stringify(data.usuario));
+  return data.usuario;
+}
+
+// fetch com token; redireciona ao login se a sessão cair (401).
+function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+  const token = getToken();
+  const headers = new Headers(opts.headers || {});
+  if (token) headers.set("Authorization", `Bearer ${token}`);
+  return fetch(url, { ...opts, headers, cache: "no-store" }).then((res) => {
+    if (res.status === 401 && typeof window !== "undefined" && !location.pathname.startsWith("/login")) {
+      logout();
+    }
+    return res;
+  });
+}
+
 // Traduz o "Failed to fetch" (erro de rede do navegador) numa mensagem acionável.
 // Esse erro NÃO é HTTP — significa que a requisição não chegou a receber resposta:
 // API fora do ar, NEXT_PUBLIC_API_URL não configurada/errada, ou CORS bloqueado.
@@ -17,7 +59,7 @@ function netError(e: unknown): Error {
 // Verifica se o backend responde. Usado pelo indicador de status.
 export async function checkHealth(): Promise<boolean> {
   try {
-    const res = await fetch(`${API}/health`, { cache: "no-store" });
+    const res = await authFetch(`${API}/health`, { cache: "no-store" });
     return res.ok;
   } catch {
     return false;
@@ -26,7 +68,7 @@ export async function checkHealth(): Promise<boolean> {
 
 export async function fetchAgenda(data?: string) {
   const url = data ? `${API}/agenda/?data=${data}` : `${API}/agenda/`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Agenda error: ${res.status}`);
   return res.json();
 }
@@ -35,62 +77,62 @@ export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
   if (params?.sit_rep) qs.set("sit_rep", params.sit_rep);
-  const res = await fetch(`${API}/animais/?${qs}`, { cache: "no-store" });
+  const res = await authFetch(`${API}/animais/?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Animais error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchIndicadores(data?: string) {
   const url = data ? `${API}/indicadores/?data=${data}` : `${API}/indicadores/`;
-  const res = await fetch(url, { cache: "no-store" });
+  const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicadores error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchServicosAnalise() {
-  const res = await fetch(`${API}/reproducao/servicos`, { cache: "no-store" });
+  const res = await authFetch(`${API}/reproducao/servicos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchParametros() {
-  const res = await fetch(`${API}/parametros/`, { cache: "no-store" });
+  const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchSanidade() {
-  const res = await fetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
+  const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchEstoque() {
-  const res = await fetch(`${API}/estoque/`, { cache: "no-store" });
+  const res = await authFetch(`${API}/estoque/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Estoque error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchAlimentacao() {
-  const res = await fetch(`${API}/alimentacao/`, { cache: "no-store" });
+  const res = await authFetch(`${API}/alimentacao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchProducao() {
-  const res = await fetch(`${API}/producao/`, { cache: "no-store" });
+  const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchControles() {
-  const res = await fetch(`${API}/producao/controles`, { cache: "no-store" });
+  const res = await authFetch(`${API}/producao/controles`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Controles error: ${res.status}`);
   return res.json();
 }
 
 export async function fetchLancamentos() {
-  const res = await fetch(`${API}/financeiro/lancamentos`, { cache: "no-store" });
+  const res = await authFetch(`${API}/financeiro/lancamentos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Financeiro error: ${res.status}`);
   return res.json();
 }
@@ -107,7 +149,7 @@ export async function fetchDRE(params: {
     regime: params.regime || "competencia",
   });
   if (params.centro_custo) qs.set("centro_custo", params.centro_custo);
-  const res = await fetch(`${API}/financeiro/dre?${qs}`, { cache: "no-store" });
+  const res = await authFetch(`${API}/financeiro/dre?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`DRE error: ${res.status}`);
   return res.json();
 }
@@ -117,7 +159,7 @@ export async function uploadCSV(tipo: string, file: File) {
   form.append("file", file);
   let res: Response;
   try {
-    res = await fetch(`${API}/upload/${tipo}`, {
+    res = await authFetch(`${API}/upload/${tipo}`, {
       method: "POST",
       body: form,
     });
@@ -145,7 +187,7 @@ export async function addEventoManual(data: {
   });
   if (data.numero_animal) qs.set("numero_animal", data.numero_animal);
   if (data.observacao) qs.set("observacao", data.observacao);
-  const res = await fetch(`${API}/agenda/manual?${qs}`, { method: "POST" });
+  const res = await authFetch(`${API}/agenda/manual?${qs}`, { method: "POST" });
   if (!res.ok) throw new Error("Erro ao adicionar evento");
   return res.json();
 }

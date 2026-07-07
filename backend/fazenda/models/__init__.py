@@ -238,3 +238,20 @@ class CurvaABC(SQLModel, table=True):
     perc_acumulado: Optional[float] = None
     perc_total: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Usuário (login / controle de acesso)
+# ---------------------------------------------------------------------------
+class Usuario(SQLModel, table=True):
+    """Usuário do sistema. Senha guardada apenas como hash (pbkdf2)."""
+
+    __tablename__ = "usuario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    username: str = Field(index=True, unique=True)
+    nome: Optional[str] = None
+    senha_hash: str
+    papel: str = "admin"          # admin | operador | leitura
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)

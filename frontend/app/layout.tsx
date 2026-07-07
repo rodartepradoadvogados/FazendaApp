@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
-import { Sidebar } from "@/components/Sidebar";
+import { AuthShell } from "@/components/AuthShell";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -18,13 +18,7 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body className={inter.className}>
-        {/* Coluna no mobile (barra + conteúdo empilhados); linha no desktop (menu à esquerda). */}
-        <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
-          <Sidebar />
-          <main className="flex-1 md:overflow-y-auto app-main">
-            {children}
-          </main>
-        </div>
+        <AuthShell>{children}</AuthShell>
       </body>
     </html>
   );
