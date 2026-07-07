@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse } from "lucide-react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, formatBRL,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import { Gauge } from "@/components/Gauge";
 
 const SIT_CORES: Record<string, string> = { Prenhes: "var(--green-light)", Vazias: "var(--red)", Inseminadas: "var(--dourado-light)" };
 
@@ -16,6 +17,7 @@ export default function Home() {
   const [d, setD] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
+  const [benchAberto, setBenchAberto] = useState(false);
 
   useEffect(() => {
     Promise.allSettled([
@@ -38,6 +40,11 @@ export default function Home() {
 
   const reb = d.ind?.rebanho, rep = d.ind?.reproducao, prod = d.ind?.producao;
   const semDados = !d.ind && !d.ag;
+
+  // Benchmark reprodutivo (nosso valor × meta × média do país)
+  const bench: any[] = d.ind?.benchmark || [];
+  const bm = (k: string) => bench.find((b) => b.chave === k) || {};
+  const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
   // Resultado do mês mais recente (competência)
   let resultadoMes: number | null = null, mesLabel = "";
@@ -74,7 +81,7 @@ export default function Home() {
   const KPI = ({ v, l, c, onClick }: { v: any; l: string; c?: string; onClick?: () => void }) => (
     <div className="kpi-card" onClick={onClick} style={onClick && animais.length ? { cursor: "pointer" } : undefined}>
       <p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p>
-      <p className="kpi-label">{l}{onClick && animais.length ? " ›" : ""}</p>
+      <p className="kpi-label flex items-center gap-1">{l}{onClick && animais.length ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
     </div>
   );
   const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
@@ -109,9 +116,50 @@ export default function Home() {
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
         <div className="kpi-card" onClick={() => candidatasList.length && setModal({ title: "Candidatas IATF", list: candidatasList })} style={candidatasList.length ? { cursor: "pointer" } : undefined}>
           <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--dourado-light)" }}>{d.ag?.totais?.candidatas_iatf ?? "—"}</p>
-          <p className="kpi-label">Candidatas IATF{candidatasList.length ? " ›" : ""}</p>
+          <p className="kpi-label flex items-center gap-1">Candidatas IATF{candidatasList.length ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
         </div>
         <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+      </div>
+
+      {/* Medidores reprodutivos (modelo velocímetro) */}
+      <div className="card mb-5">
+        <div className="card-header mb-3 flex items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
+          <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} · Prenhez = Serviço × Concepção</span>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <Gauge titulo="Taxa de Serviço" value={rep?.taxa_servico_pct} meta={bm("taxa_servico").meta} />
+          <Gauge titulo="Taxa de Concepção" value={rep?.taxa_concepcao_pct} meta={bm("taxa_concepcao").meta} />
+          <Gauge titulo="Taxa de Prenhez" value={rep?.taxa_prenhez_ciclo_pct} meta={bm("taxa_prenhez_ciclo").meta} />
+        </div>
+        {/* Linha expansível: painel completo de benchmark */}
+        <button onClick={() => setBenchAberto((v) => !v)}
+          style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
+          {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
+          Comparar com metas e média do país
+        </button>
+        {benchAberto && (
+          <div className="overflow-x-auto">
+            <table className="fazenda-table" style={{ marginTop: "0.4rem" }}>
+              <thead><tr><th>Indicador</th><th style={{ textAlign: "right" }}>Nosso</th><th style={{ textAlign: "right" }}>Meta</th><th style={{ textAlign: "right" }}>Média país</th></tr></thead>
+              <tbody>
+                {bench.map((b: any) => {
+                  const ok = b.valor != null && b.meta != null && (b.maior_melhor ? b.valor >= b.meta : b.valor <= b.meta);
+                  return (
+                    <tr key={b.chave}>
+                      <td>{b.label}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700, color: b.valor == null ? "var(--text-muted)" : ok ? "var(--green-light)" : "var(--amber)" }}>{fmtBench(b)}</td>
+                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.meta != null ? `${b.meta}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{b.media_pais != null ? `${b.media_pais}${b.unidade === "%" ? "%" : b.unidade ? " " + b.unidade : ""}` : "—"}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+              Estimativas a partir dos serviços e diagnósticos carregados. Metas ajustáveis em <a href="/parametros" style={{ color: "var(--dourado-light)" }}>Parâmetros</a>.
+            </p>
+          </div>
+        )}
       </div>
 
       {/* Gráficos */}

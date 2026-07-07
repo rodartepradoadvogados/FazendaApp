@@ -14,6 +14,7 @@ from datetime import date, timedelta
 from typing import Optional
 
 from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.parametros import BENCHMARK_METAS
 
 # Códigos de grupo (2 primeiros dígitos do grupo_primario).
 GRUPOS_LACTACAO = {"01", "02", "03"}
@@ -174,6 +175,80 @@ def calcular_indicadores(
                 if num:
                     previstos_nums["em_30_dias"].append(num)
 
+    # ---------------------------------------------------------------
+    # Benchmark reprodutivo (eficiência) — desde CONCEPCAO_DESDE.
+    # Modelo dos "medidores": Prenhez = Serviço × Concepção.
+    # ---------------------------------------------------------------
+    serv_periodo = [s for s in servicos if _no_periodo(s)]
+    servidas = {s.get("numero_matriz") for s in serv_periodo if s.get("numero_matriz")}
+    n_servicos = len(serv_periodo)
+
+    taxa_servico = round(100 * len(servidas) / aptas, 1) if aptas else None
+    taxa_prenhez_ciclo = (
+        round(taxa_servico * taxa_concepcao / 100, 1)
+        if taxa_servico is not None and taxa_concepcao is not None else None
+    )
+    servicos_por_prenhez = round(n_servicos / pos, 1) if pos else None
+    perdas_prenhez = sum(1 for s in serv_periodo if s.get("data_perda_prenhez"))
+    taxa_perda_prenhez = round(100 * perdas_prenhez / pos, 1) if pos else None
+    perc_vacas_prenhas = round(100 * prenhes / total, 1) if total else None
+
+    def _del_serv(s: dict) -> Optional[float]:
+        d = s.get("del_servico")
+        if isinstance(d, (int, float)) and d >= 0:
+            return float(d)
+        ds, dp = s.get("data_servico"), s.get("data_ult_parto")
+        if isinstance(ds, date) and isinstance(dp, date) and ds >= dp:
+            return float((ds - dp).days)
+        return None
+
+    dias_abertos = _media([
+        v for s in serv_periodo if _diag_upper(s.get("diagnostico")) == "POSITIVO"
+        for v in [_del_serv(s)] if v is not None
+    ])
+    del_1a_ia = _media([
+        v for s in serv_periodo if s.get("ordem_tentativa") == 1
+        for v in [_del_serv(s)] if v is not None
+    ])
+
+    # Painel de benchmark (nosso valor × meta × média do país).
+    _valores = {
+        "taxa_servico": taxa_servico,
+        "taxa_concepcao": taxa_concepcao,
+        "taxa_prenhez_ciclo": taxa_prenhez_ciclo,
+        "del_medio": del_medio,
+        "taxa_perda_prenhez": taxa_perda_prenhez,
+        "perc_vacas_prenhas": perc_vacas_prenhas,
+        "servicos_por_prenhez": servicos_por_prenhez,
+        "del_1a_ia": del_1a_ia,
+        "dias_abertos": dias_abertos,
+        "iep_meses": iep_meses,
+    }
+    _labels = {
+        "taxa_servico": ("Taxa de serviço", "%"),
+        "taxa_concepcao": ("Taxa de concepção", "%"),
+        "taxa_prenhez_ciclo": ("Taxa de prenhez", "%"),
+        "del_medio": ("DEL médio", "dias"),
+        "taxa_perda_prenhez": ("Taxa de perda de prenhez", "%"),
+        "perc_vacas_prenhas": ("% de fêmeas prenhas", "%"),
+        "servicos_por_prenhez": ("Serviços por prenhez", ""),
+        "del_1a_ia": ("DEL médio à 1ª IA", "dias"),
+        "dias_abertos": ("Dias abertos", "dias"),
+        "iep_meses": ("Intervalo entre partos (IEP)", "meses"),
+    }
+    benchmark = []
+    for chave, (label, unidade) in _labels.items():
+        m = BENCHMARK_METAS.get(chave, {})
+        benchmark.append({
+            "chave": chave,
+            "label": label,
+            "unidade": unidade,
+            "valor": _valores.get(chave),
+            "meta": m.get("meta"),
+            "media_pais": m.get("media_pais"),
+            "maior_melhor": m.get("maior_melhor", True),
+        })
+
     return {
         "data_referencia": hoje.isoformat(),
         "rebanho": {
@@ -198,7 +273,15 @@ def calcular_indicadores(
             "partos_previstos": previstos,
             "partos_previstos_nums": previstos_nums,
             "concepcao_desde": CONCEPCAO_DESDE.isoformat(),
+            "taxa_servico_pct": taxa_servico,
+            "taxa_prenhez_ciclo_pct": taxa_prenhez_ciclo,
+            "servicos_por_prenhez": servicos_por_prenhez,
+            "taxa_perda_prenhez_pct": taxa_perda_prenhez,
+            "perc_vacas_prenhas_pct": perc_vacas_prenhas,
+            "dias_abertos": dias_abertos,
+            "del_1a_ia": del_1a_ia,
         },
+        "benchmark": benchmark,
         "producao": {
             "vacas_com_producao": len(producoes),
             "producao_media_kg": producao_media,

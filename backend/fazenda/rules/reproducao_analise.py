@@ -17,6 +17,23 @@ def _del_servico(data_servico, data_ult_parto) -> int | None:
     return None
 
 
+def _metodo_ia(tipo_servico: str | None, protocolo: str | None) -> str:
+    """
+    Classifica como o serviço foi feito:
+      - Inseminação artificial COM protocolo hormonal  -> 'IATF'
+      - Inseminação artificial SEM protocolo (em cio)   -> 'IA em cio natural'
+      - Cobertura/monta                                 -> 'Monta natural'
+    """
+    tipo = (tipo_servico or "").strip().lower()
+    tem_protocolo = bool((protocolo or "").strip())
+    if "insemin" in tipo or tipo in ("ia", "iatf"):
+        return "IATF" if tem_protocolo else "IA em cio natural"
+    if "cobertura" in tipo or "monta" in tipo:
+        return "Monta natural"
+    # Sem tipo declarado: infere pelo protocolo.
+    return "IATF" if tem_protocolo else "(sem método)"
+
+
 def analisar_servicos(servicos: list[dict]) -> list[dict]:
     """Achata os serviços para análise. Um registro por serviço."""
     registros: list[dict] = []
@@ -35,7 +52,9 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "ordem_tentativa": s.get("ordem_tentativa"),
             "tipo_servico": s.get("tipo_servico") or "(sem tipo)",
             "protocolo": s.get("protocolo") or "(sem protocolo)",
-            "inseminador": s.get("reprodutor") or "(sem inseminador)",
+            # 'reprodutor' na fonte é o touro/sêmen usado no serviço.
+            "touro": s.get("reprodutor") or "(sem touro)",
+            "metodo_ia": _metodo_ia(s.get("tipo_servico"), s.get("protocolo")),
             "ano": ano,
             "mes": mes,
             "data": ds.isoformat() if isinstance(ds, date) else None,

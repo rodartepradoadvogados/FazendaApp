@@ -6,17 +6,17 @@ import { fetchServicosAnalise } from "@/lib/api";
 type Reg = {
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
-  tipo_servico: string; protocolo: string; inseminador: string;
+  tipo_servico: string; protocolo: string; touro: string; metodo_ia: string;
   ano: number | null; mes: string | null; data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
 };
 
 // Dimensões que o usuário pode usar para filtrar e para quebrar os gráficos.
+// Há período de/até, então não há filtro de "ano". Sem filtros de raça (por ora).
 const DIMENSOES: { key: keyof Reg; label: string }[] = [
-  { key: "ano", label: "Ano" },
-  { key: "raca", label: "Raça" },
   { key: "tipo_servico", label: "Tipo de serviço" },
-  { key: "inseminador", label: "Inseminador" },
+  { key: "metodo_ia", label: "Método (IATF / cio)" },
+  { key: "touro", label: "Touro" },
   { key: "ordem_parto", label: "Ordem de parto" },
   { key: "ordem_tentativa", label: "Ordem de tentativa" },
 ];
@@ -80,7 +80,7 @@ export default function AnaliseReprodutivaPage() {
   const [regs, setRegs] = useState<Reg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filtros, setFiltros] = useState<Record<string, string>>({});
-  const [dimensao, setDimensao] = useState<keyof Reg>("raca");
+  const [dimensao, setDimensao] = useState<keyof Reg>("tipo_servico");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
 
