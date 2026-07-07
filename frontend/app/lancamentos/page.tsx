@@ -149,32 +149,68 @@ function TouroBusca() {
 
 /* ───────────────────────── Formulários por tipo ───────────────────────── */
 
+// Subtítulo de seção dentro de um formulário.
+const Secao = ({ children }: { children: React.ReactNode }) => (
+  <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--dourado-light)", margin: "1rem 0 0.5rem" }}>{children}</p>
+);
+
+const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Novilha gestante", "Vaca", "Vaca em lactação", "Vaca seca", "Vaca gestante", "Touro", "Bezerro", "Descarte"];
+const PELAGENS = ["Malhada (preto/branco)", "Malhada (vermelho/branco)", "Preta", "Vermelha", "Baia", "Cinza", "Outra"];
+
 function FormAnimal({ lotes }: { lotes: string[] }) {
   const [origem, setOrigem] = useState<"nascimento" | "compra">("nascimento");
   return (
     <>
+      <Secao>Identificação</Secao>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Número / brinco"><input style={inputStyle} placeholder="ex.: 464" /></Campo>
-        <Campo label="Nome (opcional)"><input style={inputStyle} /></Campo>
+        <Campo label="Nome resumido"><input style={inputStyle} /></Campo>
+        <Campo label="Nome completo"><input style={inputStyle} /></Campo>
+        <Campo label="SISBOV"><input style={inputStyle} placeholder="105 ..." /></Campo>
+        <Campo label="Registro"><input style={inputStyle} /></Campo>
         <Campo label="Sexo"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
-        <Campo label="Raça"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Girolando</option><option>Holandês</option><option>Gir</option><option>Outra</option></select></Campo>
+        <Campo label="Raça"><select style={inputStyle} defaultValue="Girolando"><option>Girolando</option><option>Holandês</option><option>Gir</option><option>Outra</option></select></Campo>
+        <Campo label="Pelagem"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{PELAGENS.map((p) => <option key={p}>{p}</option>)}</select></Campo>
+        <Campo label="Categoria"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{CATEGORIAS_ANIMAL.map((c) => <option key={c}>{c}</option>)}</select></Campo>
+        <Campo label="Lote inicial"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione o lote…</option>{lotes.map((l) => <option key={l}>{l}</option>)}</select></Campo>
+      </div>
+
+      <Secao>Origem e situação</Secao>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Origem do cadastro">
           <select style={inputStyle} value={origem} onChange={(e) => setOrigem(e.target.value as any)}>
             <option value="nascimento">Nascimento (parto na fazenda)</option>
             <option value="compra">Compra (animal adquirido)</option>
           </select>
         </Campo>
-        {origem === "compra"
-          ? <Campo label="Data de entrada (compra)"><input type="date" style={inputStyle} /></Campo>
-          : <Campo label="Data de nascimento"><input type="date" style={inputStyle} /></Campo>}
-        <Campo label="Lote inicial">
-          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione o lote…</option>{lotes.map((l) => <option key={l}>{l}</option>)}</select>
-        </Campo>
-        <Campo label="Mãe (nº)"><input style={inputStyle} /></Campo>
+        <Campo label="Data de nascimento"><input type="date" style={inputStyle} /></Campo>
+        {origem === "compra" && <Campo label="Data de entrada na fazenda"><input type="date" style={inputStyle} /></Campo>}
+        <Campo label="Proprietário"><input style={inputStyle} defaultValue="Jairo Nasser Quintiliano da Silva" /></Campo>
+        <Campo label="Valor (R$)"><input type="number" inputMode="decimal" style={inputStyle} placeholder="ex.: 7000" /></Campo>
+        <Campo label="Data de baixa (se houver)"><input type="date" style={inputStyle} /></Campo>
+        <Campo label="Motivo de baixa" full><input style={inputStyle} placeholder="venda, morte, descarte…" /></Campo>
+      </div>
+
+      <Secao>Genealogia</Secao>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Nome da mãe"><input style={inputStyle} /></Campo>
+        <Campo label="Número da mãe"><input style={inputStyle} /></Campo>
       </div>
       <TouroBusca />
-      <div className="grid grid-cols-1 gap-3 mt-3">
-        <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
+      <p style={nota}>A busca do pai/touro na ABS/Alta preenche a genealogia paterna (avós/bisavós) automaticamente quando ligarmos o banco.</p>
+
+      <Secao>Produção e reprodução</Secao>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Produção de leite (referência)"><input style={inputStyle} placeholder="kg/dia" /></Campo>
+        <Campo label="Parto provável"><input type="date" style={inputStyle} /></Campo>
+        <Campo label="Idade ao 1º parto (meses)"><input type="number" style={inputStyle} /></Campo>
+        <Campo label="GPD / GMD (ganho de peso)"><input style={inputStyle} placeholder="ex.: -0,05" /></Campo>
+      </div>
+
+      <Secao>Outros</Secao>
+      <div className="grid grid-cols-1 gap-3">
+        <Campo label="Observações" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
+        <Campo label="Foto do animal" full><input type="file" accept="image/*" style={{ ...inputStyle, padding: "0.3rem" }} /></Campo>
       </div>
       <SalvarEmBreve />
     </>
@@ -321,11 +357,13 @@ function FormDiagnostico({ animais }: { animais: AnimalRow[] }) {
   );
 }
 
+// Classificação padrão ouro/prata/bronze (manual da fazenda):
+//  > 25% OURO (excelente) · 18–25% PRATA (médio, enriquecer) · < 18% BRONZE (ruim).
 // Tabela de enriquecimento: medidas de pó por litro = Brix alvo − Brix atual.
 function classeColostro(brix: number): { txt: string; cor: string } {
-  if (brix < 22) return { txt: "Ruim", cor: "var(--red)" };
-  if (brix <= 25) return { txt: "Bom", cor: "var(--amber)" };
-  return { txt: "Excelente", cor: "var(--green-light)" };
+  if (brix > 25) return { txt: "Ouro (excelente)", cor: "var(--dourado-light)" };
+  if (brix >= 18) return { txt: "Prata (médio — enriquecer)", cor: "var(--text-muted)" };
+  return { txt: "Bronze (ruim — descartar 1ª mamada)", cor: "var(--red)" };
 }
 
 function FormParto({ animais }: { animais: AnimalRow[] }) {
