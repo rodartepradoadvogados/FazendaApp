@@ -18,6 +18,7 @@ export default function Home() {
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [benchAberto, setBenchAberto] = useState(false);
+  const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
 
   useEffect(() => {
     Promise.allSettled([
@@ -41,8 +42,9 @@ export default function Home() {
   const reb = d.ind?.rebanho, rep = d.ind?.reproducao, prod = d.ind?.producao;
   const semDados = !d.ind && !d.ag;
 
-  // Benchmark reprodutivo (nosso valor × meta × média do país)
-  const bench: any[] = d.ind?.benchmark || [];
+  // Benchmark reprodutivo (nosso valor × meta × média do país), por categoria.
+  const benchCats: any = d.ind?.benchmark_categorias || { todas: d.ind?.benchmark || [] };
+  const bench: any[] = benchCats[catRep] || benchCats.todas || [];
   const bm = (k: string) => bench.find((b) => b.chave === k) || {};
   const fmtBench = (b: any) => (b?.valor == null ? "—" : `${b.valor}${b.unidade ? (b.unidade === "%" ? "%" : " " + b.unidade) : ""}`);
 
@@ -123,13 +125,24 @@ export default function Home() {
 
       {/* Medidores reprodutivos (modelo velocímetro) */}
       <div className="card mb-5">
-        <div className="card-header mb-3 flex items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
+        <div className="card-header mb-3 flex flex-wrap items-center gap-2"><GaugeIcon size={15} /> Eficiência Reprodutiva
           <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} · Prenhez = Serviço × Concepção</span>
+          <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+            {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+              <button key={k} onClick={() => setCatRep(k)}
+                style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
+                  background: catRep === k ? "var(--dourado)" : "transparent",
+                  color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
+                {lbl}
+              </button>
+            ))}
+          </div>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <Gauge titulo="Taxa de Serviço" value={rep?.taxa_servico_pct} meta={bm("taxa_servico").meta} />
-          <Gauge titulo="Taxa de Concepção" value={rep?.taxa_concepcao_pct} meta={bm("taxa_concepcao").meta} />
-          <Gauge titulo="Taxa de Prenhez" value={rep?.taxa_prenhez_ciclo_pct} meta={bm("taxa_prenhez_ciclo").meta} />
+          <Gauge titulo="Taxa de Serviço" value={bm("taxa_servico").valor} meta={bm("taxa_servico").meta} />
+          <Gauge titulo="Taxa de Concepção" value={bm("taxa_concepcao").valor} meta={bm("taxa_concepcao").meta} />
+          <Gauge titulo="Taxa de Prenhez" value={bm("taxa_prenhez_ciclo").valor} meta={bm("taxa_prenhez_ciclo").meta} />
         </div>
         {/* Linha expansível: painel completo de benchmark */}
         <button onClick={() => setBenchAberto((v) => !v)}

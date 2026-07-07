@@ -110,10 +110,12 @@ class AgendaEngine:
             s["numero_matriz"]: s for s in servicos if s.get("ult_ocorrencia") == 1
         }
         parto_por_animal: dict[str, dict] = {}
+        partos_por_animal: dict[str, list[dict]] = {}
         for p in sorted(partos, key=lambda x: x.get("ordem_parto") or 0, reverse=True):
             n = p["numero_matriz"]
             if n not in parto_por_animal:
                 parto_por_animal[n] = p
+            partos_por_animal.setdefault(n, []).append(p)
 
         # 1. CANDIDATAS IATF
         iatf_input = [
@@ -208,8 +210,15 @@ class AgendaEngine:
             ordem_parto = parto.get("ordem_parto") or servico.get("ordem_parto") or 0
 
             # ── PARTO PROVÁVEL (só para prenhes com serviço positivo)
+            # Se já houve um parto após este serviço, a prenhez já se resolveu
+            # (a vaca pariu) — não gerar parto provável nem pré-parto/secagem,
+            # senão vira uma pendência falsa de um parto que já ocorreu.
+            ja_pariu_deste_servico = data_servico is not None and any(
+                p.get("data_parto") and p["data_parto"] >= data_servico
+                for p in partos_por_animal.get(numero, [])
+            )
             data_parto_provavel = None
-            if diagnostico == "POSITIVO" and data_servico:
+            if diagnostico == "POSITIVO" and data_servico and not ja_pariu_deste_servico:
                 res_gest = calcular_parto_provavel(data_servico, raca)
                 data_parto_provavel = res_gest.data_parto_provavel
                 eventos.append(AgendaItem(

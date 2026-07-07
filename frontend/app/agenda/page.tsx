@@ -114,6 +114,12 @@ export default function AgendaPage() {
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
 
+  // Próximas datas a partir da referência: visita reprodutiva a cada 21 dias, BST a cada 12.
+  const proxData = (n: number) => { const dt = new Date(data + "T00:00:00"); dt.setDate(dt.getDate() + n); return dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }); };
+  const proxVisita = proxData(21);
+  const proxBST = proxData(12);
+  const nota: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400, marginLeft: "0.35rem" };
+
   return (
     <div className="p-6 animate-in">
       {/* Header */}
@@ -176,7 +182,7 @@ export default function AgendaPage() {
             <tbody>
               {candidatas.map((c: any, i: number) => (
                 <tr key={i}>
-                  <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
+                  <td style={{ fontWeight: 700 }}>{c.numero_matriz}<span style={nota}>(próx. visita {proxVisita})</span></td>
                   <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
                   <td>{c.del_dias ?? "—"}</td>
                   <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
@@ -194,7 +200,7 @@ export default function AgendaPage() {
             <tbody>
               {bstAptos.map((b: any, i: number) => (
                 <tr key={i}>
-                  <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
+                  <td style={{ fontWeight: 700 }}>{b.numero_matriz}<span style={nota}>(próx. BST {proxBST})</span></td>
                   <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                   <td>{b.del_dias ?? "—"}</td>
                 </tr>
