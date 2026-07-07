@@ -271,18 +271,21 @@ class AgendaEngine:
                         numero_animal=numero,
                     ))
 
-            # ── DESMAMA (90 dias)
+            # ── DESMAMA (90 dias) — bezerros, com destaque para o lote BEZ 3 (08).
             grupo_num = grupo.strip().split(" ")[0] if grupo else ""
             if grupo_num in ("06", "07", "08", "09"):
                 data_nasc = animal.get("data_nasc")
                 if data_nasc:
                     data_desmama = data_nasc + timedelta(days=90)
                     if data_desmama >= data_referencia:
+                        dias_rest = (data_desmama - data_referencia).days
+                        obs = "faltam 5 dias ou menos" if dias_rest <= 5 else None
                         eventos.append(AgendaItem(
                             data=data_desmama,
                             categoria="Produção",
-                            descricao="Desmama (90 dias)",
+                            descricao=f"Desmama aos 90 dias (faltam {dias_rest}d)",
                             numero_animal=numero,
+                            observacao=obs,
                         ))
 
             # ── BST
