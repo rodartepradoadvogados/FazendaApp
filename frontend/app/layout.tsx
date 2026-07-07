@@ -18,9 +18,10 @@ export default function RootLayout({
   return (
     <html lang="pt-BR">
       <body className={inter.className}>
-        <div className="flex h-screen bg-fazenda-bg overflow-hidden">
+        {/* Coluna no mobile (barra + conteúdo empilhados); linha no desktop (menu à esquerda). */}
+        <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
           <Sidebar />
-          <main className="flex-1 overflow-y-auto">
+          <main className="flex-1 md:overflow-y-auto app-main">
             {children}
           </main>
         </div>

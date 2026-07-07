@@ -17,6 +17,9 @@ import {
   PieChart,
   Syringe,
   SlidersHorizontal,
+  ClipboardList,
+  Menu,
+  X,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
@@ -24,6 +27,7 @@ const links = [
   { href: "/",            label: "Capa",        icon: Home },
   { href: "/indicadores", label: "Indicadores",  icon: LineChart },
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
+  { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
   { href: "/analise-reprodutiva", label: "Análise Repr.", icon: PieChart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
@@ -39,6 +43,7 @@ const links = [
 export function Sidebar() {
   const path = usePathname();
   const [online, setOnline] = useState<boolean | null>(null);
+  const [aberto, setAberto] = useState(false); // drawer no mobile
 
   useEffect(() => {
     let ativo = true;
@@ -51,16 +56,41 @@ export function Sidebar() {
     };
   }, []);
 
+  // Fecha o menu ao trocar de página (no mobile).
+  useEffect(() => { setAberto(false); }, [path]);
+
   const statusLabel =
     online === null ? "Verificando..." : online ? "API conectada" : "API offline";
   const statusColor =
     online === null ? "var(--text-muted)" : online ? "var(--green-light)" : "var(--red)";
 
   return (
-    <aside
-      style={{ background: "var(--surface)", borderRight: "1px solid var(--border)" }}
-      className="w-56 flex flex-col flex-shrink-0 h-full"
-    >
+    <>
+      {/* Barra superior — só no mobile */}
+      <div className="md:hidden flex items-center gap-3 px-4 py-3 sticky top-0 z-30"
+        style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)" }}>
+        <button onClick={() => setAberto(true)} aria-label="Abrir menu"
+          style={{ background: "none", border: "none", color: "var(--text)", cursor: "pointer", display: "flex" }}>
+          <Menu size={22} />
+        </button>
+        <Beef size={18} color="var(--dourado-light)" />
+        <span style={{ color: "var(--dourado-light)", fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.05em" }}>FAZENDA</span>
+        <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>· Jairo Nasser</span>
+      </div>
+
+      {/* Fundo escuro atrás do drawer aberto (mobile) */}
+      {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
+
+      <aside
+        style={{ background: "var(--surface)", borderRight: "1px solid var(--border)" }}
+        className={`w-56 flex flex-col flex-shrink-0 h-full fixed md:static inset-y-0 left-0 z-50 transform transition-transform duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+      >
+      {/* Botão fechar — só no mobile */}
+      <button onClick={() => setAberto(false)} aria-label="Fechar menu"
+        className="md:hidden"
+        style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}>
+        <X size={20} />
+      </button>
       {/* Logo */}
       <div
         className="p-4 border-b"
@@ -122,6 +152,7 @@ export function Sidebar() {
         </div>
         <p className="mt-1">v1.0.0 · Sprint 1</p>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }
