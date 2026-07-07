@@ -103,7 +103,7 @@ export default function Home() {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
         <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
         <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
-        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Taxa de prenhez" c="var(--green-light)" />
+        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" c="var(--green-light)" />
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
         <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" c="var(--green-light)" />
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
