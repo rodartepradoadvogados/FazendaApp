@@ -18,6 +18,8 @@ PARAMETROS: dict = {
             {"chave": "pev_dias", "label": "Período de espera voluntária (PEV)", "valor": 45, "unidade": "dias"},
             {"chave": "dias_toque", "label": "Dias para toque (diagnóstico)", "valor": 30, "unidade": "dias"},
             {"chave": "dias_reconfirmacao", "label": "Dias para reconfirmação", "valor": 30, "unidade": "dias"},
+            {"chave": "intervalo_visita_reprodutiva", "label": "Intervalo da visita reprodutiva", "valor": 21, "unidade": "dias"},
+            {"chave": "intervalo_bst", "label": "Intervalo de aplicação de BST", "valor": 12, "unidade": "dias"},
             {"chave": "intervalo_visita_vet", "label": "Intervalo de visitas do veterinário", "valor": 30, "unidade": "dias"},
             {"chave": "dias_reinseminacao", "label": "Meta de dias para re-inseminação", "valor": 15, "unidade": "dias"},
             {"chave": "idade_maturidade_novilha", "label": "Idade de maturidade da novilha", "valor": 16, "unidade": "meses"},
