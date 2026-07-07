@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
+import { AnimalPicker } from "@/components/AnimalPicker";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
@@ -55,20 +56,8 @@ function addDias(iso: string, n: number): string {
   return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
 }
 
-// Select de animal (nº — grupo · situação). options já filtradas pela chamada.
-function SelectAnimal({ animais, value, onChange, placeholder = "Selecione o animal…" }:
-  { animais: AnimalRow[]; value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return (
-    <select style={inputStyle} value={value} onChange={(e) => onChange(e.target.value)}>
-      <option value="">{placeholder}</option>
-      {animais.map((a) => (
-        <option key={a.numero} value={a.numero}>
-          {a.numero} — {a.grupo_primario || "sem grupo"}{a.sit_rep ? ` · ${a.sit_rep}` : ""}
-        </option>
-      ))}
-    </select>
-  );
-}
+// Seleção de animal via tabela clara (Nº · Grupo · Categoria · Sit. Rep. · DEL).
+const SelectAnimal = AnimalPicker;
 
 const SalvarEmBreve = () => (
   <div className="flex items-center gap-3 mt-4" style={{ flexWrap: "wrap" }}>

@@ -288,6 +288,28 @@ class TestIndicadores:
         # Sem o filtro, a média cairia para ~190d (366 e 14). Com o filtro: 366d.
         assert r["reproducao"]["iep_dias"] == 366
 
+    def test_partos_previstos_so_prenhes_gestacao_280(self):
+        hoje = date(2026, 7, 7)
+        animais = [
+            # prenhe, serviço positivo há 260 dias -> parto em ~20 dias (em_30)
+            {"numero": "10", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},
+            # vazia no PEV: não pode entrar em partos previstos
+            {"numero": "20", "grupo_primario": "03 - MÉDIA", "sit_rep": "Vaz. pev"},
+        ]
+        servicos = [
+            {"numero_matriz": "10", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO", "raca_matriz": "Girolando"},
+            {"numero_matriz": "20", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO", "raca_matriz": "Girolando"},
+        ]
+        r = calcular_indicadores(animais, servicos, [], data_ref=hoje)
+        rep = r["reproducao"]
+        # só a 10 (prenhe) entra; a 20 (vazia) fica de fora
+        assert rep["partos_previstos"]["em_30_dias"] == 1
+        assert rep["partos_previstos_nums"]["em_30_dias"] == ["10"]
+        # contagem bate com a lista (bug 6x5)
+        assert rep["partos_previstos"]["em_90_dias"] == len(rep["partos_previstos_nums"]["em_90_dias"])
+        # gestação de 280 dias: parto ~ serviço + 280
+        assert rep["partos_previstos_datas"]["10"] == (hoje - timedelta(days=260) + timedelta(days=280)).isoformat()
+
     def test_iep_so_duplicidades_fica_none(self):
         animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
         partos = [

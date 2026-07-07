@@ -270,31 +270,41 @@ def calcular_indicadores(
     iep_meses = round(iep_dias / 30.44, 1) if iep_dias else None
 
     # ---------------------------------------------------------------
-    # Partos previstos (prenhezes confirmadas → data provável de parto)
+    # Partos previstos — só matrizes ATUALMENTE prenhes (sit_rep = "Ges.").
+    # Parto provável = data do último serviço POSITIVO + 280 dias de gestação.
+    # Uma matriz por linha (não conta serviços antigos nem vazias/PEV).
     # ---------------------------------------------------------------
+    GESTACAO_PREVISTA_DIAS = 280
+    ult_pos: dict[str, date] = {}
+    for s in servicos:
+        d = s.get("data_servico")
+        if isinstance(d, date) and _diag_upper(s.get("diagnostico")) == "POSITIVO":
+            n = s.get("numero_matriz")
+            if n and (n not in ult_pos or d > ult_pos[n]):
+                ult_pos[n] = d
+
     previstos = {"em_30_dias": 0, "em_60_dias": 0, "em_90_dias": 0}
     previstos_nums: dict[str, list[str]] = {"em_30_dias": [], "em_60_dias": [], "em_90_dias": []}
-    for s in servicos:
-        if _diag_upper(s.get("diagnostico")) != "POSITIVO":
+    previstos_datas: dict[str, str] = {}  # numero -> data provável de parto (ISO)
+    for a in animais:
+        if (a.get("sit_rep") or "").strip() != "Ges.":
             continue
-        data_serv = s.get("data_servico")
+        num = a.get("numero")
+        data_serv = ult_pos.get(num)
         if not data_serv:
             continue
-        parto = calcular_parto_provavel(data_serv, s.get("raca_matriz")).data_parto_provavel
+        parto = data_serv + timedelta(days=GESTACAO_PREVISTA_DIAS)
         dias = (parto - hoje).days
-        num = s.get("numero_matriz")
         if 0 <= dias <= 90:
+            previstos_datas[num] = parto.isoformat()
             previstos["em_90_dias"] += 1
-            if num:
-                previstos_nums["em_90_dias"].append(num)
+            previstos_nums["em_90_dias"].append(num)
             if dias <= 60:
                 previstos["em_60_dias"] += 1
-                if num:
-                    previstos_nums["em_60_dias"].append(num)
+                previstos_nums["em_60_dias"].append(num)
             if dias <= 30:
                 previstos["em_30_dias"] += 1
-                if num:
-                    previstos_nums["em_30_dias"].append(num)
+                previstos_nums["em_30_dias"].append(num)
 
     # ---------------------------------------------------------------
     # Benchmark reprodutivo (eficiência) — desde CONCEPCAO_DESDE.
@@ -328,6 +338,7 @@ def calcular_indicadores(
             "iep_meses": iep_meses,
             "partos_previstos": previstos,
             "partos_previstos_nums": previstos_nums,
+            "partos_previstos_datas": previstos_datas,
             "concepcao_desde": CONCEPCAO_DESDE.isoformat(),
             "taxa_servico_pct": _bt.get("taxa_servico"),
             "taxa_prenhez_ciclo_pct": _bt.get("taxa_prenhez_ciclo"),
