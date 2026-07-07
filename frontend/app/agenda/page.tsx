@@ -123,7 +123,7 @@ export default function AgendaPage() {
   return (
     <div className="p-6 animate-in">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <Calendar size={22} style={{ color: "var(--dourado)" }} />

@@ -220,3 +220,22 @@ body {
   background: var(--green-light);
   animation: pulse-dot 2s infinite;
 }
+
+/* ── Responsivo (celular / tablet) ── */
+/* Nunca deixar a página rolar para o lado; tabelas largas rolam dentro do card. */
+html, body { max-width: 100%; overflow-x: hidden; }
+.app-main { overflow-x: hidden; }
+/* Cartões com tabela larga ganham rolagem horizontal própria. */
+.card { overflow-x: auto; }
+
+@media (max-width: 767px) {
+  /* Menos respiro nas bordas no celular. */
+  main .p-6 { padding: 1rem; }
+  .card { padding: 0.9rem; }
+  .card-header { font-size: 0.72rem; }
+  /* Títulos de página um pouco menores. */
+  main h1.text-2xl { font-size: 1.35rem; }
+  /* Tabelas mais compactas. */
+  .fazenda-table { font-size: 0.8rem; }
+  .fazenda-table thead th, .fazenda-table tbody td { padding: 0.45rem 0.6rem; }
+}
