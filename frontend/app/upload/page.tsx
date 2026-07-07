@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Upload as UploadIcon, CheckCircle, XCircle, FileText, Loader2 } from "lucide-react";
+import { Upload as UploadIcon, CheckCircle, XCircle, FileText, Loader2, RefreshCw } from "lucide-react";
 import { uploadCSV } from "@/lib/api";
 
 const TIPOS = [
@@ -11,6 +11,7 @@ const TIPOS = [
   { id: "controle_leiteiro",label: "Controle_Leiteiro.csv",          desc: "Histórico de pesagens de leite por vaca" },
   { id: "dieta",            label: "DIETA.csv",                      desc: "Plano alimentar por lote (kg/cabeça/dia)" },
   { id: "sanidade",         label: "SANIDADE.csv",                   desc: "Medicamentos aplicados nos animais" },
+  { id: "curva_abc",        label: "CURVA_ABC.csv",                  desc: "Classificação A/B/C de compras (Pareto de custos)" },
 ];
 
 type Status = "idle" | "uploading" | "ok" | "error";
@@ -49,6 +50,15 @@ export default function UploadPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Importe os relatórios exportados do Ideagri. A ordem recomendada é: GERAL → Reprodutivo → Estoque → Financeiro.
         </p>
+      </div>
+
+      <div className="card mb-4 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
+        <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
+          Depois de subir os relatórios, clique para <strong style={{ color: "var(--text)" }}>rodar os dados para dentro do site</strong> e atualizar todos os relatórios.
+        </p>
+        <button className="btn-primary" onClick={() => window.location.reload()}>
+          <RefreshCw size={16} /> Atualizar relatórios
+        </button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

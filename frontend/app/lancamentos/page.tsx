@@ -4,8 +4,10 @@ import {
   ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle,
 } from "lucide-react";
-import { fetchAnimais } from "@/lib/api";
+import { fetchAnimais, fetchEstoque } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
+
+type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
 /**
  * Tela de Lançamentos — RASCUNHO funcional.
@@ -18,6 +20,23 @@ import { AnimalRow } from "@/components/AnimalModal";
 const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo_formas%20de%20utiliza%C3%A7%C3%A3o%20colostro_site.pdf";
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : "");
 const LACT = ["01", "02", "03"];
+const IDADE_MIN_SERVICO = 13; // meses — abaixo disso a fêmea não é apta a serviço
+
+// Pessoas que podem aparecer como responsável / inseminador.
+const RESPONSAVEIS = [
+  "Jairo Nasser (proprietário)", "Alexandre Rodarte (CEO)", "Alexandre Scarpa (consultor)",
+  "Leomir Bonfim (funcionário)", "Alane dos Santos (funcionária)", "Valéria Bonfim (funcionária)",
+  "Jorbeson Nunes (funcionário)", "Huerik (veterinário COMIGO)", "Carlos Alpha/ABS (veterinário Alpha/ABS)",
+];
+// Sêmen (touros) atualmente em estoque — usados na seleção do touro em Serviço/IA.
+const TOUROS_ESTOQUE = [
+  "COORS", "GUINESS", "ABS LABEL", "CAMPEAO FI", "DESCONHECIDO", "HAGEN", "JAG", "LUZIO", "METEORO",
+  "MOSAIC", "HILLUX", "NABIL", "PRAFESS", "ROBO", "MESSI", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
+];
+const UNIDADES = ["ml", "kg", "L", "unidade", "dose"];
+const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
+// Movimentos que reduzem o estoque (baixa).
+const MOV_BAIXA = new Set(["Aplicação", "Saída de ajuste", "Doação"]);
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -261,9 +280,14 @@ function FormServico({ animais }: { animais: AnimalRow[] }) {
             <option value="Cio">Cio natural</option>
           </select>
         </Campo>
-        <Campo label="Touro / sêmen"><input style={inputStyle} placeholder="nome ou código" /></Campo>
-        <Campo label="Responsável / inseminador"><input style={inputStyle} /></Campo>
+        <Campo label="Touro / sêmen (em estoque)">
+          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione o sêmen…</option>{TOUROS_ESTOQUE.map((t) => <option key={t}>{t}</option>)}</select>
+        </Campo>
+        <Campo label="Responsável / inseminador">
+          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
+        </Campo>
       </div>
+      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Touro mostra o sêmen em estoque.</p>
 
       {protocolo === "IATF" ? (
         <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
@@ -521,20 +545,59 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
   );
 }
 
-function FormSanidade({ animais }: { animais: AnimalRow[] }) {
+// Prévia do estoque restante após uma baixa de quantidade.
+function EstoqueRestante({ estoque, produto, quantidade }: { estoque: EstoqueItem[]; produto: string; quantidade: number }) {
+  const item = estoque.find((e) => e.nome === produto);
+  if (!item) return null;
+  const atual = item.quantidade ?? 0;
+  const restante = atual - (quantidade || 0);
+  return (
+    <p style={{ fontSize: "0.78rem", marginTop: "0.3rem" }}>
+      Estoque atual: <strong>{atual} {item.unidade || ""}</strong> → após a aplicação:{" "}
+      <strong style={{ color: restante < 0 ? "var(--red)" : "var(--green-light)" }}>{restante} {item.unidade || ""}</strong>
+      {restante < 0 && <span style={{ color: "var(--red)" }}> (estoque insuficiente!)</span>}
+    </p>
+  );
+}
+
+function FormSanidade({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
+  const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
+  const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
+  const [produto, setProduto] = useState("");
+  const [qtd, setQtd] = useState("");
+  const [unid, setUnid] = useState("ml");
+  const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
+  const produtos = estoque.filter((e) => (e.categoria || "").toLowerCase().match(/vacina|antibi|verm|horm|medic|sanid|suplemento|vitamina/) || true);
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Animal"><SelectAnimal animais={animais} value={animal} onChange={setAnimal} /></Campo>
+        <Campo label="Lançar por">
+          <select style={inputStyle} value={modo} onChange={(e) => setModo(e.target.value as any)}><option value="animal">Animal</option><option value="lote">Lote</option></select>
+        </Campo>
         <Campo label="Data"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Produto / medicamento"><input style={inputStyle} /></Campo>
-        <Campo label="Categoria"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{["Vacina", "Antibiótico", "Vermífugo", "Hormônio", "Suplemento/Vitamina", "Outro"].map((o) => <option key={o}>{o}</option>)}</select></Campo>
-        <Campo label="Dose"><input style={inputStyle} /></Campo>
+        {modo === "animal"
+          ? <Campo label="Animal" full><SelectAnimal animais={animais} value={animal} onChange={setAnimal} /></Campo>
+          : <Campo label="Lotes" full>
+              <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+                {lotes.map((l) => <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}><input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}</label>)}
+              </div>
+            </Campo>}
+        <Campo label="Produto / medicamento (estoque)">
+          <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
+            <option value="" disabled>Selecione…</option>
+            {produtos.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
+          </select>
+        </Campo>
         <Campo label="Via"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{["Intramuscular", "Subcutânea", "Oral", "Intravenosa", "Tópica"].map((o) => <option key={o}>{o}</option>)}</select></Campo>
-        <Campo label="Responsável"><input style={inputStyle} /></Campo>
+        <Campo label="Quantidade (dose)"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
+        <Campo label="Unidade"><select style={inputStyle} value={unid} onChange={(e) => setUnid(e.target.value)}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select></Campo>
+        <Campo label="Responsável"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
       </div>
+      {produto && <EstoqueRestante estoque={estoque} produto={produto} quantidade={Number(qtd) || 0} />}
+      <p style={nota}>Ao salvar, dá baixa da quantidade no estoque (por animal, ou multiplicada pelo efetivo dos lotes).</p>
       <SalvarEmBreve />
     </>
   );
@@ -557,17 +620,41 @@ function FormFinanceiro() {
   );
 }
 
-function FormEstoque() {
+function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
+  const [produto, setProduto] = useState("");
+  const [mov, setMov] = useState("");
+  const [qtd, setQtd] = useState("");
+  const item = estoque.find((e) => e.nome === produto);
+  const q = Number(qtd) || 0;
+  const baixa = MOV_BAIXA.has(mov);
+  const restante = item ? (item.quantidade ?? 0) + (baixa ? -q : q) : null;
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Item"><input style={inputStyle} /></Campo>
-        <Campo label="Movimento"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Entrada</option><option>Saída</option></select></Campo>
-        <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} /></Campo>
-        <Campo label="Unidade"><input style={inputStyle} placeholder="kg, un, L…" /></Campo>
+        <Campo label="Produto / medicamento">
+          <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
+            <option value="" disabled>Selecione…</option>
+            {estoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Movimento">
+          <select style={inputStyle} value={mov} onChange={(e) => setMov(e.target.value)}>
+            <option value="" disabled>Selecione…</option>
+            {MOVIMENTOS_ESTOQUE.map((m) => <option key={m}>{m}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
+        <Campo label="Unidade"><select style={inputStyle} defaultValue={item?.unidade || "unidade"}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select></Campo>
         <Campo label="Data"><input type="date" style={inputStyle} /></Campo>
         <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
       </div>
+      {item && mov && (
+        <p style={{ fontSize: "0.78rem", marginTop: "0.3rem" }}>
+          {baixa ? "Baixa" : "Entrada"} · Estoque atual: <strong>{item.quantidade ?? 0} {item.unidade || ""}</strong> → depois:{" "}
+          <strong style={{ color: (restante ?? 0) < 0 ? "var(--red)" : "var(--green-light)" }}>{restante} {item.unidade || ""}</strong>
+          {(restante ?? 0) < 0 && <span style={{ color: "var(--red)" }}> (insuficiente!)</span>}
+        </p>
+      )}
       <SalvarEmBreve />
     </>
   );
@@ -587,10 +674,19 @@ const TIPOS = [
 export default function LancamentosPage() {
   const [sel, setSel] = useState("animal");
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
+  const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
+  useEffect(() => {
+    fetchAnimais().then(setAnimais).catch(() => {});
+    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+  }, []);
 
   const lotes = useMemo(() => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean) as string[])).sort(), [animais]);
   const lotesLact = useMemo(() => lotes.filter((l) => LACT.includes(cod(l))), [lotes]);
+  // Fêmeas aptas a serviço: idade >= 13 meses (mantém as sem idade informada, por segurança).
+  const aptasServico = useMemo(() => animais.filter((a) => {
+    const idade = (a as any).idade_meses;
+    return idade == null || idade >= IDADE_MIN_SERVICO;
+  }), [animais]);
   const tipo = TIPOS.find((t) => t.id === sel)!;
 
   return (
@@ -629,13 +725,13 @@ export default function LancamentosPage() {
           <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
           {sel === "animal" && <FormAnimal lotes={lotes} />}
-          {sel === "servico" && <FormServico animais={animais} />}
+          {sel === "servico" && <FormServico animais={aptasServico} />}
           {sel === "diagnostico" && <FormDiagnostico animais={animais} />}
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "producao" && <FormControle animais={animais} lotesLact={lotesLact} />}
-          {sel === "sanidade" && <FormSanidade animais={animais} />}
+          {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} />}
           {sel === "financeiro" && <FormFinanceiro />}
-          {sel === "estoque" && <FormEstoque />}
+          {sel === "estoque" && <FormEstoque estoque={estoque} />}
         </div>
       </div>
     </div>

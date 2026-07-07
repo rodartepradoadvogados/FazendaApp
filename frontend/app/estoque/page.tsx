@@ -55,8 +55,8 @@ export default function EstoquePage() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Package size={22} style={{ color: "var(--dourado)" }} /> Estoque</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Inventário de insumos — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Package size={22} style={{ color: "var(--dourado)" }} /> Sanidade/Estoque</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Inventário de insumos e medicamentos — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o ESTOQUE.csv</a>.</span></div>}

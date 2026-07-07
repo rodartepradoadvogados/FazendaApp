@@ -8,9 +8,10 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, Dieta, Estoque, Sanidade, Servico, Parto
+from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, CurvaABC, Dieta, Estoque, Sanidade, Servico, Parto
 from fazenda.parsers.conta_gerencial import parse_conta_gerencial
 from fazenda.parsers.controle_leiteiro import parse_controle_leiteiro
+from fazenda.parsers.curva_abc import parse_curva_abc
 from fazenda.parsers.dieta import parse_dieta
 from fazenda.parsers.estoque import parse_estoque
 from fazenda.parsers.geral import parse_geral
@@ -19,7 +20,7 @@ from fazenda.parsers.sanidade import parse_sanidade
 
 router = APIRouter(prefix="/upload", tags=["upload"])
 
-TIPOS_VALIDOS = ("geral", "reprodutivo", "conta_gerencial", "estoque", "dieta", "controle_leiteiro", "sanidade")
+TIPOS_VALIDOS = ("geral", "reprodutivo", "conta_gerencial", "estoque", "dieta", "controle_leiteiro", "sanidade", "curva_abc")
 
 
 @router.post("/{tipo}")
@@ -60,8 +61,20 @@ async def upload_csv(
             return await _upsert_controle_leiteiro(content, session)
         elif tipo == "sanidade":
             return await _upsert_sanidade(content, session)
+        elif tipo == "curva_abc":
+            return await _upsert_curva_abc(content, session)
     except Exception as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+async def _upsert_curva_abc(content: bytes, session: Session) -> dict:
+    linhas = parse_curva_abc(content)
+    for antigo in session.exec(select(CurvaABC)).all():
+        session.delete(antigo)
+    for linha in linhas:
+        session.add(linha)
+    session.commit()
+    return {"tipo": "curva_abc", "registros": len(linhas)}
 
 
 async def _upsert_geral(content: bytes, session: Session) -> dict:
