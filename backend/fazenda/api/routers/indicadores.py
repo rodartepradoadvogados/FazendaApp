@@ -26,7 +26,8 @@ def obter_indicadores(
     (taxa de prenhez, concepção, IEP, partos previstos) e produção (DEL médio,
     litros/dia). Calculado sobre os dados já carregados via upload.
     """
-    animais = [a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()]
+    todos = session.exec(select(Animal).where(Animal.ativo == True)).all()
+    animais = [a.model_dump() for a in todos if not a.eh_semen and a.sexo != "M"]  # só fêmeas
     servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
     partos = [p.model_dump() for p in session.exec(select(Parto)).all()]
 

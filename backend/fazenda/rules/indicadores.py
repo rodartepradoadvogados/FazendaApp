@@ -20,6 +20,9 @@ GRUPOS_LACTACAO = {"01", "02", "03"}
 GRUPO_PRE_PARTO = "04"
 GRUPO_SECAS = "05"
 
+# Taxa de concepção considerada sempre a partir desta data.
+CONCEPCAO_DESDE = date(2026, 1, 1)
+
 
 def _codigo_grupo(grupo: Optional[str]) -> Optional[str]:
     """Extrai o código de 2 dígitos do início do grupo (ex.: '01 - NOV. ALTA' -> '01')."""
@@ -81,10 +84,14 @@ def calcular_indicadores(
     perc_vazias = round(100 * vazias / aptas, 1) if aptas else None
 
     # ---------------------------------------------------------------
-    # Concepção — serviços diagnosticados (POSITIVO / NEGATIVO)
+    # Concepção — serviços diagnosticados (POSITIVO / NEGATIVO) desde 01/01/2026
     # ---------------------------------------------------------------
-    pos = sum(1 for s in servicos if _diag_upper(s.get("diagnostico")) == "POSITIVO")
-    neg = sum(1 for s in servicos if _diag_upper(s.get("diagnostico")) == "NEGATIVO")
+    def _no_periodo(s: dict) -> bool:
+        ds = s.get("data_servico")
+        return isinstance(ds, date) and ds >= CONCEPCAO_DESDE
+
+    pos = sum(1 for s in servicos if _no_periodo(s) and _diag_upper(s.get("diagnostico")) == "POSITIVO")
+    neg = sum(1 for s in servicos if _no_periodo(s) and _diag_upper(s.get("diagnostico")) == "NEGATIVO")
     diagnosticados = pos + neg
     taxa_concepcao = round(100 * pos / diagnosticados, 1) if diagnosticados else None
 
@@ -129,6 +136,7 @@ def calcular_indicadores(
     # Partos previstos (prenhezes confirmadas → data provável de parto)
     # ---------------------------------------------------------------
     previstos = {"em_30_dias": 0, "em_60_dias": 0, "em_90_dias": 0}
+    previstos_nums: dict[str, list[str]] = {"em_30_dias": [], "em_60_dias": [], "em_90_dias": []}
     for s in servicos:
         if _diag_upper(s.get("diagnostico")) != "POSITIVO":
             continue
@@ -137,12 +145,19 @@ def calcular_indicadores(
             continue
         parto = calcular_parto_provavel(data_serv, s.get("raca_matriz")).data_parto_provavel
         dias = (parto - hoje).days
+        num = s.get("numero_matriz")
         if 0 <= dias <= 90:
             previstos["em_90_dias"] += 1
+            if num:
+                previstos_nums["em_90_dias"].append(num)
             if dias <= 60:
                 previstos["em_60_dias"] += 1
+                if num:
+                    previstos_nums["em_60_dias"].append(num)
             if dias <= 30:
                 previstos["em_30_dias"] += 1
+                if num:
+                    previstos_nums["em_30_dias"].append(num)
 
     return {
         "data_referencia": hoje.isoformat(),
@@ -166,6 +181,8 @@ def calcular_indicadores(
             "iep_dias": iep_dias,
             "iep_meses": iep_meses,
             "partos_previstos": previstos,
+            "partos_previstos_nums": previstos_nums,
+            "concepcao_desde": CONCEPCAO_DESDE.isoformat(),
         },
         "producao": {
             "vacas_com_producao": len(producoes),

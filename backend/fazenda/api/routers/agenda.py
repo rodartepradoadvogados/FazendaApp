@@ -28,7 +28,7 @@ def calcular_agenda(
     Calcula a agenda preditiva para a data informada (padrão: hoje).
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
-    animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all()]
+    animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
     servicos_ult = [
         _model_to_dict(s) for s in session.exec(
             select(Servico).where(Servico.ult_ocorrencia == 1)

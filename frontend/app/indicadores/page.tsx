@@ -28,8 +28,16 @@ export default function IndicadoresPage() {
     if (!animais.length) return;
     setModal({ title, list: animais.filter(filtro) });
   };
+  const abrirNums = (title: string, nums: string[]) => {
+    const set = new Set(nums || []);
+    setModal({ title, list: animais.filter((a) => set.has(a.numero)) });
+  };
   const clickable: React.CSSProperties = animais.length ? { cursor: "pointer" } : {};
-  const dica = animais.length ? " (clique para ver os animais)" : "";
+  const dica = animais.length ? " (clique para ver as fêmeas)" : "";
+  const legenda: React.CSSProperties = { fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.35rem" };
+  const desdeLabel = rep?.concepcao_desde
+    ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
+    : "01/01/2026";
 
   const linhasRep = useMemo(() => [
     { label: "Fêmeas aptas", v: rep?.aptas, cor: undefined, f: (a: AnimalRow) => { const s = a.sit_rep || ""; return s === "Ges." || s.startsWith("Vaz.") || s === "Ins."; } },
@@ -42,7 +50,7 @@ export default function IndicadoresPage() {
     <div className="p-6 animate-in">
       <div className="mb-6">
         <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado-light)" }} /> Indicadores do Rebanho</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Composição, eficiência reprodutiva e produção — clique nos números para ver os animais.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Composição, eficiência reprodutiva e produção — clique nos números para ver as fêmeas.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>}
@@ -50,10 +58,10 @@ export default function IndicadoresPage() {
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{pct(rep?.taxa_prenhez_pct)}</p><p className="kpi-label">Taxa de prenhez</p><HeartPulse size={18} style={{ color: "var(--text-muted)", marginTop: "0.4rem" }} /></div>
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{pct(rep?.taxa_concepcao_pct)}</p><p className="kpi-label">Concepção / serviço</p></div>
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{num(rep?.iep_meses, " m")}</p><p className="kpi-label">IEP médio</p></div>
-          <div className="kpi-card"><p className="kpi-value">{pct(rep?.perc_vazias_pct)}</p><p className="kpi-label">Vazias</p></div>
+          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{pct(rep?.taxa_prenhez_pct)}</p><p className="kpi-label">Taxa de prenhez</p><p style={legenda}>fêmeas prenhes agora</p></div>
+          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{pct(rep?.taxa_concepcao_pct)}</p><p className="kpi-label">Concepção / serviço</p><p style={legenda}>serviços desde {desdeLabel}</p></div>
+          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{num(rep?.iep_meses, " m")}</p><p className="kpi-label">IEP médio</p><p style={legenda}>todo o histórico</p></div>
+          <div className="kpi-card"><p className="kpi-value">{pct(rep?.perc_vazias_pct)}</p><p className="kpi-label">Vazias</p><p style={legenda}>situação atual</p></div>
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
@@ -77,17 +85,25 @@ export default function IndicadoresPage() {
               </tbody>
             </table>
             <div className="card-header mt-4 mb-2 flex items-center gap-2"><TrendingUp size={14} /> Partos previstos</div>
+            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>A coluna à direita é a <strong>quantidade de fêmeas</strong> com parto previsto no período{dica}.</p>
             <table className="fazenda-table">
               <tbody>
-                <tr><td>Próximos 30 dias</td><td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.em_30_dias)}</td></tr>
-                <tr><td>Próximos 60 dias</td><td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.em_60_dias)}</td></tr>
-                <tr><td>Próximos 90 dias</td><td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.em_90_dias)}</td></tr>
+                {[
+                  { label: "Próximos 30 dias", key: "em_30_dias" },
+                  { label: "Próximos 60 dias", key: "em_60_dias" },
+                  { label: "Próximos 90 dias", key: "em_90_dias" },
+                ].map((r) => (
+                  <tr key={r.key} onClick={() => abrirNums(`Partos previstos — ${r.label.toLowerCase()}`, rep?.partos_previstos_nums?.[r.key])} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                    <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
+                    <td style={{ fontWeight: 700, textAlign: "right" }}>{num(rep?.partos_previstos?.[r.key])}</td>
+                  </tr>
+                ))}
               </tbody>
             </table>
           </div>
 
           <div className="card">
-            <div className="card-header mb-3">Composição do Rebanho ({num(reb?.total)} animais){dica}</div>
+            <div className="card-header mb-3">Composição do Rebanho ({num(reb?.total)} fêmeas){dica}</div>
             <div className="space-y-1.5">
               {grupos.map(([grupo, n]) => (
                 <div key={grupo} className="flex items-center gap-2" onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={clickable}>

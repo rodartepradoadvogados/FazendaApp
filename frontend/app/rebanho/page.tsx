@@ -79,7 +79,7 @@ export default function RebanhoPage() {
     <div className="p-6 animate-in">
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Beef size={22} style={{ color: "var(--dourado)" }} /> Rebanho</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Composição do rebanho — filtre por grupo, situação reprodutiva, raça ou número.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva, raça ou número.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload CSV</a>.</span></div>}
@@ -105,7 +105,7 @@ export default function RebanhoPage() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">Animais (filtro)</p></div>
+            <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">Fêmeas (filtro)</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{gestantes}</p><p className="kpi-label">Gestantes</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{vazias}</p><p className="kpi-label">Vazias</p></div>
             <div className="kpi-card"><p className="kpi-value">{delMedio ?? "—"}</p><p className="kpi-label">DEL médio (lactação)</p></div>
@@ -119,7 +119,7 @@ export default function RebanhoPage() {
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
                   <YAxis type="category" dataKey="grupo" tick={{ fill: "var(--text-muted)", fontSize: 9 }} width={150} />
                   <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                  <Bar dataKey="n" name="Animais" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
+                  <Bar dataKey="n" name="Fêmeas" fill="var(--vinho-light, #8B3A56)" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }}
                     onClick={(e: any) => e?.grupo && setModal({ title: e.grupo, list: filtrados.filter((a) => (a.grupo_primario || "(sem grupo)") === e.grupo) })} />
                 </BarChart>
               </ResponsiveContainer>
@@ -141,7 +141,7 @@ export default function RebanhoPage() {
 
           <div className="card">
             <div className="card-header mb-3 flex items-center justify-between">
-              <span>Animais por Grupo</span>
+              <span>Fêmeas por Grupo</span>
               <div className="flex items-center gap-3">
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
                 <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
@@ -158,7 +158,7 @@ export default function RebanhoPage() {
                     <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                       {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                       <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
-                      <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>
+                      <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} fêmea{lista.length !== 1 ? "s" : ""}</span>
                     </button>
                     {aberto && (
                       <div className="overflow-x-auto">
@@ -182,7 +182,7 @@ export default function RebanhoPage() {
                   </div>
                 );
               })}
-              {!grupoLista.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</p>}
+              {!grupoLista.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma fêmea no filtro.</p>}
             </div>
           </div>
         </>

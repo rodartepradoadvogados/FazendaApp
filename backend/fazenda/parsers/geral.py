@@ -31,6 +31,21 @@ from fazenda.parsers.utils import (
 )
 
 
+def _classificar(categoria: str, grupo: str, data_nasc, idade) -> tuple[str | None, bool]:
+    """
+    Deriva (sexo, eh_semen) a partir da categoria/cadastro.
+    - Sêmen/reprodutor: sem grupo, sem nascimento e sem idade (touros da IA).
+    - Macho: categoria 'Bezerro ...' ou contém macho/touro.
+    - Fêmea: os demais animais (Bezerra/Novilha/Vaca).
+    """
+    if not grupo and data_nasc is None and idade is None:
+        return None, True  # sêmen/reprodutor
+    cat = (categoria or "").strip().lower()
+    if cat.startswith("bezerro") or "macho" in cat or "touro" in cat:
+        return "M", False
+    return "F", False
+
+
 def parse_geral(content: bytes) -> list[Animal]:
     """
     Recebe bytes do GERAL.csv e retorna lista de objetos Animal prontos para upsert.
@@ -44,15 +59,22 @@ def parse_geral(content: bytes) -> list[Animal]:
 
         grupo_raw = row.get("Grupos atuais", "")
         del_raw = row.get("DEL", "")
+        data_nasc = parse_date(row.get("Dt. nasc.", ""))
+        idade = parse_float(row.get("Idade em meses", ""))
+        grupo_primario = clean_grupo(grupo_raw)
+        categoria_completa = row.get("Categoria completa", "") or None
+        sexo, eh_semen = _classificar(categoria_completa or "", grupo_primario, data_nasc, idade)
 
         animal = Animal(
             numero=numero,
-            data_nasc=parse_date(row.get("Dt. nasc.", "")),
-            idade_meses=parse_float(row.get("Idade em meses", "")),
+            data_nasc=data_nasc,
+            idade_meses=idade,
             grupo_raw=grupo_raw,
-            grupo_primario=clean_grupo(grupo_raw),
-            categoria_completa=row.get("Categoria completa", "") or None,
+            grupo_primario=grupo_primario,
+            categoria_completa=categoria_completa,
             categoria_abrev=row.get("Categoria abreviada", "") or None,
+            sexo=sexo,
+            eh_semen=eh_semen,
             sit_rep=row.get("Sit. rep.", "") or None,
             del_dias=parse_int(del_raw) if del_raw else None,
             data_ult_leite=parse_date(row.get("Dt. últ. leite", "")),
