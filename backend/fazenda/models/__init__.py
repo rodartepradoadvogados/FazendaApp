@@ -216,3 +216,25 @@ class AgendaManual(SQLModel, table=True):
     numero_animal: Optional[str] = None
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Curva ABC (análise de compras / Pareto)
+# ---------------------------------------------------------------------------
+class CurvaABC(SQLModel, table=True):
+    """Linha da CURVA_ABC.csv — classificação A/B/C de produtos/serviços por valor."""
+
+    __tablename__ = "curva_abc"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    item: Optional[int] = None
+    classificacao: Optional[str] = None          # A, B ou C
+    produto: Optional[str] = None
+    unidade: Optional[str] = None
+    preco_unitario: Optional[float] = None
+    quantidade: Optional[float] = None
+    valor_compra: Optional[float] = None
+    valor_acumulado: Optional[float] = None
+    perc_acumulado: Optional[float] = None
+    perc_total: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)

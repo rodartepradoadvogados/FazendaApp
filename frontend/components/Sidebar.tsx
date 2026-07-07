@@ -35,7 +35,7 @@ const links = [
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat },
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
-  { href: "/estoque",     label: "Estoque",      icon: Package },
+  { href: "/estoque",     label: "Sanidade/Estoque", icon: Package },
   { href: "/parametros",  label: "Parâmetros",   icon: SlidersHorizontal },
   { href: "/upload",      label: "Upload CSV",   icon: Upload },
 ];

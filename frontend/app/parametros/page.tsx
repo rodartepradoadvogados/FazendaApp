@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { SlidersHorizontal, AlertTriangle, Info } from "lucide-react";
+import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check } from "lucide-react";
 import { fetchParametros } from "@/lib/api";
 
 type Item = { chave: string; label: string; valor: number; unidade: string };
@@ -9,6 +9,9 @@ type Grupo = { titulo: string; itens: Item[] };
 export default function ParametrosPage() {
   const [grupos, setGrupos] = useState<Record<string, Grupo> | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [editando, setEditando] = useState<Set<string>>(new Set());
+  const [valores, setValores] = useState<Record<string, number>>({});
+  const toggleEdit = (id: string) => setEditando((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
 
   useEffect(() => {
     fetchParametros().then((d) => setGrupos(d.grupos)).catch((e) => setError(e.message));
@@ -38,23 +41,40 @@ export default function ParametrosPage() {
 
       {grupos && (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          {Object.entries(grupos).map(([id, g]) => (
+          {Object.entries(grupos).map(([id, g]) => {
+            const edit = editando.has(id);
+            return (
             <div key={id} className="card">
-              <div className="card-header mb-3">{g.titulo}</div>
+              <div className="card-header mb-3 flex items-center justify-between">
+                <span>{g.titulo}</span>
+                <button onClick={() => toggleEdit(id)} title={edit ? "Concluir" : "Editar"}
+                  style={{ background: "none", border: "none", color: "var(--dourado-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.25rem", fontSize: "0.7rem" }}>
+                  {edit ? <><Check size={13} /> Concluir</> : <><Pencil size={13} /> Editar</>}
+                </button>
+              </div>
               <table className="fazenda-table">
                 <tbody>
                   {g.itens.map((it) => (
                     <tr key={it.chave}>
                       <td style={{ fontSize: "0.82rem" }}>{it.label}</td>
                       <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>
-                        {it.valor}<span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.25rem" }}>{it.unidade}</span>
+                        {edit ? (
+                          <input type="number" defaultValue={valores[it.chave] ?? it.valor}
+                            onChange={(e) => setValores((p) => ({ ...p, [it.chave]: Number(e.target.value) }))}
+                            style={{ width: "5rem", textAlign: "right", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.2rem 0.4rem", fontSize: "0.82rem" }} />
+                        ) : (
+                          <>{valores[it.chave] ?? it.valor}</>
+                        )}
+                        <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.25rem" }}>{it.unidade}</span>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {edit && <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Ao ligar o banco, o valor salvo passa a valer para todos os relatórios, agenda e alertas.</p>}
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
