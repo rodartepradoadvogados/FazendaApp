@@ -388,3 +388,76 @@ class TestAnaliseReprodutiva:
         # método de IA: IA sem protocolo = cio natural; cobertura = monta
         assert r0["metodo_ia"] == "IA em cio natural"
         assert r[1]["metodo_ia"] == "Monta natural"
+
+
+# ============================================================
+# BENCHMARK POR CATEGORIA (vaca / novilha)
+# ============================================================
+
+class TestBenchmarkCategorias:
+    def _dados(self):
+        # Vaca = já pariu (tem parto); novilha = nunca pariu.
+        animais = [
+            {"numero": "10", "grupo_primario": "02 - VACAS ALTA", "sit_rep": "Ges."},
+            {"numero": "11", "grupo_primario": "02 - VACAS ALTA", "sit_rep": "Vaz. apt."},
+            {"numero": "20", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Ins."},
+            {"numero": "21", "grupo_primario": "12 - NOVILHAS", "sit_rep": "Vaz. apt."},
+        ]
+        servicos = [
+            # vacas (ordem_parto >= 1)
+            {"numero_matriz": "10", "data_servico": date(2026, 2, 1), "diagnostico": "POSITIVO", "ordem_parto": 2, "ordem_tentativa": 1},
+            {"numero_matriz": "11", "data_servico": date(2026, 2, 5), "diagnostico": "NEGATIVO", "ordem_parto": 1, "ordem_tentativa": 1},
+            # novilhas (ordem_parto 0/None) — ambas positivas
+            {"numero_matriz": "20", "data_servico": date(2026, 3, 1), "diagnostico": "POSITIVO", "ordem_parto": 0, "ordem_tentativa": 1},
+            {"numero_matriz": "21", "data_servico": date(2026, 3, 3), "diagnostico": "POSITIVO", "ordem_parto": None, "ordem_tentativa": 1},
+        ]
+        partos = [
+            {"numero_matriz": "10", "data_parto": date(2025, 12, 1), "ordem_parto": 2},
+            {"numero_matriz": "11", "data_parto": date(2025, 11, 1), "ordem_parto": 1},
+        ]
+        return animais, servicos, partos
+
+    def test_separa_vaca_e_novilha(self):
+        animais, servicos, partos = self._dados()
+        r = calcular_indicadores(animais, servicos, partos, data_ref=date(2026, 7, 7))
+        cats = r["benchmark_categorias"]
+        assert set(cats) == {"todas", "vaca", "novilha"}
+
+        def val(lista, chave):
+            return next(b["valor"] for b in lista if b["chave"] == chave)
+
+        # Vacas: 1 positivo / (1 pos + 1 neg) = 50% concepção.
+        assert val(cats["vaca"], "taxa_concepcao") == 50.0
+        # Novilhas: 2 positivos, 0 negativos → 100% concepção.
+        assert val(cats["novilha"], "taxa_concepcao") == 100.0
+        # Novilhas não têm parto → IEP fica indefinido.
+        assert val(cats["novilha"], "iep_meses") is None
+
+
+# ============================================================
+# MOTOR DA AGENDA — pendências de parto provável
+# ============================================================
+
+class TestAgendaEngine:
+    def _base(self, partos):
+        from fazenda.rules.agenda_engine import AgendaEngine
+        animais = [{"numero": "500", "ativo": True, "sit_rep": "Ges.", "raca": "Girolando",
+                    "del_dias": 60, "grupo_primario": "02 - VACAS ALTA"}]
+        servicos = [{"numero_matriz": "500", "data_servico": date(2024, 11, 1),
+                     "diagnostico": "POSITIVO", "ult_ocorrencia": 1, "ordem_parto": 1}]
+        return AgendaEngine().calcular(date(2026, 7, 7), animais, servicos, partos, [], [], [])
+
+    def test_parto_provavel_suprimido_se_ja_pariu(self):
+        # Serviço 2024-11-01 → parto provável ~2025-08; se já há parto após o
+        # serviço, a prenhez se resolveu e não deve virar pendência.
+        res = self._base([{"numero_matriz": "500", "data_parto": date(2025, 8, 15), "ordem_parto": 1}])
+        partos_prov = [e for e in res.eventos if e.descricao.startswith("Parto provável")]
+        assert partos_prov == []
+
+    def test_parto_provavel_gerado_se_ainda_prenhe(self):
+        # Sem parto após o serviço → a prenhez segue em aberto e o parto
+        # provável deve ser gerado (mesmo que vencido).
+        res = self._base([])
+        partos_prov = [e for e in res.eventos if e.descricao.startswith("Parto provável")]
+        assert len(partos_prov) == 1
+        assert partos_prov[0].numero_animal == "500"

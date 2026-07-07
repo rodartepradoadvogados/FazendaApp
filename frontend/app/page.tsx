@@ -148,7 +148,7 @@ export default function Home() {
         <button onClick={() => setBenchAberto((v) => !v)}
           style={{ marginTop: "0.6rem", width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.5rem 0.2rem", background: "none", border: "none", borderTop: "1px solid var(--border)", color: "var(--dourado-light)", cursor: "pointer", fontSize: "0.8rem", fontWeight: 600 }}>
           {benchAberto ? <ChevronDown size={15} /> : <ChevronRight size={15} />}
-          Comparar com metas e média do país
+          Comparar com metas e média do país <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>· {catRep === "todas" ? "todas as fêmeas" : catRep === "vaca" ? "vacas" : "novilhas"}</span>
         </button>
         {benchAberto && (
           <div className="overflow-x-auto">
