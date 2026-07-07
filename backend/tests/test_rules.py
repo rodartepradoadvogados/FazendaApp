@@ -383,5 +383,8 @@ class TestAnaliseReprodutiva:
         assert r[2]["diagnosticado"] is False and r[2]["positivo"] is False
         # perda de prenhez detectada pela data
         assert r[1]["perda"] is True
-        # inseminador vazio vira rótulo
-        assert r[2]["inseminador"] == "(sem inseminador)"
+        # touro (reprodutor) vazio vira rótulo
+        assert r[2]["touro"] == "(sem touro)"
+        # método de IA: IA sem protocolo = cio natural; cobertura = monta
+        assert r0["metodo_ia"] == "IA em cio natural"
+        assert r[1]["metodo_ia"] == "Monta natural"

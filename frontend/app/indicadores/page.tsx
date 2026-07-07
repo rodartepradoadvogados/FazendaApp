@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3 } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target } from "lucide-react";
 import { fetchIndicadores, fetchAnimais } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
@@ -34,6 +34,8 @@ export default function IndicadoresPage() {
   };
   const clickable: React.CSSProperties = animais.length ? { cursor: "pointer" } : {};
   const dica = animais.length ? " (clique para ver as fêmeas)" : "";
+  // Ícone-alvo indica que clicar abre a lista de fêmeas por trás do número.
+  const alvo = animais.length ? <Target size={13} style={{ color: "var(--dourado-light)" }} /> : null;
   // Observação/subtítulo do KPI: fonte menor que o título (kpi-label = 0.75rem).
   const legenda: React.CSSProperties = { fontSize: "0.6rem", color: "var(--text-muted)", marginTop: "0.3rem", textTransform: "none", letterSpacing: 0, opacity: 0.85 };
   const desdeLabel = rep?.concepcao_desde
@@ -74,7 +76,7 @@ export default function IndicadoresPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="card">
-            <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
+            <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
             <table className="fazenda-table">
               <tbody>
                 {linhasRep.map((r) => (
@@ -85,7 +87,7 @@ export default function IndicadoresPage() {
                 ))}
               </tbody>
             </table>
-            <div className="card-header mt-4 mb-2 flex items-center gap-2"><TrendingUp size={14} /> Partos previstos</div>
+            <div className="card-header mt-4 mb-2 flex items-center gap-2"><TrendingUp size={14} /> Partos previstos {alvo}</div>
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>A coluna à direita é a <strong>quantidade de fêmeas</strong> com parto previsto no período{dica}.</p>
             <table className="fazenda-table">
               <tbody>
@@ -104,7 +106,7 @@ export default function IndicadoresPage() {
           </div>
 
           <div className="card">
-            <div className="card-header mb-3">Composição do Rebanho ({num(reb?.total)} fêmeas){dica}</div>
+            <div className="card-header mb-3 flex items-center gap-2">Composição do Rebanho ({num(reb?.total)} fêmeas) {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
             <div className="space-y-1.5">
               {grupos.map(([grupo, n]) => (
                 <div key={grupo} className="flex items-center gap-2" onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={clickable}>

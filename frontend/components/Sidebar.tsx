@@ -16,6 +16,7 @@ import {
   Wheat,
   PieChart,
   Syringe,
+  SlidersHorizontal,
 } from "lucide-react";
 import { checkHealth } from "@/lib/api";
 
@@ -31,6 +32,7 @@ const links = [
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
   { href: "/estoque",     label: "Estoque",      icon: Package },
+  { href: "/parametros",  label: "Parâmetros",   icon: SlidersHorizontal },
   { href: "/upload",      label: "Upload CSV",   icon: Upload },
 ];
 

@@ -81,12 +81,15 @@ export default function FinanceiroPage() {
     });
   }, [filtrados, rel]);
 
-  // DRE por conta gerencial (nível 1)
+  // DRE por conta gerencial — agrupa pela conta do plano de contas, mostrando
+  // o NOME da conta (descrição) em vez do código, que é pouco legível.
   const dreContas = useMemo(() => {
-    const by = new Map<string, { conta: string; receitas: number; despesas: number }>();
+    const by = new Map<string, { conta: string; nome: string; codigo: string; receitas: number; despesas: number }>();
     filtrados.forEach((r) => {
-      const k = r.codigo_conta || "(sem conta)";
-      const e = by.get(k) ?? { conta: k, receitas: 0, despesas: 0 };
+      const codigo = r.conta_completa || r.codigo_conta || "";
+      const nome = r.descricao || codigo || "(sem conta)";
+      const k = codigo || nome;
+      const e = by.get(k) ?? { conta: k, nome, codigo, receitas: 0, despesas: 0 };
       if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
       by.set(k, e);
     });
@@ -253,17 +256,20 @@ export default function FinanceiroPage() {
                 })}</tbody>
               </table>
             )}
-            {rel === "dre" && (
+            {rel === "dre" && (<>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência). Clique numa conta <span style={{ color: "var(--text-muted)" }}>▾</span> para ver os lançamentos.
+              </p>
               <table className="fazenda-table">
-                <thead><tr><th></th><th>Conta (nível 1)</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <thead><tr><th></th><th>Conta gerencial</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
                 <tbody>{dreContas.map((c) => {
                   const aberto = exp.has("dre:" + c.conta);
-                  const itens = aberto ? filtrados.filter((r) => (r.codigo_conta || "(sem conta)") === c.conta).sort((a, b) => b.valor - a.valor) : [];
+                  const itens = aberto ? filtrados.filter((r) => (r.conta_completa || r.codigo_conta || "") === c.conta).sort((a, b) => b.valor - a.valor) : [];
                   return (
                     <>
                       <tr key={c.conta} onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
-                        <td style={{ fontWeight: 600 }}>{c.conta}</td>
+                        <td style={{ fontWeight: 600 }}>{c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
                         <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
@@ -271,7 +277,7 @@ export default function FinanceiroPage() {
                       {aberto && itens.map((r, i) => (
                         <tr key={c.conta + ":" + i} style={{ background: "var(--surface-2)" }}>
                           <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{r.descricao} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor}</span></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento || r.data_competencia)} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
                           <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
                       ))}
@@ -279,7 +285,7 @@ export default function FinanceiroPage() {
                   );
                 })}</tbody>
               </table>
-            )}
+            </>)}
             {rel === "livro" && (
               <table className="fazenda-table">
                 <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>

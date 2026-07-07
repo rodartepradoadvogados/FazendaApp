@@ -15,6 +15,7 @@ from fazenda.api.routers import (
     estoque,
     financeiro,
     indicadores,
+    parametros,
     producao,
     reproducao,
     sanidade,
@@ -66,6 +67,7 @@ app.include_router(upload.router)
 app.include_router(agenda.router)
 app.include_router(financeiro.router)
 app.include_router(indicadores.router)
+app.include_router(parametros.router)
 app.include_router(alimentacao.router)
 app.include_router(producao.router)
 app.include_router(reproducao.router)

@@ -49,24 +49,27 @@ function LineChart({ dados }: { dados: { data: string; total: number }[] }) {
 export default function ProducaoPage() {
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fRaca, setFRaca] = useState("");
   const [fAno, setFAno] = useState("");
   const [fMes, setFMes] = useState("");
-  const [fFaixa, setFFaixa] = useState("");
+  const [fDelMin, setFDelMin] = useState("");
+  const [fDelMax, setFDelMax] = useState("");
 
   useEffect(() => {
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
   }, []);
 
+  const delMin = fDelMin === "" ? null : Number(fDelMin);
+  const delMax = fDelMax === "" ? null : Number(fDelMax);
+
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((r) =>
-      (!fRaca || r.raca === fRaca) &&
       (!fAno || String(r.ano) === fAno) &&
       (!fMes || (r.data ? r.data.slice(0, 7) === fMes : false)) &&
-      (!fFaixa || (() => { const fx = FAIXAS.find((f) => f[2] === fFaixa); return fx && r.del !== null && r.del >= fx[0] && r.del <= fx[1]; })())
+      (delMin === null || (r.del !== null && r.del >= delMin)) &&
+      (delMax === null || (r.del !== null && r.del <= delMax))
     );
-  }, [regs, fRaca, fAno, fMes, fFaixa]);
+  }, [regs, fAno, fMes, delMin, delMax]);
 
   const comProd = useMemo(() => filtrados.filter((r) => r.producao_kg !== null && r.producao_kg > 0), [filtrados]);
 
@@ -101,7 +104,7 @@ export default function ProducaoPage() {
         <h1 className="text-2xl font-bold flex items-center gap-2">
           <Milk size={22} style={{ color: "var(--dourado-light)" }} /> Produção Leiteira
         </h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Curva de lactação, evolução e ranking — filtre por raça, ano ou faixa de DEL.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Curva de lactação, evolução e ranking — filtre por ano, mês ou faixa de DEL (de/até).</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o controle leiteiro</a>.</span></div>}
@@ -112,16 +115,16 @@ export default function ProducaoPage() {
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Raça</label>
-                <select style={selStyle} value={fRaca} onChange={(e) => setFRaca(e.target.value)}><option value="">Todas</option>{opcoes(regs, (r) => r.raca).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
                 <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.ano === null ? null : String(r.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Mês</label>
                 <select style={selStyle} value={fMes} onChange={(e) => setFMes(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.data ? r.data.slice(0, 7) : null).map((o) => <option key={o}>{o}</option>)}</select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Faixa de DEL</label>
-                <select style={selStyle} value={fFaixa} onChange={(e) => setFFaixa(e.target.value)}><option value="">Todas</option>{FAIXAS.map((f) => <option key={f[2]}>{f[2]}</option>)}</select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL de (dias)</label>
+                <input type="number" min={0} inputMode="numeric" placeholder="ex.: 30" style={selStyle} value={fDelMin} onChange={(e) => setFDelMin(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL até (dias)</label>
+                <input type="number" min={0} inputMode="numeric" placeholder="ex.: 120" style={selStyle} value={fDelMax} onChange={(e) => setFDelMax(e.target.value)} /></div>
             </div>
-            {(fRaca || fAno || fFaixa) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFRaca(""); setFAno(""); setFFaixa(""); }}>Limpar filtros</button>}
+            {(fAno || fMes || fDelMin || fDelMax) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); }}>Limpar filtros</button>}
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">

@@ -23,7 +23,6 @@ export default function RebanhoPage() {
   const [error, setError] = useState<string | null>(null);
   const [fGrupo, setFGrupo] = useState("");
   const [fSit, setFSit] = useState("");
-  const [fRaca, setFRaca] = useState("");
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
@@ -43,10 +42,9 @@ export default function RebanhoPage() {
     return regs.filter((a) =>
       (!fGrupo || a.grupo_primario === fGrupo) &&
       (!fSit || a.sit_rep === fSit) &&
-      (!fRaca || a.raca === fRaca) &&
       (!busca || a.numero.toLowerCase().includes(busca.toLowerCase()))
     );
-  }, [regs, fGrupo, fSit, fRaca, busca]);
+  }, [regs, fGrupo, fSit, busca]);
 
   const total = filtrados.length;
   const gestantes = filtrados.filter((a) => a.sit_rep === "Ges.").length;
@@ -79,7 +77,7 @@ export default function RebanhoPage() {
     <div className="p-6 animate-in">
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Beef size={22} style={{ color: "var(--dourado)" }} /> Rebanho</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva, raça ou número.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva ou número.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload CSV</a>.</span></div>}
@@ -89,13 +87,11 @@ export default function RebanhoPage() {
         <>
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Grupo</label>
                 <select style={selStyle} value={fGrupo} onChange={(e) => setFGrupo(e.target.value)}><option value="">Todos</option>{opc((a) => a.grupo_primario).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Situação rep.</label>
                 <select style={selStyle} value={fSit} onChange={(e) => setFSit(e.target.value)}><option value="">Todas</option>{opc((a) => a.sit_rep).map((o) => <option key={o}>{o}</option>)}</select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Raça</label>
-                <select style={selStyle} value={fRaca} onChange={(e) => setFRaca(e.target.value)}><option value="">Todas</option>{opc((a) => a.raca).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar nº</label>
                 <div style={{ position: "relative" }}>
                   <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
