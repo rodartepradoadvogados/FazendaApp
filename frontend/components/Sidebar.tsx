@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut } from "lucide-react";
+import { BullLogo } from "@/components/BullLogo";
 
 const links = [
   { href: "/",            label: "Capa",        icon: Home },
@@ -83,7 +84,7 @@ export function Sidebar() {
           style={{ background: "none", border: "none", color: "var(--text)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
         </button>
-        <Beef size={18} color="var(--dourado-light)" />
+        <BullLogo size={18} />
         <span style={{ color: "var(--dourado-light)", fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.05em" }}>FAZENDA</span>
         <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>· Jairo Nasser</span>
       </div>
@@ -110,7 +111,7 @@ export function Sidebar() {
           className="flex items-center gap-2 px-2 py-2 rounded-lg"
           style={{ background: "linear-gradient(135deg, var(--vinho), var(--vinho-dark))" }}
         >
-          <Beef size={20} color="var(--dourado-light)" />
+          <BullLogo size={22} />
           <div>
             <p style={{ color: "var(--dourado-light)", fontSize: "0.7rem", fontWeight: 800, letterSpacing: "0.05em", lineHeight: 1.2 }}>
               FAZENDA
