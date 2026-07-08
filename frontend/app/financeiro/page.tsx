@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
+  RefreshCw,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -1042,6 +1043,8 @@ type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number; valor_liquido: number;
   data_pagamento: string | null; status: string; observacao: string | null;
+  recorrente: boolean; dia_vencimento: number | null;
+  origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
 };
 
 function FolhaPagamentoView() {
@@ -1054,6 +1057,8 @@ function FolhaPagamentoView() {
   const [valorBruto, setValorBruto] = useState("");
   const [descontos, setDescontos] = useState("");
   const [observacao, setObservacao] = useState("");
+  const [recorrente, setRecorrente] = useState(false);
+  const [diaVencimento, setDiaVencimento] = useState("5");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -1070,14 +1075,23 @@ function FolhaPagamentoView() {
     if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione a pessoa." }); return; }
     if (!competencia) { setMsg({ tipo: "erro", texto: "Informe o mês de competência." }); return; }
     if (!valorBruto || parseFloat(valorBruto) <= 0) { setMsg({ tipo: "erro", texto: "Informe o valor bruto." }); return; }
+    if (recorrente && (!diaVencimento || Number(diaVencimento) < 1 || Number(diaVencimento) > 28)) {
+      setMsg({ tipo: "erro", texto: "Informe o dia de vencimento (1 a 28) para lançamentos recorrentes." }); return;
+    }
     setSalvando(true);
     try {
       await criarFolhaPagamento({
         pessoa_id: Number(pessoaId), competencia, valor_bruto: parseFloat(valorBruto),
         descontos: parseFloat(descontos) || 0, observacao: observacao || undefined,
+        recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
       });
-      setMsg({ tipo: "sucesso", texto: "Lançamento de folha criado." });
-      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao("");
+      setMsg({
+        tipo: "sucesso",
+        texto: recorrente
+          ? "Lançamento de folha criado — as próximas competências serão geradas automaticamente em Contas a Pagar."
+          : "Lançamento de folha criado.",
+      });
+      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
@@ -1091,6 +1105,7 @@ function FolhaPagamentoView() {
       await atualizarFolhaPagamento(r.id, {
         pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
         descontos: r.descontos, data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
+        recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
       });
       setPagandoId(null);
       carregar();
@@ -1131,6 +1146,21 @@ function FolhaPagamentoView() {
             <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
           <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong></span></div>
         </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
+          <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
+            <input id="folha-recorrente" type="checkbox" checked={recorrente} onChange={(e) => setRecorrente(e.target.checked)} />
+            <label htmlFor="folha-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente (lançar em Contas a Pagar todo mês)</label>
+          </div>
+          {recorrente && (
+            <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+              <input type="number" min={1} max={28} style={selStyleLote} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
+          )}
+        </div>
+        {recorrente && (
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+            A partir do próximo mês, o sistema gera automaticamente o lançamento de folha e a conta a pagar correspondente — não é preciso relançar manualmente.
+          </p>
+        )}
         {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
         <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
@@ -1146,7 +1176,14 @@ function FolhaPagamentoView() {
               {(regs || []).map((r) => (
                 <Fragment key={r.id}>
                   <tr>
-                    <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{r.pessoa_nome}</td>
+                    <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                      {r.pessoa_nome}
+                      {(r.recorrente || r.origem_recorrencia_id) && (
+                        <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
+                          <RefreshCw size={12} />
+                        </span>
+                      )}
+                    </td>
                     <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
                     <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
                     <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.descontos)}</td>

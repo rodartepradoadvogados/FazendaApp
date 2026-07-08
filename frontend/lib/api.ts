@@ -225,14 +225,14 @@ export async function fetchFolhaPagamento() {
   if (!res.ok) throw new Error(`Folha de pagamento error: ${res.status}`);
   return res.json();
 }
-export async function criarFolhaPagamento(dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string }) {
+export async function criarFolhaPagamento(dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null }) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar folha de pagamento"); }
   return res.json();
 }
-export async function atualizarFolhaPagamento(id: number, dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string }) {
+export async function atualizarFolhaPagamento(id: number, dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null }) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

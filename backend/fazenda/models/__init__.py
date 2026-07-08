@@ -455,6 +455,15 @@ class FolhaPagamento(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Recorrência mensal — marca este lançamento como o "modelo" a partir do
+    # qual as competências seguintes são geradas automaticamente em Contas a
+    # Pagar, sem precisar relançar a folha todo mês (dia_vencimento define o
+    # dia do mês da conta a pagar gerada).
+    recorrente: bool = False
+    dia_vencimento: Optional[int] = None
+    origem_recorrencia_id: Optional[int] = None  # id do lançamento-modelo, quando gerado automaticamente
+    numero_lancamento_gerado: Optional[str] = None  # nº do lançamento (LC-...) criado em Contas a Pagar
+
 
 # ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)

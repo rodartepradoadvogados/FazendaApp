@@ -15,7 +15,10 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, Pessoa, PrincipioAtivo
+from fazenda.models import (
+    Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, Pessoa, PrincipioAtivo,
+)
+from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
@@ -145,10 +148,68 @@ class FolhaPagamentoIn(BaseModel):
     data_pagamento: date | None = None
     status: str = "pendente"
     observacao: str | None = None
+    recorrente: bool = False
+    dia_vencimento: int | None = None  # obrigatório quando recorrente=True (1-28)
+
+
+def _competencia_seguinte(competencia: str) -> str:
+    ano, mes = (int(x) for x in competencia.split("-"))
+    ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
+    return f"{ano:04d}-{mes:02d}"
+
+
+def _gerar_folha_recorrente(session: Session) -> None:
+    """
+    Para cada lançamento de folha marcado como recorrente (o "modelo"), gera
+    automaticamente os lançamentos das competências seguintes até o mês atual
+    — tanto o registro de acompanhamento (FolhaPagamento) quanto a conta a
+    pagar correspondente (ContaGerencial) — sem exigir relançamento manual
+    todo mês. Mesmo padrão "lazy pull" da baixa automática de Alimentação.
+    """
+    competencia_atual = date.today().strftime("%Y-%m")
+    modelos = session.exec(select(FolhaPagamento).where(FolhaPagamento.recorrente == True)).all()  # noqa: E712
+    for modelo in modelos:
+        pessoa = session.get(Pessoa, modelo.pessoa_id)
+        if not pessoa:
+            continue
+        competencia = _competencia_seguinte(modelo.competencia)
+        while competencia <= competencia_atual:
+            existe = session.exec(
+                select(FolhaPagamento).where(
+                    FolhaPagamento.pessoa_id == modelo.pessoa_id,
+                    FolhaPagamento.competencia == competencia,
+                )
+            ).first()
+            if not existe:
+                ano, mes = (int(x) for x in competencia.split("-"))
+                dia = min(max(modelo.dia_vencimento or 5, 1), 28)
+                valor_liquido = round(modelo.valor_bruto - modelo.descontos, 2)
+                numero_lancamento = _proximo_numero_lancamento(session, ano)
+                nova = FolhaPagamento(
+                    pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
+                    descontos=modelo.descontos, valor_liquido=valor_liquido, status="pendente",
+                    observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
+                    numero_lancamento_gerado=numero_lancamento,
+                )
+                session.add(nova)
+                session.add(ContaGerencial(
+                    numero_lancamento=numero_lancamento,
+                    descricao=f"Folha de pagamento — {pessoa.nome} ({competencia})",
+                    data_vencimento=date(ano, mes, dia),
+                    data_competencia=date(ano, mes, 1),
+                    fornecedor_cliente=pessoa.nome,
+                    tipo_documento="Folha de pagamento",
+                    valor_total=valor_liquido,
+                    parcela_num=1, parcela_total=1,
+                    tipo="despesa", origem="auto",
+                ))
+                session.commit()
+            competencia = _competencia_seguinte(competencia)
 
 
 @router.get("/folha-pagamento")
 def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict]:
+    _gerar_folha_recorrente(session)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
     return [{**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—")} for r in registros]
@@ -163,10 +224,13 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+    if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
+        raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
         descontos=dados.descontos, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
+        recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
     )
     session.add(registro)
     session.commit()
@@ -186,6 +250,8 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+    if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
+        raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
     registro.pessoa_id = dados.pessoa_id
     registro.competencia = dados.competencia
     registro.valor_bruto = dados.valor_bruto
@@ -194,6 +260,8 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.data_pagamento = dados.data_pagamento
     registro.status = dados.status
     registro.observacao = dados.observacao
+    registro.recorrente = dados.recorrente
+    registro.dia_vencimento = dados.dia_vencimento if dados.recorrente else None
     session.add(registro)
     session.commit()
     session.refresh(registro)
