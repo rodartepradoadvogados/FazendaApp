@@ -78,10 +78,24 @@ class LancamentoIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
 
 
+FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito"]
+
+
 class PagamentoIn(BaseModel):
     data_pagamento: date
     valor_pago: float
     conta_bancaria: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None
+    forma_pagamento: Optional[str] = None
+    data_vencimento_cartao: Optional[date] = None
+
+
+class BaixaLoteIn(BaseModel):
+    lancamento_ids: list[int]
+    data_pagamento: date
+    conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None
+    data_vencimento_cartao: Optional[date] = None
     numero_documento_pagamento: Optional[str] = None
 
 
@@ -195,6 +209,8 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "numero_documento": c.numero_nota,
             "numero_documento_pagamento": c.numero_documento_pagamento,
             "conta_bancaria": c.conta_bancaria,
+            "forma_pagamento": c.forma_pagamento,
+            "data_vencimento_cartao": c.data_vencimento_cartao.isoformat() if c.data_vencimento_cartao else None,
             "quantidade": c.quantidade,
             "valor_unitario": c.valor_unitario,
             "entregue": c.entregue,
@@ -266,6 +282,7 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
         "produtos": produtos,
         "contas_bancarias": [rotulo_conta_corrente(c) for c in contas_correntes],
         "tipos_documento": TIPOS_DOCUMENTO,
+        "formas_pagamento": FORMAS_PAGAMENTO,
     }
 
 
@@ -525,15 +542,54 @@ def pagar_lancamento(lancamento_id: int, dados: PagamentoIn, session: Session = 
     if not registro:
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
+    if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
+        raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
+
     registro.data_pagamento = dados.data_pagamento
     registro.valor_pago = dados.valor_pago
     registro.conta_bancaria = dados.conta_bancaria
     registro.numero_documento_pagamento = dados.numero_documento_pagamento
+    registro.forma_pagamento = dados.forma_pagamento
+    registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
     registro.desconto_acrescimo = round(dados.valor_pago - (registro.valor_total or 0), 2)
     session.add(registro)
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
+
+
+@router.put("/lancamentos/baixa-lote")
+def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Dá baixa em vários lançamentos de uma vez, todos com o mesmo pagamento
+    (data, conta corrente, forma de pagamento e nº de comprovante único) —
+    cada lançamento é pago pelo próprio valor_total (sem desconto/acréscimo
+    na baixa em lote; use a baixa individual para isso).
+    """
+    if not dados.lancamento_ids:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento")
+    if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
+        raise HTTPException(status_code=400, detail="Informe a data de vencimento do cartão")
+
+    baixados = []
+    nao_encontrados = []
+    for lancamento_id in dados.lancamento_ids:
+        registro = session.get(ContaGerencial, lancamento_id)
+        if not registro:
+            nao_encontrados.append(lancamento_id)
+            continue
+        registro.data_pagamento = dados.data_pagamento
+        registro.valor_pago = registro.valor_total
+        registro.desconto_acrescimo = 0.0
+        registro.conta_bancaria = dados.conta_bancaria
+        registro.forma_pagamento = dados.forma_pagamento
+        registro.data_vencimento_cartao = dados.data_vencimento_cartao if dados.forma_pagamento == "credito" else None
+        registro.numero_documento_pagamento = dados.numero_documento_pagamento
+        session.add(registro)
+        baixados.append(lancamento_id)
+
+    session.commit()
+    return {"baixados": len(baixados), "nao_encontrados": nao_encontrados}
 
 
 @router.post("/importar-xml")

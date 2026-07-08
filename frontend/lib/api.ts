@@ -596,11 +596,23 @@ export async function criarLancamentoFinanceiro(dados: any) {
 
 export async function marcarPagoFinanceiro(id: number, dados: {
   data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
+  forma_pagamento?: string; data_vencimento_cartao?: string;
 }) {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  return res.json();
+}
+
+export async function criarBaixaLote(dados: {
+  lancamento_ids: number[]; data_pagamento: string; conta_bancaria?: string;
+  forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
+}) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
   return res.json();
 }
 

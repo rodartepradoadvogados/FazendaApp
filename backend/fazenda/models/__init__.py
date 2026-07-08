@@ -238,6 +238,8 @@ class ContaGerencial(SQLModel, table=True):
     tipo_documento: Optional[str] = None  # nota fiscal | recibo | folha de pagamento | fatura | contrato
     numero_documento_pagamento: Optional[str] = None
     conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None  # pix | transferencia | boleto | credito
+    data_vencimento_cartao: Optional[date] = None  # só quando forma_pagamento == "credito"
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
     valor_total: Optional[float] = None

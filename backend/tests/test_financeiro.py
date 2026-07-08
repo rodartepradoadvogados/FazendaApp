@@ -344,3 +344,84 @@ class TestParametrosFinanceiros:
         assert r.status_code == 200
         assert r.json()["nome"] == "Conta renomeada"
         assert r.json()["ativa"] is False
+
+
+class TestBaixaLote:
+    def _criar_lancamento(self, c, valor=1000.0, produto="Ração"):
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": produto, "quantidade": 1, "valor_unitario": valor, "valor_total": valor}],
+        })
+        return r.json()["ids"][0]
+
+    def test_baixa_lote_marca_todos_como_pagos(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 500.0)
+        id2 = self._criar_lancamento(c, 700.0)
+
+        r = c.put("/financeiro/lancamentos/baixa-lote", json={
+            "lancamento_ids": [id1, id2], "data_pagamento": "2026-07-08",
+            "conta_bancaria": "Banco X", "forma_pagamento": "pix",
+            "numero_documento_pagamento": "COMP-001",
+        })
+        assert r.status_code == 200
+        assert r.json()["baixados"] == 2
+
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["valor_pago"] == 500.0
+        assert lancs[id2]["valor_pago"] == 700.0
+        assert lancs[id1]["forma_pagamento"] == "pix"
+        assert lancs[id1]["numero_documento_pagamento"] == "COMP-001"
+        assert lancs[id1]["data_pagamento"] == "2026-07-08"
+
+    def test_baixa_lote_credito_exige_vencimento_do_cartao(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c)
+        r = c.put("/financeiro/lancamentos/baixa-lote", json={
+            "lancamento_ids": [id1], "data_pagamento": "2026-07-08", "forma_pagamento": "credito",
+        })
+        assert r.status_code == 400
+
+    def test_baixa_lote_credito_com_vencimento_ok(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c)
+        r = c.put("/financeiro/lancamentos/baixa-lote", json={
+            "lancamento_ids": [id1], "data_pagamento": "2026-07-08", "forma_pagamento": "credito",
+            "data_vencimento_cartao": "2026-08-10",
+        })
+        assert r.status_code == 200
+        lanc = next(l for l in c.get("/financeiro/lancamentos").json()["lancamentos"] if l["id"] == id1)
+        assert lanc["data_vencimento_cartao"] == "2026-08-10"
+
+    def test_baixa_lote_sem_ids_da_erro(self, client):
+        c, engine = client
+        r = c.put("/financeiro/lancamentos/baixa-lote", json={"lancamento_ids": [], "data_pagamento": "2026-07-08"})
+        assert r.status_code == 400
+
+    def test_baixa_lote_id_inexistente_reportado_sem_quebrar_os_demais(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c)
+        r = c.put("/financeiro/lancamentos/baixa-lote", json={
+            "lancamento_ids": [id1, 999999], "data_pagamento": "2026-07-08",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["baixados"] == 1
+        assert corpo["nao_encontrados"] == [999999]
+
+    def test_baixa_individual_aceita_forma_pagamento(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 300.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 300.0, "forma_pagamento": "boleto",
+        })
+        assert r.status_code == 200
+        assert r.json()["forma_pagamento"] == "boleto"
+
+    def test_baixa_individual_credito_sem_vencimento_da_erro(self, client):
+        c, engine = client
+        id1 = self._criar_lancamento(c, 300.0)
+        r = c.put(f"/financeiro/lancamentos/{id1}/pagar", json={
+            "data_pagamento": "2026-07-08", "valor_pago": 300.0, "forma_pagamento": "credito",
+        })
+        assert r.status_code == 400
