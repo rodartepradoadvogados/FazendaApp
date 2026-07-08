@@ -329,6 +329,18 @@ export async function fetchAlimentacao() {
   return res.json();
 }
 
+export async function fetchNecessidadeMensal() {
+  const res = await authFetch(`${API}/alimentacao/necessidade-mensal`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Necessidade mensal error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEstadoBaixaAlimentacao() {
+  const res = await authFetch(`${API}/alimentacao/estado-baixa`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Estado da baixa error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);

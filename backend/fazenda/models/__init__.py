@@ -431,6 +431,25 @@ class Dieta(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Estado da baixa automática de estoque da Alimentação (linha única, id=1)
+# ---------------------------------------------------------------------------
+class AlimentacaoEstado(SQLModel, table=True):
+    """
+    Controla a data da última baixa automática de estoque da Alimentação —
+    o sistema recalcula quantos dias se passaram desde então e dá a baixa
+    proporcional ao consumo do rebanho (kg/dia) de uma vez, na próxima vez
+    que a tela de Alimentação é aberta. `ultima_data_deducao` funciona como
+    trava otimista (compare-and-swap): duas requisições concorrentes nunca
+    aplicam a mesma baixa duas vezes (ver fazenda/api/routers/alimentacao.py).
+    """
+
+    __tablename__ = "alimentacao_estado"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ultima_data_deducao: Optional[date] = None
+
+
+# ---------------------------------------------------------------------------
 # Agenda Manual
 # ---------------------------------------------------------------------------
 class AgendaManual(SQLModel, table=True):
