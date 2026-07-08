@@ -113,3 +113,16 @@ class TestRegistrarAplicacao:
             "data_aplicacao": "2026-07-08", "animais": ["101"], "itens": [],
         })
         assert r.status_code == 400
+
+    def test_baixa_direta_gera_movimento_de_estoque(self, client):
+        # Antes, a baixa direta mexia em Estoque.quantidade sem deixar rastro
+        # em MovimentoEstoque — ficava invisível no histórico/RMCA físico.
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101", "102"],
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        r = client.get("/estoque/movimentos")
+        movimentos = [m for m in r.json()["movimentos"] if m["nome_item"] == "Borgal 50ml"]
+        assert len(movimentos) == 1
+        assert movimentos[0]["movimento"] == "Aplicação"
+        assert movimentos[0]["quantidade"] == 20  # 10ml * 2 animais

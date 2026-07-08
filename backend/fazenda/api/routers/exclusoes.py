@@ -49,6 +49,11 @@ def tipos() -> list[dict]:
     return TIPOS
 
 
+def _br(data) -> str:
+    """Formata uma data como dd/mm/aaaa (padrão brasileiro) para exibição no título."""
+    return data.strftime("%d/%m/%Y") if data else "—"
+
+
 def _contem(termo: str, *valores) -> bool:
     if not termo:
         return True
@@ -92,7 +97,7 @@ def buscar(
         out = [
             {
                 "id": s.id,
-                "titulo": f"{s.numero_matriz} — {s.data_servico.isoformat() if s.data_servico else '—'}",
+                "titulo": f"{s.numero_matriz} — {_br(s.data_servico)}",
                 "subtitulo": f"{s.tipo_servico or '—'} · {s.reprodutor or '—'} · diag: {s.diagnostico or '—'}",
             }
             for s in rows
@@ -106,7 +111,7 @@ def buscar(
         out = [
             {
                 "id": p.id,
-                "titulo": f"{p.numero_matriz} — {p.data_parto.isoformat() if p.data_parto else '—'}",
+                "titulo": f"{p.numero_matriz} — {_br(p.data_parto)}",
                 "subtitulo": f"Parto nº{p.ordem_parto or '?'} · {p.tipo_parto or '—'}",
             }
             for p in rows
@@ -119,7 +124,7 @@ def buscar(
         out = [
             {
                 "id": c.id,
-                "titulo": f"{c.numero_matriz} — {c.data_controle.isoformat() if c.data_controle else '—'}",
+                "titulo": f"{c.numero_matriz} — {_br(c.data_controle)}",
                 "subtitulo": f"{c.producao_kg or 0} kg",
             }
             for c in rows
@@ -132,7 +137,7 @@ def buscar(
         out = [
             {
                 "id": s.id,
-                "titulo": f"{s.numero_matriz} — {s.data_aplicacao.isoformat() if s.data_aplicacao else '—'}",
+                "titulo": f"{s.numero_matriz} — {_br(s.data_aplicacao)}",
                 "subtitulo": s.produto,
             }
             for s in rows
@@ -170,7 +175,7 @@ def buscar(
         out = [
             {
                 "id": ev.id,
-                "titulo": f"{ev.data_evento.isoformat()} — {ev.descricao}",
+                "titulo": f"{_br(ev.data_evento)} — {ev.descricao}",
                 "subtitulo": ev.categoria,
             }
             for ev in rows
@@ -206,19 +211,19 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         s = session.get(Servico, int(id_))
         if not s:
             raise HTTPException(status_code=404, detail="Serviço não encontrado")
-        return [f"Serviço de {s.numero_matriz} em {s.data_servico.isoformat() if s.data_servico else '—'}"], [s]
+        return [f"Serviço de {s.numero_matriz} em {_br(s.data_servico)}"], [s]
 
     if tipo == "parto":
         p = session.get(Parto, int(id_))
         if not p:
             raise HTTPException(status_code=404, detail="Parto não encontrado")
-        return [f"Parto de {p.numero_matriz} em {p.data_parto.isoformat() if p.data_parto else '—'}"], [p]
+        return [f"Parto de {p.numero_matriz} em {_br(p.data_parto)}"], [p]
 
     if tipo == "controle":
         c = session.get(ControleLeiteiro, int(id_))
         if not c:
             raise HTTPException(status_code=404, detail="Registro não encontrado")
-        return [f"Controle leiteiro de {c.numero_matriz} em {c.data_controle.isoformat() if c.data_controle else '—'}"], [c]
+        return [f"Controle leiteiro de {c.numero_matriz} em {_br(c.data_controle)}"], [c]
 
     if tipo == "sanidade":
         s = session.get(Sanidade, int(id_))
@@ -236,7 +241,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         ev = session.get(AgendaManual, int(id_))
         if not ev:
             raise HTTPException(status_code=404, detail="Evento não encontrado")
-        return [f'Evento manual "{ev.descricao}" em {ev.data_evento.isoformat()}'], [ev]
+        return [f'Evento manual "{ev.descricao}" em {_br(ev.data_evento)}'], [ev]
 
     if tipo == "financeiro":
         c = session.get(ContaGerencial, int(id_))

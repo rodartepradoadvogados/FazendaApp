@@ -194,3 +194,31 @@ class TestBuscaComFiltroDeData:
 
         r = c.get("/exclusoes/buscar", params={"tipo": "estoque", "data_inicio": "2026-01-01", "data_fim": "2026-12-31"})
         assert len(r.json()) == 1
+
+
+class TestFormatoDeDataNoTitulo:
+    """O título mostrado na lista (campo 'Registro') usa dd/mm/aaaa com barra,
+    não o formato ISO com hífen que o backend usava antes."""
+
+    def test_titulo_do_servico_usa_barra_em_vez_de_hifen(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Servico(numero_matriz="111", data_servico=date(2026, 3, 5)))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "servico"})
+        titulo = r.json()[0]["titulo"]
+        assert titulo == "111 — 05/03/2026"
+        assert "2026-03-05" not in titulo
+
+    def test_titulo_do_evento_manual_usa_barra(self, client):
+        c, engine = client
+        from fazenda.models import AgendaManual
+        with _sessao(engine) as s:
+            s.add(AgendaManual(data_evento=date(2026, 6, 15), descricao="Visita técnica", categoria="outro"))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "evento_manual"})
+        titulo = r.json()[0]["titulo"]
+        assert titulo.startswith("15/06/2026")
+        assert "2026-06-15" not in titulo

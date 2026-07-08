@@ -145,7 +145,7 @@ export function FormExclusao() {
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
         <div>
           <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Tipo de lançamento</label>
           <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value); setTermo(""); setDataInicio(""); setDataFim(""); setAlvo(null); setImpacto(null); }}>
@@ -153,15 +153,6 @@ export function FormExclusao() {
             {tipos.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
         </div>
-        {tipo && (
-          <div>
-            <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Buscar</label>
-            <div style={{ position: "relative" }}>
-              <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
-              <input style={{ ...inputStyle, paddingLeft: "2rem" }} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="número, nome, descrição…" />
-            </div>
-          </div>
-        )}
         {temFiltroData && (
           <>
             <div>
@@ -175,6 +166,16 @@ export function FormExclusao() {
           </>
         )}
       </div>
+
+      {tipo && (
+        <div className="mb-3" style={{ maxWidth: "420px" }}>
+          <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Buscar (refina o resultado acima)</label>
+          <div style={{ position: "relative" }}>
+            <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
+            <input style={{ ...inputStyle, paddingLeft: "2rem" }} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="número, nome, descrição…" />
+          </div>
+        </div>
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.6rem" }}>{erro}</p>}
       {msg && <p style={{ color: "var(--green-light)", fontSize: "0.82rem", marginBottom: "0.6rem" }}>{msg}</p>}

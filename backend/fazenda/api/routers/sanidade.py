@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Estoque, Sanidade
+from fazenda.models import Estoque, MovimentoEstoque, Sanidade
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
@@ -100,6 +100,13 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
                 estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
             estoque_item.atualizado_em = datetime.utcnow()
             session.add(estoque_item)
+            # Sem este registro, a baixa de sanidade ficava invisível no
+            # histórico de /estoque/movimentos e no custo físico do RMCA.
+            session.add(MovimentoEstoque(
+                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
+                unidade=estoque_item.unidade, data_movimento=dados.data_aplicacao,
+                observacao=f"Aplicação em {len(dados.animais)} animal(is) — Sanidade",
+            ))
         elif estoque_item and estoque_item.unidade and estoque_item.unidade != item.unidade:
             avisos.append(
                 f'Baixa de estoque de "{item.produto}" não aplicada — cadastre a equivalência entre '
