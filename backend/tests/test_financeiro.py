@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, LancamentoItem, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -425,3 +425,78 @@ class TestBaixaLote:
             "data_pagamento": "2026-07-08", "valor_pago": 300.0, "forma_pagamento": "credito",
         })
         assert r.status_code == 400
+
+
+class TestRmca:
+    def _marcar_contas(self, session):
+        session.add(PlanoContaGerencial(codigo="2.01.01.01", nome="Leite indústria", ativa=True, rmca_receita_leite=True))
+        session.add(PlanoContaGerencial(codigo="3.01.01.01", nome="Ração", ativa=True, rmca_custo_alimentacao=True))
+        session.commit()
+
+    def test_sem_configuracao_retorna_configurado_falso(self, client):
+        c, engine = client
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        assert r.json()["configurado"] is False
+
+    def test_versao_gerencial_soma_pelas_contas_marcadas(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "receita",
+            "itens": [{"produto": "Leite", "codigo_conta_gerencial": "2.01.01.01", "valor_total": 10000.0}],
+            "data_competencia": "2026-01-10",
+        })
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração concentrada", "codigo_conta_gerencial": "3.01.01.01", "valor_total": 3000.0}],
+            "data_competencia": "2026-01-15",
+        })
+        # Fora do período — não deve entrar na soma.
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "receita",
+            "itens": [{"produto": "Leite", "codigo_conta_gerencial": "2.01.01.01", "valor_total": 99999.0}],
+            "data_competencia": "2026-03-01",
+        })
+
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["configurado"] is True
+        assert corpo["gerencial"]["receita_leite"] == 10000.0
+        assert corpo["gerencial"]["custo_alimentacao"] == 3000.0
+        assert corpo["gerencial"]["rmca"] == 7000.0
+
+    def test_versao_fisica_usa_consumo_real_x_valor_unitario_do_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5))
+            s.commit()
+
+        c.post("/financeiro/lancamentos", json={
+            "tipo": "receita",
+            "itens": [{"produto": "Leite", "codigo_conta_gerencial": "2.01.01.01", "valor_total": 10000.0}],
+            "data_competencia": "2026-01-10",
+        })
+        with Session(engine) as s:
+            s.add(MovimentoEstoque(
+                nome_item="Ração concentrada", movimento="Saída de ajuste", quantidade=400,
+                unidade="kg", data_movimento=date(2026, 1, 20),
+            ))
+            # Movimento manual (não da Alimentação) — não deve entrar no custo físico.
+            s.add(MovimentoEstoque(
+                nome_item="Ração concentrada", movimento="Aplicação", quantidade=999,
+                unidade="kg", data_movimento=date(2026, 1, 21),
+            ))
+            s.commit()
+
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        fisico = r.json()["fisico"]
+        assert fisico["receita_leite"] == 10000.0
+        assert fisico["custo_alimentacao"] == 1000.0  # 400kg * R$2,50
+        assert fisico["rmca"] == 9000.0
+        assert fisico["itens"][0]["ingrediente"] == "Ração concentrada"

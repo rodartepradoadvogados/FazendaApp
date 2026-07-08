@@ -12,8 +12,12 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, LancamentoItem, Patrimonio, PlanoContaGerencial
+from fazenda.models import (
+    CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
+    PlanoContaGerencial,
+)
 from fazenda.rules.nfe_xml import parse_nfe_xml
+from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -300,6 +304,7 @@ def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
                 "id": c.id, "codigo": c.codigo, "nome": c.nome, "ativa": c.ativa,
                 "nivel": c.codigo.count(".") + 1,
                 "fluxo": c.fluxo, "tipo_fixo_variavel": c.tipo_fixo_variavel,
+                "rmca_receita_leite": c.rmca_receita_leite, "rmca_custo_alimentacao": c.rmca_custo_alimentacao,
             }
             for c in plano
         ],
@@ -393,6 +398,9 @@ class PlanoContaGerencialIn(BaseModel):
     participa_atividade: bool | None = None
     fluxo: bool | None = None
     tipo_fixo_variavel: str | None = None
+    # Marcação para o indicador RMCA (ver GET /financeiro/rmca).
+    rmca_receita_leite: bool | None = None
+    rmca_custo_alimentacao: bool | None = None
 
 
 @router.post("/plano-contas")
@@ -420,6 +428,51 @@ def atualizar_conta_gerencial(conta_id: int, dados: PlanoContaGerencialIn, sessi
     session.commit()
     session.refresh(conta)
     return conta.model_dump()
+
+
+@router.get("/rmca")
+def rmca(
+    data_inicio: date = Query(..., description="Data inicial (competência)"),
+    data_fim: date = Query(..., description="Data final (competência)"),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Indicador RMCA (Receita Menos Custo com Alimentação), em duas versões
+    lado a lado: "gerencial" (soma dos lançamentos financeiros pelas contas
+    marcadas em Configurações > Parâmetros financeiros) e "físico" (receita
+    igual, mas custo a partir do consumo real registrado pela Alimentação em
+    MovimentoEstoque × valor unitário do item no Estoque).
+    """
+    plano = session.exec(select(PlanoContaGerencial)).all()
+    codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
+    codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
+
+    itens = [
+        it.model_dump() for it in session.exec(select(LancamentoItem)).all()
+        if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
+    ]
+    gerencial = calcular_rmca_gerencial(itens, codigos_receita, codigos_custo)
+
+    movimentos = [
+        m.model_dump() for m in session.exec(select(MovimentoEstoque)).all()
+        if m.movimento == "Saída de ajuste" and data_inicio <= m.data_movimento <= data_fim
+    ]
+    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(select(Estoque)).all()}
+    fisico = calcular_custo_fisico(movimentos, estoque_por_nome)
+
+    return {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "configurado": bool(codigos_receita) and bool(codigos_custo),
+        "contas_receita": sorted(c.nome for c in plano if c.codigo in codigos_receita),
+        "contas_custo": sorted(c.nome for c in plano if c.codigo in codigos_custo),
+        "gerencial": gerencial,
+        "fisico": {
+            "receita_leite": gerencial["receita_leite"],
+            "custo_alimentacao": fisico["custo_total"],
+            "rmca": round(gerencial["receita_leite"] - fisico["custo_total"], 2),
+            "itens": fisico["itens"],
+        },
+    }
 
 
 @router.get("/patrimonio")
