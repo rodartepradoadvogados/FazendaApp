@@ -130,3 +130,58 @@ def animal_atende_criterios(
             return False
 
     return True
+
+
+# Campos que definem um critério de fato — um lote sem NENHUM desses
+# preenchido "atende" qualquer animal (não filtra nada), então não entra na
+# sugestão automática de movimentação (evitaria sugerir o rebanho inteiro
+# para um lote sem critério nenhum configurado).
+_CAMPOS_CRITERIO = [
+    "status_lactacao", "categorias", "pre_parto", "peso_min", "peso_max",
+    "del_min", "del_max", "producao_min", "producao_max",
+    "dias_para_parto_min", "dias_para_parto_max", "em_tratamento",
+    "idade_dias_min", "idade_dias_max", "novilhas_inseminadas", "novilhas_gestantes",
+]
+
+
+def lote_tem_criterio(lote) -> bool:
+    return any(getattr(lote, campo, None) for campo in _CAMPOS_CRITERIO)
+
+
+def sugerir_movimentacoes(
+    lotes: list,
+    animais: list[dict],
+    hoje: date,
+    peso_por_animal: dict[str, float],
+    servicos_por_animal: dict[str, list[dict]],
+    sanidades_por_animal: dict[str, list[dict]],
+) -> list[dict]:
+    """
+    Para cada animal ativo, verifica a quais lotes (com critério configurado)
+    ele atende. Se o lote atual dele não estiver entre os que ele atende,
+    mas ele atender a algum outro, sugere a troca. Animal que não atende a
+    nenhum lote com critério (dado insuficiente ou fora de toda faixa) não
+    gera sugestão — não há para onde mandar.
+    """
+    lotes_com_criterio = [l for l in lotes if lote_tem_criterio(l)]
+    sugestoes = []
+    for animal in animais:
+        numero = animal["numero"]
+        grupo = animal.get("grupo_primario") or ""
+        codigo_atual = grupo[:2] if len(grupo) >= 2 and grupo[:2].isdigit() else None
+
+        atende = [
+            l for l in lotes_com_criterio
+            if animal_atende_criterios(l, animal, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+        ]
+        if not atende:
+            continue
+        if codigo_atual in {l.codigo for l in atende}:
+            continue
+
+        sugestoes.append({
+            "numero_matriz": numero,
+            "lote_atual": grupo or None,
+            "lotes_sugeridos": [{"codigo": l.codigo, "nome": l.nome, "rotulo": f"{l.codigo} - {l.nome}"} for l in atende],
+        })
+    return sugestoes

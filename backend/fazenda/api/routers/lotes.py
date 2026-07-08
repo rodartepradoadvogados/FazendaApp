@@ -143,19 +143,10 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     return lote.model_dump()
 
 
-@router.post("/preview")
-def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
-    """
-    Prévia de quantos e quais animais atendem aos critérios informados (sem
-    precisar salvar o lote) — cumulativos, em E lógico.
-    """
-    _validar_faixas(dados)
-    lote_temp = Lote(codigo=dados.codigo or "?", nome=dados.nome or "?")
-    _aplicar_campos(lote_temp, dados)
-
-    hoje = date.today()
+def coletar_dados_criterios(session: Session) -> tuple[list[dict], dict, dict, dict]:
+    """Reúne os dados usados pelos critérios de lote (prévia e sugestão de movimentação)."""
     animais = [
-        a for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
         if not a.eh_semen and a.sexo != "M"
     ]
 
@@ -168,16 +159,31 @@ def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) ->
         sanidades_por_animal.setdefault(s.numero_matriz, []).append(s.model_dump())
 
     peso_por_animal: dict[str, float] = {}
-    pesagens = session.exec(select(PesagemCorporal)).all()
     ultima_data: dict[str, date] = {}
-    for p in pesagens:
+    for p in session.exec(select(PesagemCorporal)).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
+    return animais, servicos_por_animal, sanidades_por_animal, peso_por_animal
+
+
+@router.post("/preview")
+def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Prévia de quantos e quais animais atendem aos critérios informados (sem
+    precisar salvar o lote) — cumulativos, em E lógico.
+    """
+    _validar_faixas(dados)
+    lote_temp = Lote(codigo=dados.codigo or "?", nome=dados.nome or "?")
+    _aplicar_campos(lote_temp, dados)
+
+    hoje = date.today()
+    animais, servicos_por_animal, sanidades_por_animal, peso_por_animal = coletar_dados_criterios(session)
+
     atendem = [
-        a.numero for a in animais
-        if animal_atende_criterios(lote_temp, a.model_dump(), hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+        a["numero"] for a in animais
+        if animal_atende_criterios(lote_temp, a, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
     ]
     return {"total": len(atendem), "animais": sorted(atendem)}

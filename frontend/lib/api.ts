@@ -273,6 +273,12 @@ export async function fetchMovimentacoes(params?: { numero_matriz?: string; data
   if (!res.ok) throw new Error(`Movimentações error: ${res.status}`);
   return res.json();
 }
+export async function fetchSugestoesMovimentacao() {
+  const res = await authFetch(`${API}/movimentacoes/sugestoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sugestões de movimentação error: ${res.status}`);
+  return res.json();
+}
+
 export async function criarMovimentacao(dados: {
   data_movimento: string; hora_movimento?: string; motivo: string; observacao?: string;
   responsavel?: string; lote_destino_codigo: string; animais: string[];
