@@ -177,6 +177,38 @@ export async function fetchLancamentos() {
   return res.json();
 }
 
+export async function fetchOpcoesFinanceiro() {
+  const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarLancamentoFinanceiro(dados: any) {
+  const res = await authFetch(`${API}/financeiro/lancamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  return res.json();
+}
+
+export async function marcarPagoFinanceiro(id: number, dados: {
+  data_pagamento: string; valor_pago: number; conta_bancaria?: string; numero_documento_pagamento?: string;
+}) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${id}/pagar`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa"); }
+  return res.json();
+}
+
+export async function importarXmlFinanceiro(xml: string) {
+  const res = await authFetch(`${API}/financeiro/importar-xml`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o XML"); }
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;
