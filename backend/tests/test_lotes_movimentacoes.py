@@ -11,6 +11,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import Animal, Lote
+from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
 @pytest.fixture
@@ -42,6 +43,7 @@ def client():
             s.add(Animal(numero="202", grupo_primario="01 - Alta", del_dias=80, ativo=True))
             s.add(Animal(numero="203", grupo_primario="02 - Baixa", del_dias=200, ativo=True))
             s.commit()
+            seed_motivos_movimentacao(s)
         yield c
 
     main.app.dependency_overrides.clear()
@@ -110,10 +112,32 @@ class TestCadastroLotes:
 
 
 class TestMovimentacoes:
-    def test_lista_motivos_fixos(self, client):
+    def test_lista_motivos_seedados(self, client):
         r = client.get("/movimentacoes/motivos")
         assert r.status_code == 200
         assert "Tratamento/doença" in r.json()
+        assert "Pós-parto" in r.json()
+        assert "Parto" not in r.json()  # renomeado para "Pós-parto"
+        assert "Secagem" in r.json()
+        assert "Nascimento" in r.json()
+        assert "Outro motivo" in r.json()
+
+    def test_cria_motivo_novo(self, client):
+        r = client.post("/movimentacoes/motivos", json={"nome": "Venda"})
+        assert r.status_code == 200
+        assert r.json()["nome"] == "Venda"
+        assert "Venda" in client.get("/movimentacoes/motivos").json()
+
+    def test_nao_permite_motivo_duplicado(self, client):
+        r = client.post("/movimentacoes/motivos", json={"nome": "Secagem"})
+        assert r.status_code == 409
+
+    def test_desativar_motivo_some_da_lista_ativa_mas_continua_no_cadastro(self, client):
+        motivo_id = next(m["id"] for m in client.get("/movimentacoes/motivos/cadastro").json() if m["nome"] == "Desmama")
+        r = client.put(f"/movimentacoes/motivos/{motivo_id}", json={"nome": "Desmama", "ativo": False})
+        assert r.status_code == 200
+        assert "Desmama" not in client.get("/movimentacoes/motivos").json()
+        assert any(m["nome"] == "Desmama" for m in client.get("/movimentacoes/motivos/cadastro").json())
 
     def test_move_um_animal(self, client):
         r = client.post("/movimentacoes/mover", json={
@@ -133,12 +157,22 @@ class TestMovimentacoes:
         })
         assert r.json()["movidos"] == 2
 
-    def test_rejeita_motivo_fora_da_lista(self, client):
+    def test_aceita_motivo_livre_fora_da_lista_seedada(self, client):
+        # Motivo agora é uma lista editável (Configurações); texto digitado em
+        # "Outro motivo" não precisa bater com nenhum nome cadastrado.
         r = client.post("/movimentacoes/mover", json={
-            "data_movimento": "2026-07-08", "motivo": "Outro motivo qualquer",
+            "data_movimento": "2026-07-08", "motivo": "Alguma causa digitada à mão",
             "lote_destino_codigo": "02", "animais": ["201"],
         })
-        assert r.status_code == 400
+        assert r.status_code == 200
+
+    def test_motivo_e_opcional(self, client):
+        r = client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08",
+            "lote_destino_codigo": "02", "animais": ["201"],
+        })
+        assert r.status_code == 200
+        assert r.json()["movidos"] == 1
 
     def test_rejeita_lote_destino_inexistente(self, client):
         r = client.post("/movimentacoes/mover", json={

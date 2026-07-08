@@ -1,16 +1,18 @@
 "use client";
 import { useState } from "react";
-import { Layers, Beef, Truck, Package } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
 import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
+import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 
 const ABAS = [
   ["lotes", "Lotes", Layers],
   ["animal", "Animal (ficha)", Beef],
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Itens de estoque", Package],
+  ["motivos", "Motivos de movimentação", ArrowRightLeft],
 ] as const;
 
 export default function Cadastro() {
@@ -41,6 +43,7 @@ export default function Cadastro() {
       {aba === "animal" && <CadastroAnimalForm />}
       {aba === "fornecedores" && <CadastroFornecedores />}
       {aba === "estoque" && <CadastroEstoqueMeta />}
+      {aba === "motivos" && <CadastroMotivosMovimentacao />}
     </div>
   );
 }

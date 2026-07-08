@@ -15,6 +15,7 @@ from fazenda.api.routers import (
     alimentacao,
     animais,
     auth,
+    baixas,
     cadastro,
     estoque,
     exclusoes,
@@ -30,14 +31,16 @@ from fazenda.api.routers import (
     sanidade,
     upload,
 )
+from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria tabelas e garante o admin inicial (idempotente)."""
+    """Cria tabelas e garante o admin inicial e os motivos padrão (idempotente)."""
     create_db_and_tables()
     with Session(engine) as session:
         seed_admin(session)
+        seed_motivos_movimentacao(session)
     yield
 
 
@@ -94,6 +97,7 @@ app.include_router(sanidade.router, dependencies=_protegido)
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).

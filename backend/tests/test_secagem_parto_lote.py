@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import Animal, Estoque, Lote, Parto, Sanidade, Secagem, Servico
+from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
 @pytest.fixture
@@ -37,6 +38,8 @@ def client():
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
 
     with TestClient(main.app) as c:
+        with Session(engine) as s:
+            seed_motivos_movimentacao(s)
         yield c, engine
 
     main.app.dependency_overrides.clear()

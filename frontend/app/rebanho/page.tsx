@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
 import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
+import BaixarAnimal from "@/components/BaixarAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 const COLUNAS_REBANHO = [
@@ -204,7 +205,7 @@ function RebanhoVisaoGeral() {
 }
 
 export default function RebanhoPage() {
-  const [aba, setAba] = useState<"visao" | "sugestoes" | "mover" | "historico">("visao");
+  const [aba, setAba] = useState<"visao" | "sugestoes" | "mover" | "baixar" | "historico">("visao");
 
   return (
     <div className="px-6 pt-6">
@@ -213,6 +214,7 @@ export default function RebanhoPage() {
           ["visao", "Rebanho", Beef],
           ["sugestoes", "Sugestões de movimentação", Sparkles],
           ["mover", "Movimentar animais", ArrowRightLeft],
+          ["baixar", "Baixar animal", Skull],
           ["historico", "Histórico", History],
         ] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setAba(k)}
@@ -228,6 +230,7 @@ export default function RebanhoPage() {
         {aba === "visao" && <RebanhoVisaoGeral />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "mover" && <MovimentarAnimais />}
+        {aba === "baixar" && <BaixarAnimal />}
         {aba === "historico" && <HistoricoMovimentacoes />}
       </div>
     </div>

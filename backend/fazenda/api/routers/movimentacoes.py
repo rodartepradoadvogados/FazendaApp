@@ -12,24 +12,37 @@ from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, MovimentoLote
+from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
 router = APIRouter(prefix="/movimentacoes", tags=["movimentacoes"])
 
-MOTIVOS = [
+# Seed inicial — usado só na primeira subida do banco (ver seed_motivos_movimentacao).
+# "Outro motivo" é tratado à parte pelo front: ao ser escolhido, abre um campo de
+# texto livre e o que for digitado ali vira o próprio valor de `motivo`.
+SEED_MOTIVOS = [
     "Crescimento",
     "Desmama",
     "Aptidão",
     "Inseminação",
     "Pré-parto",
-    "Parto",
+    "Pós-parto",
     "Aumento de DEL e/ou produção",
     "Final de DEL ou queda de produção",
     "Tratamento/doença",
     "Secagem",
     "Nascimento",
+    "Outro motivo",
 ]
+
+
+def seed_motivos_movimentacao(session: Session) -> None:
+    """Cria os motivos padrão se a tabela ainda estiver vazia (idempotente)."""
+    if session.exec(select(MotivoMovimentacao)).first():
+        return
+    for nome in SEED_MOTIVOS:
+        session.add(MotivoMovimentacao(nome=nome))
+    session.commit()
 
 
 def _rotulo(codigo: str, nome: str) -> str:
@@ -39,16 +52,62 @@ def _rotulo(codigo: str, nome: str) -> str:
 class MoverIn(BaseModel):
     data_movimento: date
     hora_movimento: str | None = None
-    motivo: str
+    motivo: str | None = None
     observacao: str | None = None
     responsavel: str | None = None
     lote_destino_codigo: str
     animais: list[str]
 
 
+class MotivoIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
 @router.get("/motivos")
-def listar_motivos() -> list[str]:
-    return MOTIVOS
+def listar_motivos(session: Session = Depends(get_session)) -> list[str]:
+    """Nomes dos motivos ativos, na ordem cadastrada — usado pelos selects do front."""
+    motivos = session.exec(
+        select(MotivoMovimentacao).where(MotivoMovimentacao.ativo == True).order_by(MotivoMovimentacao.id)  # noqa: E712
+    ).all()
+    return [m.nome for m in motivos]
+
+
+@router.get("/motivos/cadastro")
+def listar_motivos_cadastro(session: Session = Depends(get_session)) -> list[dict]:
+    """Todos os motivos (inclusive inativos), para a tela de cadastro em Configurações."""
+    motivos = session.exec(select(MotivoMovimentacao).order_by(MotivoMovimentacao.id)).all()
+    return [m.model_dump() for m in motivos]
+
+
+@router.post("/motivos")
+def criar_motivo(dados: MotivoIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(MotivoMovimentacao).where(MotivoMovimentacao.nome == nome)).first():
+        raise HTTPException(status_code=409, detail="Já existe um motivo com esse nome")
+    motivo = MotivoMovimentacao(nome=nome, ativo=dados.ativo)
+    session.add(motivo)
+    session.commit()
+    session.refresh(motivo)
+    return motivo.model_dump()
+
+
+@router.put("/motivos/{motivo_id}")
+def atualizar_motivo(motivo_id: int, dados: MotivoIn, session: Session = Depends(get_session)) -> dict:
+    motivo = session.get(MotivoMovimentacao, motivo_id)
+    if not motivo:
+        raise HTTPException(status_code=404, detail="Motivo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    motivo.nome = nome
+    motivo.ativo = dados.ativo
+    session.add(motivo)
+    session.commit()
+    session.refresh(motivo)
+    return motivo.model_dump()
 
 
 @router.get("/sugestoes")
@@ -92,8 +151,6 @@ def listar_movimentacoes(
 
 @router.post("/mover")
 def mover_animais(dados: MoverIn, session: Session = Depends(get_session)) -> dict:
-    if dados.motivo not in MOTIVOS:
-        raise HTTPException(status_code=400, detail="Motivo inválido")
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
@@ -123,7 +180,7 @@ def mover_animais(dados: MoverIn, session: Session = Depends(get_session)) -> di
             lote_destino=rotulo_destino,
             data_movimento=dados.data_movimento,
             hora_movimento=dados.hora_movimento,
-            motivo=dados.motivo,
+            motivo=dados.motivo or "",
             observacao=dados.observacao,
             responsavel=dados.responsavel,
         ))

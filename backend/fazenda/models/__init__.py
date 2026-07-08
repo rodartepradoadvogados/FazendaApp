@@ -111,7 +111,7 @@ class MovimentoLote(SQLModel, table=True):
     lote_destino: str
     data_movimento: date
     hora_movimento: Optional[str] = None
-    motivo: str
+    motivo: str = ""  # opcional no lançamento — "" quando o usuário não escolher nenhum
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -566,5 +566,42 @@ class Usuario(SQLModel, table=True):
     papel: str = "admin"          # admin (tudo + gerencia usuários) | operador
     # Módulos liberados p/ operador, separados por vírgula. Admin ignora (tem tudo).
     permissoes: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Baixa de animal (Rebanho > Baixar animal) — morte/descarte, distinto da
+# movimentação entre lotes. Ao registrar, o animal é marcado inativo.
+# ---------------------------------------------------------------------------
+class BaixaAnimal(SQLModel, table=True):
+    """Registro de saída definitiva de um animal do rebanho (óbito/descarte)."""
+
+    __tablename__ = "baixa_animal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_animal: str = Field(index=True)
+    tipo_baixa: str  # morte | descarte_voluntario | descarte_involuntario
+    motivo: str      # venda | abate | acidente | doenca
+    motivo_doenca: Optional[str] = None  # preenchido só quando motivo == "doenca"
+    valor: Optional[float] = None        # preenchido só quando motivo == "venda"
+    cliente: Optional[str] = None        # preenchido só quando motivo == "venda"
+    data_baixa: date
+    observacao: Optional[str] = None
+    responsavel: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Motivo de movimentação de lote — lista editável (Configurações > Cadastro),
+# substitui a constante Python fixa que existia antes.
+# ---------------------------------------------------------------------------
+class MotivoMovimentacao(SQLModel, table=True):
+    """Motivo cadastrável de movimentação entre lotes."""
+
+    __tablename__ = "motivo_movimentacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

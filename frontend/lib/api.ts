@@ -287,13 +287,61 @@ export async function fetchSugestoesMovimentacao() {
 }
 
 export async function criarMovimentacao(dados: {
-  data_movimento: string; hora_movimento?: string; motivo: string; observacao?: string;
+  data_movimento: string; hora_movimento?: string; motivo?: string; observacao?: string;
   responsavel?: string; lote_destino_codigo: string; animais: string[];
 }) {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao mover animais"); }
+  return res.json();
+}
+
+// ── Motivos de movimentação (Configurações > Cadastro) ──
+export async function fetchMotivosMovimentacao() {
+  const res = await authFetch(`${API}/movimentacoes/motivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Motivos de movimentação error: ${res.status}`);
+  return res.json();
+}
+export async function fetchMotivosMovimentacaoCadastro() {
+  const res = await authFetch(`${API}/movimentacoes/motivos/cadastro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Motivos de movimentação error: ${res.status}`);
+  return res.json();
+}
+export async function criarMotivoMovimentacao(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/movimentacoes/motivos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo"); }
+  return res.json();
+}
+export async function atualizarMotivoMovimentacao(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/movimentacoes/motivos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo"); }
+  return res.json();
+}
+
+// ── Baixa de animal (Rebanho > Baixar animal) ──
+export async function fetchOpcoesBaixa() {
+  const res = await authFetch(`${API}/baixas/motivos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções de baixa error: ${res.status}`);
+  return res.json();
+}
+export async function fetchBaixas() {
+  const res = await authFetch(`${API}/baixas/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Baixas error: ${res.status}`);
+  return res.json();
+}
+export async function criarBaixaAnimal(dados: {
+  animais: string[]; tipo_baixa: string; motivo: string; motivo_doenca?: string;
+  valor?: number; cliente?: string; data_baixa: string; observacao?: string; responsavel?: string;
+}) {
+  const res = await authFetch(`${API}/baixas/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar baixa"); }
   return res.json();
 }
 

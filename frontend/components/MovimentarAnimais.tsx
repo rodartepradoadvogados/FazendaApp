@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
-import { fetchAnimais, fetchLotes, criarMovimentacao } from "@/lib/api";
-import { RESPONSAVEIS, MOTIVOS_MOVIMENTACAO } from "@/lib/constants";
+import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
+import { RESPONSAVEIS } from "@/lib/constants";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; del_dias: number | null };
 type Lote = { id: number; codigo: string; nome: string; rotulo: string };
@@ -18,6 +18,7 @@ const agora = () => new Date().toTimeString().slice(0, 5);
 export default function MovimentarAnimais() {
   const [animais, setAnimais] = useState<Animal[] | null>(null);
   const [lotes, setLotes] = useState<Lote[] | null>(null);
+  const [motivos, setMotivos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   // 1º passo: seleção do(s) animal(is) — busca por nº e/ou filtro opcional por lote.
@@ -29,6 +30,7 @@ export default function MovimentarAnimais() {
   const [data, setData] = useState(hoje());
   const [hora, setHora] = useState(agora());
   const [motivo, setMotivo] = useState("");
+  const [motivoLivre, setMotivoLivre] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
@@ -37,6 +39,7 @@ export default function MovimentarAnimais() {
   const carregar = () => {
     fetchAnimais().then(setAnimais).catch((e) => setError(e.message));
     fetchLotes().then(setLotes).catch((e) => setError(e.message));
+    fetchMotivosMovimentacao().then(setMotivos).catch(() => {});
   };
   useEffect(carregar, []);
 
@@ -56,18 +59,18 @@ export default function MovimentarAnimais() {
     p.size === candidatos.length && candidatos.length ? new Set() : new Set(candidatos.map((a) => a.numero))
   );
 
-  const limparSelecao = () => { setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setDestinoCodigo(""); setObservacao(""); };
+  const limparSelecao = () => { setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setDestinoCodigo(""); setObservacao(""); setMotivo(""); setMotivoLivre(""); };
 
   const salvar = async () => {
     setMsg(null);
     if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos um animal." }); return; }
     if (!destinoCodigo) { setMsg({ tipo: "erro", texto: "Selecione o lote de destino." }); return; }
-    if (!motivo) { setMsg({ tipo: "erro", texto: "Selecione o motivo da movimentação." }); return; }
 
+    const motivoFinal = motivo === "Outro motivo" ? motivoLivre.trim() : motivo;
     setSalvando(true);
     try {
       const r = await criarMovimentacao({
-        data_movimento: data, hora_movimento: hora, motivo, observacao: observacao || undefined,
+        data_movimento: data, hora_movimento: hora, motivo: motivoFinal || undefined, observacao: observacao || undefined,
         responsavel: responsavel || undefined, lote_destino_codigo: destinoCodigo, animais: Array.from(selecionados),
       });
       setMsg({ tipo: "sucesso", texto: `${r.movidos} animal(is) movido(s) com sucesso.` });
@@ -120,7 +123,7 @@ export default function MovimentarAnimais() {
                 <tbody>
                   {candidatos.map((a) => (
                     <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
-                      <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} /></td>
+                      <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || "—"}</td>
@@ -143,11 +146,15 @@ export default function MovimentarAnimais() {
               <input type="date" style={selStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
             <div><label style={labelStyle}>Hora</label>
               <input type="time" style={selStyle} value={hora} onChange={(e) => setHora(e.target.value)} /></div>
-            <div><label style={labelStyle}>Motivo</label>
+            <div><label style={labelStyle}>Motivo (opcional)</label>
               <select style={selStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
                 <option value="">Selecione...</option>
-                {MOTIVOS_MOVIMENTACAO.map((m) => <option key={m}>{m}</option>)}
-              </select></div>
+                {motivos.map((m) => <option key={m}>{m}</option>)}
+              </select>
+              {motivo === "Outro motivo" && (
+                <input style={{ ...selStyle, marginTop: "0.35rem" }} value={motivoLivre} onChange={(e) => setMotivoLivre(e.target.value)}
+                  placeholder="Descreva o motivo" />
+              )}</div>
             <div><label style={labelStyle}>Responsável</label>
               <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
                 <option value="">Selecione...</option>
