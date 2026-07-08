@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import exigir_modulo, get_current_user, seed_admin
+from fazenda.auth import exigir_admin, exigir_modulo, get_current_user, seed_admin
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -16,6 +16,7 @@ from fazenda.api.routers import (
     animais,
     auth,
     estoque,
+    exclusoes,
     financeiro,
     indicadores,
     parametros,
@@ -82,6 +83,8 @@ app.include_router(producao.router, dependencies=_protegido)
 app.include_router(reproducao.router, dependencies=_protegido)
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(sanidade.router, dependencies=_protegido)
+# Exclusões são destrutivas — restritas a administradores.
+app.include_router(exclusoes.router, dependencies=[Depends(exigir_admin)])
 
 
 @app.get("/")

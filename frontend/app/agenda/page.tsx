@@ -1,9 +1,18 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle } from "lucide-react";
-import { fetchAgenda, addEventoManual, today } from "@/lib/api";
+import React, { useEffect, useState, useCallback } from "react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+
+const DIAS_PADRAO_FUTURO = 10;
+function addDias(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n);
+  return d.toISOString().slice(0, 10);
+}
+function diasEntre(aIso: string, bIso: string): number {
+  return Math.round((new Date(bIso + "T00:00:00").getTime() - new Date(aIso + "T00:00:00").getTime()) / 86400000);
+}
 
 const CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro", "Atividades"];
 const BADGE_CLASS: Record<string, string> = {
@@ -31,12 +40,16 @@ export default function AgendaPage() {
   const [paineis, setPaineis] = useState<Set<string>>(new Set());
   const togglePainel = (k: string) => setPaineis(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
+  // Janela de contas a pagar/receber que o backend calcula: 10 dias por padrão,
+  // ou até a data "Até" escolhida (se o usuário ampliar o período).
+  const diasJanela = ate ? Math.max(DIAS_PADRAO_FUTURO, diasEntre(data, ate)) : DIAS_PADRAO_FUTURO;
+
   const carregar = useCallback(async () => {
     setLoading(true);
-    try { setAgenda(await fetchAgenda(data)); }
+    try { setAgenda(await fetchAgenda(data, diasJanela)); }
     catch { setAgenda(null); }
     finally { setLoading(false); }
-  }, [data]);
+  }, [data, diasJanela]);
 
   useEffect(() => { carregar(); }, [carregar]);
 
@@ -48,8 +61,19 @@ export default function AgendaPage() {
     if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
     return true;
   });
-  const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje);
+  // Próximos eventos: por padrão só os próximos 10 dias; se o usuário definir
+  // "Até" explicitamente, respeita o período escolhido (pode ser maior ou menor).
+  const limiteFuturo = ate || addDias(hoje, DIAS_PADRAO_FUTURO);
+  const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo);
   const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
+
+  const [marcando, setMarcando] = useState<Set<string>>(new Set());
+  const marcarRealizado = async (eventoId: string) => {
+    setMarcando((p) => new Set(p).add(eventoId));
+    try { await marcarEventoRealizado(eventoId); await carregar(); }
+    catch (e: any) { alert(e.message); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
+  };
 
   const handleAddEvento = async () => {
     try {
@@ -75,11 +99,28 @@ export default function AgendaPage() {
     );
   };
 
+  // Extrai o valor de "Conta a pagar: X — R$ 1,234.56" (formatação :,.2f do Python — vírgula de milhar, ponto decimal).
+  const extrairValor = (desc: string) => { const m = desc.match(/R\$\s*([\d,]+\.\d{2})/); return m ? m[1].replace(/,/g, "") : null; };
+
   const renderEventos = (lista: any[]) => {
     const porData = new Map<string, any[]>();
     lista.forEach((e: any) => { (porData.get(e.data) ?? porData.set(e.data, []).get(e.data)!).push(e); });
     return Array.from(porData.keys()).sort().map((d) => {
       const evs = porData.get(d)!; const aberto = datasAbertas.has(d);
+
+      // Dentro do dia, agrupa Gestão/Financeiro por referência (nº do lançamento/nota).
+      const financeiroPorRef = new Map<string, any[]>();
+      const linhas: any[] = [];
+      evs.forEach((e: any) => {
+        if (e.categoria === "Gestão/Financeiro" && e.ref) {
+          const arr = financeiroPorRef.get(e.ref) ?? [];
+          arr.push(e); financeiroPorRef.set(e.ref, arr);
+        } else {
+          linhas.push({ tipo: "simples", e });
+        }
+      });
+      financeiroPorRef.forEach((itens, ref) => linhas.push({ tipo: "grupo", ref, itens }));
+
       return (
         <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
           <button onClick={() => toggleData(d)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
@@ -90,17 +131,63 @@ export default function AgendaPage() {
           {aberto && (
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Categoria</th><th>Nº Animal</th><th>Descrição</th><th>Obs.</th><th>Origem</th></tr></thead>
+                <thead><tr><th>Categoria</th><th>Nº Animal</th><th>Descrição</th><th>Obs.</th><th>Origem</th><th></th></tr></thead>
                 <tbody>
-                  {evs.map((e: any, i: number) => (
-                    <tr key={i}>
-                      <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
-                      <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || "—"}</td>
-                      <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
-                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
-                      <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                    </tr>
-                  ))}
+                  {linhas.map((linha, i) => {
+                    if (linha.tipo === "simples") {
+                      const e = linha.e;
+                      return (
+                        <tr key={i}>
+                          <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
+                          <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || "—"}</td>
+                          <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
+                          <td>
+                            <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => marcarRealizado(e.id)}>
+                              <CheckCircle2 size={12} /> Realizado
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    }
+                    // Grupo Gestão/Financeiro por nota/lançamento.
+                    const { ref, itens } = linha;
+                    const chaveGrupo = `${d}:${ref}`;
+                    const abertoGrupo = paineis.has(chaveGrupo);
+                    const total = itens.reduce((acc: number, it: any) => acc + (Number(extrairValor(it.descricao)) || 0), 0);
+                    return (
+                      <React.Fragment key={`g-${i}`}>
+                        <tr style={{ cursor: "pointer" }} onClick={() => togglePainel(chaveGrupo)}>
+                          <td><span className={BADGE_CLASS["Gestão/Financeiro"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Gestão/Financeiro</span></td>
+                          <td>—</td>
+                          <td style={{ fontSize: "0.83rem" }}>
+                            {abertoGrupo ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                            Nota/lançamento <strong>{ref}</strong> — {itens.length} item{itens.length !== 1 ? "s" : ""} — R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                          </td>
+                          <td>—</td>
+                          <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
+                          <td onClick={(ev) => ev.stopPropagation()}>
+                            <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => itens.forEach((it: any) => marcarRealizado(it.id))}>
+                              <CheckCircle2 size={12} /> Realizado
+                            </button>
+                          </td>
+                        </tr>
+                        {abertoGrupo && itens.map((it: any, j: number) => (
+                          <tr key={`g-${i}-${j}`} style={{ background: "var(--surface-2)" }}>
+                            <td></td><td></td>
+                            <td colSpan={2} style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.descricao}{it.observacao ? ` · ${it.observacao}` : ""}</td>
+                            <td></td>
+                            <td>
+                              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(it.id)} onClick={() => marcarRealizado(it.id)}>
+                                <CheckCircle2 size={12} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -246,19 +333,25 @@ export default function AgendaPage() {
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
 
-      {/* Pendentes (eventos anteriores a hoje ainda em aberto) */}
-      {eventosPendentes.length > 0 && (
-        <div className="card mb-4" style={{ border: "1px solid var(--amber)" }}>
-          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--amber)" }}>
-            <AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})
-          </div>
-          <div className="space-y-2">{renderEventos(eventosPendentes)}</div>
+      {/* Pendentes (eventos anteriores a hoje ainda em aberto) — sempre visível, mesmo vazia */}
+      <div className="card mb-4" style={{ border: eventosPendentes.length ? "1px solid var(--amber)" : "1px solid var(--border)" }}>
+        <div className="card-header mb-3 flex items-center gap-2" style={{ color: eventosPendentes.length ? "var(--amber)" : "var(--text-muted)" }}>
+          <AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})
         </div>
-      )}
+        {eventosPendentes.length > 0 ? (
+          <div className="space-y-2">{renderEventos(eventosPendentes)}</div>
+        ) : (
+          <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center", fontSize: "0.85rem" }}>0 pendências — tudo em dia.</p>
+        )}
+      </div>
 
       {/* Agenda do dia presente em diante */}
       <div className="card">
-        <div className="card-header mb-3">Eventos — hoje e próximos ({eventosFuturos.length})</div>
+        <div className="card-header mb-1 flex items-center justify-between">
+          <span>Eventos — hoje e próximos ({eventosFuturos.length})</span>
+          {!ate && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>}
+        </div>
+        <div style={{ marginTop: "0.75rem" }}>
         {loading ? (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
         ) : eventosFuturos.length > 0 ? (
@@ -268,6 +361,7 @@ export default function AgendaPage() {
             Nenhum evento futuro no filtro. Faça o upload dos CSV na aba Upload.
           </p>
         )}
+        </div>
       </div>
 
       {/* Modal adicionar evento */}

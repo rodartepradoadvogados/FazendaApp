@@ -255,6 +255,19 @@ class CurvaABC(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Evento realizado (workflow da agenda)
+# ---------------------------------------------------------------------------
+class EventoRealizado(SQLModel, table=True):
+    """Marca um evento da agenda (identificado por hash estável) como concluído."""
+
+    __tablename__ = "evento_realizado"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evento_id: str = Field(index=True, unique=True)
+    marcado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Usuário (login / controle de acesso)
 # ---------------------------------------------------------------------------
 class Usuario(SQLModel, table=True):
