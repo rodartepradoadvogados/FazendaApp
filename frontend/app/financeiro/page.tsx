@@ -1,9 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check,
+  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2,
 } from "lucide-react";
-import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, formatBRL } from "@/lib/api";
+import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -20,7 +20,7 @@ type Lanc = {
   mes_competencia: string | null; mes_caixa: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -212,6 +212,16 @@ export default function FinanceiroPage() {
           })}
         </div>
 
+        {/* Patrimônio */}
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Patrimônio</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <button onClick={() => setRel("patrimonio")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "patrimonio" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "patrimonio" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
+            <div className="flex items-center gap-2" style={{ color: rel === "patrimonio" ? "var(--dourado-light)" : "var(--text)" }}><Building2 size={18} /><span style={{ fontWeight: 700 }}>Patrimônio</span></div>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Máquinas, veículos, implementos e terras</p>
+          </button>
+        </div>
+
+        {rel === "patrimonio" ? <PatrimonioView /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -381,10 +391,79 @@ export default function FinanceiroPage() {
           </div>
         </div>
         </>}
+        </>}
       </>}
 
       {baixaAlvo && <BaixaModal lancamento={baixaAlvo} contasBancarias={contasBancarias} onClose={() => setBaixaAlvo(null)} onSalvo={() => { setBaixaAlvo(null); recarregar(); }} />}
     </div>
+  );
+}
+
+type ItemPatrimonio = {
+  id: number; tipo: string | null; nome: string; numero: string | null;
+  atividade_cultura: string | null; placa: string | null; data_imobilizacao: string | null;
+  metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
+  quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
+};
+
+function PatrimonioView() {
+  const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  useEffect(() => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); }, []);
+
+  if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o LISTA_DE_PATRIMONIO.csv</a>.</span></div>;
+  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+  if (!dados.itens.length) {
+    return (
+      <div className="card" style={{ textAlign: "center", padding: "3rem" }}>
+        <Building2 size={38} style={{ color: "var(--text-muted)", margin: "0 auto 1rem" }} />
+        <p style={{ color: "var(--text-muted)" }}>Nenhum item de patrimônio no banco.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", marginTop: "0.5rem" }}>
+          Suba o <strong>LISTA_DE_PATRIMONIO.csv</strong> na tela de <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Upload</a>.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+        <KPI v={String(dados.total)} l="Itens" />
+        <KPI v={formatBRL(dados.valor_total)} l="Valor total (ativo)" c="var(--dourado-light)" />
+        <KPI v={String(dados.itens.filter((i) => i.data_baixa).length)} l="Com baixa" c="var(--text-muted)" />
+      </div>
+      <div className="card">
+        <div className="card-header mb-3">Bens</div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead>
+              <tr>
+                <th>Tipo</th><th>Nome</th><th>Nº</th><th>Placa</th><th>Imobilização</th>
+                <th>Depreciação</th><th>Vida útil</th><th style={{ textAlign: "right" }}>Vlr. residual</th>
+                <th style={{ textAlign: "right" }}>Qtd.</th><th style={{ textAlign: "right" }}>Vlr. total</th><th>Baixa</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dados.itens.map((i) => (
+                <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
+                  <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
+                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{i.nome}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.placa || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.metodo_depreciacao || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{i.vida_util || "—"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
+                  <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
+                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </>
   );
 }
 

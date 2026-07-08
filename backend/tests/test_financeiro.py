@@ -6,10 +6,13 @@ from __future__ import annotations
 from datetime import date
 
 import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
+import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
-from fazenda.models import ContaGerencial
+from fazenda.models import ContaGerencial, LancamentoItem
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -27,6 +30,20 @@ NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
         </prod>
       </det>
       <total><ICMSTot><vNF>3420.00</vNF></ICMSTot></total>
+    </infNFe>
+  </NFe>
+</nfeProc>
+"""
+
+NFE_MULTI_ITEM = """<?xml version="1.0" encoding="UTF-8"?>
+<nfeProc xmlns="http://www.portalfiscal.inf.br/nfe">
+  <NFe>
+    <infNFe Id="NFe789" versao="4.00">
+      <ide><nNF>7777</nNF><dhEmi>2026-04-01T10:00:00-03:00</dhEmi></ide>
+      <emit><xNome>Agropecuária Central</xNome></emit>
+      <det nItem="1"><prod><xProd>Ração concentrada 25kg</xProd><qCom>10</qCom><vUnCom>85.5</vUnCom><vProd>855.00</vProd></prod></det>
+      <det nItem="2"><prod><xProd>Sal mineral 20kg</xProd><qCom>5</qCom><vUnCom>40.0</vUnCom><vProd>200.00</vProd></prod></det>
+      <total><ICMSTot><vNF>1055.00</vNF></ICMSTot></total>
     </infNFe>
   </NFe>
 </nfeProc>
@@ -57,9 +74,11 @@ class TestParseNfeXml:
         assert r["data_emissao"] == "2026-06-15"
         assert r["fornecedor_cliente"] == "Cooperativa Agro LTDA"
         assert r["valor_total"] == 3420.00
-        assert r["descricao"] == "Ração concentrada 25kg"
-        assert r["quantidade"] == 40.0
-        assert r["valor_unitario"] == 85.5
+        assert len(r["itens"]) == 1
+        assert r["itens"][0]["produto"] == "Ração concentrada 25kg"
+        assert r["itens"][0]["quantidade"] == 40.0
+        assert r["itens"][0]["valor_unitario"] == 85.5
+        assert r["itens"][0]["valor_total"] == 3420.0
         assert r["parcelas"] == []
 
     def test_extrai_parcelas_das_duplicatas(self):
@@ -68,6 +87,15 @@ class TestParseNfeXml:
         assert len(r["parcelas"]) == 2
         assert r["parcelas"][0] == {"numero": "001", "data_vencimento": "2026-02-10", "valor": 600.0}
         assert r["parcelas"][1] == {"numero": "002", "data_vencimento": "2026-03-10", "valor": 600.0}
+
+    def test_extrai_multiplos_produtos(self):
+        r = parse_nfe_xml(NFE_MULTI_ITEM)
+        assert r["valor_total"] == 1055.00
+        assert len(r["itens"]) == 2
+        assert r["itens"][0]["produto"] == "Ração concentrada 25kg"
+        assert r["itens"][0]["valor_total"] == 855.0
+        assert r["itens"][1]["produto"] == "Sal mineral 20kg"
+        assert r["itens"][1]["valor_total"] == 200.0
 
     def test_xml_invalido_lanca_erro(self):
         with pytest.raises(Exception):
@@ -103,3 +131,104 @@ class TestNumeroLancamento:
             session.add(ContaGerencial(numero_lancamento="LC-2025-00099", valor_total=10))
             session.commit()
             assert _proximo_numero_lancamento(session, 2026) == "LC-2026-00001"
+
+
+@pytest.fixture
+def client():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+class TestLancamentoMultiplosItens:
+    def test_cria_lancamento_com_dois_produtos(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [
+                {"produto": "Ração concentrada", "codigo_conta_gerencial": "3.01.01.01", "quantidade": 10, "valor_unitario": 85.5, "valor_total": 855.0},
+                {"produto": "Sal mineral", "codigo_conta_gerencial": "3.01.01.03", "quantidade": 5, "valor_unitario": 40.0, "valor_total": 200.0},
+            ],
+            "data_emissao": "2026-04-01", "valor_pago": None,
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["valor_bruto"] == 1055.0
+        assert corpo["valor_liquido"] == 1055.0
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            itens = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == corpo["numero_lancamento"])).all()
+            assert len(itens) == 2
+            assert {i.produto for i in itens} == {"Ração concentrada", "Sal mineral"}
+            parcela = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == corpo["numero_lancamento"])).first()
+            assert parcela.valor_total == 1055.0
+            assert "Ração concentrada" in parcela.descricao and "Sal mineral" in parcela.descricao
+
+    def test_desconto_reduz_o_valor_liquido(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "valor_total": 1000.0}],
+            "desconto": 50.0,
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["valor_bruto"] == 1000.0
+        assert corpo["valor_liquido"] == 950.0
+
+    def test_acrescimo_aumenta_o_valor_liquido(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "valor_total": 1000.0}],
+            "acrescimo": 30.0,
+        })
+        assert r.status_code == 201
+        assert r.json()["valor_liquido"] == 1030.0
+
+    def test_sem_itens_da_erro(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": []})
+        assert r.status_code == 400
+
+    def test_desconto_maior_que_bruto_da_erro(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "itens": [{"produto": "X", "valor_total": 100.0}], "desconto": 200.0,
+        })
+        assert r.status_code == 400
+
+    def test_lancamentos_endpoint_traz_itens_agrupados(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [
+                {"produto": "Ração", "valor_total": 500.0},
+                {"produto": "Sal mineral", "valor_total": 300.0},
+            ],
+        })
+        numero = r.json()["numero_lancamento"]
+        listagem = c.get("/financeiro/lancamentos").json()
+        registro = next(l for l in listagem["lancamentos"] if l["numero_lancamento"] == numero)
+        assert len(registro["itens"]) == 2

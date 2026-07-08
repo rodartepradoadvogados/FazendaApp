@@ -194,6 +194,12 @@ export async function fetchLancamentos() {
   return res.json();
 }
 
+export async function fetchPatrimonio() {
+  const res = await authFetch(`${API}/financeiro/patrimonio`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Patrimônio error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchOpcoesFinanceiro() {
   const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);

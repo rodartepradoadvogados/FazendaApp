@@ -149,6 +149,75 @@ class ContaGerencial(SQLModel, table=True):
     centro_custo: Optional[str] = None
     tipo: Optional[str] = None
     origem: Optional[str] = "csv"  # "csv" (upload) | "manual" (lançamento pela tela)
+    # Desconto/acréscimo negociado NA NOTA (produtos → valor bruto → líquido pago/recebido).
+    # Diferente de desconto_acrescimo acima, que é a diferença apurada só na baixa do pagamento.
+    desconto_nota: Optional[float] = None
+    acrescimo_nota: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Item de lançamento financeiro (produto/serviço) — uma nota pode ter vários
+# ---------------------------------------------------------------------------
+class LancamentoItem(SQLModel, table=True):
+    """Um produto/serviço de um lançamento financeiro manual (várias linhas por nota)."""
+
+    __tablename__ = "lancamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: str = Field(index=True)
+    tipo: Optional[str] = None  # herdado do lançamento (despesa/receita), útil p/ consultas
+    data_competencia: Optional[date] = None  # herdado, p/ DRE por conta
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    produto: str
+    descricao: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
+    valor_total: float
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Plano de Contas Gerenciais
+# ---------------------------------------------------------------------------
+class PlanoContaGerencial(SQLModel, table=True):
+    """Hierarquia do plano de contas gerenciais — LISTA_DE_PLANO_DE_CONTAS_GERENCIAIS.csv."""
+
+    __tablename__ = "plano_conta_gerencial"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str = Field(index=True, unique=True)
+    nome: str
+    ativa: bool = True
+    participa_atividade: Optional[bool] = None
+    fluxo: Optional[bool] = None
+    tipo_fixo_variavel: Optional[str] = None  # "Fixa" | "Variável"
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Patrimônio
+# ---------------------------------------------------------------------------
+class Patrimonio(SQLModel, table=True):
+    """Item de patrimônio/imobilizado — LISTA_DE_PATRIMONIO.csv."""
+
+    __tablename__ = "patrimonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: Optional[str] = None
+    nome: str
+    numero: Optional[str] = None
+    atividade_cultura: Optional[str] = None
+    placa: Optional[str] = None
+    data_imobilizacao: Optional[date] = None
+    metodo_depreciacao: Optional[str] = None
+    vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
+    valor_residual: Optional[float] = None
+    quantidade: Optional[float] = None
+    unidade: Optional[str] = None
+    valor_total: Optional[float] = None
+    data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

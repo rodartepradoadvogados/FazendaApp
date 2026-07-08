@@ -89,11 +89,20 @@ def parse_nfe_xml(xml_texto: str) -> dict:
                 "valor": _texto(_achar(dup, ["vDup"])),
             })
 
-    resultado = {
+    return {
         "numero_documento": numero_documento,
         "data_emissao": data_emissao,
         "fornecedor_cliente": fornecedor,
         "valor_total": float(valor_total) if valor_total else None,
+        "itens": [
+            {
+                "produto": p["descricao"],
+                "quantidade": float(p["quantidade"]) if p["quantidade"] else None,
+                "valor_unitario": float(p["valor_unitario"]) if p["valor_unitario"] else None,
+                "valor_total": float(p["valor_total"]) if p["valor_total"] else None,
+            }
+            for p in produtos
+        ],
         "parcelas": [
             {
                 "numero": p["numero"],
@@ -103,13 +112,3 @@ def parse_nfe_xml(xml_texto: str) -> dict:
             for p in parcelas
         ],
     }
-
-    if len(produtos) == 1:
-        p = produtos[0]
-        resultado["descricao"] = p["descricao"]
-        resultado["quantidade"] = float(p["quantidade"]) if p["quantidade"] else None
-        resultado["valor_unitario"] = float(p["valor_unitario"]) if p["valor_unitario"] else None
-    elif len(produtos) > 1:
-        resultado["descricao"] = ", ".join(p["descricao"] for p in produtos if p["descricao"])[:500]
-
-    return resultado
