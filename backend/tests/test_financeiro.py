@@ -11,8 +11,8 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.api.routers.financeiro import _proximo_numero_lancamento
-from fazenda.models import ContaGerencial, LancamentoItem, PlanoContaGerencial
+from fazenda.api.routers.financeiro import _proximo_numero_lancamento, seed_parametros_financeiros
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, LancamentoItem, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -251,6 +251,7 @@ class TestPlanoContas:
         assert por_codigo["2.01.01.01"]["nivel"] == 4
         assert por_codigo["2"]["ativa"] is False
         assert por_codigo["2.01.01.01"]["ativa"] is True
+        assert all(isinstance(x["id"], int) for x in r.json())  # front usa o id para editar
 
     def test_opcoes_so_traz_contas_ativas_plano_completo_traz_tudo(self, client):
         c, engine = client
@@ -263,3 +264,83 @@ class TestPlanoContas:
         codigos_completo = {x["codigo"] for x in c.get("/financeiro/plano-contas").json()}
         assert codigos_opcoes == {"2.01.01.01"}
         assert codigos_completo == {"2.01", "2.01.01.01"}
+
+
+class TestParametrosFinanceiros:
+    def test_seed_cria_duas_contas_correntes(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            seed_parametros_financeiros(s)
+        r = c.get("/financeiro/contas-correntes")
+        assert r.status_code == 200
+        assert len(r.json()) == 2
+        assert all(x["banco"] == "Banco do Brasil" for x in r.json())
+
+    def test_seed_e_idempotente(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            seed_parametros_financeiros(s)
+            seed_parametros_financeiros(s)
+        assert len(c.get("/financeiro/contas-correntes").json()) == 2
+
+    def test_cria_conta_corrente(self, client):
+        c, engine = client
+        r = c.post("/financeiro/contas-correntes", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "12345-6"})
+        assert r.status_code == 200
+        assert r.json()["rotulo"] == "Sicredi · Agência 0001 · Conta corrente 12345-6"
+
+    def test_atualizar_conta_corrente(self, client):
+        c, engine = client
+        conta_id = c.post("/financeiro/contas-correntes", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "12345-6"}).json()["id"]
+        r = c.put(f"/financeiro/contas-correntes/{conta_id}", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "12345-6", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+    def test_opcoes_so_traz_contas_correntes_ativas(self, client):
+        c, engine = client
+        conta_id = c.post("/financeiro/contas-correntes", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "12345-6"}).json()["id"]
+        c.put(f"/financeiro/contas-correntes/{conta_id}", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "12345-6", "ativo": False})
+        assert c.get("/financeiro/opcoes").json()["contas_bancarias"] == []
+
+    def test_cria_centro_custo(self, client):
+        c, engine = client
+        r = c.post("/financeiro/centros-custo", json={"nome": "Ordenha"})
+        assert r.status_code == 200
+        assert "Ordenha" in [x["nome"] for x in c.get("/financeiro/centros-custo").json()]
+        assert "Ordenha" in c.get("/financeiro/opcoes").json()["centros_custo"]
+
+    def test_nao_permite_centro_custo_duplicado(self, client):
+        c, engine = client
+        c.post("/financeiro/centros-custo", json={"nome": "Ordenha"})
+        r = c.post("/financeiro/centros-custo", json={"nome": "Ordenha"})
+        assert r.status_code == 409
+
+    def test_centros_custo_ja_usados_em_lancamentos_continuam_nas_opcoes(self, client):
+        # Compatibilidade: valores digitados como texto livre antes do cadastro
+        # existir não podem desaparecer do filtro.
+        c, engine = client
+        with Session(engine) as s:
+            s.add(ContaGerencial(numero_lancamento="LC-2026-00001", centro_custo="Pasto Legado"))
+            s.commit()
+        assert "Pasto Legado" in c.get("/financeiro/opcoes").json()["centros_custo"]
+
+    def test_cria_conta_gerencial(self, client):
+        c, engine = client
+        r = c.post("/financeiro/plano-contas", json={"codigo": "3.09.09.09", "nome": "Conta teste"})
+        assert r.status_code == 200
+        codigos = {x["codigo"] for x in c.get("/financeiro/plano-contas").json()}
+        assert "3.09.09.09" in codigos
+
+    def test_nao_permite_conta_gerencial_com_codigo_duplicado(self, client):
+        c, engine = client
+        c.post("/financeiro/plano-contas", json={"codigo": "3.09.09.09", "nome": "Conta teste"})
+        r = c.post("/financeiro/plano-contas", json={"codigo": "3.09.09.09", "nome": "Outra"})
+        assert r.status_code == 409
+
+    def test_atualizar_conta_gerencial(self, client):
+        c, engine = client
+        conta_id = c.post("/financeiro/plano-contas", json={"codigo": "3.09.09.09", "nome": "Conta teste"}).json()["id"]
+        r = c.put(f"/financeiro/plano-contas/{conta_id}", json={"codigo": "3.09.09.09", "nome": "Conta renomeada", "ativa": False})
+        assert r.status_code == 200
+        assert r.json()["nome"] == "Conta renomeada"
+        assert r.json()["ativa"] is False

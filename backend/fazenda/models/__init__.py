@@ -297,6 +297,34 @@ class PlanoContaGerencial(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
+# lista fixa em Python (CONTAS_BANCARIAS); usada em lançamentos/baixas.
+# ---------------------------------------------------------------------------
+class ContaCorrente(SQLModel, table=True):
+    __tablename__ = "conta_corrente"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    banco: str
+    agencia: str
+    numero_conta: str
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Centro de custo (Configurações > Parâmetros financeiros) — antes era só
+# sugestão (distinct dos valores já usados em ContaGerencial.centro_custo).
+# ---------------------------------------------------------------------------
+class CentroCusto(SQLModel, table=True):
+    __tablename__ = "centro_custo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Patrimônio
 # ---------------------------------------------------------------------------
 class Patrimonio(SQLModel, table=True):

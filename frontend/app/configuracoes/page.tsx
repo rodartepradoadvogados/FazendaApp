@@ -1,14 +1,15 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
 import Cadastro from "@/components/Cadastro";
 import ImportarDados from "@/components/ImportarDados";
+import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios";
+type Aba = "cadastro" | "parametros" | "financeiro" | "upload" | "importar" | "usuarios";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -18,6 +19,7 @@ export default function ConfiguracoesPage() {
     const abas: { id: Aba; label: string; icon: any }[] = [];
     if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers });
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal });
+    if (podeModulo("financeiro")) abas.push({ id: "financeiro", label: "Parâmetros financeiros", icon: Wallet });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users });
@@ -52,6 +54,7 @@ export default function ConfiguracoesPage() {
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "cadastro" && <Cadastro />}
         {aba === "parametros" && <ParametrosPage />}
+        {aba === "financeiro" && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "usuarios" && <UsuariosPage />}
