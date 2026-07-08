@@ -1,14 +1,15 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock,
+  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServico,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
+  fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -1087,6 +1088,268 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   );
 }
 
+type ItemDieta = { alimento: string; quantidade: string; unidade: string };
+const itemDietaVazio = (): ItemDieta => ({ alimento: "", quantidade: "", unidade: "kg" });
+
+type DietaLote = {
+  id: number; lote: number; responsavel: string | null; data_abertura: string;
+  data_prevista_encerramento: string | null; data_efetivo_encerramento: string | null;
+  observacao: string | null; ativa: boolean;
+  itens_programados: { alimento: string; quantidade: number; unidade: string }[];
+};
+type ItemComparativo = { alimento: string; unidade: string; programado: number; real_total: number; real_dias: number; real_media_dia: number | null };
+
+function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
+  const [dietas, setDietas] = useState<DietaLote[] | null>(null);
+  const [alimentosPadrao, setAlimentosPadrao] = useState<string[]>([]);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  // Nova dieta
+  const [loteNovo, setLoteNovo] = useState("");
+  const [responsavel, setResponsavel] = useState("Alexandre Scarpa");
+  const [dataAbertura, setDataAbertura] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataPrevista, setDataPrevista] = useState("");
+  const [observacaoNova, setObservacaoNova] = useState("");
+  const [itens, setItens] = useState<ItemDieta[]>([itemDietaVazio()]);
+  const [salvando, setSalvando] = useState(false);
+
+  // Encerrar / registrar real / comparativo
+  const [encerrando, setEncerrando] = useState<number | null>(null);
+  const [dataEncerramento, setDataEncerramento] = useState(() => new Date().toISOString().slice(0, 10));
+  const [registrando, setRegistrando] = useState<number | null>(null);
+  const [dataReal, setDataReal] = useState(() => new Date().toISOString().slice(0, 10));
+  const [itensReal, setItensReal] = useState<ItemDieta[]>([itemDietaVazio()]);
+  const [comparandoId, setComparandoId] = useState<number | null>(null);
+  const [comparativo, setComparativo] = useState<ItemComparativo[] | null>(null);
+
+  const carregar = () => fetchDietas().then(setDietas).catch((e) => setErro(e.message));
+  useEffect(() => {
+    carregar();
+    fetchAlimentosPadrao().then(setAlimentosPadrao).catch(() => {});
+  }, []);
+
+  const atualizarItem = (idx: number, patch: Partial<ItemDieta>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
+  const acrescentarItem = () => setItens((p) => [...p, itemDietaVazio()]);
+  const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
+
+  const atualizarItemReal = (idx: number, patch: Partial<ItemDieta>) => setItensReal((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
+  const acrescentarItemReal = () => setItensReal((p) => [...p, itemDietaVazio()]);
+  const removerItemReal = (idx: number) => setItensReal((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
+
+  async function salvarDieta() {
+    setErro(null); setSucesso(null);
+    const loteNum = Number(cod(loteNovo));
+    if (!loteNovo || !loteNum) { setErro("Selecione o lote."); return; }
+    if (!dataAbertura) { setErro("Informe a data de abertura."); return; }
+    const itensValidos = itens.filter((i) => i.alimento && Number(i.quantidade) > 0 && i.unidade);
+    if (!itensValidos.length) { setErro("Adicione ao menos um alimento com quantidade e unidade."); return; }
+
+    setSalvando(true);
+    try {
+      await criarDieta({
+        lote: loteNum, responsavel: responsavel || undefined, data_abertura: dataAbertura,
+        data_prevista_encerramento: dataPrevista || undefined, observacao: observacaoNova || undefined,
+        itens: itensValidos.map((i) => ({ alimento: i.alimento, quantidade: Number(i.quantidade), unidade: i.unidade })),
+      });
+      setSucesso(`Dieta lançada para o lote ${loteNovo}.`);
+      setLoteNovo(""); setDataPrevista(""); setObservacaoNova(""); setItens([itemDietaVazio()]);
+      carregar();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar dieta");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function confirmarEncerramento(dieta: DietaLote) {
+    setErro(null); setSucesso(null);
+    try {
+      await encerrarDieta(dieta.id, dataEncerramento);
+      setEncerrando(null);
+      setSucesso(`Dieta do lote ${dieta.lote} encerrada.`);
+      carregar();
+      if (window.confirm(`Dieta do lote ${dieta.lote} encerrada. Deseja lançar uma nova dieta para este lote agora?`)) {
+        const loteLabel = lotes.find((l) => Number(cod(l)) === dieta.lote) || "";
+        setLoteNovo(loteLabel);
+        setDataAbertura(dataEncerramento);
+      }
+    } catch (e: any) {
+      setErro(e.message || "Erro ao encerrar dieta");
+    }
+  }
+
+  async function salvarReal(dietaId: number) {
+    setErro(null); setSucesso(null);
+    const itensValidos = itensReal.filter((i) => i.alimento && Number(i.quantidade) > 0 && i.unidade);
+    if (!itensValidos.length) { setErro("Adicione ao menos um alimento com quantidade e unidade."); return; }
+    try {
+      await registrarRealDieta(dietaId, {
+        data: dataReal, itens: itensValidos.map((i) => ({ alimento: i.alimento, quantidade: Number(i.quantidade), unidade: i.unidade })),
+      });
+      setSucesso("Real oferecido registrado com sucesso.");
+      setRegistrando(null); setItensReal([itemDietaVazio()]);
+      if (comparandoId === dietaId) abrirComparativo(dietaId);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao registrar o real oferecido");
+    }
+  }
+
+  const abrirComparativo = (dietaId: number) => {
+    setComparandoId((atual) => (atual === dietaId ? null : dietaId));
+    if (comparandoId !== dietaId) {
+      fetchComparativoDieta(dietaId).then((d) => setComparativo(d.itens)).catch((e) => setErro(e.message));
+    }
+  };
+
+  const listaAlimentos = alimentosPadrao;
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Lote">
+          <select style={inputStyle} value={loteNovo} onChange={(e) => setLoteNovo(e.target.value)}>
+            <option value="">Selecione…</option>{lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Responsável (nutricionista)">
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">—</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Data de abertura"><input type="date" style={inputStyle} value={dataAbertura} onChange={(e) => setDataAbertura(e.target.value)} /></Campo>
+        <Campo label="Data prevista de encerramento (opcional)"><input type="date" style={inputStyle} value={dataPrevista} onChange={(e) => setDataPrevista(e.target.value)} /></Campo>
+        <Campo label="Observação" full><input style={inputStyle} value={observacaoNova} onChange={(e) => setObservacaoNova(e.target.value)} /></Campo>
+      </div>
+      <p style={nota}>A data prevista de encerramento entra na Agenda como um evento para análise. Só uma dieta pode ficar ativa por lote — encerre a atual antes de lançar outra.</p>
+
+      <Secao>Plano programado (formulado)</Secao>
+      <div className="space-y-3">
+        {itens.map((item, idx) => (
+          <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+              <Campo label={`Alimento ${idx + 1}`}>
+                <input style={inputStyle} list="alimentos-padrao-dieta" value={item.alimento} onChange={(e) => atualizarItem(idx, { alimento: e.target.value })} placeholder="ex.: Silagem" />
+              </Campo>
+              <Campo label="Quantidade total do lote/dia"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+              <Campo label="Unidade">
+                <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItem(idx, { unidade: e.target.value })}>
+                  {UNIDADES.map((u) => <option key={u}>{u}</option>)}
+                </select>
+              </Campo>
+            </div>
+            {itens.length > 1 && (
+              <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+                <Trash2 size={13} />
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+      <datalist id="alimentos-padrao-dieta">{listaAlimentos.map((a) => <option key={a} value={a} />)}</datalist>
+      <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar alimento</button>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvarDieta} disabled={salvando}>{salvando ? "Salvando…" : "Lançar dieta"}</button>
+      </div>
+
+      {dietas && (
+        <div className="card mt-4">
+          <div className="card-header mb-2">Dietas lançadas</div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Lote</th><th>Responsável</th><th>Abertura</th><th>Prev. encerramento</th><th>Situação</th><th></th></tr></thead>
+              <tbody>
+                {dietas.map((d) => (
+                  <Fragment key={d.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{d.lote}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{d.responsavel || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{formatDate(d.data_abertura)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{d.data_prevista_encerramento ? formatDate(d.data_prevista_encerramento) : "—"}</td>
+                      <td>
+                        <span style={{ fontSize: "0.72rem", fontWeight: 700, color: d.ativa ? "var(--green-light)" : "var(--text-muted)" }}>
+                          {d.ativa ? "Ativa" : `Encerrada em ${formatDate(d.data_efetivo_encerramento!)}`}
+                        </span>
+                      </td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirComparativo(d.id)}>Comparativo</button>
+                        {d.ativa && <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setRegistrando(registrando === d.id ? null : d.id)}>Registrar real</button>}
+                        {d.ativa && <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => setEncerrando(encerrando === d.id ? null : d.id)}>Encerrar</button>}
+                      </td>
+                    </tr>
+                    {encerrando === d.id && (
+                      <tr><td colSpan={6} style={{ padding: 0 }}>
+                        <div style={{ background: "var(--surface-2)", padding: "0.75rem", display: "flex", alignItems: "center", gap: "0.6rem", flexWrap: "wrap" }}>
+                          <label style={lbl}>Data de encerramento efetivo</label>
+                          <input type="date" style={{ ...inputStyle, width: "auto" }} value={dataEncerramento} onChange={(e) => setDataEncerramento(e.target.value)} />
+                          <button className="btn-primary" style={{ fontSize: "0.75rem" }} onClick={() => confirmarEncerramento(d)}>Confirmar encerramento</button>
+                          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setEncerrando(null)}>Cancelar</button>
+                        </div>
+                      </td></tr>
+                    )}
+                    {registrando === d.id && (
+                      <tr><td colSpan={6} style={{ padding: 0 }}>
+                        <div style={{ background: "var(--surface-2)", padding: "0.75rem" }}>
+                          <div className="flex items-center gap-2 mb-2">
+                            <label style={lbl}>Data</label>
+                            <input type="date" style={{ ...inputStyle, width: "auto" }} value={dataReal} onChange={(e) => setDataReal(e.target.value)} />
+                          </div>
+                          {itensReal.map((item, idx) => (
+                            <div key={idx} className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2" style={{ alignItems: "end" }}>
+                              <Campo label="Alimento"><input style={inputStyle} list="alimentos-padrao-dieta" value={item.alimento} onChange={(e) => atualizarItemReal(idx, { alimento: e.target.value })} /></Campo>
+                              <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItemReal(idx, { quantidade: e.target.value })} /></Campo>
+                              <Campo label="Unidade">
+                                <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItemReal(idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>
+                              </Campo>
+                              {itensReal.length > 1 && <button onClick={() => removerItemReal(idx)} className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }}><Trash2 size={13} /></button>}
+                            </div>
+                          ))}
+                          <button onClick={acrescentarItemReal} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><Plus size={13} /> Acrescentar alimento</button>
+                          <div className="flex items-center gap-2 mt-2">
+                            <button className="btn-primary" style={{ fontSize: "0.75rem" }} onClick={() => salvarReal(d.id)}>Salvar real oferecido</button>
+                            <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setRegistrando(null)}>Cancelar</button>
+                          </div>
+                        </div>
+                      </td></tr>
+                    )}
+                    {comparandoId === d.id && comparativo && (
+                      <tr><td colSpan={6} style={{ padding: 0 }}>
+                        <div style={{ background: "var(--surface-2)", padding: "0.75rem" }}>
+                          <table className="fazenda-table" style={{ margin: 0 }}>
+                            <thead><tr><th>Alimento</th><th style={{ textAlign: "right" }}>Programado (dia)</th><th style={{ textAlign: "right" }}>Real (total)</th><th style={{ textAlign: "right" }}>Dias registrados</th><th style={{ textAlign: "right" }}>Real (média/dia)</th></tr></thead>
+                            <tbody>
+                              {comparativo.map((c) => (
+                                <tr key={c.alimento}>
+                                  <td style={{ fontWeight: 700 }}>{c.alimento}</td>
+                                  <td style={{ textAlign: "right" }}>{c.programado} {c.unidade}</td>
+                                  <td style={{ textAlign: "right" }}>{c.real_total} {c.unidade}</td>
+                                  <td style={{ textAlign: "right" }}>{c.real_dias}</td>
+                                  <td style={{ textAlign: "right", fontWeight: 600, color: c.real_media_dia != null && c.real_media_dia > c.programado ? "var(--amber)" : "var(--green-light)" }}>
+                                    {c.real_media_dia != null ? `${c.real_media_dia} ${c.unidade}` : "—"}
+                                  </td>
+                                </tr>
+                              ))}
+                              {!comparativo.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem itens.</td></tr>}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td></tr>
+                    )}
+                  </Fragment>
+                ))}
+                {!dietas.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma dieta lançada ainda.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 const MOTIVOS_SECAGEM = [
   { v: "doente", l: "Animal doente" },
   { v: "baixa_producao", l: "Baixa produção" },
@@ -1355,6 +1618,7 @@ const TIPOS_GRUPOS = [
       { id: "financeiro_receita", label: "Contas a receber (receita)", icon: Wallet, desc: "Lançamento de receita/conta a receber." },
     ],
   },
+  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
   { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque.", leaf: "estoque" },
   { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto.", leaf: "exclusao" },
 ];
@@ -1439,6 +1703,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
           ) : sel === "estoque" ? (
             <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+          ) : sel === "alimentacao_dieta" ? (
+            <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "calendario_sanitario" ? (
@@ -1509,6 +1775,7 @@ export default function LancamentosPage() {
           {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
+          {sel === "alimentacao_dieta" && <FormAlimentacaoDieta lotes={lotes} />}
           {sel === "exclusao" && <FormExclusao />}
         </div>
       </div>

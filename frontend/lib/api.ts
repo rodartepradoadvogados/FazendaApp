@@ -514,6 +514,55 @@ export async function fetchEstadoBaixaAlimentacao() {
   return res.json();
 }
 
+// ── Lançamento de dieta (Lançamentos > Alimentação) ──
+export async function fetchAlimentosPadrao() {
+  const res = await authFetch(`${API}/alimentacao/alimentos-padrao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Alimentos padrão error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchDietas(filtros?: { lote?: number; ativo?: boolean }) {
+  const params = new URLSearchParams();
+  if (filtros?.lote != null) params.set("lote", String(filtros.lote));
+  if (filtros?.ativo != null) params.set("ativo", String(filtros.ativo));
+  const res = await authFetch(`${API}/alimentacao/dietas?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Dietas error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarDieta(dados: {
+  lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
+  itens: { alimento: string; quantidade: number; unidade: string }[];
+}) {
+  const res = await authFetch(`${API}/alimentacao/dietas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar dieta"); }
+  return res.json();
+}
+
+export async function encerrarDieta(id: number, dataEfetivoEncerramento: string) {
+  const res = await authFetch(`${API}/alimentacao/dietas/${id}/encerrar`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ data_efetivo_encerramento: dataEfetivoEncerramento }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar dieta"); }
+  return res.json();
+}
+
+export async function registrarRealDieta(id: number, dados: { data: string; itens: { alimento: string; quantidade: number; unidade: string }[] }) {
+  const res = await authFetch(`${API}/alimentacao/dietas/${id}/real`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar o real oferecido"); }
+  return res.json();
+}
+
+export async function fetchComparativoDieta(id: number) {
+  const res = await authFetch(`${API}/alimentacao/dietas/${id}/comparativo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Comparativo da dieta error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchProducao() {
   const res = await authFetch(`${API}/producao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Produção error: ${res.status}`);
