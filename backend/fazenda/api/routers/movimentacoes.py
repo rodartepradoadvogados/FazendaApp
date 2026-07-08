@@ -27,6 +27,8 @@ MOTIVOS = [
     "Aumento de DEL e/ou produção",
     "Final de DEL ou queda de produção",
     "Tratamento/doença",
+    "Secagem",
+    "Nascimento",
 ]
 
 
