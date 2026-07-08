@@ -27,6 +27,9 @@ from fazenda.rules.iatf import (
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
 DIAS_CONTAS_A_PAGAR = 10  # janela de contas a pagar
+INTERVALO_VISITA_REPRODUTIVA = 21  # dias — mesmo ciclo usado na Análise Reprodutiva
+INTERVALO_BST = 12  # dias
+DIAS_REINSEMINACAO = 15  # dias — meta p/ próximo serviço de uma matriz marcada p/ retoque
 
 
 @dataclass
@@ -77,6 +80,10 @@ class AgendaResult:
     bst_excluidos: list[ResultadoBST] = field(default_factory=list)
     contas_a_pagar: list[dict] = field(default_factory=list)
     eventos: list[AgendaItem] = field(default_factory=list)
+    # Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
+    # rebanho (não por animal): último serviço em 03/07 -> visita em 24/07 (21 dias).
+    proxima_visita_iatf: date | None = None
+    proxima_visita_bst: date | None = None
 
 
 class AgendaEngine:
@@ -141,6 +148,30 @@ class AgendaEngine:
         result.candidatas_iatf = candidatas
         if candidatas:
             result.necessidade_iatf = calcular_necessidade_hormonios(len(candidatas))
+
+        # Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
+        # rebanho inteiro (não por animal individual).
+        datas_servico = [s["data_servico"] for s in servicos if s.get("data_servico")]
+        if datas_servico:
+            ultimo_servico = max(datas_servico)
+            result.proxima_visita_iatf = ultimo_servico + timedelta(days=INTERVALO_VISITA_REPRODUTIVA)
+            result.proxima_visita_bst = ultimo_servico + timedelta(days=INTERVALO_BST)
+
+        # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
+        # agenda no dia do próximo serviço (data do diagnóstico + meta de
+        # reinseminação; sem diagnóstico registrado, usa a data do serviço).
+        for s in servicos:
+            if not s.get("retoque"):
+                continue
+            ancora = s.get("data_diagnostico") or s.get("data_servico")
+            if not ancora:
+                continue
+            eventos.append(AgendaItem(
+                data=ancora + timedelta(days=DIAS_REINSEMINACAO),
+                categoria="Reprodutivo",
+                descricao=f"Retoque — reconfirmar diagnóstico de {s['numero_matriz']}",
+                numero_animal=s["numero_matriz"],
+            ))
 
         # 2. CHECAGEM DE HORMÔNIOS
         if result.necessidade_iatf:

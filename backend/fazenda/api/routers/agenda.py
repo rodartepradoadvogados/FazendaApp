@@ -66,6 +66,8 @@ def calcular_agenda(
             for c in result.candidatas_iatf
         ],
         "necessidade_iatf": result.necessidade_iatf.__dict__ if result.necessidade_iatf else None,
+        "proxima_visita_iatf": result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None,
+        "proxima_visita_bst": result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None,
         "hormonios_check": [h.__dict__ for h in result.hormonios_check],
         "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis],
         "bst_excluidos": [b.__dict__ for b in result.bst_excluidos],
