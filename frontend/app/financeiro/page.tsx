@@ -1,9 +1,12 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search,
+  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
 } from "lucide-react";
-import { fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
+import {
+  fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
+  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, formatBRL, formatDate,
+} from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -33,7 +36,7 @@ type Lanc = {
   itens?: { produto: string }[];
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "folha";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -305,9 +308,13 @@ export default function FinanceiroPage() {
             <div className="flex items-center gap-2" style={{ color: rel === "lote" ? "var(--dourado-light)" : "var(--text)" }}><Layers size={18} /><span style={{ fontWeight: 700 }}>Pagamento/recebimento em lote</span></div>
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Filtre notas em aberto e dê baixa em várias de uma vez, com um comprovante único</p>
           </button>
+          <button onClick={() => setRel("folha")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "folha" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "folha" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
+            <div className="flex items-center gap-2" style={{ color: rel === "folha" ? "var(--dourado-light)" : "var(--text)" }}><Users size={18} /><span style={{ fontWeight: 700 }}>Folha de pagamento</span></div>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Lance e acompanhe os pagamentos por pessoa e por mês de competência</p>
+          </button>
         </div>
 
-        {rel === "patrimonio" ? <PatrimonioView /> : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : <>
+        {rel === "patrimonio" ? <PatrimonioView /> : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -985,6 +992,154 @@ function BaixaModal({ lancamento, contasBancarias, onClose, onSalvo }: { lancame
             <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}
           </button>
           <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/*
+ * Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
+ * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
+ * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
+ */
+type PessoaFolha = { id: number; nome: string; tipo: string };
+type RegistroFolha = {
+  id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
+  valor_bruto: number; descontos: number; valor_liquido: number;
+  data_pagamento: string | null; status: string; observacao: string | null;
+};
+
+function FolhaPagamentoView() {
+  const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
+  const [regs, setRegs] = useState<RegistroFolha[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [pessoaId, setPessoaId] = useState("");
+  const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
+  const [valorBruto, setValorBruto] = useState("");
+  const [descontos, setDescontos] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+
+  const [pagandoId, setPagandoId] = useState<number | null>(null);
+  const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
+
+  const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+
+  const valorLiquido = useMemo(() => (parseFloat(valorBruto) || 0) - (parseFloat(descontos) || 0), [valorBruto, descontos]);
+
+  async function salvar() {
+    setMsg(null);
+    if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione a pessoa." }); return; }
+    if (!competencia) { setMsg({ tipo: "erro", texto: "Informe o mês de competência." }); return; }
+    if (!valorBruto || parseFloat(valorBruto) <= 0) { setMsg({ tipo: "erro", texto: "Informe o valor bruto." }); return; }
+    setSalvando(true);
+    try {
+      await criarFolhaPagamento({
+        pessoa_id: Number(pessoaId), competencia, valor_bruto: parseFloat(valorBruto),
+        descontos: parseFloat(descontos) || 0, observacao: observacao || undefined,
+      });
+      setMsg({ tipo: "sucesso", texto: "Lançamento de folha criado." });
+      setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao("");
+      carregar();
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  async function marcarPago(r: RegistroFolha) {
+    try {
+      await atualizarFolhaPagamento(r.id, {
+        pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
+        descontos: r.descontos, data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
+      });
+      setPagandoId(null);
+      carregar();
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao marcar como pago" });
+    }
+  }
+
+  if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
+
+  const totalPendente = (regs || []).filter((r) => r.status === "pendente").reduce((a, r) => a + r.valor_liquido, 0);
+  const totalPago = (regs || []).filter((r) => r.status === "pago").reduce((a, r) => a + r.valor_liquido, 0);
+
+  return (
+    <div>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+        <KPI v={String((regs || []).length)} l="Lançamentos" />
+        <KPI v={formatBRL(totalPendente)} l="Pendente" c="var(--amber)" />
+        <KPI v={formatBRL(totalPago)} l="Pago" c="var(--green-light)" />
+      </div>
+
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Pessoa</label>
+            <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+              <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Competência (mês)</label>
+            <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Valor bruto (R$)</label>
+            <input type="number" inputMode="decimal" style={selStyleLote} value={valorBruto} onChange={(e) => setValorBruto(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Descontos (R$)</label>
+            <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Observação</label>
+            <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+          <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong></span></div>
+        </div>
+        {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
+          <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
+        </button>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-3">Lançamentos de folha</div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Pessoa</th><th>Competência</th><th style={{ textAlign: "right" }}>Bruto</th><th style={{ textAlign: "right" }}>Descontos</th><th style={{ textAlign: "right" }}>Líquido</th><th>Status</th><th>Pagamento</th><th></th></tr></thead>
+            <tbody>
+              {(regs || []).map((r) => (
+                <Fragment key={r.id}>
+                  <tr>
+                    <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{r.pessoa_nome}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.descontos)}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
+                    <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                    <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
+                    <td style={{ textAlign: "right" }}>
+                      {r.status === "pendente" && (
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(pagandoId === r.id ? null : r.id)}>Marcar como pago</button>
+                      )}
+                    </td>
+                  </tr>
+                  {pagandoId === r.id && (
+                    <tr><td colSpan={8}>
+                      <div className="flex items-end gap-2" style={{ padding: "0.5rem 0" }}>
+                        <div><label style={labelStyleLote}>Data do pagamento</label>
+                          <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+                        <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
+                        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPagandoId(null)}>Cancelar</button>
+                      </div>
+                    </td></tr>
+                  )}
+                </Fragment>
+              ))}
+              {regs && !regs.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento de folha ainda.</td></tr>}
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
