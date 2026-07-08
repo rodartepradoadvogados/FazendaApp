@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import date
 from typing import Any, Iterator
 
@@ -88,9 +89,44 @@ def clean_grupo(grupo_raw: str) -> str:
     Retorna o grupo primário de um animal.
     Campo pode conter múltiplos grupos separados por vírgula:
       '03 - Média,01 - NOV. ALTA' → '01 - NOV. ALTA' (menor número = principal)
-    Heurística: toma o primeiro grupo (posição original no Ideagri é o principal).
     """
     if not grupo_raw:
         return ""
     grupos = [g.strip() for g in grupo_raw.split(",") if g.strip()]
-    return grupos[0] if grupos else ""
+    if not grupos:
+        return ""
+
+    def _codigo(g: str) -> int:
+        m = re.match(r"^(\d+)", g)
+        return int(m.group(1)) if m else 999
+
+    return min(grupos, key=_codigo)
+
+
+def normalizar_grupos_por_codigo(animais: list) -> None:
+    """
+    Uniformiza, em memória, a grafia de `grupo_primario` para todos os animais
+    que compartilham o mesmo código de 2 dígitos (ex.: "03 - Média" e
+    "03 - MÉDIA" viram uma única grafia) — evita que o mesmo lote apareça
+    duplicado nos relatórios por causa de maiúsculas/minúsculas divergentes
+    entre linhas do GERAL.csv. Prefere a grafia toda em maiúsculas, se houver.
+    """
+    por_codigo: dict[str, list[str]] = {}
+    for a in animais:
+        g = a.grupo_primario
+        if not g:
+            continue
+        codigo = g[:2] if g[:2].isdigit() else g
+        por_codigo.setdefault(codigo, []).append(g)
+
+    canonico: dict[str, str] = {}
+    for codigo, grafias in por_codigo.items():
+        maiuscula = next((g for g in grafias if g == g.upper()), None)
+        canonico[codigo] = maiuscula or grafias[0]
+
+    for a in animais:
+        g = a.grupo_primario
+        if not g:
+            continue
+        codigo = g[:2] if g[:2].isdigit() else g
+        a.grupo_primario = canonico[codigo]

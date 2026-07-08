@@ -8,17 +8,14 @@ import {
   Heart,
   BarChart3,
   Package,
-  Upload,
   Home,
   Beef,
   LineChart,
   Milk,
   Wheat,
-  PieChart,
   Syringe,
-  SlidersHorizontal,
+  Settings,
   ClipboardList,
-  Users,
   Menu,
   X,
 } from "lucide-react";
@@ -32,15 +29,12 @@ const links = [
   { href: "/agenda",      label: "Agenda",       icon: Calendar },
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart },
-  { href: "/analise-reprodutiva", label: "Análise Repr.", icon: PieChart },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef },
   { href: "/producao",    label: "Produção",     icon: Milk },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat },
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3 },
   { href: "/estoque",     label: "Sanidade/Estoque", icon: Package },
-  { href: "/parametros",  label: "Parâmetros",   icon: SlidersHorizontal },
-  { href: "/upload",      label: "Upload CSV",   icon: Upload },
 ];
 
 export function Sidebar() {
@@ -50,10 +44,13 @@ export function Sidebar() {
   const [visiveis, setVisiveis] = useState(links);
   const [admin, setAdmin] = useState(false);
 
+  const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado.
     setVisiveis(links.filter((l) => podeModulo(ROTA_MODULO[l.href] || l.href)));
     setAdmin(ehAdmin());
+    setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
   }, [path]);
 
   useEffect(() => {
@@ -125,7 +122,7 @@ export function Sidebar() {
 
       {/* Nav links */}
       <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
-        {[...visiveis, ...(admin ? [{ href: "/usuarios", label: "Usuários", icon: Users }] : [])].map(({ href, label, icon: Icon }) => {
+        {[...visiveis, ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings }] : [])].map(({ href, label, icon: Icon }) => {
           const active = path === href || (href !== "/" && path.startsWith(href));
           return (
             <Link

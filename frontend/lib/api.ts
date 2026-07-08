@@ -188,6 +188,17 @@ export async function fetchControles() {
   return res.json();
 }
 
+export async function criarControlesLeiteiros(dados: {
+  data_controle: string;
+  entradas: { numero_matriz: string; ordenhas: number[] }[];
+}) {
+  const res = await authFetch(`${API}/producao/controles`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar controle leiteiro"); }
+  return res.json();
+}
+
 export async function fetchLancamentos() {
   const res = await authFetch(`${API}/financeiro/lancamentos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Financeiro error: ${res.status}`);

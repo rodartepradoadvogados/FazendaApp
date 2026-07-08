@@ -25,6 +25,7 @@ from fazenda.models import Animal
 from fazenda.parsers.utils import (
     clean_grupo,
     iter_csv_rows,
+    normalizar_grupos_por_codigo,
     parse_date,
     parse_float,
     parse_int,
@@ -84,5 +85,9 @@ def parse_geral(content: bytes) -> list[Animal]:
             ativo=True,
         )
         animais.append(animal)
+
+    # Uniformiza a grafia do grupo entre linhas (ex.: "03 - Média" / "03 - MÉDIA")
+    # para o mesmo lote não aparecer duplicado nos relatórios por causa de caixa.
+    normalizar_grupos_por_codigo(animais)
 
     return animais

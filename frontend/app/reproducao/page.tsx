@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Heart, AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchServicosAnalise } from "@/lib/api";
+import { Heart, PieChart, AlertTriangle, Filter, Search } from "lucide-react";
+import { fetchServicosAnalise, podeModulo } from "@/lib/api";
+import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
 
 type Serv = {
   numero: string; raca: string; categoria: string;
@@ -16,7 +17,7 @@ const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLoca
 const isoOf = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 const ddmm = (d: Date) => d.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" });
 
-export default function ReproducaoPage() {
+function ReproducaoVisaoGeral() {
   const [regs, setRegs] = useState<Serv[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [animal, setAnimal] = useState("");
@@ -165,6 +166,33 @@ export default function ReproducaoPage() {
           </div>
         </div>
       </>}
+    </div>
+  );
+}
+
+export default function ReproducaoPage() {
+  const [aba, setAba] = useState<"visao" | "analise">("visao");
+  const [temAnalise, setTemAnalise] = useState(false);
+  useEffect(() => { setTemAnalise(podeModulo("analise")); }, []);
+
+  if (!temAnalise) return <ReproducaoVisaoGeral />;
+
+  return (
+    <div className="px-6 pt-6">
+      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+        {([["visao", "Reprodução", Heart], ["analise", "Análise reprodutiva", PieChart]] as const).map(([k, label, Icon]) => (
+          <button key={k} onClick={() => setAba(k)}
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+              border: "1px solid " + (aba === k ? "var(--dourado)" : "var(--border)"),
+              background: aba === k ? "rgba(94,26,46,0.4)" : "transparent",
+              color: aba === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === k ? 700 : 500 }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ margin: "0 -1.5rem" }}>
+        {aba === "visao" ? <ReproducaoVisaoGeral /> : <AnaliseReprodutivaPage />}
+      </div>
     </div>
   );
 }
