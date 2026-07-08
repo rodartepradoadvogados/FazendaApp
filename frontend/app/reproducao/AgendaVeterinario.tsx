@@ -1,0 +1,204 @@
+"use client";
+import { useEffect, useMemo, useState } from "react";
+import { ChevronDown, ChevronRight, ChevronUp, Stethoscope, AlertTriangle, Check, X } from "lucide-react";
+import { fetchAgendaVeterinario, registrarReconfirmacao } from "@/lib/api";
+
+type Item = {
+  numero_matriz: string; categoria: string; peso: number | null;
+  dias_inseminada: number | null; data_servico: string | null;
+  tocada: boolean; reconfirmada: boolean;
+  diagnostico: string | null; diagnostico_reconfirmacao: string | null;
+  atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
+};
+type Listas = Record<string, Item[]>;
+
+// Ordenação por coluna (asc/desc ao clicar no cabeçalho) — mesmo padrão da Agenda.
+function useOrdenacao(linhas: Item[]) {
+  const [coluna, setColuna] = useState<string | null>(null);
+  const [dir, setDir] = useState<1 | -1>(1);
+  const ordenar = (c: string) => {
+    if (c === coluna) setDir((d) => (d === 1 ? -1 : 1));
+    else { setColuna(c); setDir(1); }
+  };
+  const linhasOrdenadas = useMemo(() => {
+    if (!coluna) return linhas;
+    return [...linhas].sort((a: any, b: any) => {
+      const av = a[coluna]; const bv = b[coluna];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [linhas, coluna, dir]);
+  return { linhasOrdenadas, coluna, dir, ordenar };
+}
+
+function Th({ label, campo, coluna, dir, ordenar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void }) {
+  const ativo = coluna === campo;
+  return (
+    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      <span className="flex items-center gap-1">{label}{ativo ? (dir === 1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />) : null}</span>
+    </th>
+  );
+}
+
+const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+
+const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | "dias_para_parto" | "motivo"; reconfirmavel?: boolean }[] = [
+  { key: "inseminadas_1_29", label: "Inseminadas 1–29 dias", color: "var(--blue)" },
+  { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", extra: "atrasada" },
+  { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", extra: "atrasada", reconfirmavel: true },
+  { key: "novilhas_aptas_vazias", label: "Novilhas aptas vazias (≥300 kg)", color: "var(--green-light)" },
+  { key: "verificar_aptidao", label: "Verificar aptidão (260–299 kg)", color: "var(--text-muted)" },
+  { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
+  { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
+  { key: "verificar_pre_parto", label: "Verificar pré-parto (31–60 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
+  { key: "pendentes_classificacao", label: "Pendentes de classificação", color: "var(--text-muted)", extra: "motivo" },
+];
+
+function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: () => void; onCancelar: () => void }) {
+  const [data, setData] = useState(new Date().toISOString().slice(0, 10));
+  const [resultado, setResultado] = useState<"positivo" | "negativo">("positivo");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
+
+  async function salvar() {
+    setSalvando(true); setErro(null);
+    try {
+      await registrarReconfirmacao({ numero_matriz: numero, data_reconfirmacao: data, resultado });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
+  }
+
+  return (
+    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+      <input type="date" style={selStyle} value={data} onChange={(e) => setData(e.target.value)} />
+      <select style={selStyle} value={resultado} onChange={(e) => setResultado(e.target.value as any)}>
+        <option value="positivo">Positivo (gestante confirmada)</option>
+        <option value="negativo">Negativo (perda de prenhez)</option>
+      </select>
+      <button onClick={salvar} disabled={salvando} className="btn-primario" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+        <Check size={13} /> {salvando ? "Salvando…" : "Salvar"}
+      </button>
+      <button onClick={onCancelar} style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+        <X size={13} />
+      </button>
+      {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
+    </div>
+  );
+}
+
+export default function AgendaVeterinarioPage() {
+  const [dados, setDados] = useState<{ listas: Listas; totais: Record<string, number>; data_referencia: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [abertas, setAbertas] = useState<Set<string>>(new Set());
+  const [reconfirmando, setReconfirmando] = useState<string | null>(null);
+
+  function carregar() {
+    fetchAgendaVeterinario().then(setDados).catch((e) => setError(e.message));
+  }
+  useEffect(carregar, []);
+
+  const toggle = (k: string) => setAbertas((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
+  if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  return (
+    <div className="animate-in">
+      <div className="mb-4">
+        <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda do veterinário</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
+          Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos, bezerras e novilhas
+          abaixo de 260 kg não entram em nenhuma lista. Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
+        </p>
+      </div>
+
+      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+        {LISTAS.map((l) => {
+          const n = dados.totais[l.key] ?? 0;
+          const ativa = abertas.has(l.key);
+          if (n === 0) return null;
+          return (
+            <button key={l.key} onClick={() => toggle(l.key)}
+              style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (ativa ? l.color : "var(--border)"),
+                background: ativa ? "rgba(94,26,46,0.25)" : "transparent",
+                color: ativa ? l.color : "var(--text-muted)", fontWeight: ativa ? 700 : 500 }}>
+              {ativa ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+              {l.label} ({n})
+            </button>
+          );
+        })}
+      </div>
+
+      {LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
+        <ListaTabela key={l.key} cfg={l} itens={dados.listas[l.key] ?? []}
+          reconfirmando={reconfirmando} setReconfirmando={setReconfirmando} onSalvo={() => { setReconfirmando(null); carregar(); }} />
+      ))}
+
+      {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal para classificar no momento.</p>
+      )}
+    </div>
+  );
+}
+
+function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
+  cfg: typeof LISTAS[number]; itens: Item[];
+  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: () => void;
+}) {
+  const ord = useOrdenacao(itens);
+  return (
+    <div className="card mb-3" style={{ overflowX: "auto" }}>
+      <div className="card-header mb-2">{cfg.label}</div>
+      <table className="fazenda-table">
+        <thead><tr>
+          <Th label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Peso (kg)" campo="peso" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Dias insem." campo="dias_inseminada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Data serviço" campo="data_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Toque" campo="tocada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <Th label="Reconfirmação" campo="reconfirmada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          {cfg.extra === "atrasada" && <Th label="Situação" campo="atrasada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.extra === "dias_para_parto" && <Th label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.extra === "motivo" && <Th label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.reconfirmavel && <th></th>}
+        </tr></thead>
+        <tbody>
+          {ord.linhasOrdenadas.map((it) => (
+            <tr key={it.numero_matriz}>
+              <td style={{ fontWeight: 700 }}>{it.numero_matriz}</td>
+              <td style={{ fontSize: "0.78rem", textTransform: "capitalize" }}>{it.categoria}</td>
+              <td>{it.peso ?? "—"}</td>
+              <td>{it.dias_inseminada ?? "—"}</td>
+              <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(it.data_servico)}</td>
+              <td>{it.tocada ? <Check size={14} style={{ color: "var(--green-light)" }} /> : "—"}</td>
+              <td>{it.reconfirmada ? <Check size={14} style={{ color: "var(--green-light)" }} /> : "—"}</td>
+              {cfg.extra === "atrasada" && (
+                <td>{it.atrasada ? <span style={{ color: "var(--red)", fontWeight: 600, fontSize: "0.75rem" }}>Atrasada</span> : <span style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>No prazo</span>}</td>
+              )}
+              {cfg.extra === "dias_para_parto" && <td>{it.dias_para_parto ?? "—"}</td>}
+              {cfg.extra === "motivo" && <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{it.motivo}</td>}
+              {cfg.reconfirmavel && (
+                <td>
+                  {reconfirmando === it.numero_matriz ? (
+                    <FormReconfirmacao numero={it.numero_matriz} onSalvo={onSalvo} onCancelar={() => setReconfirmando(null)} />
+                  ) : (
+                    <button onClick={() => setReconfirmando(it.numero_matriz)}
+                      style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
+                      Registrar reconfirmação
+                    </button>
+                  )}
+                </td>
+              )}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}

@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Heart, PieChart, AlertTriangle, Filter, Search } from "lucide-react";
+import { Heart, PieChart, Stethoscope, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchServicosAnalise, podeModulo } from "@/lib/api";
 import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
+import AgendaVeterinarioPage from "@/app/reproducao/AgendaVeterinario";
 
 type Serv = {
   numero: string; raca: string; categoria: string;
@@ -171,27 +172,37 @@ function ReproducaoVisaoGeral() {
 }
 
 export default function ReproducaoPage() {
-  const [aba, setAba] = useState<"visao" | "analise">("visao");
+  const [aba, setAba] = useState<"visao" | "analise" | "vet">("visao");
   const [temAnalise, setTemAnalise] = useState(false);
-  useEffect(() => { setTemAnalise(podeModulo("analise")); }, []);
+  const [temVet, setTemVet] = useState(false);
+  // Cada usuário logado tem suas próprias permissões — reavalia sempre que a
+  // página monta (evita mostrar abas de uma sessão anterior de outro usuário).
+  useEffect(() => { setTemAnalise(podeModulo("analise")); setTemVet(podeModulo("vet")); }, []);
 
-  if (!temAnalise) return <ReproducaoVisaoGeral />;
+  if (!temAnalise && !temVet) return <ReproducaoVisaoGeral />;
+
+  const abas = [
+    ["visao", "Reprodução", Heart] as const,
+    ...(temAnalise ? [["analise", "Análise reprodutiva", PieChart] as const] : []),
+    ...(temVet ? [["vet", "Agenda do veterinário", Stethoscope] as const] : []),
+  ];
+  const abaAtiva = abas.some(([k]) => k === aba) ? aba : "visao";
 
   return (
     <div className="px-6 pt-6">
       <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        {([["visao", "Reprodução", Heart], ["analise", "Análise reprodutiva", PieChart]] as const).map(([k, label, Icon]) => (
+        {abas.map(([k, label, Icon]) => (
           <button key={k} onClick={() => setAba(k)}
             style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === k ? "var(--dourado)" : "var(--border)"),
-              background: aba === k ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === k ? 700 : 500 }}>
+              border: "1px solid " + (abaAtiva === k ? "var(--dourado)" : "var(--border)"),
+              background: abaAtiva === k ? "rgba(94,26,46,0.4)" : "transparent",
+              color: abaAtiva === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: abaAtiva === k ? 700 : 500 }}>
             <Icon size={14} /> {label}
           </button>
         ))}
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
-        {aba === "visao" ? <ReproducaoVisaoGeral /> : <AnaliseReprodutivaPage />}
+        {abaAtiva === "visao" ? <ReproducaoVisaoGeral /> : abaAtiva === "analise" ? <AnaliseReprodutivaPage /> : <div className="px-6"><AgendaVeterinarioPage /></div>}
       </div>
     </div>
   );

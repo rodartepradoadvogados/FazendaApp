@@ -6,6 +6,7 @@ import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario } from "@/lib
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
   { key: "lancamentos", label: "Lançamentos" }, { key: "reproducao", label: "Reprodução" }, { key: "analise", label: "Análise Repr." },
+  { key: "vet", label: "Agenda do veterinário" },
   { key: "rebanho", label: "Rebanho" }, { key: "producao", label: "Produção" }, { key: "alimentacao", label: "Alimentação" },
   { key: "sanidade", label: "Sanidade" }, { key: "financeiro", label: "Financeiro" }, { key: "estoque", label: "Sanidade/Estoque" },
   { key: "parametros", label: "Parâmetros" }, { key: "upload", label: "Upload" },

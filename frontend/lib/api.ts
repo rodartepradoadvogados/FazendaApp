@@ -162,6 +162,70 @@ export async function salvarDiagnostico(dados: {
   return res.json();
 }
 
+export async function fetchAgendaVeterinario() {
+  const res = await authFetch(`${API}/reproducao/agenda-veterinario`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Agenda do veterinário error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarReconfirmacao(dados: {
+  numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";
+}) {
+  const res = await authFetch(`${API}/reproducao/reconfirmacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar reconfirmação"); }
+  return res.json();
+}
+
+export async function fetchFornecedores() {
+  const res = await authFetch(`${API}/cadastro/fornecedores`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Fornecedores error: ${res.status}`);
+  return res.json();
+}
+export async function criarFornecedor(dados: { nome: string; tipo: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/fornecedores`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fornecedor"); }
+  return res.json();
+}
+export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/fornecedores/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fornecedor"); }
+  return res.json();
+}
+
+export async function criarAnimalFicha(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/cadastro/animais`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar animal"); }
+  return res.json();
+}
+export async function atualizarAnimalFicha(numero: string, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/cadastro/animais/${numero}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar ficha"); }
+  return res.json();
+}
+
+export async function fetchItensEstoqueCadastro() {
+  const res = await authFetch(`${API}/cadastro/estoque-itens`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Itens de estoque error: ${res.status}`);
+  return res.json();
+}
+export async function atualizarMetaEstoque(id: number, dados: { ensacado?: boolean | null; kg_por_saco?: number | null; fornecedor_id?: number | null }) {
+  const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item"); }
+  return res.json();
+}
+
 export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
@@ -262,6 +326,18 @@ export async function movimentarEstoque(dados: {
 export async function fetchAlimentacao() {
   const res = await authFetch(`${API}/alimentacao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchNecessidadeMensal() {
+  const res = await authFetch(`${API}/alimentacao/necessidade-mensal`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Necessidade mensal error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchEstadoBaixaAlimentacao() {
+  const res = await authFetch(`${API}/alimentacao/estado-baixa`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Estado da baixa error: ${res.status}`);
   return res.json();
 }
 
@@ -370,6 +446,20 @@ export async function fetchDRE(params: {
   if (params.centro_custo) qs.set("centro_custo", params.centro_custo);
   const res = await authFetch(`${API}/financeiro/dre?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`DRE error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchModelosImportar() {
+  const res = await authFetch(`${API}/importar/modelos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Modelos de importação error: ${res.status}`);
+  return res.json();
+}
+
+export async function importarCSV(categoria: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/importar/${categoria}`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar"); }
   return res.json();
 }
 
