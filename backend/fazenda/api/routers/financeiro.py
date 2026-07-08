@@ -250,6 +250,27 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
     }
 
 
+@router.get("/plano-contas")
+def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
+    """
+    Plano de contas gerenciais COMPLETO (inclui os códigos de grupo/cabeçalho,
+    que vêm com Ativa=Não e não aparecem em /opcoes — aqui servem só para dar
+    nome à hierarquia nos relatórios, não para lançar diretamente neles).
+    """
+    plano = session.exec(select(PlanoContaGerencial)).all()
+    return sorted(
+        [
+            {
+                "codigo": c.codigo, "nome": c.nome, "ativa": c.ativa,
+                "nivel": c.codigo.count(".") + 1,
+                "fluxo": c.fluxo, "tipo_fixo_variavel": c.tipo_fixo_variavel,
+            }
+            for c in plano
+        ],
+        key=lambda x: x["codigo"],
+    )
+
+
 @router.get("/patrimonio")
 def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
     """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv)."""

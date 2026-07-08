@@ -12,7 +12,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
-from fazenda.models import ContaGerencial, LancamentoItem
+from fazenda.models import ContaGerencial, LancamentoItem, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 NFE_SIMPLES = """<?xml version="1.0" encoding="UTF-8"?>
@@ -232,3 +232,34 @@ class TestLancamentoMultiplosItens:
         listagem = c.get("/financeiro/lancamentos").json()
         registro = next(l for l in listagem["lancamentos"] if l["numero_lancamento"] == numero)
         assert len(registro["itens"]) == 2
+
+
+class TestPlanoContas:
+    def test_traz_contas_ativas_e_de_grupo(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(PlanoContaGerencial(codigo="2", nome="Receita", ativa=False))
+            s.add(PlanoContaGerencial(codigo="2.01", nome="Pecuária", ativa=False))
+            s.add(PlanoContaGerencial(codigo="2.01.01.01", nome="Leite indústria", ativa=True))
+            s.commit()
+
+        r = c.get("/financeiro/plano-contas")
+        assert r.status_code == 200
+        por_codigo = {x["codigo"]: x for x in r.json()}
+        assert por_codigo["2"]["nivel"] == 1
+        assert por_codigo["2.01"]["nivel"] == 2
+        assert por_codigo["2.01.01.01"]["nivel"] == 4
+        assert por_codigo["2"]["ativa"] is False
+        assert por_codigo["2.01.01.01"]["ativa"] is True
+
+    def test_opcoes_so_traz_contas_ativas_plano_completo_traz_tudo(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(PlanoContaGerencial(codigo="2.01", nome="Pecuária", ativa=False))
+            s.add(PlanoContaGerencial(codigo="2.01.01.01", nome="Leite indústria", ativa=True))
+            s.commit()
+
+        codigos_opcoes = {x["codigo"] for x in c.get("/financeiro/opcoes").json()["contas_gerenciais"]}
+        codigos_completo = {x["codigo"] for x in c.get("/financeiro/plano-contas").json()}
+        assert codigos_opcoes == {"2.01.01.01"}
+        assert codigos_completo == {"2.01", "2.01.01.01"}
