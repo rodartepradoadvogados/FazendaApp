@@ -437,6 +437,20 @@ export async function fetchDRE(params: {
   return res.json();
 }
 
+export async function fetchModelosImportar() {
+  const res = await authFetch(`${API}/importar/modelos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Modelos de importação error: ${res.status}`);
+  return res.json();
+}
+
+export async function importarCSV(categoria: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/importar/${categoria}`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar"); }
+  return res.json();
+}
+
 export async function uploadCSV(tipo: string, file: File) {
   const form = new FormData();
   form.append("file", file);

@@ -1,13 +1,14 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users, Layers } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
 import Cadastro from "@/components/Cadastro";
+import ImportarDados from "@/components/ImportarDados";
 
-type Aba = "cadastro" | "parametros" | "upload" | "usuarios";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -18,6 +19,7 @@ export default function ConfiguracoesPage() {
     if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers });
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload });
+    if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users });
     setAbasVisiveis(abas);
     setAba(abas[0]?.id ?? null);
@@ -51,6 +53,7 @@ export default function ConfiguracoesPage() {
         {aba === "cadastro" && <Cadastro />}
         {aba === "parametros" && <ParametrosPage />}
         {aba === "upload" && <UploadPage />}
+        {aba === "importar" && <ImportarDados />}
         {aba === "usuarios" && <UsuariosPage />}
       </div>
     </div>

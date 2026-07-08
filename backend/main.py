@@ -19,6 +19,7 @@ from fazenda.api.routers import (
     estoque,
     exclusoes,
     financeiro,
+    importar,
     indicadores,
     lotes,
     movimentacoes,
@@ -77,6 +78,8 @@ app.include_router(auth.router)
 _protegido = [Depends(get_current_user)]
 app.include_router(animais.router, dependencies=_protegido)
 app.include_router(upload.router, dependencies=_protegido)
+# Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
+app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))])
 app.include_router(agenda.router, dependencies=_protegido)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
