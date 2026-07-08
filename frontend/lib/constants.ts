@@ -5,15 +5,5 @@ export const RESPONSAVEIS = [
   "Jorbeson Nunes (funcionário)", "Huerik (veterinário COMIGO)", "Carlos Alpha/ABS (veterinário Alpha/ABS)",
 ];
 
-// Motivos de movimentação de animais entre lotes (lista fixa).
-export const MOTIVOS_MOVIMENTACAO = [
-  "Crescimento",
-  "Desmama",
-  "Aptidão",
-  "Inseminação",
-  "Pré-parto",
-  "Parto",
-  "Aumento de DEL e/ou produção",
-  "Final de DEL ou queda de produção",
-  "Tratamento/doença",
-];
+// Motivos de movimentação agora são cadastráveis (Configurações > Cadastro >
+// Motivos) — ver fetchMotivosMovimentacao em lib/api.ts.

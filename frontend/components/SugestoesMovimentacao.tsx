@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
-import { fetchSugestoesMovimentacao, criarMovimentacao } from "@/lib/api";
-import { RESPONSAVEIS, MOTIVOS_MOVIMENTACAO } from "@/lib/constants";
+import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
+import { RESPONSAVEIS } from "@/lib/constants";
 
 type LoteSugerido = { codigo: string; nome: string; rotulo: string };
 type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[] };
@@ -13,9 +13,9 @@ const selStyle: React.CSSProperties = {
 };
 const hoje = () => new Date().toISOString().split("T")[0];
 
-function FormMover({ sugestao, onFeito, onCancelar }: { sugestao: Sugestao; onFeito: () => void; onCancelar: () => void }) {
+function FormMover({ sugestao, motivos, onFeito, onCancelar }: { sugestao: Sugestao; motivos: string[]; onFeito: () => void; onCancelar: () => void }) {
   const [destino, setDestino] = useState(sugestao.lotes_sugeridos[0]?.codigo ?? "");
-  const [motivo, setMotivo] = useState("Aptidão");
+  const [motivo, setMotivo] = useState(motivos.includes("Aptidão") ? "Aptidão" : (motivos[0] ?? ""));
   const [responsavel, setResponsavel] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -41,7 +41,7 @@ function FormMover({ sugestao, onFeito, onCancelar }: { sugestao: Sugestao; onFe
         {sugestao.lotes_sugeridos.map((l) => <option key={l.codigo} value={l.codigo}>{l.rotulo}</option>)}
       </select>
       <select style={selStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
-        {MOTIVOS_MOVIMENTACAO.map((m) => <option key={m}>{m}</option>)}
+        {motivos.map((m) => <option key={m}>{m}</option>)}
       </select>
       <select style={selStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
         <option value="">Responsável…</option>
@@ -60,11 +60,13 @@ function FormMover({ sugestao, onFeito, onCancelar }: { sugestao: Sugestao; onFe
 
 export default function SugestoesMovimentacao() {
   const [dados, setDados] = useState<{ sugestoes: Sugestao[]; total: number; lotes_com_criterio: number } | null>(null);
+  const [motivos, setMotivos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [movendo, setMovendo] = useState<string | null>(null);
 
   function carregar() {
     fetchSugestoesMovimentacao().then(setDados).catch((e) => setError(e.message));
+    fetchMotivosMovimentacao().then(setMotivos).catch(() => {});
   }
   useEffect(carregar, []);
 
@@ -96,7 +98,7 @@ export default function SugestoesMovimentacao() {
                 <td style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{s.lotes_sugeridos.map((l) => l.rotulo).join(" ou ")}</td>
                 <td>
                   {movendo === s.numero_matriz ? (
-                    <FormMover sugestao={s} onFeito={() => { setMovendo(null); carregar(); }} onCancelar={() => setMovendo(null)} />
+                    <FormMover sugestao={s} motivos={motivos} onFeito={() => { setMovendo(null); carregar(); }} onCancelar={() => setMovendo(null)} />
                   ) : (
                     <button onClick={() => setMovendo(s.numero_matriz)}
                       style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--dourado)", background: "transparent", color: "var(--dourado-light)", cursor: "pointer" }}>
