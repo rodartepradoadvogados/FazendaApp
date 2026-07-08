@@ -7,6 +7,7 @@ import {
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
+  fetchVales, criarVale,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -1213,6 +1214,124 @@ function FolhaPagamentoView() {
           </table>
         </div>
       </div>
+
+      <ValeFuncionarioSection pessoas={pessoas} />
+    </div>
+  );
+}
+
+const FORMAS_VALE = [
+  { value: "dinheiro", label: "Dinheiro" }, { value: "pix", label: "Pix" },
+  { value: "transferencia", label: "Transferência" }, { value: "desconto_integral_folha", label: "Desconto integral na próxima folha" },
+];
+
+type ParcelaVale = { competencia: string; valor: number; aplicada?: boolean };
+type Vale = {
+  id: number; pessoa_id: number; pessoa_nome: string; valor_total: number; forma_pagamento: string;
+  data_pagamento: string; parcelas: number; competencia_inicio: string; observacao: string | null;
+  parcelas_detalhe: ParcelaVale[];
+};
+
+function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
+  const [vales, setVales] = useState<Vale[] | null>(null);
+  const [pessoaId, setPessoaId] = useState("");
+  const [valorTotal, setValorTotal] = useState("");
+  const [formaPagamento, setFormaPagamento] = useState("dinheiro");
+  const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
+  const [parcelas, setParcelas] = useState("1");
+  const [competenciaInicio, setCompetenciaInicio] = useState(() => new Date().toISOString().slice(0, 7));
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+
+  const carregar = () => fetchVales().then(setVales).catch(() => {});
+  useEffect(() => { carregar(); }, []);
+
+  async function lancar(confirmar = false) {
+    setMsg(null);
+    if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione a pessoa." }); return; }
+    if (!valorTotal || parseFloat(valorTotal) <= 0) { setMsg({ tipo: "erro", texto: "Informe o valor do vale." }); return; }
+    if (!parcelas || Number(parcelas) < 1) { setMsg({ tipo: "erro", texto: "Informe ao menos 1 parcela." }); return; }
+    setSalvando(true);
+    try {
+      await criarVale({
+        pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
+        data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
+        observacao: observacao || undefined, confirmar,
+      });
+      setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto entrará automaticamente na folha das competências afetadas." });
+      setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao("");
+      carregar();
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
+        if (window.confirm(`${e.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja lançar mesmo assim?`)) {
+          await lancar(true);
+          setSalvando(false);
+          return;
+        }
+      } else {
+        setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar vale" });
+      }
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div className="card mt-4">
+      <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Vale de funcionário</div>
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+        Adiantamento pago à parte, descontado da folha em uma ou mais competências. Se a soma dos descontos de vale
+        de uma competência ultrapassar 40% do salário base da pessoa, o sistema pede confirmação antes de lançar.
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><label style={labelStyleLote}>Pessoa</label>
+          <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+            <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+          </select></div>
+        <div><label style={labelStyleLote}>Valor total (R$)</label>
+          <input type="number" inputMode="decimal" style={selStyleLote} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Forma de pagamento</label>
+          <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
+            {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+          </select></div>
+        <div><label style={labelStyleLote}>Data do pagamento</label>
+          <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+      </div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><label style={labelStyleLote}>Parcelas do desconto</label>
+          <input type="number" min={1} style={selStyleLote} value={parcelas} onChange={(e) => setParcelas(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Competência inicial do desconto</label>
+          <input type="month" style={selStyleLote} value={competenciaInicio} onChange={(e) => setCompetenciaInicio(e.target.value)} /></div>
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyleLote}>Observação</label>
+          <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+      </div>
+      {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+      <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
+        <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
+      </button>
+
+      {vales && vales.length > 0 && (
+        <div className="overflow-x-auto mt-4">
+          <table className="fazenda-table">
+            <thead><tr><th>Pessoa</th><th style={{ textAlign: "right" }}>Valor total</th><th>Forma</th><th>Parcelas</th><th>Competências</th></tr></thead>
+            <tbody>
+              {vales.map((v) => (
+                <tr key={v.id}>
+                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{v.pessoa_nome}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_total)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{v.parcelas}x</td>
+                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                    {v.parcelas_detalhe.map((p) => `${p.competencia}: ${formatBRL(p.valor)}${p.aplicada ? " ✓" : ""}`).join(" · ")}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

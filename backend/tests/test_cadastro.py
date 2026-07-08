@@ -288,6 +288,83 @@ class TestFolhaPagamentoRecorrente:
         assert r.json()["dia_vencimento"] == 10
 
 
+class TestValeFuncionario:
+    def _pessoa(self, c, salario_base=None):
+        r = c.post("/cadastro/pessoas", json={"nome": "Funcionário Vale", "tipo": "Funcionário"}).json()
+        if salario_base is not None:
+            c.put(f"/cadastro/pessoas/{r['id']}", json={
+                "nome": "Funcionário Vale", "tipo": "Funcionário", "salario_base": salario_base,
+            })
+        return r["id"]
+
+    def test_rejeita_sem_salario_base_cadastrado(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 400
+
+    def test_rejeita_forma_pagamento_invalida(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "cheque",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 400
+
+    def test_cria_vale_parcelado_com_arredondamento_na_ultima_parcela(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 100.0, "forma_pagamento": "pix",
+            "data_pagamento": "2026-01-10", "parcelas": 3, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 200
+        parcelas = r.json()["parcelas_detalhe"]
+        assert [p["competencia"] for p in parcelas] == ["2026-02", "2026-03", "2026-04"]
+        assert round(sum(p["valor"] for p in parcelas), 2) == 100.0
+
+    def test_alerta_quando_ultrapassa_quarenta_por_cento_do_salario(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=1000.0)  # limite = 400
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 409
+        detalhe = r.json()["detail"]
+        assert detalhe["competencias_excedidas"][0]["competencia"] == "2026-02"
+
+        r2 = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02", "confirmar": True,
+        })
+        assert r2.status_code == 200
+
+    def test_parcela_de_vale_e_aplicada_automaticamente_na_folha(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        })
+        assert r.status_code == 200
+        assert r.json()["descontos"] == 300.0
+        assert r.json()["valor_liquido"] == 1700.0
+
+        # segunda folha na mesma competência não deve reaplicar a parcela já usada
+        r2 = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-03", "valor_bruto": 2000.0,
+        })
+        assert r2.json()["descontos"] == 0.0
+
+
 class TestCadastroSanitario:
     """Princípio ativo / Doença / Evento sanitário — cadastros simples nome+ativo."""
 

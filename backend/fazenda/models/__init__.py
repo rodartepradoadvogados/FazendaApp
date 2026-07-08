@@ -435,6 +435,9 @@ class Pessoa(SQLModel, table=True):
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Referência para o limite de 40% de desconto de vale (ver ValeFuncionario).
+    salario_base: Optional[float] = None
+
 
 # ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
@@ -463,6 +466,40 @@ class FolhaPagamento(SQLModel, table=True):
     dia_vencimento: Optional[int] = None
     origem_recorrencia_id: Optional[int] = None  # id do lançamento-modelo, quando gerado automaticamente
     numero_lancamento_gerado: Optional[str] = None  # nº do lançamento (LC-...) criado em Contas a Pagar
+
+
+# ---------------------------------------------------------------------------
+# Vale de funcionário — adiantamento pago à parte, descontado da folha em uma
+# ou mais competências futuras (ver ValeParcela).
+# ---------------------------------------------------------------------------
+class ValeFuncionario(SQLModel, table=True):
+    """Um vale/adiantamento lançado para uma pessoa, com o desconto parcelado na folha."""
+
+    __tablename__ = "vale_funcionario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    valor_total: float
+    forma_pagamento: str  # dinheiro | pix | transferencia | desconto_integral_folha
+    data_pagamento: date
+    parcelas: int = 1
+    competencia_inicio: str = Field(index=True)  # "AAAA-MM" — primeira competência com desconto
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ValeParcela(SQLModel, table=True):
+    """Uma parcela do desconto de um vale — uma linha por competência afetada."""
+
+    __tablename__ = "vale_parcela"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    vale_id: int = Field(foreign_key="vale_funcionario.id")
+    pessoa_id: int = Field(foreign_key="pessoa.id", index=True)
+    competencia: str = Field(index=True)  # "AAAA-MM"
+    valor: float
+    aplicada: bool = False  # já foi somada aos descontos de algum lançamento de folha?
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

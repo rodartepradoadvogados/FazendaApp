@@ -17,8 +17,11 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, Pessoa, PrincipioAtivo,
+    ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+
+FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
@@ -102,6 +105,7 @@ class PessoaIn(BaseModel):
     email: str | None = None
     observacoes: str | None = None
     ativo: bool = True
+    salario_base: float | None = None
 
 
 @router.get("/pessoas")
@@ -158,6 +162,28 @@ def _competencia_seguinte(competencia: str) -> str:
     return f"{ano:04d}-{mes:02d}"
 
 
+def _aplicar_vale_parcelas(session: Session, pessoa_id: int, competencia: str) -> float:
+    """
+    Soma e marca como aplicadas as parcelas de vale pendentes da pessoa nesta
+    competência — o valor retornado deve ser somado aos descontos do
+    lançamento de folha dessa competência (manual ou gerado pela recorrência).
+    """
+    pendentes = session.exec(
+        select(ValeParcela).where(
+            ValeParcela.pessoa_id == pessoa_id,
+            ValeParcela.competencia == competencia,
+            ValeParcela.aplicada == False,  # noqa: E712
+        )
+    ).all()
+    if not pendentes:
+        return 0.0
+    total = round(sum(p.valor for p in pendentes), 2)
+    for p in pendentes:
+        p.aplicada = True
+        session.add(p)
+    return total
+
+
 def _gerar_folha_recorrente(session: Session) -> None:
     """
     Para cada lançamento de folha marcado como recorrente (o "modelo"), gera
@@ -183,11 +209,12 @@ def _gerar_folha_recorrente(session: Session) -> None:
             if not existe:
                 ano, mes = (int(x) for x in competencia.split("-"))
                 dia = min(max(modelo.dia_vencimento or 5, 1), 28)
-                valor_liquido = round(modelo.valor_bruto - modelo.descontos, 2)
+                descontos = round(modelo.descontos + _aplicar_vale_parcelas(session, modelo.pessoa_id, competencia), 2)
+                valor_liquido = round(modelo.valor_bruto - descontos, 2)
                 numero_lancamento = _proximo_numero_lancamento(session, ano)
                 nova = FolhaPagamento(
                     pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
-                    descontos=modelo.descontos, valor_liquido=valor_liquido, status="pendente",
+                    descontos=descontos, valor_liquido=valor_liquido, status="pendente",
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
                 )
@@ -221,14 +248,15 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
-    valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
-    if valor_liquido <= 0:
-        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
+    descontos = round(dados.descontos + _aplicar_vale_parcelas(session, dados.pessoa_id, dados.competencia), 2)
+    valor_liquido = round(dados.valor_bruto - descontos, 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
-        descontos=dados.descontos, valor_liquido=valor_liquido,
+        descontos=descontos, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
     )
@@ -266,6 +294,102 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Vale de funcionário — adiantamento com desconto parcelado na folha. Se a
+# soma das parcelas de vale de uma competência ultrapassar 40% do salário
+# base da pessoa, é preciso confirmar explicitamente antes de lançar.
+# ---------------------------------------------------------------------------
+class ValeIn(BaseModel):
+    pessoa_id: int
+    valor_total: float
+    forma_pagamento: str
+    data_pagamento: date
+    parcelas: int = 1
+    competencia_inicio: str  # "AAAA-MM"
+    observacao: str | None = None
+    confirmar: bool = False  # true para prosseguir mesmo ultrapassando 40% do salário
+
+
+def _competencias_do_vale(competencia_inicio: str, parcelas: int) -> list[str]:
+    competencias = [competencia_inicio]
+    for _ in range(parcelas - 1):
+        competencias.append(_competencia_seguinte(competencias[-1]))
+    return competencias
+
+
+@router.get("/vales")
+def listar_vales(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    vales = session.exec(select(ValeFuncionario).order_by(ValeFuncionario.data_pagamento.desc())).all()
+    saida = []
+    for v in vales:
+        parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == v.id)).all()
+        saida.append({
+            **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"),
+            "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas), key=lambda p: p["competencia"]),
+        })
+    return saida
+
+
+@router.post("/vales")
+def criar_vale(dados: ValeIn, session: Session = Depends(get_session)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE:
+        raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
+    if dados.valor_total <= 0:
+        raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
+    if dados.parcelas < 1:
+        raise HTTPException(status_code=400, detail="Informe ao menos 1 parcela")
+
+    competencias = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    valor_parcela = round(dados.valor_total / dados.parcelas, 2)
+    # a última parcela absorve o arredondamento, para a soma bater com valor_total
+    valores_parcela = [valor_parcela] * (dados.parcelas - 1)
+    valores_parcela.append(round(dados.valor_total - valor_parcela * (dados.parcelas - 1), 2))
+
+    if not pessoa.salario_base:
+        raise HTTPException(
+            status_code=400,
+            detail="Cadastre o salário base da pessoa (Configurações > Cadastro > Pessoas) antes de lançar um vale.",
+        )
+
+    limite = round(pessoa.salario_base * 0.4, 2)
+    competencias_excedidas = []
+    for competencia, valor in zip(competencias, valores_parcela):
+        ja_lancado = session.exec(
+            select(ValeParcela).where(ValeParcela.pessoa_id == dados.pessoa_id, ValeParcela.competencia == competencia)
+        ).all()
+        total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
+        if total_competencia > limite:
+            competencias_excedidas.append({"competencia": competencia, "total": total_competencia, "limite": limite})
+
+    if competencias_excedidas and not dados.confirmar:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": (
+                f"O desconto de vale ultrapassa 40% do salário (limite de R$ {limite:.2f}) em "
+                f"{len(competencias_excedidas)} competência(s). Confirme para lançar mesmo assim."
+            ),
+            "competencias_excedidas": competencias_excedidas,
+        })
+
+    vale = ValeFuncionario(
+        pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
+        data_pagamento=dados.data_pagamento, parcelas=dados.parcelas, competencia_inicio=dados.competencia_inicio,
+        observacao=dados.observacao,
+    )
+    session.add(vale)
+    session.commit()
+    session.refresh(vale)
+    for competencia, valor in zip(competencias, valores_parcela):
+        session.add(ValeParcela(vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor))
+    session.commit()
+    return {**vale.model_dump(), "parcelas_detalhe": [
+        {"competencia": c, "valor": v} for c, v in zip(competencias, valores_parcela)
+    ]}
 
 
 # ---------------------------------------------------------------------------
