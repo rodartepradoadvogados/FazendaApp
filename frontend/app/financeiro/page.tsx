@@ -5,7 +5,7 @@ import {
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
-  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, formatBRL, formatDate,
+  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -36,11 +36,14 @@ type Lanc = {
   itens?: { produto: string }[];
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "folha";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "folha" | "rmca";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
+];
+const INDICADORES: { id: Rel; label: string; icon: any; desc: string }[] = [
+  { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_pagar", label: "Contas a pagar", icon: Clock, desc: "Despesas em aberto (sem data de pagamento)" },
@@ -297,6 +300,20 @@ export default function FinanceiroPage() {
           })}
         </div>
 
+        {/* Indicadores */}
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Indicadores</p>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          {INDICADORES.map((r) => {
+            const ativo = rel === r.id; const Icon = r.icon;
+            return (
+              <button key={r.id} onClick={() => setRel(r.id)} className="card" style={{ textAlign: "left", cursor: "pointer", border: ativo ? "1px solid var(--dourado)" : "1px solid var(--border)", background: ativo ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
+                <div className="flex items-center gap-2" style={{ color: ativo ? "var(--dourado-light)" : "var(--text)" }}><Icon size={18} /><span style={{ fontWeight: 700 }}>{r.label}</span></div>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>{r.desc}</p>
+              </button>
+            );
+          })}
+        </div>
+
         {/* Patrimônio e ações em lote */}
         <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Patrimônio e ações</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
@@ -314,7 +331,7 @@ export default function FinanceiroPage() {
           </button>
         </div>
 
-        {rel === "patrimonio" ? <PatrimonioView /> : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : <>
+        {rel === "patrimonio" ? <PatrimonioView /> : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -1142,6 +1159,108 @@ function FolhaPagamentoView() {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+/*
+ * RMCA (Receita Menos Custo com Alimentação) — duas versões lado a lado, por
+ * decisão explícita do usuário: "gerencial" (contas do plano de contas
+ * marcadas em Configurações > Parâmetros financeiros) e "físico" (consumo
+ * real registrado pela Alimentação × valor unitário do Estoque).
+ */
+type ItemFisicoRmca = { ingrediente: string; quantidade: number; valor_unitario: number; custo: number };
+type RmcaResp = {
+  periodo: { inicio: string; fim: string };
+  configurado: boolean;
+  contas_receita: string[];
+  contas_custo: string[];
+  gerencial: { receita_leite: number; custo_alimentacao: number; rmca: number };
+  fisico: { receita_leite: number; custo_alimentacao: number; rmca: number; itens: ItemFisicoRmca[] };
+};
+
+function primeiroDiaDoMes() {
+  const hoje = new Date();
+  return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+}
+
+function RmcaView() {
+  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dados, setDados] = useState<RmcaResp | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchRmca(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (
+        <>
+          {!dados.configurado && (
+            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
+                Nenhuma conta gerencial está marcada como receita do leite ou custo de alimentação — a versão gerencial fica zerada até a configuração ser feita.
+                Marque em <strong>Configurações → Parâmetros financeiros → Conta gerencial</strong>.
+              </p>
+            </div>
+          )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="card">
+              <div className="card-header mb-3">RMCA gerencial</div>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                A partir dos lançamentos financeiros, pelas contas marcadas como receita do leite / custo de alimentação.
+              </p>
+              <div className="grid grid-cols-1 gap-3 mb-3">
+                <KPI v={formatBRL(dados.gerencial.receita_leite)} l="Receita do leite" c="var(--green-light)" />
+                <KPI v={formatBRL(dados.gerencial.custo_alimentacao)} l="Custo de alimentação" c="var(--red)" />
+                <KPI v={formatBRL(dados.gerencial.rmca)} l="RMCA" c={dados.gerencial.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+              </div>
+              {dados.contas_receita.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Receita: {dados.contas_receita.join(", ")}</p>}
+              {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
+            </div>
+            <div className="card">
+              <div className="card-header mb-3">RMCA físico</div>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                Mesma receita do leite, mas custo a partir do consumo real registrado pela Alimentação × valor unitário do Estoque.
+              </p>
+              <div className="grid grid-cols-1 gap-3 mb-3">
+                <KPI v={formatBRL(dados.fisico.receita_leite)} l="Receita do leite" c="var(--green-light)" />
+                <KPI v={formatBRL(dados.fisico.custo_alimentacao)} l="Custo de alimentação (físico)" c="var(--red)" />
+                <KPI v={formatBRL(dados.fisico.rmca)} l="RMCA" c={dados.fisico.rmca >= 0 ? "var(--green-light)" : "var(--amber)"} />
+              </div>
+              {dados.fisico.itens.length > 0 && (
+                <div className="overflow-x-auto">
+                  <table className="fazenda-table" style={{ margin: 0 }}>
+                    <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Consumo</th><th style={{ textAlign: "right" }}>Vlr. unit.</th><th style={{ textAlign: "right" }}>Custo</th></tr></thead>
+                    <tbody>
+                      {dados.fisico.itens.map((it) => (
+                        <tr key={it.ingrediente}>
+                          <td style={{ fontSize: "0.78rem" }}>{it.ingrediente}</td>
+                          <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{it.quantidade}</td>
+                          <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(it.valor_unitario)}</td>
+                          <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(it.custo)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+              {!dados.fisico.itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem consumo registrado pela Alimentação no período.</p>}
+            </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }

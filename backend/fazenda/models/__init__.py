@@ -297,6 +297,11 @@ class PlanoContaGerencial(SQLModel, table=True):
     tipo_fixo_variavel: Optional[str] = None  # "Fixa" | "Variável"
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Marcação para o indicador RMCA (Receita Menos Custo com Alimentação) —
+    # versão "gerencial", ver Configurações > Parâmetros financeiros.
+    rmca_receita_leite: Optional[bool] = None
+    rmca_custo_alimentacao: Optional[bool] = None
+
 
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma

@@ -252,9 +252,18 @@ function CentrosCusto() {
 }
 
 // ---------------------------------------------------------------------------
-type ContaGerencial = { id: number; codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string | null };
-type FormGerencial = { codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string };
-const formGerencialVazio: FormGerencial = { codigo: "", nome: "", ativa: true, tipo_fixo_variavel: "" };
+type ContaGerencial = {
+  id: number; codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string | null;
+  rmca_receita_leite: boolean | null; rmca_custo_alimentacao: boolean | null;
+};
+type FormGerencial = {
+  codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string;
+  rmca_receita_leite: boolean; rmca_custo_alimentacao: boolean;
+};
+const formGerencialVazio: FormGerencial = {
+  codigo: "", nome: "", ativa: true, tipo_fixo_variavel: "",
+  rmca_receita_leite: false, rmca_custo_alimentacao: false,
+};
 
 function ContasGerenciais() {
   const [itens, setItens] = useState<ContaGerencial[] | null>(null);
@@ -268,14 +277,23 @@ function ContasGerenciais() {
   useEffect(() => { carregar(); }, []);
 
   const abrirNovo = () => { setForm(formGerencialVazio); setEditando("novo"); setMsg(null); };
-  const abrirEdicao = (c: ContaGerencial) => { setForm({ codigo: c.codigo, nome: c.nome, ativa: c.ativa, tipo_fixo_variavel: c.tipo_fixo_variavel ?? "" }); setEditando(c.id); setMsg(null); };
+  const abrirEdicao = (c: ContaGerencial) => {
+    setForm({
+      codigo: c.codigo, nome: c.nome, ativa: c.ativa, tipo_fixo_variavel: c.tipo_fixo_variavel ?? "",
+      rmca_receita_leite: c.rmca_receita_leite ?? false, rmca_custo_alimentacao: c.rmca_custo_alimentacao ?? false,
+    });
+    setEditando(c.id); setMsg(null);
+  };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
   const salvar = async () => {
     if (!form.codigo.trim() || !form.nome.trim()) { setMsg("Código e nome são obrigatórios."); return; }
     setSalvando(true); setMsg(null);
     try {
-      const dados = { codigo: form.codigo.trim(), nome: form.nome.trim(), ativa: form.ativa, tipo_fixo_variavel: form.tipo_fixo_variavel || undefined };
+      const dados = {
+        codigo: form.codigo.trim(), nome: form.nome.trim(), ativa: form.ativa, tipo_fixo_variavel: form.tipo_fixo_variavel || undefined,
+        rmca_receita_leite: form.rmca_receita_leite, rmca_custo_alimentacao: form.rmca_custo_alimentacao,
+      };
       if (editando === "novo") await criarContaGerencial(dados);
       else if (typeof editando === "number") await atualizarContaGerencial(editando, dados);
       setEditando(null);
@@ -288,16 +306,24 @@ function ContasGerenciais() {
   };
 
   const campos = (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-      <div><label style={labelStyle}>Código</label><input style={inputStyle} value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} placeholder="ex.: 3.09.09.09" /></div>
-      <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
-      <div><label style={labelStyle}>Tipo</label>
-        <select style={inputStyle} value={form.tipo_fixo_variavel} onChange={(e) => setForm({ ...form, tipo_fixo_variavel: e.target.value })}>
-          <option value="">—</option><option value="Fixa">Fixa</option><option value="Variável">Variável</option>
-        </select></div>
-      <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-        <input type="checkbox" checked={form.ativa} onChange={(e) => setForm({ ...form, ativa: e.target.checked })} /> Ativa</label></div>
-    </div>
+    <>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><label style={labelStyle}>Código</label><input style={inputStyle} value={form.codigo} onChange={(e) => setForm({ ...form, codigo: e.target.value })} placeholder="ex.: 3.09.09.09" /></div>
+        <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
+        <div><label style={labelStyle}>Tipo</label>
+          <select style={inputStyle} value={form.tipo_fixo_variavel} onChange={(e) => setForm({ ...form, tipo_fixo_variavel: e.target.value })}>
+            <option value="">—</option><option value="Fixa">Fixa</option><option value="Variável">Variável</option>
+          </select></div>
+        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.ativa} onChange={(e) => setForm({ ...form, ativa: e.target.checked })} /> Ativa</label></div>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.rmca_receita_leite} onChange={(e) => setForm({ ...form, rmca_receita_leite: e.target.checked })} /> Conta de receita do leite (indicador RMCA)</label>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.rmca_custo_alimentacao} onChange={(e) => setForm({ ...form, rmca_custo_alimentacao: e.target.checked })} /> Conta de custo com alimentação (indicador RMCA)</label>
+      </div>
+    </>
   );
 
   return (
@@ -327,7 +353,7 @@ function ContasGerenciais() {
       {itens && (
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
-            <thead><tr><th>Código</th><th>Nome</th><th>Tipo</th><th></th></tr></thead>
+            <thead><tr><th>Código</th><th>Nome</th><th>Tipo</th><th>RMCA</th><th></th></tr></thead>
             <tbody>
               {itens.map((c) => (
                 <Fragment key={c.id}>
@@ -335,12 +361,15 @@ function ContasGerenciais() {
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.codigo}</td>
                     <td style={{ fontWeight: 700 }}>{c.nome}{!c.ativa && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{c.tipo_fixo_variavel || "—"}</td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--dourado-light)" }}>
+                      {c.rmca_receita_leite ? "Receita leite" : c.rmca_custo_alimentacao ? "Custo alimentação" : "—"}
+                    </td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /> Editar</button>
                     </td>
                   </tr>
                   {editando === c.id && (
-                    <tr><td colSpan={4} style={{ padding: 0 }}>
+                    <tr><td colSpan={5} style={{ padding: 0 }}>
                       <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.5rem 0" }}>
                         {campos}
                         {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
@@ -353,7 +382,7 @@ function ContasGerenciais() {
                   )}
                 </Fragment>
               ))}
-              {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma conta gerencial cadastrada ainda.</td></tr>}
+              {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma conta gerencial cadastrada ainda.</td></tr>}
             </tbody>
           </table>
         </div>

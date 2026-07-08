@@ -571,18 +571,28 @@ export async function fetchPlanoContas() {
   if (!res.ok) throw new Error(`Plano de contas error: ${res.status}`);
   return res.json();
 }
-export async function criarContaGerencial(dados: { codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string }) {
+type ContaGerencialPayload = {
+  codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string;
+  rmca_receita_leite?: boolean; rmca_custo_alimentacao?: boolean;
+};
+export async function criarContaGerencial(dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta gerencial"); }
   return res.json();
 }
-export async function atualizarContaGerencial(id: number, dados: { codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string }) {
+export async function atualizarContaGerencial(id: number, dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta gerencial"); }
+  return res.json();
+}
+
+export async function fetchRmca(dataInicio: string, dataFim: string) {
+  const res = await authFetch(`${API}/financeiro/rmca?data_inicio=${dataInicio}&data_fim=${dataFim}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`RMCA error: ${res.status}`);
   return res.json();
 }
 
