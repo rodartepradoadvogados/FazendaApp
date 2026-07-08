@@ -138,6 +138,10 @@ class Servico(SQLModel, table=True):
     # Diagnóstico positivo marcado para reconfirmar (ainda não é prenhez definitiva)
     # — gera o lembrete de retoque na agenda, na data do próximo serviço.
     retoque: Optional[bool] = None
+    # Segundo exame (reconfirmação, ~60 dias do serviço) — distinto do primeiro
+    # toque (data_diagnostico/diagnostico) para a agenda do veterinário.
+    data_reconfirmacao: Optional[date] = None
+    diagnostico_reconfirmacao: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

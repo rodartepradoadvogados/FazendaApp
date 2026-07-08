@@ -162,6 +162,22 @@ export async function salvarDiagnostico(dados: {
   return res.json();
 }
 
+export async function fetchAgendaVeterinario() {
+  const res = await authFetch(`${API}/reproducao/agenda-veterinario`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Agenda do veterinário error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarReconfirmacao(dados: {
+  numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";
+}) {
+  const res = await authFetch(`${API}/reproducao/reconfirmacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar reconfirmação"); }
+  return res.json();
+}
+
 export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
