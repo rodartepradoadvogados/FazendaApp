@@ -198,7 +198,10 @@ export default function FinanceiroPage() {
       }
       const niveis = propagarPorHierarquia(codigoFolha);
       niveis.forEach((codigo, i) => {
-        const nome = nomePorCodigo.get(codigo) || (i === niveis.length - 1 ? (r.descricao || codigo) : codigo);
+        const nomeConhecido = nomePorCodigo.get(codigo);
+        const ehFolha = i === niveis.length - 1;
+        if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
+        const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { conta: codigo, nome, codigo, nivel: i + 1, receitas: 0, despesas: 0 };
         if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
         by.set(codigo, e);
@@ -220,7 +223,10 @@ export default function FinanceiroPage() {
       if (!codigoFolha || !mes) return;
       const niveis = propagarPorHierarquia(codigoFolha);
       niveis.forEach((codigo, i) => {
-        const nome = nomePorCodigo.get(codigo) || (i === niveis.length - 1 ? (r.descricao || codigo) : codigo);
+        const nomeConhecido = nomePorCodigo.get(codigo);
+        const ehFolha = i === niveis.length - 1;
+        if (!nomeConhecido && !ehFolha) return; // nível intermediário sem nome cadastrado — não gera linha "só número"
+        const nome = nomeConhecido || (r.descricao || codigo);
         const e = by.get(codigo) ?? { codigo, nome, nivel: i + 1, porMes: {}, total: 0 };
         e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + r.valor) * 100) / 100;
         e.total = Math.round((e.total + r.valor) * 100) / 100;
@@ -639,6 +645,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [produto, setProduto] = useState("");
+  const [centroCusto, setCentroCusto] = useState("");
   const [emissaoDe, setEmissaoDe] = useState("");
   const [emissaoAte, setEmissaoAte] = useState("");
   const [vencimentoDe, setVencimentoDe] = useState("");
@@ -656,6 +663,8 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
 
+  const centrosCusto = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo).filter(Boolean))).sort(), [regs]);
+
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((r) =>
@@ -663,10 +672,11 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
       (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
       (!fornecedor || (r.fornecedor || "").toLowerCase().includes(fornecedor.toLowerCase())) &&
       (!produto || (r.itens || []).some((it) => (it.produto || "").toLowerCase().includes(produto.toLowerCase()))) &&
+      (!centroCusto || r.centro_custo === centroCusto) &&
       (!emissaoDe || (r.data_emissao || "") >= emissaoDe) && (!emissaoAte || (r.data_emissao || "") <= emissaoAte) &&
       (!vencimentoDe || (r.data_vencimento || "") >= vencimentoDe) && (!vencimentoAte || (r.data_vencimento || "") <= vencimentoAte)
     );
-  }, [regs, tipoFiltro, numeroDocumento, fornecedor, produto, emissaoDe, emissaoAte, vencimentoDe, vencimentoAte]);
+  }, [regs, tipoFiltro, numeroDocumento, fornecedor, produto, centroCusto, emissaoDe, emissaoAte, vencimentoDe, vencimentoAte]);
 
   const selecionaveis = useMemo(() => filtrados.filter((r) => !r.data_pagamento), [filtrados]);
   const toggle = (id: number) => setSelecionados((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -720,11 +730,18 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
           <div><label style={labelStyleLote}>Produto</label>
             <input style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)} /></div>
         </div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Emissão — de</label><input type="date" style={selStyleLote} value={emissaoDe} onChange={(e) => setEmissaoDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Emissão — até</label><input type="date" style={selStyleLote} value={emissaoAte} onChange={(e) => setEmissaoAte(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={labelStyleLote}>Centro de custo</label>
+            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+              <option value="">Todos</option>
+              {centrosCusto.map((c) => (<option key={c} value={c}>{c}</option>))}
+            </select></div>
         </div>
       </div>
 
