@@ -4,18 +4,27 @@ e lançamento de diagnóstico de gestação.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Parto, PesagemCorporal, Servico
+from fazenda.models import AgendaManual, Animal, Parto, PesagemCorporal, Servico
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.reproducao_analise import analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
+
+# Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
+# (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.
+PASSOS_PROTOCOLO_IATF = [
+    (0, "Implante de progesterona + Benzoato de estradiol + Acetato de buserelina (D0)"),
+    (7, "Cloprostenol (D7)"),
+    (9, "Retirar implante + Cipionato de estradiol + Cloprostenol (D9)"),
+    (11, "Inseminação (IATF) — D11"),
+]
 
 
 @router.get("/agenda-veterinario")
@@ -201,3 +210,83 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
 
     session.commit()
     return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas}
+
+
+class ProtocoloIatfIn(BaseModel):
+    animais: list[str]
+    data_d0: date
+    protocolo: str = "Protocolo IATF"
+
+
+@router.post("/protocolo-iatf")
+def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11) — não cria o serviço em si.
+    A inseminação de fato (D11) é lançada à parte em POST /reproducao/servico,
+    para separar "marcar o protocolo" de "a vaca foi inseminada".
+    """
+    if not dados.animais:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+
+    eventos_criados = 0
+    for numero in dados.animais:
+        for dias, descricao in PASSOS_PROTOCOLO_IATF:
+            session.add(AgendaManual(
+                data_evento=dados.data_d0 + timedelta(days=dias),
+                descricao=f"{dados.protocolo} — {descricao}",
+                categoria="Reprodutivo",
+                numero_animal=numero,
+            ))
+            eventos_criados += 1
+
+    session.commit()
+    return {"criado": True, "eventos_criados": eventos_criados, "animais": len(dados.animais)}
+
+
+class ServicoIn(BaseModel):
+    numero_matriz: str
+    data_servico: date
+    tipo_servico: str = "IA"  # "IA" | "Monta natural"
+    protocolo: str | None = None  # preenchido = veio de um protocolo IATF; vazio = cio natural
+    reprodutor: str | None = None
+    responsavel: str | None = None
+
+
+@router.post("/servico")
+def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Registra a inseminação/cobertura em si — cio natural (sem protocolo) ou a
+    inseminação de um protocolo IATF já agendado (protocolo preenchido).
+    """
+    animal = session.exec(select(Animal).where(Animal.numero == dados.numero_matriz)).first()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Matriz não encontrada")
+
+    anteriores = session.exec(select(Servico).where(Servico.numero_matriz == dados.numero_matriz)).all()
+    for s in anteriores:
+        if s.ult_ocorrencia == 1:
+            s.ult_ocorrencia = 0
+            session.add(s)
+
+    ultimo = max(anteriores, key=lambda s: s.data_servico or date.min, default=None)
+    ordem_tentativa = (ultimo.ordem_tentativa or 0) + 1 if ultimo else 1
+    intervalo = (dados.data_servico - ultimo.data_servico).days if ultimo and ultimo.data_servico else None
+
+    servico = Servico(
+        animal_id=animal.id,
+        numero_matriz=dados.numero_matriz,
+        raca_matriz=animal.raca,
+        data_nasc_matriz=animal.data_nasc,
+        data_servico=dados.data_servico,
+        tipo_servico=dados.tipo_servico,
+        protocolo=dados.protocolo,
+        reprodutor=dados.reprodutor,
+        ordem_tentativa=ordem_tentativa,
+        intervalo_tentativas=intervalo,
+        del_servico=animal.del_dias,
+        ult_ocorrencia=1,
+    )
+    session.add(servico)
+    session.commit()
+    session.refresh(servico)
+    return servico.model_dump()
