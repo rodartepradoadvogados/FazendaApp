@@ -34,6 +34,8 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 # O create_all não altera tabelas existentes, então adicionamos manualmente.
 _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "controle_leiteiro": [("raca", "VARCHAR")],
+    "servico": [("retoque", "BOOLEAN")],
+    "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],
     "animal": [("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN")],
     "usuario": [("permissoes", "VARCHAR")],
     "conta_gerencial": [
@@ -53,6 +55,20 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("origem", "VARCHAR"),
         ("desconto_nota", "FLOAT"),
         ("acrescimo_nota", "FLOAT"),
+    ],
+    "lote": [
+        ("status_lactacao", "VARCHAR"),
+        ("categorias", "VARCHAR"),
+        ("pre_parto", "BOOLEAN"),
+        ("peso_min", "FLOAT"),
+        ("peso_max", "FLOAT"),
+        ("dias_para_parto_min", "INTEGER"),
+        ("dias_para_parto_max", "INTEGER"),
+        ("em_tratamento", "BOOLEAN"),
+        ("idade_dias_min", "INTEGER"),
+        ("idade_dias_max", "INTEGER"),
+        ("novilhas_inseminadas", "BOOLEAN"),
+        ("novilhas_gestantes", "BOOLEAN"),
     ],
 }
 

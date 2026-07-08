@@ -61,11 +61,27 @@ class Lote(SQLModel, table=True):
     codigo: str = Field(index=True, unique=True)
     nome: str
     del_min: Optional[int] = None
-    del_max: Optional[int] = None
-    producao_min: Optional[float] = None
+    del_max: Optional[int] = None  # também usado no critério "até X dias após o parto"
+    producao_min: Optional[float] = None  # também usado no critério "produção de X a Y L"
     producao_max: Optional[float] = None
     ativo: bool = True
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+    # ---- Critérios de seleção de animais (cumulativos/E lógico) — usados na
+    # prévia de "quantos animais atendem" e, na sequência, nas sugestões
+    # automáticas de movimentação entre lotes. Cada campo None = não filtra.
+    status_lactacao: Optional[str] = None  # "lactacao" | "seca"
+    categorias: Optional[str] = None  # "vaca,novilha,bezerra" (lista separada por vírgula)
+    pre_parto: Optional[bool] = None
+    peso_min: Optional[float] = None
+    peso_max: Optional[float] = None
+    dias_para_parto_min: Optional[int] = None
+    dias_para_parto_max: Optional[int] = None
+    em_tratamento: Optional[bool] = None
+    idade_dias_min: Optional[int] = None
+    idade_dias_max: Optional[int] = None
+    novilhas_inseminadas: Optional[bool] = None
+    novilhas_gestantes: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +135,9 @@ class Servico(SQLModel, table=True):
     producao_lactacao_anterior: Optional[float] = None
     duracao_lactacao_anterior: Optional[int] = None
     periodo_seco_anterior: Optional[int] = None
+    # Diagnóstico positivo marcado para reconfirmar (ainda não é prenhez definitiva)
+    # — gera o lembrete de retoque na agenda, na data do próximo serviço.
+    retoque: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
@@ -308,6 +327,24 @@ class Estoque(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
+# ---------------------------------------------------------------------------
+class MovimentoEstoque(SQLModel, table=True):
+    """Uma entrada ou saída de estoque lançada em Lançamentos > Estoque."""
+
+    __tablename__ = "movimento_estoque"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome_item: str = Field(index=True)
+    movimento: str  # "Aplicação" | "Saída de ajuste" | "Entrada de ajuste" | "Entrada de cortesia" | "Doação"
+    quantidade: float
+    unidade: Optional[str] = None
+    data_movimento: date
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Sanidade (medicamentos aplicados nos animais)
 # ---------------------------------------------------------------------------
 class Sanidade(SQLModel, table=True):
@@ -325,6 +362,9 @@ class Sanidade(SQLModel, table=True):
     produto: str
     categoria: Optional[str] = None  # derivada (Vacina, Antiparasitário, ...)
     dose: Optional[float] = None
+    unidade: Optional[str] = None  # unidade da dose (ml, L, unidade, dose) — lançamento manual
+    via: Optional[str] = None
+    responsavel: Optional[str] = None
     lote: Optional[str] = None
     atividade: Optional[str] = None
     obs: Optional[str] = None

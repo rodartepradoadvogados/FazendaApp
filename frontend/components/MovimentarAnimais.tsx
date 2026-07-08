@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { ArrowRightLeft, AlertTriangle, Check } from "lucide-react";
+import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao } from "@/lib/api";
 import { RESPONSAVEIS, MOTIVOS_MOVIMENTACAO } from "@/lib/constants";
 
@@ -20,9 +20,12 @@ export default function MovimentarAnimais() {
   const [lotes, setLotes] = useState<Lote[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [origemCodigo, setOrigemCodigo] = useState("");
-  const [destinoCodigo, setDestinoCodigo] = useState("");
+  // 1º passo: seleção do(s) animal(is) — busca por nº e/ou filtro opcional por lote.
+  const [busca, setBusca] = useState("");
+  const [filtroLote, setFiltroLote] = useState("");
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+
+  const [destinoCodigo, setDestinoCodigo] = useState("");
   const [data, setData] = useState(hoje());
   const [hora, setHora] = useState(agora());
   const [motivo, setMotivo] = useState("");
@@ -37,26 +40,28 @@ export default function MovimentarAnimais() {
   };
   useEffect(carregar, []);
 
-  const origemLote = lotes?.find((l) => l.codigo === origemCodigo) || null;
+  const filtroLoteRotulo = lotes?.find((l) => l.codigo === filtroLote)?.rotulo || "";
   const candidatos = useMemo(() => {
-    if (!animais || !origemLote) return [];
-    return animais.filter((a) => a.grupo_primario === origemLote.rotulo);
-  }, [animais, origemLote]);
+    if (!animais) return [];
+    return animais.filter((a) =>
+      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+      (!filtroLote || a.grupo_primario === filtroLoteRotulo)
+    );
+  }, [animais, busca, filtroLote, filtroLoteRotulo]);
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
   });
   const toggleTodos = () => setSelecionados((p) =>
-    p.size === candidatos.length ? new Set() : new Set(candidatos.map((a) => a.numero))
+    p.size === candidatos.length && candidatos.length ? new Set() : new Set(candidatos.map((a) => a.numero))
   );
 
-  const limparSelecao = () => { setOrigemCodigo(""); setDestinoCodigo(""); setSelecionados(new Set()); setObservacao(""); };
+  const limparSelecao = () => { setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setDestinoCodigo(""); setObservacao(""); };
 
   const salvar = async () => {
     setMsg(null);
-    if (!origemCodigo || !destinoCodigo) { setMsg({ tipo: "erro", texto: "Selecione o lote de origem e o de destino." }); return; }
-    if (origemCodigo === destinoCodigo) { setMsg({ tipo: "erro", texto: "O lote de destino deve ser diferente do de origem." }); return; }
     if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos um animal." }); return; }
+    if (!destinoCodigo) { setMsg({ tipo: "erro", texto: "Selecione o lote de destino." }); return; }
     if (!motivo) { setMsg({ tipo: "erro", texto: "Selecione o motivo da movimentação." }); return; }
 
     setSalvando(true);
@@ -80,7 +85,7 @@ export default function MovimentarAnimais() {
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><ArrowRightLeft size={22} style={{ color: "var(--dourado)" }} /> Movimentar animais</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Selecione o lote de origem, o de destino e os animais (individual ou em lote), com data, hora e motivo.
+          Selecione o(s) animal(is) (individual ou em lote), o lote de destino, com data, hora e motivo.
         </p>
       </div>
 
@@ -89,16 +94,50 @@ export default function MovimentarAnimais() {
 
       {animais && lotes && (
         <div className="card">
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
-            <div><label style={labelStyle}>Lote de origem</label>
-              <select style={selStyle} value={origemCodigo} onChange={(e) => { setOrigemCodigo(e.target.value); setSelecionados(new Set()); }}>
-                <option value="">Selecione...</option>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+            <div><label style={labelStyle}>Buscar animal (nº)</label>
+              <div style={{ position: "relative" }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" />
+              </div></div>
+            <div><label style={labelStyle}>Filtrar por lote (opcional)</label>
+              <select style={selStyle} value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)}>
+                <option value="">Todos os lotes</option>
                 {lotes.map((l) => <option key={l.id} value={l.codigo}>{l.rotulo}</option>)}
               </select></div>
+          </div>
+
+          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+            <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <span style={{ fontSize: "0.85rem" }}>Animais ({candidatos.length}) — {selecionados.size} selecionado(s)</span>
+              <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
+                {selecionados.size === candidatos.length && candidatos.length ? "Limpar seleção" : "Selecionar todos"}
+              </button>
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th></th><th>Nº</th><th>Lote atual</th><th>Categoria</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+                <tbody>
+                  {candidatos.map((a) => (
+                    <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
+                      <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} /></td>
+                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
+                      <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || "—"}</td>
+                      <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                    </tr>
+                  ))}
+                  {!candidatos.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3 mb-4">
             <div><label style={labelStyle}>Lote de destino</label>
               <select style={selStyle} value={destinoCodigo} onChange={(e) => setDestinoCodigo(e.target.value)}>
                 <option value="">Selecione...</option>
-                {lotes.filter((l) => l.codigo !== origemCodigo).map((l) => <option key={l.id} value={l.codigo}>{l.rotulo}</option>)}
+                {lotes.map((l) => <option key={l.id} value={l.codigo}>{l.rotulo}</option>)}
               </select></div>
             <div><label style={labelStyle}>Data</label>
               <input type="date" style={selStyle} value={data} onChange={(e) => setData(e.target.value)} /></div>
@@ -120,33 +159,6 @@ export default function MovimentarAnimais() {
             <label style={labelStyle}>Observação (opcional)</label>
             <input style={selStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="ex.: transferência após diagnóstico de prenhez" />
           </div>
-
-          {origemLote && (
-            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
-              <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                <span style={{ fontSize: "0.85rem" }}>Animais do lote {origemLote.rotulo} ({candidatos.length})</span>
-                <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
-                  {selecionados.size === candidatos.length && candidatos.length ? "Limpar seleção" : "Selecionar todos"}
-                </button>
-              </div>
-              <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
-                <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th></th><th>Nº</th><th>Categoria</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
-                  <tbody>
-                    {candidatos.map((a) => (
-                      <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
-                        <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} /></td>
-                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                        <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || "—"}</td>
-                        <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                      </tr>
-                    ))}
-                    {!candidatos.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal ativo neste lote.</td></tr>}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          )}
 
           {msg && (
             <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>

@@ -4,7 +4,7 @@ import {
   ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -81,41 +81,46 @@ const MANUAL_SANGUE = [
   { t: "6. Ação urgente (falha ≤ 8,0%)", d: "1) Isolar a bezerra. 2) Monitorar temperatura 2x/dia. 3) Avisar Vet/Gerente. 4) Auditar urgente a rotina de colostro." },
 ];
 
-function ManualModal({ onClose }: { onClose: () => void }) {
+function ManualColostroModal({ onClose }: { onClose: () => void }) {
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
-      <div className="card" style={{ width: "760px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+      <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
-          <div className="card-header" style={{ margin: 0 }}>Manual — Colostro e Teste de Sangue (IgG)</div>
+          <div className="card-header" style={{ margin: 0 }}>Manual — Rotina do Colostro</div>
           <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
         </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <p style={{ fontWeight: 700, color: "var(--dourado-light)", fontSize: "0.85rem", marginBottom: "0.5rem" }}>Rotina do Colostro</p>
-            <div className="space-y-2">
-              {MANUAL_COLOSTRO.map((s) => (
-                <div key={s.t} style={{ borderLeft: "3px solid var(--vinho-light)", paddingLeft: "0.6rem" }}>
-                  <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
-                  <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
-                </div>
-              ))}
+        <div className="space-y-2">
+          {MANUAL_COLOSTRO.map((s) => (
+            <div key={s.t} style={{ borderLeft: "3px solid var(--green-light)", paddingLeft: "0.6rem" }}>
+              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
+              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
             </div>
-          </div>
-          <div>
-            <p style={{ fontWeight: 700, color: "var(--dourado-light)", fontSize: "0.85rem", marginBottom: "0.5rem" }}>Teste de Sangue (IgG)</p>
-            <div className="space-y-2">
-              {MANUAL_SANGUE.map((s) => (
-                <div key={s.t} style={{ borderLeft: "3px solid var(--blue)", paddingLeft: "0.6rem" }}>
-                  <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
-                  <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
-                </div>
-              ))}
-            </div>
-          </div>
+          ))}
         </div>
         <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-2 mt-4" style={{ color: "var(--dourado-light)", fontSize: "0.8rem" }}>
           <ExternalLink size={14} /> Abrir a tabela oficial da Alta (PDF)
         </a>
+      </div>
+    </div>
+  );
+}
+
+function ManualSangueModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
+      <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>Manual — Teste de Sangue (IgG)</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div className="space-y-2">
+          {MANUAL_SANGUE.map((s) => (
+            <div key={s.t} style={{ borderLeft: "3px solid var(--blue)", paddingLeft: "0.6rem" }}>
+              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
+              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );
@@ -318,7 +323,11 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
   const [matriz, setMatriz] = useState("");
   const [data, setData] = useState("");
+  const [metodo, setMetodo] = useState("");
   const [resultado, setResultado] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
   // Data da última IA/cobertura vem automaticamente do histórico da matriz.
   const ultimoServico = matriz ? ultServico[matriz] || "" : "";
   const ultimoLabel = ultimoServico ? new Date(ultimoServico + "T00:00:00").toLocaleDateString("pt-BR") : "—";
@@ -329,6 +338,25 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
     return dias >= 0 && dias < 30;
   }, [data, ultimoServico]);
 
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!matriz || !data || !resultado) { setErro("Selecione a matriz, a data e o resultado do diagnóstico."); return; }
+    setSalvando(true);
+    try {
+      await salvarDiagnostico({ numero_matriz: matriz, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+      setSucesso(
+        resultado === "retoque"
+          ? `Diagnóstico salvo. ${matriz} entrou na agenda para retoque.`
+          : `Diagnóstico de ${matriz} salvo com sucesso.`
+      );
+      setMatriz(""); setData(""); setMetodo(""); setResultado("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar diagnóstico");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -337,7 +365,11 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
         </Campo>
         <Campo label="Última IA / cobertura (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={ultimoLabel} readOnly /></Campo>
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
-        <Campo label="Método"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option></select></Campo>
+        <Campo label="Método">
+          <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
+            <option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option>
+          </select>
+        </Campo>
         <Campo label="Resultado" full>
           <select style={inputStyle} value={resultado} onChange={(e) => setResultado(e.target.value)}>
             <option value="" disabled>Selecione…</option>
@@ -361,10 +393,14 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
       )}
       {resultado === "retoque" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          O animal segue na lista de <strong>retoque</strong> (positivo a reconfirmar) para relatórios futuros.
+          O animal entra na <strong>agenda para retoque</strong>, no dia do próximo serviço.
         </p>
       )}
-      <SalvarEmBreve />
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </>
   );
 }
@@ -392,7 +428,8 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [litros, setLitros] = useState("");
   const [brix, setBrix] = useState("");
   const [alvo, setAlvo] = useState("25");
-  const [manualAberto, setManualAberto] = useState(false);
+  const [manualColostroAberto, setManualColostroAberto] = useState(false);
+  const [manualSangueAberto, setManualSangueAberto] = useState(false);
 
   const [soro, setSoro] = useState("");
   const brixN = brix ? Number(brix) : null;
@@ -406,7 +443,8 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
-      {manualAberto && <ManualModal onClose={() => setManualAberto(false)} />}
+      {manualColostroAberto && <ManualColostroModal onClose={() => setManualColostroAberto(false)} />}
+      {manualSangueAberto && <ManualSangueModal onClose={() => setManualSangueAberto(false)} />}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz que pariu…" /></Campo>
         <Campo label="Data do parto"><input type="date" style={inputStyle} /></Campo>
@@ -424,41 +462,51 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
           <Campo label="Número da cria"><input style={inputStyle} placeholder="ex.: 483" /></Campo>
           <Campo label="Sexo da cria"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
           <Campo label="Cria baixada? (não entra no rebanho)"><select style={inputStyle} defaultValue="Não"><option>Não</option><option>Sim</option></select></Campo>
-          <Campo label="Tomou colostro?"><select style={inputStyle} value={tomouColostro} onChange={(e) => setTomou(e.target.value)}><option value="" disabled>Selecione…</option><option>Sim</option><option>Não</option></select></Campo>
-          <Campo label="Quantidade de colostro (litros)">
-            <select style={inputStyle} value={litros} onChange={(e) => setLitros(e.target.value)}>
-              <option value="" disabled>Selecione…</option>
-              {["1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"].map((l) => <option key={l} value={l}>{l} L</option>)}
-            </select>
-          </Campo>
-          <Campo label="Brix do colostro (%)">
-            <select style={inputStyle} value={brix} onChange={(e) => setBrix(e.target.value)}>
-              <option value="" disabled>Selecione…</option>
-              {Array.from({ length: 21 }, (_, i) => 15 + i).map((b) => <option key={b} value={b}>{b}%</option>)}
-            </select>
-          </Campo>
         </div>
 
-        {cls && (
-          <div className="mt-2" style={{ fontSize: "0.82rem" }}>
-            Qualidade: <strong style={{ color: cls.cor }}>{cls.txt}</strong>
-            {enriquecer && (
-              <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
-                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-                  <span>Enriquecer até</span>
-                  <select style={{ ...inputStyle, width: "auto", padding: "0.2rem 0.4rem" }} value={alvo} onChange={(e) => setAlvo(e.target.value)}>
-                    {["22", "23", "24", "25", "26", "27", "28", "29", "30"].map((a) => <option key={a} value={a}>{a}%</option>)}
-                  </select>
-                </div>
-                <p style={{ marginTop: "0.4rem" }}>
-                  Adicionar <strong style={{ color: "var(--dourado-light)" }}>{medidasPorL} medida(s) de colostro em pó por litro</strong> (15 g cada).
-                  {litrosN > 0 && <> Para {litrosN} L: <strong>{totalMedidas} medidas ≈ {totalMedidas * 15} g</strong>.</>}
-                </p>
-              </div>
-            )}
-            <button onClick={() => setManualAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.72rem", marginTop: "0.5rem" }}><BookOpen size={12} /> Manual: quantidade, qualidade e enriquecimento</button>
+        <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+          <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--green-light)" }}>Colostragem da cria</p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+            <Campo label="Tomou colostro?"><select style={inputStyle} value={tomouColostro} onChange={(e) => setTomou(e.target.value)}><option value="" disabled>Selecione…</option><option>Sim</option><option>Não</option></select></Campo>
+            <Campo label="Quantidade de colostro (litros)">
+              <select style={inputStyle} value={litros} onChange={(e) => setLitros(e.target.value)}>
+                <option value="" disabled>Selecione…</option>
+                {["1", "1.5", "2", "2.5", "3", "3.5", "4", "4.5", "5"].map((l) => <option key={l} value={l}>{l} L</option>)}
+              </select>
+            </Campo>
+            <Campo label="Brix do colostro (%)">
+              <select style={inputStyle} value={brix} onChange={(e) => setBrix(e.target.value)}>
+                <option value="" disabled>Selecione…</option>
+                {Array.from({ length: 21 }, (_, i) => 15 + i).map((b) => <option key={b} value={b}>{b}%</option>)}
+              </select>
+            </Campo>
           </div>
-        )}
+
+          {cls && (
+            <div className="mt-2" style={{ fontSize: "0.82rem" }}>
+              Qualidade: <strong style={{ color: cls.cor }}>{cls.txt}</strong>
+              {enriquecer && (
+                <div style={{ marginTop: "0.5rem", background: "rgba(94,26,46,0.2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
+                  <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                    <span>Enriquecer até</span>
+                    <select style={{ ...inputStyle, width: "auto", padding: "0.2rem 0.4rem" }} value={alvo} onChange={(e) => setAlvo(e.target.value)}>
+                      {["22", "23", "24", "25", "26", "27", "28", "29", "30"].map((a) => <option key={a} value={a}>{a}%</option>)}
+                    </select>
+                  </div>
+                  <p style={{ marginTop: "0.4rem" }}>
+                    Adicionar <strong style={{ color: "var(--dourado-light)" }}>{medidasPorL} medida(s) de colostro em pó por litro</strong> (15 g cada).
+                    {litrosN > 0 && <> Para {litrosN} L: <strong>{totalMedidas} medidas ≈ {totalMedidas * 15} g</strong>.</>}
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
+            <button onClick={() => setManualColostroAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Manual do colostro</button>
+            <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-1" style={{ color: "var(--dourado-light)", fontSize: "0.75rem" }}><ExternalLink size={13} /> Tabela oficial (PDF)</a>
+          </div>
+        </div>
 
         <div className="mt-3" style={{ background: "rgba(30,111,168,0.1)", border: "1px solid var(--blue)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--blue)" }}>Exame de sangue (IgG) da cria</p>
@@ -476,8 +524,7 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
             {clsSoro && <div style={{ display: "flex", alignItems: "flex-end" }}><p style={{ fontSize: "0.82rem" }}>Resultado: <strong style={{ color: clsSoro.cor }}>{clsSoro.txt}</strong></p></div>}
           </div>
           <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
-            <button onClick={() => setManualAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Ver manual na tela</button>
-            <a href={LINK_COLOSTRO} target="_blank" rel="noreferrer" className="flex items-center gap-1" style={{ color: "var(--dourado-light)", fontSize: "0.75rem" }}><ExternalLink size={13} /> Tabela oficial (PDF)</a>
+            <button onClick={() => setManualSangueAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Manual do sangue</button>
           </div>
         </div>
       </div>
@@ -643,18 +690,70 @@ function EstoqueRestante({ estoque, produto, quantidade }: { estoque: EstoqueIte
   );
 }
 
+// Mesma regra do backend (fazenda.rules.unidades): unidade de aplicação
+// precisa ser compatível com a unidade de estoque do produto — ex.: um
+// produto guardado em "ml" pode ser aplicado em ml/unidade/dose, mas não em L.
+const GRUPOS_UNIDADE: string[][] = [["ml", "unidade", "dose"], ["L", "kg"]];
+function unidadesCompativeis(unidadeEstoque: string | null | undefined): string[] {
+  if (!unidadeEstoque) return UNIDADES;
+  const grupo = GRUPOS_UNIDADE.find((g) => g.includes(unidadeEstoque));
+  return grupo || [unidadeEstoque];
+}
+
+type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string };
+const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "" });
+
 function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState("");
   const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
-  const [produto, setProduto] = useState("");
-  const [qtd, setQtd] = useState("");
-  const [unid, setUnid] = useState("ml");
+  const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
+  const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
+  const [responsavel, setResponsavel] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
   const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
   // Lista de produtos vem do relatório de sanidade (medicamentos já aplicados),
   // complementada pelos itens do estoque que ainda não apareceram na sanidade.
   const nomesEstoque = estoque.map((e) => e.nome);
   const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).sort();
+
+  const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => {
+    const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n;
+  });
+  const escolherProduto = (idx: number, produto: string) => {
+    const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
+    atualizarItem(idx, { produto, unidade: compativeis[0] || "" });
+  };
+  const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
+  const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    const animaisAlvo = modo === "animal"
+      ? (animal ? [animal] : [])
+      : animais.filter((a) => a.grupo_primario && lotesSel.has(a.grupo_primario)).map((a) => a.numero);
+    if (!animaisAlvo.length) { setErro(modo === "animal" ? "Selecione o animal." : "Selecione ao menos um lote."); return; }
+    const itensValidos = itens.filter((i) => i.produto && Number(i.quantidade) > 0 && i.unidade);
+    if (!itensValidos.length) { setErro("Adicione ao menos um produto com quantidade e unidade."); return; }
+
+    setSalvando(true);
+    try {
+      const r = await criarAplicacaoSanidade({
+        data_aplicacao: dataAplicacao, animais: animaisAlvo, responsavel: responsavel || undefined, observacao: observacao || undefined,
+        itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+      });
+      setSucesso(`${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}`);
+      setItens([itemSanidadeVazio()]); setObservacao("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar aplicação de sanidade");
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   return (
     <>
@@ -662,7 +761,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
         <Campo label="Lançar por">
           <select style={inputStyle} value={modo} onChange={(e) => setModo(e.target.value as any)}><option value="animal">Animal</option><option value="lote">Lote</option></select>
         </Campo>
-        <Campo label="Data"><input type="date" style={inputStyle} /></Campo>
+        <Campo label="Data"><input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></Campo>
         {modo === "animal"
           ? <Campo label="Animal" full><SelectAnimal animais={animais} value={animal} onChange={setAnimal} /></Campo>
           : <Campo label="Lotes" full>
@@ -670,36 +769,97 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
                 {lotes.map((l) => <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}><input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}</label>)}
               </div>
             </Campo>}
-        <Campo label="Produto / medicamento (relatório de sanidade)">
-          <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
-            <option value="" disabled>Selecione…</option>
-            {listaProdutos.map((nome) => {
-              const est = estoque.find((e) => e.nome === nome);
-              return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
-            })}
-          </select>
-        </Campo>
-        <Campo label="Via"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{["Intramuscular", "Subcutânea", "Oral", "Intravenosa", "Tópica"].map((o) => <option key={o}>{o}</option>)}</select></Campo>
-        <Campo label="Quantidade (dose)"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
-        <Campo label="Unidade"><select style={inputStyle} value={unid} onChange={(e) => setUnid(e.target.value)}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select></Campo>
-        <Campo label="Responsável"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
-        <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
-      {produto && <EstoqueRestante estoque={estoque} produto={produto} quantidade={Number(qtd) || 0} />}
-      <p style={nota}>Ao salvar, dá baixa da quantidade no estoque (por animal, ou multiplicada pelo efetivo dos lotes).</p>
-      <SalvarEmBreve />
+
+      <Secao>Produtos aplicados</Secao>
+      <div className="space-y-3">
+        {itens.map((item, idx) => {
+          const estoqueItem = estoque.find((e) => e.nome === item.produto);
+          const compativeis = unidadesCompativeis(estoqueItem?.unidade);
+          return (
+            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Campo label={`Produto/medicamento ${idx + 1}`}>
+                  <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)}>
+                    <option value="" disabled>Selecione…</option>
+                    {listaProdutos.map((nome) => {
+                      const est = estoque.find((e) => e.nome === nome);
+                      return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
+                    })}
+                  </select>
+                </Campo>
+                <Campo label="Via">
+                  <select style={inputStyle} value={item.via} onChange={(e) => atualizarItem(idx, { via: e.target.value })}>
+                    <option value="">Selecione…</option>
+                    {["Intramuscular", "Subcutânea", "Oral", "Intravenosa", "Tópica"].map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Quantidade (dose)"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+                <Campo label="Unidade">
+                  <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItem(idx, { unidade: e.target.value })}>
+                    {compativeis.map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </Campo>
+              </div>
+              {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
+              {itens.length > 1 && (
+                <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+
+      <p style={nota}>Ao salvar, dá baixa da quantidade no estoque (por animal, ou multiplicada pelo efetivo dos lotes) quando a unidade escolhida bater com a unidade de estoque do produto.</p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </>
   );
 }
 
+const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
+const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
+
 function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
   const [produto, setProduto] = useState("");
+  const [tipo, setTipo] = useState<"entrada" | "saida" | "">("");
   const [mov, setMov] = useState("");
   const [qtd, setQtd] = useState("");
+  const [unidade, setUnidade] = useState("");
+  const [dataMov, setDataMov] = useState(() => new Date().toISOString().slice(0, 10));
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
   const item = estoque.find((e) => e.nome === produto);
   const q = Number(qtd) || 0;
   const baixa = MOV_BAIXA.has(mov);
   const restante = item ? (item.quantidade ?? 0) + (baixa ? -q : q) : null;
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!produto || !tipo || !mov || !q) { setErro("Selecione o produto, o tipo de movimento e a quantidade."); return; }
+    setSalvando(true);
+    try {
+      const r = await movimentarEstoque({ nome: produto, movimento: mov, quantidade: q, unidade: unidade || item?.unidade || undefined, data_movimento: dataMov, observacao: observacao || undefined });
+      setSucesso(`Estoque de ${produto} atualizado: ${r.quantidade} ${r.unidade || ""}.`);
+      setMov(""); setQtd(""); setObservacao("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar movimento de estoque");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -709,16 +869,27 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
             {estoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
           </select>
         </Campo>
-        <Campo label="Movimento">
-          <select style={inputStyle} value={mov} onChange={(e) => setMov(e.target.value)}>
+        <Campo label="Tipo de movimento">
+          <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setMov(""); }}>
             <option value="" disabled>Selecione…</option>
-            {MOVIMENTOS_ESTOQUE.map((m) => <option key={m}>{m}</option>)}
+            <option value="entrada">Entrada</option>
+            <option value="saida">Saída</option>
+          </select>
+        </Campo>
+        <Campo label="Movimento">
+          <select style={inputStyle} value={mov} onChange={(e) => setMov(e.target.value)} disabled={!tipo}>
+            <option value="" disabled>{tipo ? "Selecione…" : "Escolha o tipo primeiro"}</option>
+            {(tipo === "entrada" ? MOVIMENTOS_ENTRADA : tipo === "saida" ? MOVIMENTOS_SAIDA : []).map((m) => <option key={m}>{m}</option>)}
           </select>
         </Campo>
         <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
-        <Campo label="Unidade"><select style={inputStyle} defaultValue={item?.unidade || "unidade"}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select></Campo>
-        <Campo label="Data"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
+        <Campo label="Unidade">
+          <select style={inputStyle} value={unidade || item?.unidade || "unidade"} onChange={(e) => setUnidade(e.target.value)}>
+            {UNIDADES.map((u) => <option key={u}>{u}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Data"><input type="date" style={inputStyle} value={dataMov} onChange={(e) => setDataMov(e.target.value)} /></Campo>
+        <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
       {item && mov && (
         <p style={{ fontSize: "0.78rem", marginTop: "0.3rem" }}>
@@ -727,7 +898,11 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
           {(restante ?? 0) < 0 && <span style={{ color: "var(--red)" }}> (insuficiente!)</span>}
         </p>
       )}
-      <SalvarEmBreve />
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </>
   );
 }
@@ -835,6 +1010,12 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD logo abaixo.</>
           ) : sel === "exclusao" ? (
             <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Administradores excluem na hora; os demais usuários só solicitam, e a exclusão fica pendente de aprovação.</>
+          ) : sel === "diagnostico" ? (
+            <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
+          ) : sel === "estoque" ? (
+            <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+          ) : sel === "sanidade" ? (
+            <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : (
             <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
             mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>

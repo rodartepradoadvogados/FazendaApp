@@ -1,9 +1,44 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
+import React, { useEffect, useMemo, useState, useCallback } from "react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronUp, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+
+// Ordenação por coluna (asc/desc ao clicar no cabeçalho) — o mais simples
+// possível, igual ao clique na primeira linha de uma planilha.
+function useOrdenacao<T extends Record<string, any>>(linhas: T[]) {
+  const [coluna, setColuna] = useState<string | null>(null);
+  const [dir, setDir] = useState<1 | -1>(1);
+  const ordenar = (c: string) => {
+    if (c === coluna) setDir((d) => (d === 1 ? -1 : 1));
+    else { setColuna(c); setDir(1); }
+  };
+  const linhasOrdenadas = useMemo(() => {
+    if (!coluna) return linhas;
+    return [...linhas].sort((a, b) => {
+      const av = a[coluna]; const bv = b[coluna];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
+      return String(av).localeCompare(String(bv)) * dir;
+    });
+  }, [linhas, coluna, dir]);
+  return { linhasOrdenadas, coluna, dir, ordenar };
+}
+
+function ThOrdenavel({ label, campo, coluna, dir, ordenar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void }) {
+  const ativo = coluna === campo;
+  return (
+    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
+      <span className="flex items-center gap-1">
+        {label}
+        {ativo ? (dir === 1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />) : null}
+      </span>
+    </th>
+  );
+}
 
 const DIAS_PADRAO_FUTURO = 10;
 function addDias(iso: string, n: number): string {
@@ -81,22 +116,6 @@ export default function AgendaPage() {
       setShowModal(false);
       carregar();
     } catch (e: any) { alert(e.message); }
-  };
-
-  // Painel recolhível genérico que expande para mostrar uma tabela de animais.
-  const Painel = ({ id, titulo, cor, children }: { id: string; titulo: string; cor?: string; children: React.ReactNode }) => {
-    const aberto = paineis.has(id);
-    return (
-      <div className="card mb-4" style={{ padding: 0, overflow: "hidden" }}>
-        <button onClick={() => togglePainel(id)}
-          style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.7rem 1rem", background: cor || "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", fontWeight: 700, fontSize: "0.9rem" }}>
-          {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          <span style={{ flex: 1 }}>{titulo}</span>
-          <Target size={14} style={{ color: "var(--dourado-light)" }} />
-        </button>
-        {aberto && <div className="overflow-x-auto" style={{ padding: "0 1rem 1rem" }}>{children}</div>}
-      </div>
-    );
   };
 
   // Extrai o valor de "Conta a pagar: X — R$ 1,234.56" (formatação :,.2f do Python — vírgula de milhar, ponto decimal).
@@ -201,11 +220,17 @@ export default function AgendaPage() {
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
 
-  // Próximas datas a partir da referência: visita reprodutiva a cada 21 dias, BST a cada 12.
-  const proxData = (n: number) => { const dt = new Date(data + "T00:00:00"); dt.setDate(dt.getDate() + n); return dt.toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }); };
-  const proxVisita = proxData(21);
-  const proxBST = proxData(12);
-  const nota: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)", fontWeight: 400, marginLeft: "0.35rem" };
+  // Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
+  // rebanho (calculada no backend; ex.: último serviço 03/07 -> visita 24/07).
+  const fmtCurta = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : null);
+  const proxVisita = fmtCurta(agenda?.proxima_visita_iatf);
+  const proxBST = fmtCurta(agenda?.proxima_visita_bst);
+
+  const ordIatf = useOrdenacao(candidatas);
+  const ordBstAptos = useOrdenacao(bstAptos);
+  const ordBstExcl = useOrdenacao(bstExcl);
+  const [listaAtiva, setListaAtiva] = useState<Set<string>>(new Set());
+  const toggleLista = (k: string) => setListaAtiva((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
   return (
     <div className="p-6 animate-in">
@@ -261,58 +286,109 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Painéis recolhíveis */}
-      {candidatas.length > 0 && (
-        <Painel id="iatf" titulo={`Candidatas IATF (${candidatas.length})`}>
-          <table className="fazenda-table">
-            <thead><tr><th>Nº Animal</th><th>Sit. Rep.</th><th>DEL</th><th>Motivo</th></tr></thead>
-            <tbody>
-              {candidatas.map((c: any, i: number) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 700 }}>{c.numero_matriz}<span style={nota}>(próx. visita {proxVisita})</span></td>
-                  <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
-                  <td>{c.del_dias ?? "—"}</td>
-                  <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Painel>
-      )}
+      {/* Listas lado a lado — cada uma expande/recolhe ao clicar, sem ocupar linhas repetidas */}
+      {(candidatas.length > 0 || bstAptos.length > 0 || bstExcl.length > 0) && (
+        <div className="mb-4">
+          <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+            {candidatas.length > 0 && (
+              <button onClick={() => toggleLista("iatf")}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (listaAtiva.has("iatf") ? "var(--dourado)" : "var(--border)"),
+                  background: listaAtiva.has("iatf") ? "rgba(94,26,46,0.4)" : "transparent",
+                  color: listaAtiva.has("iatf") ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: listaAtiva.has("iatf") ? 700 : 500 }}>
+                {listaAtiva.has("iatf") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                Candidatas IATF ({candidatas.length}){proxVisita && <span style={{ fontWeight: 400, fontSize: "0.72rem" }}> — próx. visita {proxVisita}</span>}
+              </button>
+            )}
+            {bstAptos.length > 0 && (
+              <button onClick={() => toggleLista("bstAptos")}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (listaAtiva.has("bstAptos") ? "var(--green-light)" : "var(--border)"),
+                  background: listaAtiva.has("bstAptos") ? "rgba(20,83,45,0.4)" : "transparent",
+                  color: listaAtiva.has("bstAptos") ? "var(--green-light)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstAptos") ? 700 : 500 }}>
+                {listaAtiva.has("bstAptos") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                BST — Aptas ({bstAptos.length}){proxBST && <span style={{ fontWeight: 400, fontSize: "0.72rem" }}> — próx. BST {proxBST}</span>}
+              </button>
+            )}
+            {bstExcl.length > 0 && (
+              <button onClick={() => toggleLista("bstExcl")}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (listaAtiva.has("bstExcl") ? "var(--amber)" : "var(--border)"),
+                  background: listaAtiva.has("bstExcl") ? "rgba(120,90,10,0.35)" : "transparent",
+                  color: listaAtiva.has("bstExcl") ? "var(--amber)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstExcl") ? 700 : 500 }}>
+                {listaAtiva.has("bstExcl") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                BST — Excluídos ({bstExcl.length})
+              </button>
+            )}
+          </div>
 
-      {bstAptos.length > 0 && (
-        <Painel id="bstAptos" titulo={`BST — Aptos (${bstAptos.length})`} cor="linear-gradient(135deg, #0f2a12, #0a1a0c)">
-          <table className="fazenda-table">
-            <thead><tr><th>Nº Animal</th><th>Grupo</th><th>DEL</th></tr></thead>
-            <tbody>
-              {bstAptos.map((b: any, i: number) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 700 }}>{b.numero_matriz}<span style={nota}>(próx. BST {proxBST})</span></td>
-                  <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                  <td>{b.del_dias ?? "—"}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Painel>
-      )}
+          {listaAtiva.has("iatf") && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                  <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                  <ThOrdenavel label="Motivo" campo="motivo" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                </tr></thead>
+                <tbody>
+                  {ordIatf.linhasOrdenadas.map((c: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
+                      <td>{c.del_dias ?? "—"}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
 
-      {bstExcl.length > 0 && (
-        <Painel id="bstExcl" titulo={`BST — Excluídos (${bstExcl.length})`} cor="linear-gradient(135deg, #2a2000, #1a1400)">
-          <table className="fazenda-table">
-            <thead><tr><th>Nº Animal</th><th>Grupo</th><th>DEL</th><th>Motivo</th></tr></thead>
-            <tbody>
-              {bstExcl.map((b: any, i: number) => (
-                <tr key={i}>
-                  <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
-                  <td>{b.del_dias ?? "—"}</td>
-                  <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </Painel>
+          {listaAtiva.has("bstAptos") && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
+                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
+                </tr></thead>
+                <tbody>
+                  {ordBstAptos.linhasOrdenadas.map((b: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
+                      <td>{b.del_dias ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {listaAtiva.has("bstExcl") && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
+                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
+                  <ThOrdenavel label="Motivo" campo="motivo_exclusao" coluna={ordBstExcl.coluna} dir={ordBstExcl.dir} ordenar={ordBstExcl.ordenar} />
+                </tr></thead>
+                <tbody>
+                  {ordBstExcl.linhasOrdenadas.map((b: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
+                      <td>{b.del_dias ?? "—"}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
       )}
 
       {/* Filtros da agenda cronológica */}

@@ -152,6 +152,16 @@ export async function fetchServicosAnalise() {
   return res.json();
 }
 
+export async function salvarDiagnostico(dados: {
+  numero_matriz: string; data_diagnostico: string; resultado: "retoque" | "reconfirmada" | "negativo"; metodo?: string;
+}) {
+  const res = await authFetch(`${API}/reproducao/diagnostico`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar diagnóstico"); }
+  return res.json();
+}
+
 export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
@@ -164,24 +174,28 @@ export async function fetchLotes() {
   if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
   return res.json();
 }
-export async function criarLote(dados: {
-  codigo: string; nome: string; del_min?: number | null; del_max?: number | null;
-  producao_min?: number | null; producao_max?: number | null;
-}) {
+// `dados` inclui código/nome, faixas (del/producao/peso/dias_para_parto/idade_dias)
+// e os critérios booleanos (status_lactacao, categorias, pre_parto, em_tratamento,
+// novilhas_inseminadas, novilhas_gestantes) — ver fazenda.rules.lote_criterios.
+export async function criarLote(dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lote"); }
   return res.json();
 }
-export async function atualizarLote(id: number, dados: {
-  codigo: string; nome: string; del_min?: number | null; del_max?: number | null;
-  producao_min?: number | null; producao_max?: number | null;
-}) {
+export async function atualizarLote(id: number, dados: Record<string, any>) {
   const res = await authFetch(`${API}/lotes/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lote"); }
+  return res.json();
+}
+export async function previewCriteriosLote(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/lotes/preview`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) throw new Error(`Prévia de critérios error: ${res.status}`);
   return res.json();
 }
 
@@ -212,9 +226,36 @@ export async function fetchSanidade() {
   return res.json();
 }
 
+export async function fetchUnidadesCompativeis(produto: string) {
+  const res = await authFetch(`${API}/sanidade/unidades-compativeis?produto=${encodeURIComponent(produto)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Unidades compatíveis error: ${res.status}`);
+  return res.json();
+}
+
+export async function criarAplicacaoSanidade(dados: {
+  data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
+  itens: { produto: string; via?: string; quantidade: number; unidade: string }[];
+}) {
+  const res = await authFetch(`${API}/sanidade/aplicacoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de sanidade"); }
+  return res.json();
+}
+
 export async function fetchEstoque() {
   const res = await authFetch(`${API}/estoque/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Estoque error: ${res.status}`);
+  return res.json();
+}
+
+export async function movimentarEstoque(dados: {
+  nome: string; movimento: string; quantidade: number; unidade?: string; data_movimento: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/estoque/movimentar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar movimento de estoque"); }
   return res.json();
 }
 
