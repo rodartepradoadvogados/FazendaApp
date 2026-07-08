@@ -49,6 +49,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("conta_gerencial_receita_padrao", "VARCHAR"), ("exibir_necessidade_compra_agenda", "BOOLEAN"),
     ],
     "fornecedor": [("categoria", "VARCHAR")],
+    "pessoa": [("salario_base", "FLOAT")],
     "usuario": [("permissoes", "VARCHAR")],
     "conta_gerencial": [
         ("numero_lancamento", "VARCHAR"),

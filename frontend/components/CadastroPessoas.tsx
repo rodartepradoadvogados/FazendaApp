@@ -5,10 +5,10 @@ import { fetchPessoas, criarPessoa, atualizarPessoa } from "@/lib/api";
 
 type Pessoa = {
   id: number; nome: string; tipo: string; telefone: string | null; email: string | null;
-  observacoes: string | null; ativo: boolean;
+  observacoes: string | null; ativo: boolean; salario_base: number | null;
 };
-type Form = { nome: string; tipo: string; telefone: string; email: string; observacoes: string; ativo: boolean };
-const formVazio: Form = { nome: "", tipo: "Funcionário", telefone: "", email: "", observacoes: "", ativo: true };
+type Form = { nome: string; tipo: string; telefone: string; email: string; observacoes: string; ativo: boolean; salarioBase: string };
+const formVazio: Form = { nome: "", tipo: "Funcionário", telefone: "", email: "", observacoes: "", ativo: true, salarioBase: "" };
 
 // Mesma lista de fazenda.api.routers.cadastro.TIPOS_PESSOA no backend.
 const TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços"];
@@ -18,7 +18,10 @@ const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
-  return { nome: f.nome.trim(), tipo: f.tipo, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes), ativo: f.ativo };
+  return {
+    nome: f.nome.trim(), tipo: f.tipo, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes),
+    ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
+  };
 }
 
 export default function CadastroPessoas() {
@@ -34,7 +37,10 @@ export default function CadastroPessoas() {
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Pessoa) => {
-    setForm({ nome: p.nome, tipo: p.tipo, telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "", ativo: p.ativo });
+    setForm({
+      nome: p.nome, tipo: p.tipo, telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "",
+      ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "",
+    });
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
@@ -65,7 +71,8 @@ export default function CadastroPessoas() {
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Funcionários, veterinários, zootecnistas, diaristas e prestadores de serviço ligados à fazenda — diferente de
-        Fornecedores, pois entram na folha de pagamento, não em nota de compra.
+        Fornecedores, pois entram na folha de pagamento, não em nota de compra. O salário base é usado para calcular
+        o limite de 40% de desconto de vale.
       </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
@@ -120,6 +127,8 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
           </select></div>
         <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
         <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+        <div><label style={labelStyle}>Salário base (R$)</label>
+          <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observações</label>

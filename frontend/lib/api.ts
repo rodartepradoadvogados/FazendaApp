@@ -204,14 +204,14 @@ export async function fetchPessoas() {
   if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
   return res.json();
 }
-export async function criarPessoa(dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function criarPessoa(dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number }) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pessoa"); }
   return res.json();
 }
-export async function atualizarPessoa(id: number, dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function atualizarPessoa(id: number, dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number }) {
   const res = await authFetch(`${API}/cadastro/pessoas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -237,6 +237,29 @@ export async function atualizarFolhaPagamento(id: number, dados: { pessoa_id: nu
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar folha de pagamento"); }
+  return res.json();
+}
+
+// ── Vale de funcionário (Financeiro > Folha de pagamento) ──
+export async function fetchVales() {
+  const res = await authFetch(`${API}/cadastro/vales`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Vales error: ${res.status}`);
+  return res.json();
+}
+export async function criarVale(dados: {
+  pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
+  parcelas: number; competencia_inicio: string; observacao?: string; confirmar?: boolean;
+}) {
+  const res = await authFetch(`${API}/cadastro/vales`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao lançar vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 
