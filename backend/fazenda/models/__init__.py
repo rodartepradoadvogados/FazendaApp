@@ -426,6 +426,20 @@ class Sanidade(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Secagem(SQLModel, table=True):
+    """Registro de secagem de uma vaca — produto(s) usado(s) entram como Sanidade (atividade='Secagem')."""
+
+    __tablename__ = "secagem"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    data_secagem: date
+    motivo: str  # doente | baixa_producao | comportamento | mastite | casco | rotina | outros
+    escore_condicao_corporal: Optional[float] = None  # 1 a 5, passo 0,25
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Dieta (plano alimentar por lote)
 # ---------------------------------------------------------------------------

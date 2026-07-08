@@ -388,6 +388,44 @@ export async function criarPesagensCorporais(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
   return res.json();
 }
+// ── Secagem ──
+export async function fetchSecagemInfo(numeroMatriz: string) {
+  const res = await authFetch(`${API}/producao/secagem-info?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar dados de secagem"); }
+  return res.json();
+}
+export async function criarSecagem(dados: {
+  numero_matriz: string; data_secagem: string; motivo: string; escore_condicao_corporal?: number | null;
+  observacao?: string; responsavel?: string;
+  produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
+}) {
+  const res = await authFetch(`${API}/producao/secagem`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar secagem"); }
+  return res.json();
+}
+export async function sugestaoLoteEvento(dados: { numero_matriz: string; categoria_abrev: string; del_dias?: number | null; data_nasc?: string | null }) {
+  const res = await authFetch(`${API}/producao/sugestao-lote-evento`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao buscar sugestão de lote"); }
+  return res.json();
+}
+
+// ── Parto / nascimento ──
+export async function criarParto(dados: {
+  numero_matriz: string; data_parto: string; tipo_parto?: string;
+  crias: { numero: string; sexo: string; nasceu_viva?: boolean }[];
+  retencao_placenta?: boolean; gemelar?: boolean; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/reproducao/parto`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar parto"); }
+  return res.json();
+}
+
 export async function fetchRelatorioPesagemCorporal(params?: {
   numero_matriz?: string; grupo?: string; data_inicio?: string; data_fim?: string;
 }) {

@@ -2,9 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
+  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade } from "@/lib/api";
+import {
+  fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
+  fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
+} from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -331,6 +334,20 @@ const OPCOES_SORO = Array.from({ length: 13 }, (_, i) => (6 + i * 0.5).toFixed(1
 
 function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [matriz, setMatriz] = useState("");
+  const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
+  const [tipoParto, setTipoParto] = useState("");
+  const [gemelar, setGemelar] = useState(false);
+  const [criaNumero, setCriaNumero] = useState("");
+  const [criaSexo, setCriaSexo] = useState("");
+  const [criaBaixada, setCriaBaixada] = useState(false);
+  const [cria2Numero, setCria2Numero] = useState("");
+  const [cria2Sexo, setCria2Sexo] = useState("");
+  const [cria2Baixada, setCria2Baixada] = useState(false);
+  const [retencaoPlacenta, setRetencaoPlacenta] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
   const [tomouColostro, setTomou] = useState("");
   const [litros, setLitros] = useState("");
   const [brix, setBrix] = useState("");
@@ -348,17 +365,64 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const medidasPorL = enriquecer ? Math.max(0, Number(alvo) - brixN!) : 0;
   const totalMedidas = medidasPorL * (litrosN || 1);
 
+  async function alocarSeConfirmado(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string) {
+    try {
+      const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
+      if (lote_sugerido && window.confirm(`Alocar o animal ${numero} no lote ${lote_sugerido.rotulo}? Ele ainda não tem lote definido.`)) {
+        await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
+        return lote_sugerido.rotulo as string;
+      }
+    } catch { /* sugestão é best-effort — não bloqueia o parto já salvo */ }
+    return null;
+  }
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!matriz) { setErro("Selecione a matriz que pariu."); return; }
+    const crias = [
+      ...(criaNumero ? [{ numero: criaNumero, sexo: criaSexo === "Macho" ? "M" : "F", nasceu_viva: !criaBaixada }] : []),
+      ...(gemelar && cria2Numero ? [{ numero: cria2Numero, sexo: cria2Sexo === "Macho" ? "M" : "F", nasceu_viva: !cria2Baixada }] : []),
+    ];
+    setSalvando(true);
+    try {
+      const r = await criarParto({
+        numero_matriz: matriz, data_parto: dataParto, tipo_parto: tipoParto || undefined,
+        crias, retencao_placenta: retencaoPlacenta, gemelar,
+      });
+      const alocacoes: string[] = [];
+      const rotuloMae = await alocarSeConfirmado(matriz, "Vaca", { del_dias: 0 }, "Parto");
+      if (rotuloMae) alocacoes.push(`${matriz} → ${rotuloMae}`);
+      for (const c of r.crias_criadas as string[]) {
+        const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
+        const rotulo = await alocarSeConfirmado(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento");
+        if (rotulo) alocacoes.push(`${c} → ${rotulo}`);
+      }
+      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}`);
+      setMatriz(""); setTipoParto(""); setGemelar(false);
+      setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
+      setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
+      setRetencaoPlacenta(false);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao registrar parto");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
   return (
     <>
       {manualColostroAberto && <ManualColostroModal onClose={() => setManualColostroAberto(false)} />}
       {manualSangueAberto && <ManualSangueModal onClose={() => setManualSangueAberto(false)} />}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz que pariu…" /></Campo>
-        <Campo label="Data do parto"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Situação">
-          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Normal</option><option>Natimorto</option><option>Aborto</option><option>Parto assistido / puxado</option></select>
+        <Campo label="Data do parto"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
+        <Campo label="Tipo de parto">
+          <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
+            <option value="">Selecione…</option><option>Normal</option><option>Distócico</option><option>Cesariana</option>
+          </select>
         </Campo>
-        <Campo label="Nº de crias"><input type="number" style={inputStyle} defaultValue="1" /></Campo>
+        <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim</label></Campo>
+        <Campo label="Parto gemelar (2 crias)"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={gemelar} onChange={(e) => setGemelar(e.target.checked)} /> Sim</label></Campo>
       </div>
 
       <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
@@ -366,10 +430,21 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
           <Baby size={14} /> Cadastro da cria (prole)
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Campo label="Número da cria"><input style={inputStyle} placeholder="ex.: 483" /></Campo>
-          <Campo label="Sexo da cria"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
-          <Campo label="Cria baixada? (não entra no rebanho)"><select style={inputStyle} defaultValue="Não"><option>Não</option><option>Sim</option></select></Campo>
+          <Campo label="Número da cria"><input style={inputStyle} value={criaNumero} onChange={(e) => setCriaNumero(e.target.value)} placeholder="ex.: 483" /></Campo>
+          <Campo label="Sexo da cria"><select style={inputStyle} value={criaSexo} onChange={(e) => setCriaSexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
+          <Campo label="Cria baixada? (não entra no rebanho)">
+            <select style={inputStyle} value={criaBaixada ? "Sim" : "Não"} onChange={(e) => setCriaBaixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
+          </Campo>
         </div>
+        {gemelar && (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
+            <Campo label="Número da 2ª cria"><input style={inputStyle} value={cria2Numero} onChange={(e) => setCria2Numero(e.target.value)} placeholder="ex.: 484" /></Campo>
+            <Campo label="Sexo da 2ª cria"><select style={inputStyle} value={cria2Sexo} onChange={(e) => setCria2Sexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
+            <Campo label="2ª cria baixada?">
+              <select style={inputStyle} value={cria2Baixada ? "Sim" : "Não"} onChange={(e) => setCria2Baixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
+            </Campo>
+          </div>
+        )}
 
         <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--green-light)" }}>Colostragem da cria</p>
@@ -435,7 +510,16 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
           </div>
         </div>
       </div>
-      <SalvarEmBreve />
+      <p style={nota}>
+        Matriz, data, tipo de parto, crias e retenção de placenta já gravam de verdade. Ao salvar, sugere o lote da
+        mãe e de cada cria (confirmação antes de mover). Os campos de colostragem/IgG acima ainda são só a
+        calculadora — o registro desses dados no histórico do animal é um próximo passo.
+      </p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </>
   );
 }
@@ -734,6 +818,154 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   );
 }
 
+const MOTIVOS_SECAGEM = [
+  { v: "doente", l: "Animal doente" },
+  { v: "baixa_producao", l: "Baixa produção" },
+  { v: "comportamento", l: "Comportamento" },
+  { v: "mastite", l: "Mastite" },
+  { v: "casco", l: "Problema de casco" },
+  { v: "rotina", l: "Rotina" },
+  { v: "outros", l: "Outros" },
+];
+
+function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] }) {
+  const [matriz, setMatriz] = useState("");
+  const [info, setInfo] = useState<{ del_atual: number | null; data_prevista_secagem: string | null; deve_secar: boolean | null; motivo_exclusao: string | null } | null>(null);
+  const [carregandoInfo, setCarregandoInfo] = useState(false);
+  const [dataSecagem, setDataSecagem] = useState(() => new Date().toISOString().slice(0, 10));
+  const [motivo, setMotivo] = useState("");
+  const [ecc, setEcc] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [responsavel, setResponsavel] = useState("");
+  const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!matriz) { setInfo(null); return; }
+    setCarregandoInfo(true);
+    fetchSecagemInfo(matriz)
+      .then((d) => { setInfo(d); if (d.data_prevista_secagem) setDataSecagem(d.data_prevista_secagem); })
+      .catch(() => setInfo(null))
+      .finally(() => setCarregandoInfo(false));
+  }, [matriz]);
+
+  const nomesEstoque = estoque.map((e) => e.nome);
+  const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).sort();
+  const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
+  const escolherProduto = (idx: number, produto: string) => {
+    const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
+    atualizarItem(idx, { produto, unidade: compativeis[0] || "" });
+  };
+  const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
+  const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!matriz) { setErro("Selecione a vaca."); return; }
+    if (!motivo) { setErro("Selecione o motivo da secagem."); return; }
+    const itensValidos = itens.filter((i) => i.produto && Number(i.quantidade) > 0 && i.unidade);
+
+    setSalvando(true);
+    try {
+      const r = await criarSecagem({
+        numero_matriz: matriz, data_secagem: dataSecagem, motivo,
+        escore_condicao_corporal: ecc ? Number(ecc) : null,
+        observacao: observacao || undefined, responsavel: responsavel || undefined,
+        produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+      });
+      let msg = "Secagem lançada com sucesso.";
+      if (r.avisos?.length) msg += " " + r.avisos.join(" ");
+      if (r.lote_sugerido && window.confirm(`Deseja alocar a vaca ${matriz} no lote ${r.lote_sugerido.rotulo} (lote das secas)?`)) {
+        await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: r.lote_sugerido.codigo, animais: [matriz] });
+        msg += ` Movida para o lote ${r.lote_sugerido.rotulo}.`;
+      }
+      setSucesso(msg);
+      setMatriz(""); setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar secagem");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Vaca"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>
+        <Campo label="DEL atual">
+          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
+        </Campo>
+        <Campo label="Data prevista de secagem (60 dias antes do parto)">
+          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
+        </Campo>
+        <Campo label="Data da secagem (pode ser retroativa)"><input type="date" style={inputStyle} value={dataSecagem} onChange={(e) => setDataSecagem(e.target.value)} /></Campo>
+        <Campo label="Motivo da secagem">
+          <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
+            <option value="" disabled>Selecione…</option>
+            {MOTIVOS_SECAGEM.map((m) => <option key={m.v} value={m.v}>{m.l}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Escore de condição corporal (opcional, 1 a 5)">
+          <input type="number" step={0.25} min={1} max={5} style={inputStyle} value={ecc} onChange={(e) => setEcc(e.target.value)} placeholder="ex.: 3,25" />
+        </Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+      </div>
+      {info?.motivo_exclusao && <p style={{ ...nota, color: "var(--amber)" }}>{info.motivo_exclusao}</p>}
+
+      <Secao>Produto(s) de secagem (opcional)</Secao>
+      <div className="space-y-3">
+        {itens.map((item, idx) => {
+          const estoqueItem = estoque.find((e) => e.nome === item.produto);
+          const compativeis = unidadesCompativeis(estoqueItem?.unidade);
+          return (
+            <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <Campo label={`Medicamento ${idx + 1}`}>
+                  <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)}>
+                    <option value="" disabled>Selecione…</option>
+                    {listaProdutos.map((nome) => {
+                      const est = estoque.find((e) => e.nome === nome);
+                      return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
+                    })}
+                  </select>
+                </Campo>
+                <Campo label="Via">
+                  <select style={inputStyle} value={item.via} onChange={(e) => atualizarItem(idx, { via: e.target.value })}>
+                    <option value="">Selecione…</option>
+                    {["Intramuscular", "Subcutânea", "Intramamária", "Oral", "Tópica"].map((o) => <option key={o}>{o}</option>)}
+                  </select>
+                </Campo>
+                <Campo label="Dosagem"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+                <Campo label="Unidade">
+                  <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItem(idx, { unidade: e.target.value })}>
+                    {compativeis.map((u) => <option key={u}>{u}</option>)}
+                  </select>
+                </Campo>
+              </div>
+              {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
+              {itens.length > 1 && (
+                <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+                  <Trash2 size={13} />
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </>
+  );
+}
+
 const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
 const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
 
@@ -834,6 +1066,7 @@ const TIPOS_GRUPOS = [
     subs: [
       { id: "controle", label: "Controle leiteiro", icon: Milk, desc: "Pesagem de leite por vaca ou por lote." },
       { id: "pesagem", label: "Pesagem corporal", icon: Scale, desc: "Peso vivo por animal ou por lote — acompanha o crescimento do rebanho." },
+      { id: "secagem", label: "Secagem", icon: Droplet, desc: "Registro de secagem, motivo, ECC e produto(s) — sugere a mudança para o lote de secas." },
     ],
   },
   { id: "sanidade", label: "Sanidade", icon: Syringe, desc: "Aplicação de medicamento / manejo sanitário.", leaf: "sanidade" },
@@ -924,6 +1157,10 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
           ) : sel === "sanidade" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
+          ) : sel === "secagem" ? (
+            <><strong style={{ color: "var(--text)" }}>Secagem já grava de verdade.</strong> Ao salvar, sugere mover a vaca para o lote das secas — você confirma antes da mudança.</>
+          ) : sel === "parto" ? (
+            <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG ainda são só calculadora.</>
           ) : (
             <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
             mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
@@ -975,6 +1212,7 @@ export default function LancamentosPage() {
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
           {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
+          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
