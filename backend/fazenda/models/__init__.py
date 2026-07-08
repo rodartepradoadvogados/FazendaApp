@@ -40,6 +40,52 @@ class Animal(SQLModel, table=True):
     diagnostico: Optional[str] = None
     ativo: bool = True
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    # True após uma movimentação manual de lote (ver MovimentoLote) — impede que
+    # o próximo upload do GERAL.csv sobrescreva o lote atual com o valor do Ideagri.
+    grupo_manual: bool = False
+
+
+# ---------------------------------------------------------------------------
+# Lote (cadastro + parâmetros para sugestão de movimentação)
+# ---------------------------------------------------------------------------
+class Lote(SQLModel, table=True):
+    """
+    Cadastro de lotes de manejo. `codigo` é o código de 2 dígitos usado no
+    Ideagri (ex.: "01"); `Animal.grupo_primario` é montado como
+    "{codigo} - {nome}" para continuar compatível com os relatórios existentes.
+    """
+
+    __tablename__ = "lote"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str = Field(index=True, unique=True)
+    nome: str
+    del_min: Optional[int] = None
+    del_max: Optional[int] = None
+    producao_min: Optional[float] = None
+    producao_max: Optional[float] = None
+    ativo: bool = True
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Movimento de lote (histórico de transferências de animais entre lotes)
+# ---------------------------------------------------------------------------
+class MovimentoLote(SQLModel, table=True):
+    """Registro de cada transferência manual de animal entre lotes."""
+
+    __tablename__ = "movimento_lote"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    lote_origem: Optional[str] = None
+    lote_destino: str
+    data_movimento: date
+    hora_movimento: Optional[str] = None
+    motivo: str
+    observacao: Optional[str] = None
+    responsavel: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

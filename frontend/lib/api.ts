@@ -158,6 +158,54 @@ export async function fetchParametros() {
   return res.json();
 }
 
+// ── Lotes (cadastro + parâmetros) ──
+export async function fetchLotes() {
+  const res = await authFetch(`${API}/lotes/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
+  return res.json();
+}
+export async function criarLote(dados: {
+  codigo: string; nome: string; del_min?: number | null; del_max?: number | null;
+  producao_min?: number | null; producao_max?: number | null;
+}) {
+  const res = await authFetch(`${API}/lotes/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lote"); }
+  return res.json();
+}
+export async function atualizarLote(id: number, dados: {
+  codigo: string; nome: string; del_min?: number | null; del_max?: number | null;
+  producao_min?: number | null; producao_max?: number | null;
+}) {
+  const res = await authFetch(`${API}/lotes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar lote"); }
+  return res.json();
+}
+
+// ── Movimentação de animais entre lotes ──
+export async function fetchMovimentacoes(params?: { numero_matriz?: string; data_inicio?: string; data_fim?: string }) {
+  const qs = new URLSearchParams();
+  if (params?.numero_matriz) qs.set("numero_matriz", params.numero_matriz);
+  if (params?.data_inicio) qs.set("data_inicio", params.data_inicio);
+  if (params?.data_fim) qs.set("data_fim", params.data_fim);
+  const res = await authFetch(`${API}/movimentacoes/?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Movimentações error: ${res.status}`);
+  return res.json();
+}
+export async function criarMovimentacao(dados: {
+  data_movimento: string; hora_movimento?: string; motivo: string; observacao?: string;
+  responsavel?: string; lote_destino_codigo: string; animais: string[];
+}) {
+  const res = await authFetch(`${API}/movimentacoes/mover`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao mover animais"); }
+  return res.json();
+}
+
 export async function fetchSanidade() {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);
