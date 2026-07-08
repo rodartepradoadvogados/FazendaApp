@@ -677,8 +677,21 @@ const TIPO_EXCLUSAO = { id: "exclusao", label: "Exclusão", icon: Trash2, desc: 
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("animal");
+  const [sujo, setSujo] = useState(false);
+  const trocarTipo = (novoId: string) => {
+    if (novoId === sel) return;
+    if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
+    setSujo(false);
+    setSel(novoId);
+  };
   const [souAdmin, setSouAdmin] = useState(false);
   useEffect(() => { setSouAdmin(ehAdmin()); }, []);
+  // Avisa também ao fechar a aba/recarregar/sair do site com dados não salvos.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => { if (sujo) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [sujo]);
   const tiposVisiveis = souAdmin ? [...TIPOS, TIPO_EXCLUSAO] : TIPOS;
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
@@ -744,7 +757,7 @@ export default function LancamentosPage() {
             {tiposVisiveis.map((t) => {
               const Icon = t.icon; const ativo = t.id === sel;
               return (
-                <button key={t.id} onClick={() => setSel(t.id)}
+                <button key={t.id} onClick={() => trocarTipo(t.id)}
                   style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
                     border: "1px solid " + (ativo ? "var(--dourado)" : "transparent"), background: ativo ? "rgba(94,26,46,0.4)" : "transparent",
                     color: ativo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.85rem", fontWeight: ativo ? 700 : 500 }}>
@@ -755,7 +768,7 @@ export default function LancamentosPage() {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
           <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
           {sel === "animal" && <FormAnimal lotes={lotes} />}
@@ -764,7 +777,7 @@ export default function LancamentosPage() {
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "producao" && <FormControle animais={animais} lotesLact={lotesLact} />}
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} />}
+          {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
           {sel === "exclusao" && <FormExclusao />}
         </div>

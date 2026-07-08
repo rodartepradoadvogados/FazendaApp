@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Upload, FileText, X, Check, AlertTriangle, Loader2 } from "lucide-react";
+import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import { fetchOpcoesFinanceiro, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL } from "@/lib/api";
 
 const inputStyle: React.CSSProperties = {
@@ -14,16 +14,26 @@ function Campo({ label, children, full }: { label: string; children: React.React
 }
 
 type Parcela = { data_vencimento: string; valor: string };
+type Item = {
+  codigo_conta_gerencial: string; nome_conta_gerencial: string;
+  produto: string; descricao: string;
+  quantidade: string; valor_unitario: string; valor_total: string; valorTotalManual: boolean;
+};
+const itemVazio = (): Item => ({
+  codigo_conta_gerencial: "", nome_conta_gerencial: "", produto: "", descricao: "",
+  quantidade: "", valor_unitario: "", valor_total: "", valorTotalManual: false,
+});
 
 type Opcoes = {
-  contas_gerenciais: { codigo: string | null; descricao: string | null }[];
+  contas_gerenciais: { codigo: string; nome: string }[];
   centros_custo: string[];
   fornecedores: string[];
+  produtos: string[];
   contas_bancarias: string[];
   tipos_documento: string[];
 };
 
-const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], contas_bancarias: [], tipos_documento: [] };
+const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [] };
 
 function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string): Parcela[] {
   if (qtd <= 0) return [];
@@ -37,13 +47,17 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
   });
 }
 
-/** Lançamento financeiro completo: parcelamento, conta bancária, documento, produto e importação de XML de nota. */
-export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
+/**
+ * Lançamento financeiro completo: vários produtos/serviços por nota, desconto
+ * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
+ * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
+ */
+export function FormFinanceiro({ responsaveis, onSujo }: { responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   useEffect(() => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); }, []);
 
   const [tipo, setTipo] = useState<"despesa" | "receita">("despesa");
-  const [descricao, setDescricao] = useState("");
+  const [itens, setItens] = useState<Item[]>([itemVazio()]);
   const [centroCusto, setCentroCusto] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [responsavel, setResponsavel] = useState("");
@@ -53,10 +67,8 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
   const [dataPrevistaEntrada, setDataPrevistaEntrada] = useState("");
   const [dataPedido, setDataPedido] = useState("");
   const [entregue, setEntregue] = useState(false);
-  const [quantidade, setQuantidade] = useState("");
-  const [valorUnitario, setValorUnitario] = useState("");
-  const [valorTotal, setValorTotal] = useState("");
-  const [valorTotalEditadoManual, setValorTotalEditadoManual] = useState(false);
+  const [desconto, setDesconto] = useState("");
+  const [acrescimo, setAcrescimo] = useState("");
 
   const [parcelado, setParcelado] = useState(false);
   const [qtdParcelas, setQtdParcelas] = useState("2");
@@ -79,30 +91,48 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
-  // Produto: quantidade × valor unitário = valor total automático (a menos que o usuário sobrescreva).
-  useEffect(() => {
-    const q = Number(quantidade), v = Number(valorUnitario);
-    if (quantidade && valorUnitario && !valorTotalEditadoManual) {
-      setValorTotal((q * v).toFixed(2));
-    }
-  }, [quantidade, valorUnitario, valorTotalEditadoManual]);
+  const contasFiltradas = useMemo(
+    () => opcoes.contas_gerenciais.filter((c) => c.codigo.startsWith(tipo === "receita" ? "2" : "3")),
+    [opcoes, tipo]
+  );
 
-  // Regenera as parcelas (divisão igual) quando ligar o parcelamento ou mudar quantidade/valor/data.
+  function atualizarItem(idx: number, patch: Partial<Item>) {
+    setItens((arr) => arr.map((it, i) => {
+      if (i !== idx) return it;
+      const novo = { ...it, ...patch };
+      const q = Number(novo.quantidade), v = Number(novo.valor_unitario);
+      if (novo.quantidade && novo.valor_unitario && !novo.valorTotalManual && !("valor_total" in patch)) {
+        novo.valor_total = (q * v).toFixed(2);
+      }
+      return novo;
+    }));
+  }
+  function escolherContaGerencial(idx: number, valor: string) {
+    const match = contasFiltradas.find((c) => `${c.codigo} — ${c.nome}` === valor);
+    atualizarItem(idx, match ? { codigo_conta_gerencial: match.codigo, nome_conta_gerencial: match.nome } : { codigo_conta_gerencial: "", nome_conta_gerencial: valor });
+  }
+  function acrescentarItem() { setItens((arr) => [...arr, itemVazio()]); }
+  function removerItem(idx: number) { setItens((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr)); }
+
+  const valorBruto = useMemo(() => itens.reduce((a, i) => a + (Number(i.valor_total) || 0), 0), [itens]);
+  const valorLiquido = useMemo(() => Math.round((valorBruto - (Number(desconto) || 0) + (Number(acrescimo) || 0)) * 100) / 100, [valorBruto, desconto, acrescimo]);
+
+  // Regenera as parcelas (divisão igual) quando ligar o parcelamento ou mudar quantidade.
   useEffect(() => {
     if (!parcelado) { setParcelas([]); return; }
     const n = Math.max(1, Math.round(Number(qtdParcelas) || 0));
-    const total = Number(valorTotal) || 0;
-    setParcelas(dividirParcelas(total, n, dataPrevistaEntrada || dataEmissao));
+    setParcelas(dividirParcelas(valorLiquido, n, dataPrevistaEntrada || dataEmissao));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [parcelado, qtdParcelas]);
 
   const somaParcelas = useMemo(() => parcelas.reduce((a, p) => a + (Number(p.valor) || 0), 0), [parcelas]);
-  const diferencaPagamento = useMemo(() => (valorPago && valorTotal ? Math.round((Number(valorPago) - Number(valorTotal)) * 100) / 100 : 0), [valorPago, valorTotal]);
+  const diferencaPagamento = useMemo(() => (valorPago ? Math.round((Number(valorPago) - valorLiquido) * 100) / 100 : 0), [valorPago, valorLiquido]);
 
   function limpar() {
-    setDescricao(""); setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
+    setItens([itemVazio()]);
+    setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setDataEmissao(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
-    setQuantidade(""); setValorUnitario(""); setValorTotal(""); setValorTotalEditadoManual(false);
+    setDesconto(""); setAcrescimo("");
     setParcelado(false); setQtdParcelas("2"); setParcelas([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
     setXmlTexto(""); setXmlAberto(false);
@@ -112,11 +142,19 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
     if (dados.numero_documento) setNumeroDocumento(dados.numero_documento);
     if (dados.data_emissao) setDataEmissao(dados.data_emissao);
     if (dados.fornecedor_cliente) setFornecedor(dados.fornecedor_cliente);
-    if (dados.descricao) setDescricao(dados.descricao);
-    if (dados.quantidade != null) setQuantidade(String(dados.quantidade));
-    if (dados.valor_unitario != null) setValorUnitario(String(dados.valor_unitario));
-    if (dados.valor_total != null) { setValorTotal(String(dados.valor_total)); setValorTotalEditadoManual(true); }
     setTipoDocumento("Nota fiscal");
+    if (Array.isArray(dados.itens) && dados.itens.length) {
+      setItens(dados.itens.map((it: any) => ({
+        codigo_conta_gerencial: "", nome_conta_gerencial: "",
+        produto: it.produto || "", descricao: "",
+        quantidade: it.quantidade != null ? String(it.quantidade) : "",
+        valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
+        valor_total: it.valor_total != null ? String(it.valor_total) : "",
+        valorTotalManual: it.valor_total != null,
+      })));
+    } else if (dados.valor_total != null) {
+      setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), valorTotalManual: true }]);
+    }
     if (Array.isArray(dados.parcelas) && dados.parcelas.length) {
       setParcelado(true);
       setQtdParcelas(String(dados.parcelas.length));
@@ -151,7 +189,17 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
   function montarPayload() {
     return {
       tipo,
-      descricao: descricao || null,
+      itens: itens
+        .filter((i) => i.produto.trim())
+        .map((i) => ({
+          codigo_conta_gerencial: i.codigo_conta_gerencial || null,
+          nome_conta_gerencial: i.nome_conta_gerencial || null,
+          produto: i.produto.trim(),
+          descricao: i.descricao || null,
+          quantidade: i.quantidade ? Number(i.quantidade) : null,
+          valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
+          valor_total: Number(i.valor_total) || 0,
+        })),
       centro_custo: centroCusto || null,
       fornecedor_cliente: fornecedor || null,
       responsavel: responsavel || null,
@@ -161,9 +209,8 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
       data_prevista_entrada: dataPrevistaEntrada || null,
       data_pedido: dataPedido || null,
       entregue,
-      quantidade: quantidade ? Number(quantidade) : null,
-      valor_unitario: valorUnitario ? Number(valorUnitario) : null,
-      valor_total: Number(valorTotal) || 0,
+      desconto: Number(desconto) || 0,
+      acrescimo: Number(acrescimo) || 0,
       parcelas: parcelado ? parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 })) : [],
       data_pagamento: !parcelado && jaPago ? dataPagamento || null : null,
       valor_pago: !parcelado && jaPago ? Number(valorPago) || 0 : null,
@@ -174,24 +221,22 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!valorTotal || Number(valorTotal) <= 0) { setErro("Informe o valor total."); return; }
+    const validos = itens.filter((i) => i.produto.trim());
+    if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
+    if (valorLiquido <= 0) { setErro("O valor líquido do lançamento deve ser positivo."); return; }
     if (!parcelado && jaPago && diferencaPagamento !== 0 && !confirmando) { setConfirmando(true); return; }
     setSalvando(true);
     try {
       const r = await criarLancamentoFinanceiro(montarPayload());
       setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.`);
       limpar();
+      onSujo?.(false);
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar lançamento");
     } finally {
       setSalvando(false); setConfirmando(false);
     }
   }
-
-  const contasGerenciaisNomes = useMemo(
-    () => Array.from(new Set(opcoes.contas_gerenciais.map((c) => c.descricao).filter(Boolean))) as string[],
-    [opcoes]
-  );
 
   return (
     <>
@@ -219,27 +264,65 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
           </div>
         )}
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
-        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Os campos importados ficam abaixo, todos editáveis antes de salvar.</p>
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Reconhece vários produtos/serviços da mesma nota — os campos ficam abaixo, todos editáveis.</p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Tipo">
-          <select style={inputStyle} value={tipo} onChange={(e) => setTipo(e.target.value as any)}>
-            <option value="despesa">Despesa (conta a pagar)</option>
-            <option value="receita">Receita (conta a receber)</option>
-          </select>
-        </Campo>
-        <Campo label="Descrição (conta gerencial / produto)">
-          <input list="fin-contas" style={inputStyle} value={descricao} onChange={(e) => setDescricao(e.target.value)} placeholder="ex.: Ração concentrada, Leite indústria…" />
-          <datalist id="fin-contas">{contasGerenciaisNomes.map((c) => <option key={c} value={c} />)}</datalist>
+      <Campo label="Tipo">
+        <select style={{ ...inputStyle, maxWidth: "16rem" }} value={tipo} onChange={(e) => setTipo(e.target.value as any)}>
+          <option value="despesa">Despesa (conta a pagar)</option>
+          <option value="receita">Receita (conta a receber)</option>
+        </select>
+      </Campo>
+
+      {/* Produtos / serviços da nota */}
+      <div className="mt-3 space-y-3">
+        {itens.map((it, idx) => (
+          <div key={idx} className="card" style={{ background: "var(--surface-2)", position: "relative" }}>
+            {itens.length > 1 && (
+              <button type="button" onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", fontSize: "0.7rem", color: "var(--red)" }}>
+                <Trash2 size={13} />
+              </button>
+            )}
+            <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <Campo label="Conta gerencial">
+                <input list={`fin-contas-${idx}`} style={inputStyle}
+                  value={it.codigo_conta_gerencial ? `${it.codigo_conta_gerencial} — ${it.nome_conta_gerencial}` : it.nome_conta_gerencial}
+                  onChange={(e) => escolherContaGerencial(idx, e.target.value)} placeholder="ex.: 3.01.01.01 — Concentrado protéico" />
+                <datalist id={`fin-contas-${idx}`}>{contasFiltradas.map((c) => <option key={c.codigo} value={`${c.codigo} — ${c.nome}`} />)}</datalist>
+              </Campo>
+              <Campo label="Produto">
+                <input list={`fin-produtos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Ração concentrada 25kg" />
+                <datalist id={`fin-produtos-${idx}`}>{opcoes.produtos.map((p) => <option key={p} value={p} />)}</datalist>
+              </Campo>
+              <Campo label="Descrição (opcional)">
+                <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
+              </Campo>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+              <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
+              <Campo label="Valor unitário (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={it.valor_unitario} onChange={(e) => atualizarItem(idx, { valor_unitario: e.target.value })} /></Campo>
+              <Campo label="Valor total (R$)">
+                <input type="number" inputMode="decimal" style={inputStyle} value={it.valor_total}
+                  onChange={(e) => atualizarItem(idx, { valor_total: e.target.value, valorTotalManual: true })} />
+              </Campo>
+            </div>
+          </div>
+        ))}
+        <button type="button" className="btn-ghost" onClick={acrescentarItem} style={{ fontSize: "0.8rem" }}>
+          <Plus size={14} /> Acrescentar produto ou serviço
+        </button>
+      </div>
+
+      {/* Dados da nota (uma vez por lançamento) */}
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+        <Campo label="Fornecedor / cliente">
+          <input list="fin-fornecedores" style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} />
+          <datalist id="fin-fornecedores">{opcoes.fornecedores.map((f) => <option key={f} value={f} />)}</datalist>
         </Campo>
         <Campo label="Centro de custo">
           <input list="fin-centros" style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)} />
           <datalist id="fin-centros">{opcoes.centros_custo.map((c) => <option key={c} value={c} />)}</datalist>
-        </Campo>
-        <Campo label="Fornecedor / cliente">
-          <input list="fin-fornecedores" style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} />
-          <datalist id="fin-fornecedores">{opcoes.fornecedores.map((f) => <option key={f} value={f} />)}</datalist>
         </Campo>
         <Campo label="Responsável pelo lançamento">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
@@ -253,23 +336,31 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
             {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
           </select>
         </Campo>
+
         <Campo label="Número do documento"><input style={inputStyle} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></Campo>
         <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} /></Campo>
         <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
         <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
+
         <Campo label="Entregue?">
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", marginTop: "0.4rem" }}>
             <input type="checkbox" checked={entregue} onChange={(e) => setEntregue(e.target.checked)} /> Já entregue / recebido
           </label>
         </Campo>
-
-        <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} /></Campo>
-        <Campo label="Valor unitário (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} /></Campo>
-        <Campo label="Valor total (R$)">
-          <input type="number" inputMode="decimal" style={inputStyle} value={valorTotal}
-            onChange={(e) => { setValorTotal(e.target.value); setValorTotalEditadoManual(true); }} />
-        </Campo>
+        <Campo label="Desconto (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={desconto} onChange={(e) => setDesconto(e.target.value)} placeholder="0,00" /></Campo>
+        <Campo label="Acréscimo (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={acrescimo} onChange={(e) => setAcrescimo(e.target.value)} placeholder="0,00" /></Campo>
+        <div>
+          <label style={lbl}>Valor líquido da nota</label>
+          <div style={{ ...inputStyle, fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</div>
+        </div>
       </div>
+      {(Number(desconto) > 0 || Number(acrescimo) > 0) && (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          Bruto dos produtos: {formatBRL(valorBruto)}
+          {Number(desconto) > 0 && <> · desconto de {formatBRL(Number(desconto))}</>}
+          {Number(acrescimo) > 0 && <> · acréscimo de {formatBRL(Number(acrescimo))}</>}
+        </p>
+      )}
 
       {/* Parcelamento */}
       <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
@@ -295,10 +386,10 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
                 ))}
               </tbody>
             </table>
-            {Math.abs(somaParcelas - (Number(valorTotal) || 0)) > 0.01 && (
+            {Math.abs(somaParcelas - valorLiquido) > 0.01 && (
               <p style={{ color: "var(--amber)", fontSize: "0.75rem", marginTop: "0.4rem" }}>
                 <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.2rem" }} />
-                Soma das parcelas ({formatBRL(somaParcelas)}) difere do valor total ({formatBRL(Number(valorTotal) || 0)}).
+                Soma das parcelas ({formatBRL(somaParcelas)}) difere do valor líquido ({formatBRL(valorLiquido)}).
               </p>
             )}
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
@@ -327,7 +418,7 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
               <Campo label="Número do documento de pagamento"><input style={inputStyle} value={numeroDocumentoPagamento} onChange={(e) => setNumeroDocumentoPagamento(e.target.value)} /></Campo>
               {diferencaPagamento !== 0 && (
                 <p style={{ gridColumn: "1 / -1", fontSize: "0.78rem", color: diferencaPagamento < 0 ? "var(--green-light)" : "var(--amber)" }}>
-                  {diferencaPagamento < 0 ? `Desconto de ${formatBRL(Math.abs(diferencaPagamento))}` : `Acréscimo de ${formatBRL(diferencaPagamento)}`} em relação ao valor total.
+                  {diferencaPagamento < 0 ? `Desconto de ${formatBRL(Math.abs(diferencaPagamento))}` : `Acréscimo de ${formatBRL(diferencaPagamento)}`} em relação ao valor líquido (na baixa do pagamento, diferente do desconto/acréscimo da nota acima).
                 </p>
               )}
             </div>
@@ -335,7 +426,7 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
         </div>
       )}
 
-      {erro &&<p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
 
       <div className="flex items-center gap-3 mt-4">
@@ -349,7 +440,7 @@ export function FormFinanceiro({ responsaveis }: { responsaveis: string[] }) {
           <div className="card" style={{ width: "420px", maxWidth: "95vw" }}>
             <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} /><strong>Confirmar diferença de valor</strong></div>
             <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
-              Valor total: <strong style={{ color: "var(--text)" }}>{formatBRL(Number(valorTotal) || 0)}</strong><br />
+              Valor líquido: <strong style={{ color: "var(--text)" }}>{formatBRL(valorLiquido)}</strong><br />
               Valor {tipo === "despesa" ? "pago" : "recebido"}: <strong style={{ color: "var(--text)" }}>{formatBRL(Number(valorPago) || 0)}</strong><br />
               {diferencaPagamento < 0 ? "Desconto" : "Acréscimo"}: <strong style={{ color: diferencaPagamento < 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(Math.abs(diferencaPagamento))}</strong>
             </p>

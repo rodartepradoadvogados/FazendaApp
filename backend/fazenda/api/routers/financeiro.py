@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import ContaGerencial
+from fazenda.models import ContaGerencial, LancamentoItem, Patrimonio, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -30,10 +30,19 @@ class ParcelaIn(BaseModel):
     valor: float
 
 
+class ItemIn(BaseModel):
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    produto: str
+    descricao: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
+    valor_total: float
+
+
 class LancamentoIn(BaseModel):
     tipo: str  # "receita" | "despesa"
-    codigo_conta: Optional[str] = None
-    descricao: Optional[str] = None
+    itens: list[ItemIn]  # um ou mais produtos/serviços da mesma nota
     centro_custo: Optional[str] = None
     fornecedor_cliente: Optional[str] = None
     responsavel: Optional[str] = None
@@ -44,9 +53,8 @@ class LancamentoIn(BaseModel):
     data_prevista_entrada: Optional[date] = None
     data_pedido: Optional[date] = None
     entregue: Optional[bool] = None
-    quantidade: Optional[float] = None
-    valor_unitario: Optional[float] = None
-    valor_total: float
+    desconto: float = 0
+    acrescimo: float = 0
     parcelas: list[ParcelaIn] = []
     # Preenchidos só quando o lançamento já nasce pago/recebido (sem parcelamento).
     data_pagamento: Optional[date] = None
@@ -136,6 +144,19 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
     Movimentações achatadas para o dashboard financeiro interativo.
     O front filtra por regime (competência/caixa), ano e centro de custo.
     """
+    itens_por_lancamento: dict[str, list[dict]] = {}
+    for it in session.exec(select(LancamentoItem)).all():
+        itens_por_lancamento.setdefault(it.numero_lancamento, []).append({
+            "id": it.id,
+            "codigo_conta_gerencial": it.codigo_conta_gerencial,
+            "nome_conta_gerencial": it.nome_conta_gerencial,
+            "produto": it.produto,
+            "descricao": it.descricao,
+            "quantidade": it.quantidade,
+            "valor_unitario": it.valor_unitario,
+            "valor_total": it.valor_total,
+        })
+
     registros = []
     for c in session.exec(select(ContaGerencial)).all():
         dc = c.data_competencia
@@ -147,6 +168,8 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "valor": c.valor_total or 0.0,
             "valor_pago": c.valor_pago,
             "desconto_acrescimo": c.desconto_acrescimo,
+            "desconto_nota": c.desconto_nota,
+            "acrescimo_nota": c.acrescimo_nota,
             "centro_custo": c.centro_custo or "(sem centro)",
             "codigo_conta": (c.codigo_conta or "").split(".")[0] or "(sem conta)",
             "conta_completa": c.codigo_conta or "",
@@ -163,6 +186,7 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "parcela_num": c.parcela_num,
             "parcela_total": c.parcela_total,
             "origem": c.origem,
+            "itens": itens_por_lancamento.get(c.numero_lancamento or "", []),
             "data_competencia": dc.isoformat() if dc else None,
             "data_pagamento": dp.isoformat() if dp else None,
             "data_vencimento": c.data_vencimento.isoformat() if c.data_vencimento else None,
@@ -177,55 +201,123 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
     return {"lancamentos": registros, "total": len(registros)}
 
 
+@router.get("/itens-por-conta")
+def itens_por_conta(
+    data_inicio: date = Query(...),
+    data_fim: date = Query(...),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    Produtos/serviços lançados no período (por competência), um por linha —
+    usado no DRE para o detalhamento correto por conta gerencial quando uma
+    nota tem vários produtos com contas diferentes.
+    """
+    itens = session.exec(select(LancamentoItem)).all()
+    return [
+        {
+            "numero_lancamento": it.numero_lancamento,
+            "tipo": it.tipo,
+            "codigo_conta_gerencial": it.codigo_conta_gerencial,
+            "nome_conta_gerencial": it.nome_conta_gerencial,
+            "produto": it.produto,
+            "valor_total": it.valor_total,
+            "data_competencia": it.data_competencia.isoformat() if it.data_competencia else None,
+        }
+        for it in itens
+        if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
+    ]
+
+
 @router.get("/opcoes")
 def opcoes(session: Session = Depends(get_session)) -> dict:
-    """Listas para os seletores do lançamento — derivadas dos dados já importados."""
+    """Listas para os seletores do lançamento — plano de contas real + dados já importados."""
+    plano = session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.ativa == True)).all()
+    contas_gerenciais = sorted(
+        [{"codigo": c.codigo, "nome": c.nome} for c in plano],
+        key=lambda x: x["codigo"],
+    )
     contas = session.exec(select(ContaGerencial)).all()
-    contas_gerenciais = sorted({
-        (c.codigo_conta, c.descricao) for c in contas if c.codigo_conta or c.descricao
-    }, key=lambda x: (x[0] or "", x[1] or ""))
     centros_custo = sorted({c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
+    produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
     return {
-        "contas_gerenciais": [{"codigo": c[0], "descricao": c[1]} for c in contas_gerenciais],
+        "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
         "fornecedores": fornecedores,
+        "produtos": produtos,
         "contas_bancarias": CONTAS_BANCARIAS,
         "tipos_documento": TIPOS_DOCUMENTO,
     }
 
 
+@router.get("/patrimonio")
+def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
+    """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv)."""
+    itens = session.exec(select(Patrimonio)).all()
+    total = sum(i.valor_total or 0 for i in itens if not i.data_baixa)
+    return {"itens": [i.model_dump() for i in itens], "total": len(itens), "valor_total": round(total, 2)}
+
+
 @router.post("/lancamentos", status_code=201)
 def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session)) -> dict:
     """
-    Cria um lançamento financeiro. Se houver parcelamento, gera uma linha por
-    parcela, todas com o mesmo número de referência (numero_lancamento).
-    Sem data de pagamento, o lançamento nasce em aberto (contas a pagar/receber).
+    Cria um lançamento financeiro com um ou mais produtos/serviços (itens).
+    Desconto/acréscimo ajustam o valor bruto dos itens para o valor líquido,
+    que é o que efetivamente vira parcela(s). Sem data de pagamento, o
+    lançamento nasce em aberto (contas a pagar/receber).
     """
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
+    if not dados.itens:
+        raise HTTPException(status_code=400, detail="Informe ao menos um produto ou serviço")
+
+    valor_bruto = round(sum(i.valor_total for i in dados.itens), 2)
+    valor_liquido = round(valor_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="O valor líquido do lançamento deve ser positivo")
 
     ano = (dados.data_emissao or dados.data_competencia or date.today()).year
     numero_lancamento = _proximo_numero_lancamento(session, ano)
+    data_competencia = dados.data_competencia or dados.data_emissao
+
+    itens_criados = [
+        LancamentoItem(
+            numero_lancamento=numero_lancamento,
+            tipo=dados.tipo,
+            data_competencia=data_competencia,
+            codigo_conta_gerencial=item.codigo_conta_gerencial,
+            nome_conta_gerencial=item.nome_conta_gerencial,
+            produto=item.produto,
+            descricao=item.descricao,
+            quantidade=item.quantidade,
+            valor_unitario=item.valor_unitario,
+            valor_total=item.valor_total,
+        )
+        for item in dados.itens
+    ]
+
+    # Resumo p/ os relatórios legados que só olham 1 conta/descrição por linha.
+    descricao_resumo = ", ".join(i.produto for i in dados.itens)[:500]
+    codigo_resumo = dados.itens[0].codigo_conta_gerencial if len(dados.itens) == 1 else None
 
     campos_comuns = dict(
         numero_lancamento=numero_lancamento,
-        codigo_conta=dados.codigo_conta,
-        descricao=dados.descricao,
+        codigo_conta=codigo_resumo,
+        descricao=descricao_resumo,
         centro_custo=dados.centro_custo,
         fornecedor_cliente=dados.fornecedor_cliente,
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,
         numero_nota=dados.numero_documento,
         data_emissao=dados.data_emissao,
-        data_competencia=dados.data_competencia or dados.data_emissao,
+        data_competencia=data_competencia,
         data_prevista_entrada=dados.data_prevista_entrada,
         data_pedido=dados.data_pedido,
         entregue=dados.entregue,
-        quantidade=dados.quantidade,
-        valor_unitario=dados.valor_unitario,
         tipo=dados.tipo,
         origem="manual",
+        desconto_nota=dados.desconto or None,
+        acrescimo_nota=dados.acrescimo or None,
     )
 
     criados: list[ContaGerencial] = []
@@ -243,7 +335,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         registro = ContaGerencial(
             **campos_comuns,
             data_vencimento=dados.data_prevista_entrada,
-            valor_total=dados.valor_total,
+            valor_total=valor_liquido,
             parcela_num=1,
             parcela_total=1,
         )
@@ -252,16 +344,23 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
             registro.valor_pago = dados.valor_pago
             registro.conta_bancaria = dados.conta_bancaria
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
-            registro.desconto_acrescimo = round((dados.valor_pago or 0) - dados.valor_total, 2)
+            registro.desconto_acrescimo = round((dados.valor_pago or 0) - valor_liquido, 2)
         criados.append(registro)
 
+    for it in itens_criados:
+        session.add(it)
     for c in criados:
         session.add(c)
     session.commit()
     for c in criados:
         session.refresh(c)
 
-    return {"numero_lancamento": numero_lancamento, "ids": [c.id for c in criados]}
+    return {
+        "numero_lancamento": numero_lancamento,
+        "ids": [c.id for c in criados],
+        "valor_bruto": valor_bruto,
+        "valor_liquido": valor_liquido,
+    }
 
 
 @router.put("/lancamentos/{lancamento_id}/pagar")

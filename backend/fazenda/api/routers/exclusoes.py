@@ -15,6 +15,7 @@ from fazenda.models import (
     ContaGerencial,
     ControleLeiteiro,
     Estoque,
+    LancamentoItem,
     Parto,
     Sanidade,
     Servico,
@@ -206,6 +207,10 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         c = session.get(ContaGerencial, int(id_))
         if not c:
             raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+        itens = (
+            session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == c.numero_lancamento)).all()
+            if c.numero_lancamento else []
+        )
         if c.numero_lancamento and (c.parcela_total or 1) > 1:
             irmaos = session.exec(
                 select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento)
@@ -214,8 +219,13 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
                 f"Lançamento {c.numero_lancamento} — {c.descricao or '—'}",
                 f"{len(irmaos)} parcela(s) no total — todas serão excluídas",
             ]
-            return impacto, list(irmaos)
-        return [f"Lançamento {c.numero_lancamento or ''} — {c.descricao or '—'} (R$ {c.valor_total or 0:,.2f})"], [c]
+            if itens:
+                impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
+            return impacto, [*irmaos, *itens]
+        impacto = [f"Lançamento {c.numero_lancamento or ''} — {c.descricao or '—'} (R$ {c.valor_total or 0:,.2f})"]
+        if itens:
+            impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
+        return impacto, [c, *itens]
 
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 

@@ -51,6 +51,8 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("parcela_total", "INTEGER"),
         ("responsavel", "VARCHAR"),
         ("origem", "VARCHAR"),
+        ("desconto_nota", "FLOAT"),
+        ("acrescimo_nota", "FLOAT"),
     ],
 }
 

@@ -61,6 +61,18 @@ def parse_float(value: str) -> float | None:
         return None
 
 
+def parse_bool(value: str) -> bool | None:
+    """Converte 'Sim'/'Não' (Ideagri) para bool. Retorna None se vazio/desconhecido."""
+    if not value or value.strip() == "":
+        return None
+    v = value.strip().lower()
+    if v in ("sim", "true", "1"):
+        return True
+    if v in ("não", "nao", "false", "0"):
+        return False
+    return None
+
+
 def parse_int(value: str) -> int | None:
     """Converte string para int. Retorna None se vazio."""
     if not value or value.strip() in ("", "-"):
