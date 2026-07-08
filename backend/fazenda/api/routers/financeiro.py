@@ -12,17 +12,32 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import ContaGerencial, LancamentoItem, Patrimonio, PlanoContaGerencial
+from fazenda.models import CentroCusto, ContaCorrente, ContaGerencial, LancamentoItem, Patrimonio, PlanoContaGerencial
 from fazenda.rules.nfe_xml import parse_nfe_xml
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
-# As duas contas correntes da fazenda no Banco do Brasil.
-CONTAS_BANCARIAS = [
-    "Banco do Brasil · Agência 3775-3 · Conta corrente 3.615-3",
-    "Banco do Brasil · Agência 4057-6 · Conta corrente 3.615-3",
-]
 TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]
+
+# Seed inicial — as duas contas correntes da fazenda no Banco do Brasil (antes
+# uma lista fixa em Python; agora cadastráveis em Configurações > Parâmetros
+# financeiros). Ver seed_parametros_financeiros, chamada uma vez no startup.
+SEED_CONTAS_CORRENTES = [
+    {"banco": "Banco do Brasil", "agencia": "3775-3", "numero_conta": "3.615-3"},
+    {"banco": "Banco do Brasil", "agencia": "4057-6", "numero_conta": "3.615-3"},
+]
+
+
+def rotulo_conta_corrente(c: ContaCorrente) -> str:
+    return f"{c.banco} · Agência {c.agencia} · Conta corrente {c.numero_conta}"
+
+
+def seed_parametros_financeiros(session: Session) -> None:
+    """Cria as contas correntes padrão se a tabela ainda estiver vazia (idempotente)."""
+    if not session.exec(select(ContaCorrente)).first():
+        for dados in SEED_CONTAS_CORRENTES:
+            session.add(ContaCorrente(**dados))
+        session.commit()
 
 
 class ParcelaIn(BaseModel):
@@ -237,15 +252,19 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
         key=lambda x: x["codigo"],
     )
     contas = session.exec(select(ContaGerencial)).all()
-    centros_custo = sorted({c.centro_custo for c in contas if c.centro_custo})
+    # União com os valores já lançados como texto livre (antes do cadastro
+    # formal existir) — nada que já foi usado deixa de aparecer no filtro.
+    centros_cadastrados = {c.nome for c in session.exec(select(CentroCusto).where(CentroCusto.ativo == True)).all()}
+    centros_custo = sorted(centros_cadastrados | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
+    contas_correntes = session.exec(select(ContaCorrente).where(ContaCorrente.ativo == True)).all()
     return {
         "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
         "fornecedores": fornecedores,
         "produtos": produtos,
-        "contas_bancarias": CONTAS_BANCARIAS,
+        "contas_bancarias": [rotulo_conta_corrente(c) for c in contas_correntes],
         "tipos_documento": TIPOS_DOCUMENTO,
     }
 
@@ -261,7 +280,7 @@ def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
     return sorted(
         [
             {
-                "codigo": c.codigo, "nome": c.nome, "ativa": c.ativa,
+                "id": c.id, "codigo": c.codigo, "nome": c.nome, "ativa": c.ativa,
                 "nivel": c.codigo.count(".") + 1,
                 "fluxo": c.fluxo, "tipo_fixo_variavel": c.tipo_fixo_variavel,
             }
@@ -269,6 +288,121 @@ def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
         ],
         key=lambda x: x["codigo"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Parâmetros financeiros (Configurações) — conta corrente, centro de custo e
+# conta gerencial cadastráveis, além da importação de CSV do plano de contas.
+# ---------------------------------------------------------------------------
+class ContaCorrenteIn(BaseModel):
+    banco: str
+    agencia: str
+    numero_conta: str
+    ativo: bool = True
+
+
+@router.get("/contas-correntes")
+def listar_contas_correntes(session: Session = Depends(get_session)) -> list[dict]:
+    contas = session.exec(select(ContaCorrente).order_by(ContaCorrente.id)).all()
+    return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c)} for c in contas]
+
+
+@router.post("/contas-correntes")
+def criar_conta_corrente(dados: ContaCorrenteIn, session: Session = Depends(get_session)) -> dict:
+    c = ContaCorrente(**dados.model_dump())
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c)}
+
+
+@router.put("/contas-correntes/{conta_id}")
+def atualizar_conta_corrente(conta_id: int, dados: ContaCorrenteIn, session: Session = Depends(get_session)) -> dict:
+    c = session.get(ContaCorrente, conta_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Conta corrente não encontrada")
+    for campo, valor in dados.model_dump().items():
+        setattr(c, campo, valor)
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return {**c.model_dump(), "rotulo": rotulo_conta_corrente(c)}
+
+
+class CentroCustoIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+@router.get("/centros-custo")
+def listar_centros_custo(session: Session = Depends(get_session)) -> list[dict]:
+    return [c.model_dump() for c in session.exec(select(CentroCusto).order_by(CentroCusto.id)).all()]
+
+
+@router.post("/centros-custo")
+def criar_centro_custo(dados: CentroCustoIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(CentroCusto).where(CentroCusto.nome == nome)).first():
+        raise HTTPException(status_code=409, detail="Já existe um centro de custo com esse nome")
+    c = CentroCusto(nome=nome, ativo=dados.ativo)
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c.model_dump()
+
+
+@router.put("/centros-custo/{centro_id}")
+def atualizar_centro_custo(centro_id: int, dados: CentroCustoIn, session: Session = Depends(get_session)) -> dict:
+    c = session.get(CentroCusto, centro_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Centro de custo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    c.nome = nome
+    c.ativo = dados.ativo
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c.model_dump()
+
+
+class PlanoContaGerencialIn(BaseModel):
+    codigo: str
+    nome: str
+    ativa: bool = True
+    participa_atividade: bool | None = None
+    fluxo: bool | None = None
+    tipo_fixo_variavel: str | None = None
+
+
+@router.post("/plano-contas")
+def criar_conta_gerencial(dados: PlanoContaGerencialIn, session: Session = Depends(get_session)) -> dict:
+    codigo = dados.codigo.strip()
+    if not codigo or not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
+    if session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.codigo == codigo)).first():
+        raise HTTPException(status_code=409, detail="Já existe uma conta gerencial com esse código")
+    conta = PlanoContaGerencial(**{**dados.model_dump(), "codigo": codigo})
+    session.add(conta)
+    session.commit()
+    session.refresh(conta)
+    return conta.model_dump()
+
+
+@router.put("/plano-contas/{conta_id}")
+def atualizar_conta_gerencial(conta_id: int, dados: PlanoContaGerencialIn, session: Session = Depends(get_session)) -> dict:
+    conta = session.get(PlanoContaGerencial, conta_id)
+    if not conta:
+        raise HTTPException(status_code=404, detail="Conta gerencial não encontrada")
+    for campo, valor in dados.model_dump().items():
+        setattr(conta, campo, valor)
+    session.add(conta)
+    session.commit()
+    session.refresh(conta)
+    return conta.model_dump()
 
 
 @router.get("/patrimonio")

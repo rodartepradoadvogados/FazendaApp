@@ -32,15 +32,17 @@ from fazenda.api.routers import (
     upload,
 )
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
+from fazenda.api.routers.financeiro import seed_parametros_financeiros
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Cria tabelas e garante o admin inicial e os motivos padrão (idempotente)."""
+    """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
     create_db_and_tables()
     with Session(engine) as session:
         seed_admin(session)
         seed_motivos_movimentacao(session)
+        seed_parametros_financeiros(session)
     yield
 
 

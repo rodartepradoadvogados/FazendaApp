@@ -529,6 +529,62 @@ export async function fetchPlanoContas() {
   if (!res.ok) throw new Error(`Plano de contas error: ${res.status}`);
   return res.json();
 }
+export async function criarContaGerencial(dados: { codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string }) {
+  const res = await authFetch(`${API}/financeiro/plano-contas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta gerencial"); }
+  return res.json();
+}
+export async function atualizarContaGerencial(id: number, dados: { codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string }) {
+  const res = await authFetch(`${API}/financeiro/plano-contas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta gerencial"); }
+  return res.json();
+}
+
+// ── Contas correntes (Configurações > Parâmetros financeiros) ──
+export async function fetchContasCorrentes() {
+  const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contas correntes error: ${res.status}`);
+  return res.json();
+}
+export async function criarContaCorrente(dados: { banco: string; agencia: string; numero_conta: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/contas-correntes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar conta corrente"); }
+  return res.json();
+}
+export async function atualizarContaCorrente(id: number, dados: { banco: string; agencia: string; numero_conta: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/contas-correntes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta corrente"); }
+  return res.json();
+}
+
+// ── Centros de custo (Configurações > Parâmetros financeiros) ──
+export async function fetchCentrosCusto() {
+  const res = await authFetch(`${API}/financeiro/centros-custo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Centros de custo error: ${res.status}`);
+  return res.json();
+}
+export async function criarCentroCusto(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/centros-custo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar centro de custo"); }
+  return res.json();
+}
+export async function atualizarCentroCusto(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/centros-custo/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar centro de custo"); }
+  return res.json();
+}
 
 export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
