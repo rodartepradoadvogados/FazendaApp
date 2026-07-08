@@ -7,6 +7,18 @@ import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, fetchPla
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_LANCAMENTOS = [
+  { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
+  { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
+  { header: "Centro custo", key: "centro_custo" }, { header: "Documento", key: "documento" },
+  { header: "Valor", key: "valor" }, { header: "Pago", key: "valor_pago" }, { header: "Conta bancária", key: "conta_bancaria" },
+];
+const COLUNAS_LIVRO = [
+  { header: "Data", key: "dataFmt" }, { header: "Descrição", key: "descricao" }, { header: "Fornecedor/Cliente", key: "fornecedor" },
+  { header: "Entrada", key: "entrada" }, { header: "Saída", key: "saida" }, { header: "Saldo", key: "saldo" },
+];
 
 type Lanc = {
   id: number; numero_lancamento: string | null;
@@ -406,9 +418,15 @@ export default function FinanceiroPage() {
 
         {/* Detalhamento do relatório */}
         <div className="card mb-4">
-          <div className="card-header mb-3">
-            {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
-            {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+          <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.4rem" }}>
+            <span>
+              {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
+              {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
+            </span>
+            {rel === "livro" && (
+              <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
+                linhas={livro.map((l) => ({ ...l, dataFmt: fmtDia(l.data) }))} />
+            )}
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : "460px" }}>
             {rel === "fluxo" && visaoFluxo === "mensal" && (
@@ -656,7 +674,12 @@ function TabelaContas({ rel, itens, onDarBaixa }: { rel: Rel; itens: Lanc[]; onD
         {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
       </div>
       <div className="card">
-        <div className="card-header mb-3">Lançamentos</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span>Lançamentos</span>
+          <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
+            colunas={COLUNAS_LANCAMENTOS}
+            linhas={itens.map((r) => ({ ...r, data: fmtDia(emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+        </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
             <thead>

@@ -3,6 +3,14 @@ import { useEffect, useMemo, useState } from "react";
 import { Package, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchEstoque, fetchAgenda, formatBRL } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_ESTOQUE = [
+  { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
+  { header: "Qtd", key: "quantidade" }, { header: "Unidade", key: "unidade" },
+  { header: "Mínimo", key: "estoque_minimo" }, { header: "Valor unit.", key: "valor_unitario" },
+  { header: "Valor total", key: "valor_total" }, { header: "Status", key: "status" },
+];
 
 type Item = {
   categoria: string | null; nome: string; quantidade: number | null;
@@ -124,7 +132,12 @@ export default function EstoquePage() {
 
           <div className="card">
             <div className="card-header mb-3 flex items-center justify-between">
-              <span>Itens</span><span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} no filtro</span>
+              <span>Itens</span>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} no filtro</span>
+                <ExportarBotoes titulo="Estoque" nomeArquivoBase="estoque" colunas={COLUNAS_ESTOQUE}
+                  linhas={filtrados.map((i) => ({ ...i, status: i.abaixo_minimo ? "ABAIXO DO MÍNIMO" : "OK" }))} />
+              </div>
             </div>
             <div className="overflow-x-auto">
               <table className="fazenda-table">

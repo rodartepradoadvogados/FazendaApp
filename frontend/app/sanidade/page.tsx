@@ -3,6 +3,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchSanidade } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_SANIDADE = [
+  { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
+  { header: "Categoria", key: "categoria" }, { header: "Dose", key: "dose" }, { header: "Atividade", key: "atividade" },
+];
 
 type Aplic = {
   numero: string; raca: string; produto: string; categoria: string;
@@ -132,7 +138,13 @@ export default function SanidadePage() {
             </table>
           </div>
           <div className="card">
-            <div className="card-header mb-3 flex items-center justify-between"><span>Aplicações</span><span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span></div>
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Aplicações</span>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span>
+                <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
+              </div>
+            </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
                 <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th></tr></thead>

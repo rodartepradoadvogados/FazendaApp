@@ -2,6 +2,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { Milk, AlertTriangle, Filter, TrendingUp } from "lucide-react";
 import { fetchControles } from "@/lib/api";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_RANKING = [
+  { header: "Vaca", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Média (kg)", key: "media" },
+  { header: "Pico (kg)", key: "pico" }, { header: "Última (kg)", key: "ultima" }, { header: "Pesagens", key: "n" },
+];
 
 type Ctrl = { numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null };
 
@@ -155,7 +161,10 @@ export default function ProducaoPage() {
           </div>
 
           <div className="card">
-            <div className="card-header mb-3">Ranking de Produção (top 20 por média)</div>
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Ranking de Produção (top 20 por média)</span>
+              <ExportarBotoes titulo="Ranking de Produção Leiteira" nomeArquivoBase="ranking_producao" colunas={COLUNAS_RANKING} linhas={ranking} />
+            </div>
             <table className="fazenda-table">
               <thead><tr><th>Vaca</th><th>Raça</th><th>Média</th><th>Pico</th><th>Última</th><th>Pesagens</th></tr></thead>
               <tbody>

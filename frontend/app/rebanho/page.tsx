@@ -7,6 +7,14 @@ import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
 import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_REBANHO = [
+  { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
+  { header: "Categoria", key: "categoria" }, { header: "Raça", key: "raca" },
+  { header: "Sit. Rep.", key: "sit_rep" }, { header: "DEL", key: "del_dias" },
+  { header: "Últ. CL (kg)", key: "ult_cl_kg" },
+];
 
 type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
@@ -143,6 +151,9 @@ function RebanhoVisaoGeral() {
               <span>Fêmeas por Grupo</span>
               <div className="flex items-center gap-3">
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
+                <ExportarBotoes titulo="Rebanho" nomeArquivoBase="rebanho"
+                  colunas={COLUNAS_REBANHO}
+                  linhas={filtrados.map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa }))} />
                 <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
                   onClick={() => setAbertos((p) => p.size === grupoLista.length ? new Set() : new Set(grupoLista.map(([g]) => g)))}>
                   {abertos.size === grupoLista.length && grupoLista.length ? "Recolher tudo" : "Expandir tudo"}
