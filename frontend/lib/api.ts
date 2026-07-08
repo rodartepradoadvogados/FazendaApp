@@ -198,6 +198,48 @@ export async function atualizarFornecedor(id: number, dados: { nome: string; tip
   return res.json();
 }
 
+// ── Pessoas (Configurações > Cadastro) ──
+export async function fetchPessoas() {
+  const res = await authFetch(`${API}/cadastro/pessoas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
+  return res.json();
+}
+export async function criarPessoa(dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/pessoas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pessoa"); }
+  return res.json();
+}
+export async function atualizarPessoa(id: number, dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/pessoas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pessoa"); }
+  return res.json();
+}
+
+// ── Folha de pagamento (Configurações > Cadastro / Financeiro) ──
+export async function fetchFolhaPagamento() {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Folha de pagamento error: ${res.status}`);
+  return res.json();
+}
+export async function criarFolhaPagamento(dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string }) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar folha de pagamento"); }
+  return res.json();
+}
+export async function atualizarFolhaPagamento(id: number, dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string }) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar folha de pagamento"); }
+  return res.json();
+}
+
 export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

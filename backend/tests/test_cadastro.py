@@ -122,3 +122,86 @@ class TestMetaEstoque:
         item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
         r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"fornecedor_id": 999})
         assert r.status_code == 400
+
+
+class TestPessoas:
+    def test_seed_cria_funcionarios_padrao(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.api.routers.cadastro import seed_pessoas
+            seed_pessoas(s)
+        nomes = {p["nome"] for p in c.get("/cadastro/pessoas").json()}
+        assert "Leomir Bonfim" in nomes
+        assert "Alexandre Scarpa" in nomes
+        assert len(nomes) == 5
+
+    def test_seed_e_idempotente(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.api.routers.cadastro import seed_pessoas
+            seed_pessoas(s)
+            seed_pessoas(s)
+        assert len(c.get("/cadastro/pessoas").json()) == 5
+
+    def test_cria_pessoa(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Dr. Huerik", "tipo": "Veterinário"})
+        assert r.status_code == 200
+        assert r.json()["tipo"] == "Veterinário"
+
+    def test_rejeita_tipo_invalido(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Fulano", "tipo": "Gerente"})
+        assert r.status_code == 400
+
+    def test_atualiza_pessoa(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista X", "tipo": "Diarista"}).json()["id"]
+        r = c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Diarista X", "tipo": "Diarista", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+
+class TestFolhaPagamento:
+    def _pessoa(self, c):
+        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Teste", "tipo": "Funcionário"}).json()["id"]
+
+    def test_cria_lancamento_de_folha(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0, "descontos": 200.0,
+        })
+        assert r.status_code == 200
+        assert r.json()["valor_liquido"] == 1800.0
+        assert r.json()["status"] == "pendente"
+
+    def test_lista_traz_nome_da_pessoa(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0})
+        registros = c.get("/cadastro/folha-pagamento").json()
+        assert registros[0]["pessoa_nome"] == "Funcionário Teste"
+
+    def test_pessoa_inexistente_rejeitada(self, client):
+        c, engine = client
+        r = c.post("/cadastro/folha-pagamento", json={"pessoa_id": 999, "competencia": "2026-07", "valor_bruto": 2000.0})
+        assert r.status_code == 404
+
+    def test_valor_liquido_negativo_rejeitado(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 100.0, "descontos": 200.0})
+        assert r.status_code == 400
+
+    def test_atualiza_para_pago(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        registro_id = c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0}).json()["id"]
+        r = c.put(f"/cadastro/folha-pagamento/{registro_id}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0,
+            "status": "pago", "data_pagamento": "2026-07-05",
+        })
+        assert r.status_code == 200
+        assert r.json()["status"] == "pago"
+        assert r.json()["data_pagamento"] == "2026-07-05"

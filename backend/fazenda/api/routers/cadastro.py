@@ -15,9 +15,30 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Estoque, Fornecedor
+from fazenda.models import Animal, Estoque, FolhaPagamento, Fornecedor, Pessoa
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
+
+TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços"]
+
+# Seed inicial — funcionários já conhecidos da fazenda (ver seed_pessoas,
+# chamada uma vez no startup, mesmo padrão de seed_motivos_movimentacao).
+SEED_PESSOAS = [
+    {"nome": "Leomir Bonfim", "tipo": "Funcionário"},
+    {"nome": "Alane dos Santos", "tipo": "Funcionário"},
+    {"nome": "Jorbeson Nunes", "tipo": "Funcionário"},
+    {"nome": "Valéria Bonfim", "tipo": "Funcionário"},
+    {"nome": "Alexandre Scarpa", "tipo": "Funcionário"},
+]
+
+
+def seed_pessoas(session: Session) -> None:
+    """Cria as pessoas padrão se a tabela ainda estiver vazia (idempotente)."""
+    if session.exec(select(Pessoa)).first():
+        return
+    for dados in SEED_PESSOAS:
+        session.add(Pessoa(**dados))
+    session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -65,6 +86,118 @@ def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Sessi
     session.commit()
     session.refresh(f)
     return f.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Pessoas — funcionário, veterinário, zootecnista, diarista, prestador de
+# serviços. Distinto de Fornecedor: usado na folha de pagamento, não em notas.
+# ---------------------------------------------------------------------------
+class PessoaIn(BaseModel):
+    nome: str
+    tipo: str
+    telefone: str | None = None
+    email: str | None = None
+    observacoes: str | None = None
+    ativo: bool = True
+
+
+@router.get("/pessoas")
+def listar_pessoas(session: Session = Depends(get_session)) -> list[dict]:
+    return [p.model_dump() for p in session.exec(select(Pessoa).order_by(Pessoa.nome)).all()]
+
+
+@router.post("/pessoas")
+def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
+    if dados.tipo not in TIPOS_PESSOA:
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    p = Pessoa(**dados.model_dump())
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return p.model_dump()
+
+
+@router.put("/pessoas/{pessoa_id}")
+def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
+    if dados.tipo not in TIPOS_PESSOA:
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+    p = session.get(Pessoa, pessoa_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    for campo, valor in dados.model_dump().items():
+        setattr(p, campo, valor)
+    session.add(p)
+    session.commit()
+    session.refresh(p)
+    return p.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
+# ---------------------------------------------------------------------------
+class FolhaPagamentoIn(BaseModel):
+    pessoa_id: int
+    competencia: str  # "AAAA-MM"
+    valor_bruto: float
+    descontos: float = 0.0
+    data_pagamento: date | None = None
+    status: str = "pendente"
+    observacao: str | None = None
+
+
+@router.get("/folha-pagamento")
+def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
+    return [{**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—")} for r in registros]
+
+
+@router.post("/folha-pagamento")
+def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
+    if not session.get(Pessoa, dados.pessoa_id):
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+    registro = FolhaPagamento(
+        pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
+        descontos=dados.descontos, valor_liquido=valor_liquido,
+        data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
+    )
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.put("/folha-pagamento/{registro_id}")
+def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(FolhaPagamento, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
+    if not session.get(Pessoa, dados.pessoa_id):
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+    registro.pessoa_id = dados.pessoa_id
+    registro.competencia = dados.competencia
+    registro.valor_bruto = dados.valor_bruto
+    registro.descontos = dados.descontos
+    registro.valor_liquido = valor_liquido
+    registro.data_pagamento = dados.data_pagamento
+    registro.status = dados.status
+    registro.observacao = dados.observacao
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
 
 
 # ---------------------------------------------------------------------------

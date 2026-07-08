@@ -412,6 +412,46 @@ class Fornecedor(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Pessoa (Configurações > Cadastro) — funcionário, veterinário, zootecnista,
+# diarista, prestador de serviços. Distinto de Fornecedor: pessoa entra em
+# folha de pagamento, não em nota de compra.
+# ---------------------------------------------------------------------------
+class Pessoa(SQLModel, table=True):
+    """Cadastro de pessoas — funcionários e prestadores ligados à fazenda."""
+
+    __tablename__ = "pessoa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)
+    tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+    observacoes: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Folha de pagamento — lançamento e acompanhamento por pessoa/competência.
+# ---------------------------------------------------------------------------
+class FolhaPagamento(SQLModel, table=True):
+    """Um lançamento de folha de pagamento (pessoa × mês/ano de competência)."""
+
+    __tablename__ = "folha_pagamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    competencia: str = Field(index=True)  # "AAAA-MM"
+    valor_bruto: float
+    descontos: float = 0.0
+    valor_liquido: float
+    data_pagamento: Optional[date] = None
+    status: str = "pendente"  # pendente | pago
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
 # ---------------------------------------------------------------------------
 class MovimentoEstoque(SQLModel, table=True):
