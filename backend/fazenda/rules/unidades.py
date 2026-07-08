@@ -9,14 +9,14 @@ from __future__ import annotations
 # Grupos de unidades intercompatíveis para fins de SELEÇÃO na aplicação.
 GRUPOS_UNIDADE: list[set[str]] = [
     {"ml", "unidade", "dose"},
-    {"L", "kg"},
+    {"L", "kg", "saca 30kg", "saca 60kg"},
 ]
 
 
 def unidades_compativeis(unidade_estoque: str | None) -> list[str]:
     """Unidades que fazem sentido escolher na aplicação, dado o produto guardar estoque em `unidade_estoque`."""
     if not unidade_estoque:
-        return ["ml", "L", "unidade", "dose", "kg"]
+        return ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"]
     for grupo in GRUPOS_UNIDADE:
         if unidade_estoque in grupo:
             return sorted(grupo)

@@ -11,6 +11,7 @@ import { AnimalPicker } from "@/components/AnimalPicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
@@ -31,7 +32,7 @@ const TOUROS_ESTOQUE = [
   "COORS", "GUINESS", "ABS LABEL", "CAMPEAO FI", "DESCONHECIDO", "HAGEN", "JAG", "LUZIO", "METEORO",
   "MOSAIC", "HILLUX", "NABIL", "PRAFESS", "ROBO", "MESSI", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
 ];
-const UNIDADES = ["ml", "kg", "L", "unidade", "dose"];
+const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
 // Movimentos que reduzem o estoque (baixa).
 const MOV_BAIXA = new Set(["Aplicação", "Saída de ajuste", "Doação"]);
@@ -456,6 +457,7 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
 
   // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada uma.
   const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const ordVacas = useOrdenacao(vacasDoLote);
   const setOrdVaca = (numero: string, idx: number, valor: string) =>
     setPorVaca((p) => { const arr = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
   const totalVaca = (numero: string) => (porVaca[numero] || []).slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
@@ -543,13 +545,14 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead>
                 <tr>
-                  <th>Nº</th><th style={{ textAlign: "right" }}>DEL</th>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
                   {Array.from({ length: nOrd }, (_, i) => <th key={i} style={{ textAlign: "right" }}>{i + 1}ª ordenha (kg)</th>)}
                   <th style={{ textAlign: "right" }}>Total</th>
                 </tr>
               </thead>
               <tbody>
-                {vacasDoLote.map((a) => (
+                {ordVacas.linhasOrdenadas.map((a) => (
                   <tr key={a.numero}>
                     <td style={{ fontWeight: 700 }}>{a.numero}</td>
                     <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{a.del_dias ?? "—"}</td>

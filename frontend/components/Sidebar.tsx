@@ -20,7 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
-import { LogOut } from "lucide-react";
+import { LogOut, UserCircle } from "lucide-react";
 import { BullLogo } from "@/components/BullLogo";
 
 const links = [
@@ -171,10 +171,14 @@ function UsuarioLogado() {
   useEffect(() => { const u = getUsuario(); setNome(u?.nome || u?.username || null); }, []);
   if (!nome) return null;
   return (
-    <div className="mt-2 flex items-center justify-center gap-2" style={{ fontSize: "0.68rem" }}>
-      <span style={{ color: "var(--text)" }}>{nome}</span>
-      <button onClick={logout} title="Sair" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", display: "inline-flex" }}>
-        <LogOut size={13} />
+    <div className="mt-2" style={{ fontSize: "0.68rem" }}>
+      <div className="flex items-center justify-center gap-1.5 mb-1.5" style={{ color: "var(--text)" }}>
+        <UserCircle size={13} /> {nome}
+      </div>
+      <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
+        className="flex items-center justify-center gap-1.5 mx-auto"
+        style={{ background: "none", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.6rem", color: "var(--text-muted)", cursor: "pointer" }}>
+        <LogOut size={12} /> Sair / trocar de usuário
       </button>
     </div>
   );
