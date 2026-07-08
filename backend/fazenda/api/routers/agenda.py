@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import AgendaManual, Animal, ContaGerencial, Estoque, EventoRealizado, Parto, Servico
+from fazenda.models import AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, Parto, Servico
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
@@ -59,6 +59,24 @@ def calcular_agenda(
     realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
     eventos = [e for e in result.eventos if e.chave not in realizados]
 
+    # Dietas ativas com encerramento previsto: evento de análise (chave própria,
+    # fora do AgendaEngine para não mexer no cálculo delicado já testado dele).
+    dietas_para_analise = session.exec(
+        select(DietaLancamento).where(
+            DietaLancamento.data_efetivo_encerramento == None,  # noqa: E711
+            DietaLancamento.data_prevista_encerramento != None,  # noqa: E711
+        )
+    ).all()
+    eventos_dieta = [
+        {
+            "id": f"dieta_analise_{d.id}", "data": d.data_prevista_encerramento.isoformat(), "categoria": "alimentacao",
+            "descricao": f"Analisar dieta do lote {d.lote} (encerramento previsto)",
+            "numero_animal": None, "observacao": d.observacao, "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+        }
+        for d in dietas_para_analise
+        if f"dieta_analise_{d.id}" not in realizados
+    ]
+
     return {
         "data_referencia": result.data_referencia.isoformat(),
         "candidatas_iatf": [
@@ -85,12 +103,12 @@ def calcular_agenda(
                 "ref": e.ref,
             }
             for e in eventos
-        ],
+        ] + eventos_dieta,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf),
             "bst_elegiveis": len(result.bst_elegiveis),
             "contas_a_pagar": len(result.contas_a_pagar),
-            "eventos": len(eventos),
+            "eventos": len(eventos) + len(eventos_dieta),
         },
     }
 

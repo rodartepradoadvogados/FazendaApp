@@ -184,3 +184,135 @@ class TestBaixaAutomatica:
             assert item.quantidade == 800.0
             movimentos = s.exec(MovimentoEstoque.__table__.select()).fetchall()
             assert len(movimentos) == 1
+
+
+class TestDietaLancamento:
+    def _criar(self, c, **overrides):
+        dados = {
+            "lote": 1, "responsavel": "Alexandre Scarpa", "data_abertura": "2026-01-10",
+            "data_prevista_encerramento": "2026-02-10",
+            "itens": [{"alimento": "Silagem", "quantidade": 300.0, "unidade": "kg"}],
+        }
+        dados.update(overrides)
+        return c.post("/alimentacao/dietas", json=dados)
+
+    def test_cria_dieta_com_itens_programados(self, client):
+        c, engine = client
+        r = self._criar(c)
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["ativa"] is True
+        assert corpo["itens_programados"][0]["alimento"] == "Silagem"
+        assert corpo["itens_programados"][0]["quantidade"] == 300.0
+
+    def test_sem_itens_da_400(self, client):
+        c, engine = client
+        r = self._criar(c, itens=[])
+        assert r.status_code == 400
+
+    def test_nao_permite_duas_dietas_ativas_no_mesmo_lote(self, client):
+        c, engine = client
+        self._criar(c)
+        r = self._criar(c)
+        assert r.status_code == 409
+
+    def test_permite_nova_dieta_apos_encerrar_a_anterior(self, client):
+        c, engine = client
+        dieta_id = self._criar(c).json()["id"]
+        c.put(f"/alimentacao/dietas/{dieta_id}/encerrar", json={"data_efetivo_encerramento": "2026-01-20"})
+        r = self._criar(c)
+        assert r.status_code == 201
+
+    def test_encerrar_dieta_ja_encerrada_da_400(self, client):
+        c, engine = client
+        dieta_id = self._criar(c).json()["id"]
+        c.put(f"/alimentacao/dietas/{dieta_id}/encerrar", json={"data_efetivo_encerramento": "2026-01-20"})
+        r = c.put(f"/alimentacao/dietas/{dieta_id}/encerrar", json={"data_efetivo_encerramento": "2026-01-21"})
+        assert r.status_code == 400
+
+    def test_lista_filtra_por_lote_e_ativo(self, client):
+        c, engine = client
+        dieta_id = self._criar(c, lote=1).json()["id"]
+        self._criar(c, lote=2)
+        c.put(f"/alimentacao/dietas/{dieta_id}/encerrar", json={"data_efetivo_encerramento": "2026-01-20"})
+
+        r = c.get("/alimentacao/dietas", params={"lote": 2})
+        assert len(r.json()) == 1
+        assert r.json()[0]["lote"] == 2
+
+        r = c.get("/alimentacao/dietas", params={"ativo": False})
+        assert len(r.json()) == 1
+        assert r.json()[0]["lote"] == 1
+
+    def test_registra_real_e_comparativo(self, client):
+        c, engine = client
+        dieta_id = self._criar(c).json()["id"]
+        r = c.post(f"/alimentacao/dietas/{dieta_id}/real", json={
+            "data": "2026-01-11", "itens": [{"alimento": "Silagem", "quantidade": 280.0, "unidade": "kg"}],
+        })
+        assert r.status_code == 201
+        c.post(f"/alimentacao/dietas/{dieta_id}/real", json={
+            "data": "2026-01-12", "itens": [{"alimento": "Silagem", "quantidade": 320.0, "unidade": "kg"}],
+        })
+
+        r = c.get(f"/alimentacao/dietas/{dieta_id}/comparativo")
+        assert r.status_code == 200
+        item = r.json()["itens"][0]
+        assert item["alimento"] == "Silagem"
+        assert item["programado"] == 300.0
+        assert item["real_total"] == 600.0
+        assert item["real_dias"] == 2
+        assert item["real_media_dia"] == 300.0
+
+    def test_dieta_inexistente_da_404_no_comparativo(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/dietas/999/comparativo")
+        assert r.status_code == 404
+
+    def test_alimentos_padrao_traz_lista_fixa(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/alimentos-padrao")
+        assert r.status_code == 200
+        assert "Silagem" in r.json()
+        assert "Ração Bezerro 1" in r.json()
+
+
+class TestAgendaDieta:
+    def test_dieta_ativa_com_previsao_gera_evento_de_analise(self, client):
+        c, engine = client
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 3, "data_abertura": "2026-07-01", "data_prevista_encerramento": "2026-07-15",
+            "itens": [{"alimento": "Ração Bezerro 1", "quantidade": 50.0, "unidade": "kg"}],
+        }).json()["id"]
+
+        r = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30})
+        assert r.status_code == 200
+        eventos = [e for e in r.json()["eventos"] if e["id"] == f"dieta_analise_{dieta_id}"]
+        assert len(eventos) == 1
+        assert eventos[0]["data"] == "2026-07-15"
+        assert eventos[0]["categoria"] == "alimentacao"
+        assert "lote 3" in eventos[0]["descricao"]
+
+    def test_dieta_encerrada_nao_gera_evento(self, client):
+        c, engine = client
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 4, "data_abertura": "2026-07-01", "data_prevista_encerramento": "2026-07-15",
+            "itens": [{"alimento": "Corte 21", "quantidade": 10.0, "unidade": "kg"}],
+        }).json()["id"]
+        c.put(f"/alimentacao/dietas/{dieta_id}/encerrar", json={"data_efetivo_encerramento": "2026-07-05"})
+
+        r = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30})
+        eventos = [e for e in r.json()["eventos"] if e["id"] == f"dieta_analise_{dieta_id}"]
+        assert len(eventos) == 0
+
+    def test_marcar_realizado_remove_evento_de_dieta(self, client):
+        c, engine = client
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 5, "data_abertura": "2026-07-01", "data_prevista_encerramento": "2026-07-15",
+            "itens": [{"alimento": "Milk Proteico", "quantidade": 10.0, "unidade": "kg"}],
+        }).json()["id"]
+
+        c.post("/agenda/realizados", json={"evento_id": f"dieta_analise_{dieta_id}"})
+        r = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30})
+        eventos = [e for e in r.json()["eventos"] if e["id"] == f"dieta_analise_{dieta_id}"]
+        assert len(eventos) == 0

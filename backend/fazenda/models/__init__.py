@@ -590,6 +590,53 @@ class Dieta(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Lançamento de dieta (Lançamentos > Alimentação) — histórico por lote, com
+# data de abertura/encerramento previsto/efetivo, e a comparação programado
+# (nutricionista) × real oferecido. Independente do `Dieta` acima (que segue
+# vindo do DIETA.csv e alimentando o painel de Alimentação já existente).
+# ---------------------------------------------------------------------------
+class DietaLancamento(SQLModel, table=True):
+    """Uma dieta lançada para um lote — só uma pode estar ativa por lote."""
+
+    __tablename__ = "dieta_lancamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lote: int = Field(index=True)
+    responsavel: Optional[str] = None  # nutricionista — ex. "Alexandre Scarpa"
+    data_abertura: date
+    data_prevista_encerramento: Optional[date] = None  # gera evento de análise na Agenda
+    data_efetivo_encerramento: Optional[date] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DietaItemProgramado(SQLModel, table=True):
+    """Um alimento do plano formulado (programado) de uma DietaLancamento — quantidade TOTAL do lote/dia."""
+
+    __tablename__ = "dieta_item_programado"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dieta_lancamento_id: int = Field(foreign_key="dieta_lancamento.id", index=True)
+    alimento: str
+    quantidade: float
+    unidade: str
+
+
+class DietaRegistroReal(SQLModel, table=True):
+    """O que foi realmente oferecido, por data — comparado ao programado."""
+
+    __tablename__ = "dieta_registro_real"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    dieta_lancamento_id: int = Field(foreign_key="dieta_lancamento.id", index=True)
+    data: date
+    alimento: str
+    quantidade: float
+    unidade: str
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Estado da baixa automática de estoque da Alimentação (linha única, id=1)
 # ---------------------------------------------------------------------------
 class AlimentacaoEstado(SQLModel, table=True):
