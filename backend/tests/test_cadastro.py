@@ -4,10 +4,12 @@ itens de estoque (Configurações > Cadastro).
 """
 from __future__ import annotations
 
+from datetime import date
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import Estoque
@@ -205,6 +207,85 @@ class TestFolhaPagamento:
         assert r.status_code == 200
         assert r.json()["status"] == "pago"
         assert r.json()["data_pagamento"] == "2026-07-05"
+
+
+class TestFolhaPagamentoRecorrente:
+    def _pessoa(self, c):
+        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Recorrente", "tipo": "Funcionário"}).json()["id"]
+
+    def _competencia_anterior(self, competencia: str, meses: int) -> str:
+        ano, mes = (int(x) for x in competencia.split("-"))
+        for _ in range(meses):
+            ano, mes = (ano - 1, 12) if mes == 1 else (ano, mes - 1)
+        return f"{ano:04d}-{mes:02d}"
+
+    def test_rejeita_recorrente_sem_dia_vencimento(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-01", "valor_bruto": 2000.0, "recorrente": True,
+        })
+        assert r.status_code == 400
+
+    def test_gera_competencias_seguintes_ate_o_mes_atual(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        competencia_atual = date.today().strftime("%Y-%m")
+        competencia_inicial = self._competencia_anterior(competencia_atual, 3)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": competencia_inicial, "valor_bruto": 2000.0,
+            "descontos": 200.0, "recorrente": True, "dia_vencimento": 5,
+        })
+        assert r.status_code == 200
+
+        registros = c.get("/cadastro/folha-pagamento").json()
+        competencias = sorted(r["competencia"] for r in registros)
+        assert competencias == sorted({competencia_inicial, competencia_atual} | {
+            self._competencia_anterior(competencia_atual, m) for m in range(3)
+        })
+
+        gerados = [r for r in registros if r["origem_recorrencia_id"]]
+        assert len(gerados) == 3
+        assert all(r["numero_lancamento_gerado"] for r in gerados)
+        assert all(r["valor_liquido"] == 1800.0 for r in gerados)
+
+        numeros_gerados = {r["numero_lancamento_gerado"] for r in gerados}
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            contas_criadas = s.exec(select(ContaGerencial).where(ContaGerencial.origem == "auto")).all()
+        assert {c.numero_lancamento for c in contas_criadas} == numeros_gerados
+        assert all(c.tipo_documento == "Folha de pagamento" for c in contas_criadas)
+        assert all(c.valor_total == 1800.0 for c in contas_criadas)
+
+    def test_nao_duplica_ao_chamar_duas_vezes(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        competencia_atual = date.today().strftime("%Y-%m")
+        competencia_inicial = self._competencia_anterior(competencia_atual, 2)
+        c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": competencia_inicial, "valor_bruto": 1500.0,
+            "recorrente": True, "dia_vencimento": 10,
+        })
+        c.get("/cadastro/folha-pagamento")
+        primeira = c.get("/cadastro/folha-pagamento").json()
+        segunda = c.get("/cadastro/folha-pagamento").json()
+        assert len(primeira) == len(segunda)
+
+    def test_marcar_pago_preserva_recorrencia(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        registro = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-01", "valor_bruto": 1500.0,
+            "recorrente": True, "dia_vencimento": 10,
+        }).json()
+        r = c.put(f"/cadastro/folha-pagamento/{registro['id']}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-01", "valor_bruto": 1500.0,
+            "status": "pago", "data_pagamento": "2026-01-10",
+            "recorrente": True, "dia_vencimento": 10,
+        })
+        assert r.status_code == 200
+        assert r.json()["recorrente"] is True
+        assert r.json()["dia_vencimento"] == 10
 
 
 class TestCadastroSanitario:
