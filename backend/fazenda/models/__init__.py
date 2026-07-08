@@ -123,18 +123,32 @@ class ContaGerencial(SQLModel, table=True):
     __tablename__ = "conta_gerencial"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: Optional[str] = Field(default=None, index=True)  # referência do lançamento (ex.: LC-2026-00001), igual em todas as parcelas
     codigo_conta: Optional[str] = None
     descricao: Optional[str] = None
     data_vencimento: Optional[date] = None
     data_pagamento: Optional[date] = None
     data_competencia: Optional[date] = None
     data_emissao: Optional[date] = None
+    data_prevista_entrada: Optional[date] = None
+    data_pedido: Optional[date] = None
+    entregue: Optional[bool] = None
     fornecedor_cliente: Optional[str] = None
-    numero_nota: Optional[str] = None
+    numero_nota: Optional[str] = None  # número do documento (nota fiscal, recibo, fatura...)
+    tipo_documento: Optional[str] = None  # nota fiscal | recibo | folha de pagamento | fatura | contrato
+    numero_documento_pagamento: Optional[str] = None
+    conta_bancaria: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
     valor_total: Optional[float] = None
     valor_pago: Optional[float] = None
+    desconto_acrescimo: Optional[float] = None
+    parcela_num: Optional[int] = None
+    parcela_total: Optional[int] = None
+    responsavel: Optional[str] = None
     centro_custo: Optional[str] = None
     tipo: Optional[str] = None
+    origem: Optional[str] = "csv"  # "csv" (upload) | "manual" (lançamento pela tela)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -7,6 +7,7 @@ import {
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { FormFinanceiro } from "@/components/FormFinanceiro";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
@@ -621,23 +622,6 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   );
 }
 
-function FormFinanceiro() {
-  return (
-    <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Data"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Tipo"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Receita</option><option>Despesa</option></select></Campo>
-        <Campo label="Conta gerencial"><input style={inputStyle} placeholder="ex.: Leite indústria" /></Campo>
-        <Campo label="Valor (R$)"><input type="number" inputMode="decimal" style={inputStyle} /></Campo>
-        <Campo label="Fornecedor / cliente"><input style={inputStyle} /></Campo>
-        <Campo label="Centro de custo"><input style={inputStyle} /></Campo>
-        <Campo label="Descrição" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
-      </div>
-      <SalvarEmBreve />
-    </>
-  );
-}
-
 function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
   const [produto, setProduto] = useState("");
   const [mov, setMov] = useState("");
@@ -738,8 +722,12 @@ export default function LancamentosPage() {
       <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-          <strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
-          mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.
+          {sel === "financeiro" ? (
+            <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
+          ) : (
+            <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
+            mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
+          )}
         </p>
       </div>
 
@@ -769,7 +757,7 @@ export default function LancamentosPage() {
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "producao" && <FormControle animais={animais} lotesLact={lotesLact} />}
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "financeiro" && <FormFinanceiro />}
+          {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
         </div>
       </div>

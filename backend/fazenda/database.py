@@ -36,6 +36,22 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "controle_leiteiro": [("raca", "VARCHAR")],
     "animal": [("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN")],
     "usuario": [("permissoes", "VARCHAR")],
+    "conta_gerencial": [
+        ("numero_lancamento", "VARCHAR"),
+        ("data_prevista_entrada", "DATE"),
+        ("data_pedido", "DATE"),
+        ("entregue", "BOOLEAN"),
+        ("tipo_documento", "VARCHAR"),
+        ("numero_documento_pagamento", "VARCHAR"),
+        ("conta_bancaria", "VARCHAR"),
+        ("quantidade", "FLOAT"),
+        ("valor_unitario", "FLOAT"),
+        ("desconto_acrescimo", "FLOAT"),
+        ("parcela_num", "INTEGER"),
+        ("parcela_total", "INTEGER"),
+        ("responsavel", "VARCHAR"),
+        ("origem", "VARCHAR"),
+    ],
 }
 
 
