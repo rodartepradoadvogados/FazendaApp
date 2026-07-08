@@ -14,14 +14,14 @@ from __future__ import annotations
 
 from datetime import date
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from fazenda.api.routers.estoque import MovimentoIn, movimentar_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
-from fazenda.api.routers.producao import PesagensIn, PesoIn, criar_pesagens
+from fazenda.api.routers.producao import ControlesIn, OrdenhaIn, PesagensIn, PesoIn, criar_controles, criar_pesagens
 from fazenda.database import get_session
-from fazenda.models import Estoque, Fornecedor
+from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Sanidade
 from fazenda.parsers.utils import iter_csv_rows, parse_bool, parse_date, parse_float
 
 router = APIRouter(prefix="/importar", tags=["importar"])
@@ -32,6 +32,15 @@ CATEGORIAS_NOVAS = {
         "colunas": ["numero_matriz", "data_pesagem (DD/MM/AAAA)", "peso_kg"],
         "colunas_csv": ["numero_matriz", "data_pesagem", "peso_kg"],
         "exemplo": ["464", "08/07/2026", "350"],
+    },
+    "controle_leiteiro_simples": {
+        "label": "Controle leiteiro simplificado (1ª e 2ª ordenha)",
+        "colunas": ["numero_matriz", "ordenha1_kg", "ordenha2_kg"],
+        "colunas_csv": ["numero_matriz", "ordenha1_kg", "ordenha2_kg"],
+        "exemplo": ["464", "14,5", "13,0"],
+        # Só esta categoria pede uma data ÚNICA no upload (o CSV não tem coluna de
+        # data) — o site já sabe o DEL a partir da ficha do animal e soma o total.
+        "precisa_data_controle": True,
     },
     "financeiro": {
         "label": "Financeiro simplificado (uma parcela à vista por linha)",
@@ -56,9 +65,15 @@ CATEGORIAS_NOVAS = {
     },
     "fornecedores": {
         "label": "Fornecedores, fabricantes e clientes",
-        "colunas": ["nome", "tipo (fornecedor/fabricante/cliente)", "cnpj_cpf", "telefone", "email"],
-        "colunas_csv": ["nome", "tipo", "cnpj_cpf", "telefone", "email"],
-        "exemplo": ["Agropecuária Central", "fornecedor", "12.345.678/0001-00", "(67) 3222-1000", "contato@agropecuaria.com.br"],
+        "colunas": ["nome", "tipo (fornecedor/fabricante/cliente)", "categoria", "cnpj_cpf", "telefone", "email"],
+        "colunas_csv": ["nome", "tipo", "categoria", "cnpj_cpf", "telefone", "email"],
+        "exemplo": ["Agropecuária Central", "fornecedor", "Ração e insumos alimentares", "12.345.678/0001-00", "(67) 3222-1000", "contato@agropecuaria.com.br"],
+    },
+    "animais_cadastro": {
+        "label": "Cadastro de animais em lote (ficha simplificada)",
+        "colunas": ["numero", "nome", "sexo (F/M)", "raca", "data_nasc (DD/MM/AAAA)", "lote", "data_entrada (DD/MM/AAAA)"],
+        "colunas_csv": ["numero", "nome", "sexo", "raca", "data_nasc", "lote", "data_entrada"],
+        "exemplo": ["465", "Mimosa", "F", "Girolando", "10/03/2024", "01 - BEZ 1 (0 A 30)", "10/03/2024"],
     },
 }
 
@@ -170,6 +185,34 @@ async def importar_pesagem(file: UploadFile, session: Session = Depends(get_sess
         resultado = criar_pesagens(PesagensIn(data_pesagem=data, entradas=entradas), session)
         criados += resultado["criados"]
     return {"categoria": "pesagem", "criados": criados, "erros": erros}
+
+
+@router.post("/controle_leiteiro_simples")
+async def importar_controle_leiteiro_simples(
+    file: UploadFile,
+    data_controle: date = Form(...),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    CSV enxuto (só nº da matriz + 1ª/2ª ordenha) para quando não se quer
+    preencher a planilha rica do Ideagri — DEL e total vêm do próprio site
+    (mesma lógica de criar_controles), a data é uma só para o lote inteiro.
+    """
+    content = await file.read()
+    entradas: list[OrdenhaIn] = []
+    erros: list[str] = []
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        numero = row.get("numero_matriz", "").strip()
+        ord1 = parse_float(row.get("ordenha1_kg", ""))
+        ord2 = parse_float(row.get("ordenha2_kg", ""))
+        if not numero or (ord1 is None and ord2 is None):
+            erros.append(f"Linha {i}: número da matriz e ao menos uma ordenha são obrigatórios")
+            continue
+        entradas.append(OrdenhaIn(numero_matriz=numero, ordenhas=[ord1 or 0, ord2 or 0]))
+
+    resultado = criar_controles(ControlesIn(data_controle=data_controle, entradas=entradas), session)
+    return {"categoria": "controle_leiteiro_simples", "criados": resultado["criados"], "erros": erros}
 
 
 @router.post("/financeiro")
@@ -292,6 +335,7 @@ async def importar_fornecedores(file: UploadFile, session: Session = Depends(get
         else:
             f.tipo = tipo
             atualizados += 1
+        f.categoria = row.get("categoria", "").strip() or None
         f.cnpj_cpf = row.get("cnpj_cpf", "").strip() or None
         f.telefone = row.get("telefone", "").strip() or None
         f.email = row.get("email", "").strip() or None
@@ -299,3 +343,94 @@ async def importar_fornecedores(file: UploadFile, session: Session = Depends(get
 
     session.commit()
     return {"categoria": "fornecedores", "criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+@router.post("/animais_cadastro")
+async def importar_animais_cadastro(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """
+    Cadastro em lote de animais pela ficha simplificada — cria os que não
+    existem e atualiza os que já existem (casado por número), sem exigir a
+    planilha rica do Ideagri (que é para o rebanho já em operação).
+    """
+    content = await file.read()
+    criados, atualizados = 0, 0
+    erros: list[str] = []
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        numero = row.get("numero", "").strip()
+        if not numero:
+            erros.append(f"Linha {i}: número é obrigatório")
+            continue
+
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if not animal:
+            animal = Animal(numero=numero, ativo=True)
+            criados += 1
+        else:
+            atualizados += 1
+        animal.nome = row.get("nome", "").strip() or None
+        sexo = row.get("sexo", "").strip().upper() or None
+        if sexo:
+            animal.sexo = sexo
+        animal.raca = row.get("raca", "").strip() or None
+        data_nasc = parse_date(row.get("data_nasc", ""))
+        if data_nasc:
+            animal.data_nasc = data_nasc
+        lote = row.get("lote", "").strip()
+        if lote:
+            animal.grupo_primario = lote
+            animal.grupo_manual = True  # protege do próximo upload do GERAL.csv sobrescrever
+        data_entrada = parse_date(row.get("data_entrada", ""))
+        if data_entrada:
+            animal.data_entrada = data_entrada
+        session.add(animal)
+
+    session.commit()
+    return {"categoria": "animais_cadastro", "criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+@router.post("/backfill")
+def backfill_fornecedores_e_estoque(session: Session = Depends(get_session)) -> dict:
+    """
+    Varre os dados já importados (financeiro, curva ABC, dieta, sanidade) e
+    cadastra automaticamente os fornecedores e itens de estoque citados neles
+    que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
+    Não sobrescreve nada que já existe, só preenche o que falta.
+    """
+    fornecedores_existentes = set(session.exec(select(Fornecedor.nome)).all())
+    nomes_conta = {
+        c.strip() for c in session.exec(select(ContaGerencial.fornecedor_cliente)).all() if c and c.strip()
+    }
+    fornecedores_criados = []
+    for nome in sorted(nomes_conta - fornecedores_existentes):
+        f = Fornecedor(nome=nome, tipo="fornecedor")
+        session.add(f)
+        fornecedores_criados.append(nome)
+
+    estoque_existente = set(session.exec(select(Estoque.nome)).all())
+    candidatos_estoque: set[str] = set()
+    for produto in session.exec(select(CurvaABC.produto)).all():
+        if produto and produto.strip():
+            candidatos_estoque.add(produto.strip())
+    for produto in session.exec(select(LancamentoItem.produto)).all():
+        if produto and produto.strip():
+            candidatos_estoque.add(produto.strip())
+    for ingrediente in session.exec(select(Dieta.ingrediente)).all():
+        if ingrediente and ingrediente.strip():
+            candidatos_estoque.add(ingrediente.strip())
+    for produto in session.exec(select(Sanidade.produto)).all():
+        if produto and produto.strip():
+            candidatos_estoque.add(produto.strip())
+
+    estoque_criados = []
+    for nome in sorted(candidatos_estoque - estoque_existente):
+        session.add(Estoque(nome=nome, quantidade=0))
+        estoque_criados.append(nome)
+
+    session.commit()
+    return {
+        "fornecedores_criados": fornecedores_criados,
+        "estoque_criados": estoque_criados,
+        "total_fornecedores_criados": len(fornecedores_criados),
+        "total_estoque_criados": len(estoque_criados),
+    }

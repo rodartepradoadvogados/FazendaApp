@@ -42,7 +42,13 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
     ],
-    "estoque": [("ensacado", "BOOLEAN"), ("kg_por_saco", "FLOAT"), ("fornecedor_id", "INTEGER")],
+    "estoque": [
+        ("ensacado", "BOOLEAN"), ("kg_por_saco", "FLOAT"), ("fornecedor_id", "INTEGER"),
+        ("ativo", "BOOLEAN"), ("observacao", "VARCHAR"), ("carencia_dias", "INTEGER"),
+        ("centro_custo_padrao", "VARCHAR"), ("conta_gerencial_despesa_padrao", "VARCHAR"),
+        ("conta_gerencial_receita_padrao", "VARCHAR"), ("exibir_necessidade_compra_agenda", "BOOLEAN"),
+    ],
+    "fornecedor": [("categoria", "VARCHAR")],
     "usuario": [("permissoes", "VARCHAR")],
     "conta_gerencial": [
         ("numero_lancamento", "VARCHAR"),

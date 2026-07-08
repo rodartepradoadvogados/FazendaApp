@@ -26,6 +26,7 @@ router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 class FornecedorIn(BaseModel):
     nome: str
     tipo: str  # "fornecedor" | "fabricante" | "cliente"
+    categoria: str | None = None
     cnpj_cpf: str | None = None
     telefone: str | None = None
     email: str | None = None

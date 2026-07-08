@@ -348,6 +348,18 @@ class Estoque(SQLModel, table=True):
     kg_por_saco: Optional[float] = None
     fornecedor_id: Optional[int] = Field(default=None, foreign_key="fornecedor.id")
 
+    # Cadastro completo de item (Configurações > Cadastro > Itens de estoque).
+    # Booleanos ficam Optional (None = valor não definido ainda, ex.: itens
+    # antigos vindos do ESTOQUE.csv antes deste cadastro existir) — None é
+    # tratado como "não desativado"/"não pediu lembrete", nunca como erro.
+    ativo: Optional[bool] = None
+    observacao: Optional[str] = None
+    carencia_dias: Optional[int] = None  # período de carência (leite/carne) após uso, em dias
+    centro_custo_padrao: Optional[str] = None
+    conta_gerencial_despesa_padrao: Optional[str] = None  # código do plano de contas (ex.: "3.01.01.01")
+    conta_gerencial_receita_padrao: Optional[str] = None
+    exibir_necessidade_compra_agenda: Optional[bool] = None  # abaixo do mínimo -> lembrete na Agenda
+
 
 # ---------------------------------------------------------------------------
 # Fornecedor / fabricante / cliente
@@ -360,6 +372,7 @@ class Fornecedor(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     tipo: str  # "fornecedor" | "fabricante" | "cliente"
+    categoria: Optional[str] = None  # ver CATEGORIAS_FORNECEDOR em fazenda.rules.categorias
     cnpj_cpf: Optional[str] = None
     telefone: Optional[str] = None
     email: Optional[str] = None

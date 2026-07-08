@@ -1,11 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Package, Pencil, Check, X, AlertTriangle } from "lucide-react";
+import { Package, Pencil, Check, X, AlertTriangle, Plus } from "lucide-react";
 import { fetchItensEstoqueCadastro, atualizarMetaEstoque, fetchFornecedores } from "@/lib/api";
+import NovoItemEstoque from "./NovoItemEstoque";
 
 type Item = {
   id: number; nome: string; categoria: string | null; quantidade: number | null; unidade: string | null;
   ensacado: boolean | null; kg_por_saco: number | null; fornecedor_id: number | null;
+  ativo: boolean | null;
 };
 type Fornecedor = { id: number; nome: string };
 
@@ -20,6 +22,7 @@ export default function CadastroEstoqueMeta() {
   const [kgPorSaco, setKgPorSaco] = useState("");
   const [fornecedorId, setFornecedorId] = useState("");
   const [salvando, setSalvando] = useState(false);
+  const [novoAberto, setNovoAberto] = useState(false);
 
   const carregar = () => fetchItensEstoqueCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchFornecedores().then(setFornecedores).catch(() => {}); }, []);
@@ -46,11 +49,19 @@ export default function CadastroEstoqueMeta() {
 
   return (
     <div className="card">
-      <div className="card-header mb-3 flex items-center gap-2"><Package size={16} /> Itens de estoque — metadados</div>
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span className="flex items-center gap-2"><Package size={16} /> Itens de estoque</span>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }}
+          onClick={() => setNovoAberto((v) => !v)}>
+          <Plus size={14} /> Novo item
+        </button>
+      </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Marque quais itens são ensacados e quantos kg tem cada saco — a Alimentação usa isso para converter a
-        necessidade calculada em número de sacos. Quantidade e movimentações continuam vindo do Estoque normalmente.
+        necessidade calculada em número de sacos. Itens vindos de upload de CSV também aparecem aqui.
       </p>
+
+      {novoAberto && <NovoItemEstoque onCriado={() => { setNovoAberto(false); carregar(); }} onCancelar={() => setNovoAberto(false)} />}
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -62,7 +73,7 @@ export default function CadastroEstoqueMeta() {
             <tbody>
               {itens.map((it) => (
                 <tr key={it.id}>
-                  <td style={{ fontWeight: 700 }}>{it.nome}</td>
+                  <td style={{ fontWeight: 700 }}>{it.nome}{it.ativo === false && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                   <td style={{ fontSize: "0.78rem" }}>{it.categoria || "—"}</td>
                   {editando === it.id ? (
                     <>
