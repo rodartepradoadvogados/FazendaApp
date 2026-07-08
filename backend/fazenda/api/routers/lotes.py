@@ -122,19 +122,29 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     if not lote:
         raise HTTPException(status_code=404, detail="Lote não encontrado")
 
+    codigo_novo = dados.codigo.strip() or lote.codigo
+    if codigo_novo != lote.codigo:
+        existente = session.exec(select(Lote).where(Lote.codigo == codigo_novo)).first()
+        if existente and existente.id != lote.id:
+            raise HTTPException(status_code=400, detail=f"Já existe um lote com o código {codigo_novo}")
+
+    codigo_antigo = lote.codigo
     nome_antigo = lote.nome
+
+    lote.codigo = codigo_novo
     lote.nome = dados.nome.strip() or lote.nome
     _aplicar_campos(lote, dados)
     lote.atualizado_em = datetime.utcnow()
     session.add(lote)
 
-    # Renomeou o lote: atualiza o rótulo de todos os animais que estão nele hoje,
-    # para o cadastro e o rebanho não ficarem com nomes divergentes.
-    if lote.nome != nome_antigo:
+    # Mudou o código e/ou o nome: atualiza o rótulo de todos os animais que
+    # estavam no lote (pelo código ANTIGO), para o cadastro e o rebanho não
+    # ficarem com rótulos divergentes.
+    if lote.codigo != codigo_antigo or lote.nome != nome_antigo:
         rotulo_novo = _rotulo(lote.codigo, lote.nome)
         animais = session.exec(select(Animal).where(Animal.grupo_primario != None)).all()  # noqa: E711
         for a in animais:
-            if (a.grupo_primario or "")[:2] == lote.codigo:
+            if (a.grupo_primario or "")[:2] == codigo_antigo:
                 a.grupo_primario = rotulo_novo
                 session.add(a)
 
