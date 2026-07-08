@@ -5,6 +5,13 @@ import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, A
 import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_AGENDA = [
+  { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
+  { header: "Nº Animal", key: "numero_animal" }, { header: "Descrição", key: "descricao" },
+  { header: "Obs.", key: "observacao" },
+];
 
 const DIAS_PADRAO_FUTURO = 10;
 function addDias(iso: string, n: number): string {
@@ -377,8 +384,9 @@ export default function AgendaPage() {
 
       {/* Pendentes (eventos anteriores a hoje ainda em aberto) — sempre visível, mesmo vazia */}
       <div className="card mb-4" style={{ border: eventosPendentes.length ? "1px solid var(--amber)" : "1px solid var(--border)" }}>
-        <div className="card-header mb-3 flex items-center gap-2" style={{ color: eventosPendentes.length ? "var(--amber)" : "var(--text-muted)" }}>
-          <AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})
+        <div className="card-header mb-3 flex items-center justify-between" style={{ color: eventosPendentes.length ? "var(--amber)" : "var(--text-muted)" }}>
+          <span className="flex items-center gap-2"><AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})</span>
+          <ExportarBotoes titulo="Agenda de Pendentes" nomeArquivoBase="agenda_pendentes" colunas={COLUNAS_AGENDA} linhas={eventosPendentes} />
         </div>
         {eventosPendentes.length > 0 ? (
           <div className="space-y-2">{renderEventos(eventosPendentes)}</div>
@@ -389,9 +397,12 @@ export default function AgendaPage() {
 
       {/* Agenda do dia presente em diante */}
       <div className="card">
-        <div className="card-header mb-1 flex items-center justify-between">
+        <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span>Eventos — hoje e próximos ({eventosFuturos.length})</span>
-          {!ate && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>}
+          <div className="flex items-center gap-2">
+            {!ate && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>}
+            <ExportarBotoes titulo="Agenda — Eventos" nomeArquivoBase="agenda_eventos" colunas={COLUNAS_AGENDA} linhas={eventosFuturos} />
+          </div>
         </div>
         <div style={{ marginTop: "0.75rem" }}>
         {loading ? (

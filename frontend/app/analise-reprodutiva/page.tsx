@@ -2,6 +2,15 @@
 import { useEffect, useMemo, useState } from "react";
 import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise } from "@/lib/api";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_SERVICOS = [
+  { header: "Nº", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Categoria", key: "categoria" },
+  { header: "Data", key: "data" }, { header: "Tipo", key: "tipo_servico" }, { header: "Método", key: "metodo_ia" },
+  { header: "Touro", key: "touro" }, { header: "Protocolo", key: "protocolo" },
+  { header: "Ordem parto", key: "ordem_parto" }, { header: "Ordem tentativa", key: "ordem_tentativa" },
+  { header: "DEL serviço", key: "del_servico" }, { header: "Diagnóstico", key: "diagnostico" },
+];
 
 type Reg = {
   numero: string; raca: string; categoria: string;
@@ -192,7 +201,10 @@ export default function AnaliseReprodutivaPage() {
 
           {/* Combo por mês */}
           <div className="card mb-4">
-            <div className="card-header mb-2">Concepção por Mês (serviços × taxa)</div>
+            <div className="card-header mb-2 flex items-center justify-between">
+              <span>Concepção por Mês (serviços × taxa)</span>
+              <ExportarBotoes titulo="Análise Reprodutiva — Serviços" nomeArquivoBase="analise_reprodutiva" colunas={COLUNAS_SERVICOS} linhas={filtrados} />
+            </div>
             {serieMes.length ? <ComboChart dados={serieMes} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem serviços no filtro atual.</p>}
           </div>
 
