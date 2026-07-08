@@ -4,7 +4,7 @@ import {
   ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, ehAdmin } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, ehAdmin } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
@@ -494,18 +494,54 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
 function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact: string[] }) {
   const [modo, setModo] = useState<"vaca" | "lote">("vaca");
   const [vaca, setVaca] = useState("");
-  const [lotesSel, setLotesSel] = useState<Set<string>>(new Set());
+  const [lote, setLote] = useState("");
   const [nOrd, setNOrd] = useState(2);
   const [ord, setOrd] = useState<string[]>(["", "", ""]);
-  const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
+  const [porVaca, setPorVaca] = useState<Record<string, string[]>>({});
+  const [dataControle, setDataControle] = useState(() => new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
   const del = useMemo(() => animais.find((a) => a.numero === vaca)?.del_dias ?? null, [animais, vaca]);
   const total = ord.slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
+
+  // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada uma.
+  const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const setOrdVaca = (numero: string, idx: number, valor: string) =>
+    setPorVaca((p) => { const arr = [...(p[numero] || ["", "", ""])]; arr[idx] = valor; return { ...p, [numero]: arr }; });
+  const totalVaca = (numero: string) => (porVaca[numero] || []).slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
+  const totalLote = vacasDoLote.reduce((s, a) => s + totalVaca(a.numero), 0);
+
+  function limpar() {
+    setOrd(["", "", ""]);
+    setPorVaca({});
+  }
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    const entradas = modo === "vaca"
+      ? (vaca ? [{ numero_matriz: vaca, ordenhas: ord.slice(0, nOrd).map((v) => Number(v) || 0) }] : [])
+      : vacasDoLote.map((a) => ({ numero_matriz: a.numero, ordenhas: (porVaca[a.numero] || []).slice(0, nOrd).map((v) => Number(v) || 0) }))
+          .filter((e) => e.ordenhas.some((v) => v > 0));
+    if (!entradas.length) { setErro(modo === "vaca" ? "Selecione a vaca e informe ao menos uma ordenha." : "Informe a pesagem de ao menos uma vaca do lote."); return; }
+    setSalvando(true);
+    try {
+      const r = await criarControlesLeiteiros({ data_controle: dataControle, entradas });
+      setSucesso(`${r.criados} ${r.criados === 1 ? "pesagem" : "pesagens"} lançada${r.criados === 1 ? "" : "s"} com sucesso.`);
+      limpar();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar controle leiteiro");
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Modalidade">
-          <select style={inputStyle} value={modo} onChange={(e) => setModo(e.target.value as any)}>
+          <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
             <option value="vaca">Por vaca</option>
             <option value="lote">Por lote</option>
           </select>
@@ -522,39 +558,77 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
             <Campo label="DEL (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={del != null ? `${del} dias` : "—"} readOnly /></Campo>
           </>
         ) : (
-          <Campo label="Lotes em lactação" full>
-            <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
-              {lotesLact.map((l) => (
-                <label key={l} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
-                  <input type="checkbox" checked={lotesSel.has(l)} onChange={() => toggleLote(l)} /> {l}
-                </label>
-              ))}
-              {!lotesLact.length && <span style={nota}>Sem lotes de lactação carregados.</span>}
-            </div>
+          <Campo label="Lote">
+            <select style={inputStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
+              <option value="">Selecione…</option>
+              {lotesLact.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
           </Campo>
         )}
+        <Campo label="Data do controle"><input type="date" style={inputStyle} value={dataControle} onChange={(e) => setDataControle(e.target.value)} /></Campo>
       </div>
 
-      <div className="mt-3">
-        <label style={lbl}>Quilos por ordenha</label>
-        <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
-          {Array.from({ length: nOrd }, (_, i) => (
-            <div key={i}>
-              <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{i + 1}ª ordenha</span>
-              <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "7rem" }} value={ord[i]}
-                onChange={(e) => setOrd((p) => { const n = [...p]; n[i] = e.target.value; return n; })} placeholder="kg" />
+      {modo === "vaca" ? (
+        <div className="mt-3">
+          <label style={lbl}>Quilos por ordenha</label>
+          <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+            {Array.from({ length: nOrd }, (_, i) => (
+              <div key={i}>
+                <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{i + 1}ª ordenha</span>
+                <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "7rem" }} value={ord[i]}
+                  onChange={(e) => setOrd((p) => { const n = [...p]; n[i] = e.target.value; return n; })} placeholder="kg" />
+              </div>
+            ))}
+            <div>
+              <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Total do dia</span>
+              <div style={{ ...inputStyle, width: "7rem", fontWeight: 700, color: "var(--green-light)" }}>{total.toFixed(1)} kg</div>
             </div>
-          ))}
-          <div>
-            <span style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Total do dia</span>
-            <div style={{ ...inputStyle, width: "7rem", fontWeight: 700, color: "var(--green-light)" }}>{total.toFixed(1)} kg</div>
           </div>
         </div>
-        {modo === "lote" && <p style={nota}>No modo lote, os quilos/ordenha são lançados para cada vaca dos lotes selecionados (tela de digitação em massa entra com o salvamento).</p>}
+      ) : lote ? (
+        <div className="card mt-3" style={{ padding: 0 }}>
+          <div className="card-header m-3 flex items-center justify-between">
+            <span>Vacas do lote {lote} ({vacasDoLote.length})</span>
+            <span style={{ fontSize: "0.78rem", color: "var(--green-light)", fontWeight: 700 }}>Total do lote: {totalLote.toFixed(1)} kg</span>
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead>
+                <tr>
+                  <th>Nº</th><th style={{ textAlign: "right" }}>DEL</th>
+                  {Array.from({ length: nOrd }, (_, i) => <th key={i} style={{ textAlign: "right" }}>{i + 1}ª ordenha (kg)</th>)}
+                  <th style={{ textAlign: "right" }}>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {vacasDoLote.map((a) => (
+                  <tr key={a.numero}>
+                    <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{a.del_dias ?? "—"}</td>
+                    {Array.from({ length: nOrd }, (_, i) => (
+                      <td key={i}>
+                        <input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }}
+                          value={(porVaca[a.numero] || [])[i] || ""} onChange={(e) => setOrdVaca(a.numero, i, e.target.value)} placeholder="kg" />
+                      </td>
+                    ))}
+                    <td style={{ textAlign: "right", fontWeight: 700, color: "var(--green-light)" }}>{totalVaca(a.numero).toFixed(1)}</td>
+                  </tr>
+                ))}
+                {!vacasDoLote.length && <tr><td colSpan={nOrd + 3} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma vaca neste lote.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      ) : (
+        <p style={nota}>Selecione um lote para ver a listagem de vacas e lançar a pesagem individual de todas de uma vez.</p>
+      )}
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
-      <Campo label="Data do controle"><div style={{ maxWidth: "12rem" }}><input type="date" style={inputStyle} /></div></Campo>
-      <p style={nota}>O histórico de controle leiteiro (filtrável por lote) já existe na aba Produção e passará a incluir estes lançamentos.</p>
-      <SalvarEmBreve />
     </>
   );
 }
@@ -742,6 +816,8 @@ export default function LancamentosPage() {
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro" ? (
             <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
+          ) : sel === "producao" ? (
+            <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
           ) : sel === "exclusao" ? (
             <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Busque o registro, confira o que será impactado e só depois confirme.</>
           ) : (

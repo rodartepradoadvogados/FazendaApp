@@ -1,17 +1,30 @@
 """
-Router de produção — indicadores do histórico de controle leiteiro.
-Endpoint: GET /producao/
+Router de produção — indicadores do histórico de controle leiteiro e
+lançamento de pesagens (por vaca ou por lote inteiro, de uma vez).
 """
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import ControleLeiteiro
+from fazenda.models import Animal, ControleLeiteiro
 from fazenda.rules.producao import calcular_producao
 
 router = APIRouter(prefix="/producao", tags=["producao"])
+
+
+class OrdenhaIn(BaseModel):
+    numero_matriz: str
+    ordenhas: list[float]
+
+
+class ControlesIn(BaseModel):
+    data_controle: date
+    entradas: list[OrdenhaIn]
 
 
 @router.get("/")
@@ -36,3 +49,28 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
             "del": c.del_no_controle,
         })
     return {"controles": registros, "total": len(registros)}
+
+
+@router.post("/controles")
+def criar_controles(dados: ControlesIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
+    individual ou em lote — o front manda uma entrada por vaca do lote).
+    """
+    criados = []
+    for entrada in dados.entradas:
+        if not entrada.ordenhas or not any(entrada.ordenhas):
+            continue
+        animal = session.exec(select(Animal).where(Animal.numero == entrada.numero_matriz)).first()
+        registro = ControleLeiteiro(
+            animal_id=animal.id if animal else None,
+            numero_matriz=entrada.numero_matriz,
+            raca=animal.raca if animal else None,
+            data_controle=dados.data_controle,
+            producao_kg=round(sum(entrada.ordenhas), 2),
+            del_no_controle=animal.del_dias if animal else None,
+        )
+        session.add(registro)
+        criados.append(registro)
+    session.commit()
+    return {"criados": len(criados)}
