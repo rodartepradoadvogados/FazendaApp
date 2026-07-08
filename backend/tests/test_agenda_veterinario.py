@@ -177,3 +177,26 @@ class TestPendentesClassificacao:
         r = c.get("/reproducao/agenda-veterinario")
         item = next(a for a in r.json()["listas"]["pendentes_classificacao"] if a["numero_matriz"] == "41")
         assert "peso" in item["motivo"].lower()
+
+
+class TestVaziasPorDiagnostico:
+    def test_negativo_no_toque_vai_para_lista_propria(self, client):
+        c, engine = client
+        _add_animal(engine, "50", "Vaca")
+        _add_servico(engine, "50", 40, data_diagnostico=HOJE - timedelta(days=10), diagnostico="NEGATIVO")
+        r = c.get("/reproducao/agenda-veterinario")
+        listas = r.json()["listas"]
+        item = next(a for a in listas["vazias_por_diagnostico"] if a["numero_matriz"] == "50")
+        assert "negativo" in item["motivo"].lower()
+        assert not any(a["numero_matriz"] == "50" for a in listas["pendentes_classificacao"])
+
+    def test_perda_de_prenhez_vai_para_lista_propria(self, client):
+        c, engine = client
+        _add_animal(engine, "51", "Vaca")
+        _add_servico(engine, "51", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO",
+                     data_reconfirmacao=HOJE - timedelta(days=5), diagnostico_reconfirmacao="NEGATIVO")
+        r = c.get("/reproducao/agenda-veterinario")
+        listas = r.json()["listas"]
+        item = next(a for a in listas["vazias_por_diagnostico"] if a["numero_matriz"] == "51")
+        assert "perda" in item["motivo"].lower()
+        assert not any(a["numero_matriz"] == "51" for a in listas["pendentes_classificacao"])
