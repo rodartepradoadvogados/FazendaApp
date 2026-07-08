@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
+  ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade } from "@/lib/api";
@@ -126,106 +126,12 @@ function ManualSangueModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-/* ───────────────────────── Cadastro geral de touro ───────────────────────── */
-function TouroBusca() {
-  const [touro, setTouro] = useState("");
-  const [manual, setManual] = useState(false);
-  return (
-    <div style={{ border: "1px dashed var(--border)", borderRadius: "8px", padding: "0.75rem", marginTop: "0.5rem" }}>
-      <label style={lbl}>Pai / touro (sêmen)</label>
-      <div className="flex gap-2" style={{ flexWrap: "wrap" }}>
-        <input style={{ ...inputStyle, flex: 1, minWidth: "10rem" }} value={touro} onChange={(e) => setTouro(e.target.value)} placeholder="nome ou código do touro" />
-        <a className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }} target="_blank" rel="noreferrer"
-          href={"https://absbullsearch.absglobal.com/?lang=bra-pt"}><Search size={13} /> ABS</a>
-        <a className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }} target="_blank" rel="noreferrer"
-          href={"https://touros.altagenetics.com.br/"}><Search size={13} /> Alta</a>
-      </div>
-      <button onClick={() => setManual((v) => !v)} className="btn-ghost" style={{ fontSize: "0.72rem", marginTop: "0.5rem" }}>
-        {manual ? "Ocultar" : "Não encontrei — cadastro geral do touro"}
-      </button>
-      {manual && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
-          <Campo label="Nome do touro"><input style={inputStyle} /></Campo>
-          <Campo label="Código / registro"><input style={inputStyle} /></Campo>
-          <Campo label="Raça"><input style={inputStyle} /></Campo>
-          <Campo label="Central / empresa"><input style={inputStyle} placeholder="ABS, Alta, outra…" /></Campo>
-          <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
-        </div>
-      )}
-      <p style={nota}>A busca automática na ABS/Alta será ligada com o banco; por ora abre o site para consulta e há o cadastro geral como reserva.</p>
-    </div>
-  );
-}
-
 /* ───────────────────────── Formulários por tipo ───────────────────────── */
 
 // Subtítulo de seção dentro de um formulário.
 const Secao = ({ children }: { children: React.ReactNode }) => (
   <p style={{ fontSize: "0.72rem", fontWeight: 700, letterSpacing: "0.05em", textTransform: "uppercase", color: "var(--dourado-light)", margin: "1rem 0 0.5rem" }}>{children}</p>
 );
-
-const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Novilha gestante", "Vaca", "Vaca em lactação", "Vaca seca", "Vaca gestante", "Touro", "Bezerro", "Descarte"];
-const PELAGENS = ["Malhada (preto/branco)", "Malhada (vermelho/branco)", "Preta", "Vermelha", "Baia", "Cinza", "Outra"];
-
-function FormAnimal({ lotes }: { lotes: string[] }) {
-  const [origem, setOrigem] = useState<"nascimento" | "compra">("nascimento");
-  return (
-    <>
-      <Secao>Identificação</Secao>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Número / brinco"><input style={inputStyle} placeholder="ex.: 464" /></Campo>
-        <Campo label="Nome resumido"><input style={inputStyle} /></Campo>
-        <Campo label="Nome completo"><input style={inputStyle} /></Campo>
-        <Campo label="SISBOV"><input style={inputStyle} placeholder="105 ..." /></Campo>
-        <Campo label="Registro"><input style={inputStyle} /></Campo>
-        <Campo label="Sexo"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
-        <Campo label="Raça"><select style={inputStyle} defaultValue="Girolando"><option>Girolando</option><option>Holandês</option><option>Gir</option><option>Outra</option></select></Campo>
-        <Campo label="Pelagem"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{PELAGENS.map((p) => <option key={p}>{p}</option>)}</select></Campo>
-        <Campo label="Categoria"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{CATEGORIAS_ANIMAL.map((c) => <option key={c}>{c}</option>)}</select></Campo>
-        <Campo label="Lote inicial"><select style={inputStyle} defaultValue=""><option value="" disabled>Selecione o lote…</option>{lotes.map((l) => <option key={l}>{l}</option>)}</select></Campo>
-      </div>
-
-      <Secao>Origem e situação</Secao>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Origem do cadastro">
-          <select style={inputStyle} value={origem} onChange={(e) => setOrigem(e.target.value as any)}>
-            <option value="nascimento">Nascimento (parto na fazenda)</option>
-            <option value="compra">Compra (animal adquirido)</option>
-          </select>
-        </Campo>
-        <Campo label="Data de nascimento"><input type="date" style={inputStyle} /></Campo>
-        {origem === "compra" && <Campo label="Data de entrada na fazenda"><input type="date" style={inputStyle} /></Campo>}
-        <Campo label="Proprietário"><input style={inputStyle} defaultValue="Jairo Nasser Quintiliano da Silva" /></Campo>
-        <Campo label="Valor (R$)"><input type="number" inputMode="decimal" style={inputStyle} placeholder="ex.: 7000" /></Campo>
-        <Campo label="Data de baixa (se houver)"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Motivo de baixa" full><input style={inputStyle} placeholder="venda, morte, descarte…" /></Campo>
-      </div>
-
-      <Secao>Genealogia</Secao>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Nome da mãe"><input style={inputStyle} /></Campo>
-        <Campo label="Número da mãe"><input style={inputStyle} /></Campo>
-      </div>
-      <TouroBusca />
-      <p style={nota}>A busca do pai/touro na ABS/Alta preenche a genealogia paterna (avós/bisavós) automaticamente quando ligarmos o banco.</p>
-
-      <Secao>Produção e reprodução</Secao>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Produção de leite (referência)"><input style={inputStyle} placeholder="kg/dia" /></Campo>
-        <Campo label="Parto provável"><input type="date" style={inputStyle} /></Campo>
-        <Campo label="Idade ao 1º parto (meses)"><input type="number" style={inputStyle} /></Campo>
-        <Campo label="GPD / GMD (ganho de peso)"><input style={inputStyle} placeholder="ex.: -0,05" /></Campo>
-      </div>
-
-      <Secao>Outros</Secao>
-      <div className="grid grid-cols-1 gap-3">
-        <Campo label="Observações" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} /></Campo>
-        <Campo label="Foto do animal" full><input type="file" accept="image/*" style={{ ...inputStyle, padding: "0.3rem" }} /></Campo>
-      </div>
-      <SalvarEmBreve />
-    </>
-  );
-}
 
 const HORMONIOS: Record<string, string[]> = {
   progesterona: ["Sincrogest", "Cidr"],
@@ -910,7 +816,6 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
 // Tipos de lançamento, agrupados: alguns grupos (Reprodutivo, Produção) têm uma
 // camada inferior de sub-tipos, para economizar abas no menu.
 const TIPOS_GRUPOS = [
-  { id: "animal", label: "Animal (ficha)", icon: Beef, desc: "Cadastro/atualização de um animal do rebanho.", leaf: "animal" },
   {
     id: "reprodutivo", label: "Reprodutivo", icon: Heart,
     desc: "Serviço/IA, diagnóstico de gestação ou parto/nascimento.",
@@ -937,10 +842,10 @@ const TIPOS_GRUPOS = [
 // Lista achatada de sub-tipos (folhas), usada para saber qual formulário renderizar.
 const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) => (g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]));
 // Grupo dono de um determinado sub-tipo (folha).
-const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.subs?.some((s) => s.id === id))?.id ?? "animal";
+const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.subs?.some((s) => s.id === id))?.id ?? "reprodutivo";
 
 export default function LancamentosPage() {
-  const [sel, setSel] = useState("animal");
+  const [sel, setSel] = useState("servico");
   const [sujo, setSujo] = useState(false);
   const trocarTipo = (novoId: string) => {
     if (novoId === sel) return;
@@ -1062,7 +967,6 @@ export default function LancamentosPage() {
         <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
           <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-          {sel === "animal" && <FormAnimal lotes={lotes} />}
           {sel === "servico" && <FormServico animais={aptasServico} />}
           {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
           {sel === "parto" && <FormParto animais={animais} />}

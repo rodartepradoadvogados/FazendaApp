@@ -5,7 +5,7 @@ import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
-import CadastroLotes from "@/components/CadastroLotes";
+import Cadastro from "@/components/Cadastro";
 
 type Aba = "cadastro" | "parametros" | "upload" | "usuarios";
 
@@ -48,7 +48,7 @@ export default function ConfiguracoesPage() {
         ))}
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
-        {aba === "cadastro" && <CadastroLotes />}
+        {aba === "cadastro" && <Cadastro />}
         {aba === "parametros" && <ParametrosPage />}
         {aba === "upload" && <UploadPage />}
         {aba === "usuarios" && <UsuariosPage />}

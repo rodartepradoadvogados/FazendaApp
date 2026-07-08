@@ -44,6 +44,19 @@ class Animal(SQLModel, table=True):
     # o próximo upload do GERAL.csv sobrescreva o lote atual com o valor do Ideagri.
     grupo_manual: bool = False
 
+    # Ficha de cadastro (Configurações > Cadastro) — dados de identificação que
+    # não vêm do GERAL.csv, preenchidos manualmente no cadastro do animal.
+    nome: Optional[str] = None
+    sisbov: Optional[str] = None
+    mae_numero: Optional[str] = None
+    mae_nome: Optional[str] = None
+    proprietario: Optional[str] = None
+    valor: Optional[float] = None
+    data_entrada: Optional[date] = None
+    motivo_baixa: Optional[str] = None
+    data_baixa: Optional[date] = None
+    observacoes: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Lote (cadastro + parâmetros para sugestão de movimentação)
@@ -328,6 +341,31 @@ class Estoque(SQLModel, table=True):
     abaixo_minimo: Optional[bool] = None
     local_armazenamento: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+    # Metadados de cadastro (Configurações > Cadastro), usados pela Alimentação
+    # para converter kg necessários em sacos quando o item é ensacado.
+    ensacado: Optional[bool] = None
+    kg_por_saco: Optional[float] = None
+    fornecedor_id: Optional[int] = Field(default=None, foreign_key="fornecedor.id")
+
+
+# ---------------------------------------------------------------------------
+# Fornecedor / fabricante / cliente
+# ---------------------------------------------------------------------------
+class Fornecedor(SQLModel, table=True):
+    """Cadastro de fornecedores, fabricantes e clientes (Configurações > Cadastro)."""
+
+    __tablename__ = "fornecedor"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)
+    tipo: str  # "fornecedor" | "fabricante" | "cliente"
+    cnpj_cpf: Optional[str] = None
+    telefone: Optional[str] = None
+    email: Optional[str] = None
+    observacoes: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
