@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import Animal, Lote, MovimentoLote
+from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
 router = APIRouter(prefix="/movimentacoes", tags=["movimentacoes"])
 
@@ -45,6 +47,27 @@ class MoverIn(BaseModel):
 @router.get("/motivos")
 def listar_motivos() -> list[str]:
     return MOTIVOS
+
+
+@router.get("/sugestoes")
+def sugestoes_movimentacao(session: Session = Depends(get_session)) -> dict:
+    """
+    Sugestão automática de movimentação entre lotes: usa os critérios já
+    cadastrados em cada lote (Configurações > Cadastro > Lotes) — não pede
+    nenhum parâmetro novo. Só considera lotes com pelo menos um critério
+    definido; um lote sem nenhum critério "atenderia" o rebanho inteiro, então
+    fica de fora da comparação.
+    """
+    hoje = date.today()
+    lotes = session.exec(select(Lote)).all()
+    animais, servicos_por_animal, sanidades_por_animal, peso_por_animal = coletar_dados_criterios(session)
+
+    sugestoes = sugerir_movimentacoes(lotes, animais, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+    return {
+        "sugestoes": sugestoes,
+        "total": len(sugestoes),
+        "lotes_com_criterio": sum(1 for l in lotes if lote_tem_criterio(l)),
+    }
 
 
 @router.get("/")
