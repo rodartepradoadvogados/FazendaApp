@@ -1,9 +1,9 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2,
+  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search,
 } from "lucide-react";
-import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
+import { fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -26,13 +26,14 @@ type Lanc = {
   centro_custo: string; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
   tipo_documento: string | null; numero_documento: string | null; numero_documento_pagamento: string | null;
-  conta_bancaria: string | null; entregue: boolean | null;
+  conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
-  data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null;
+  data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
+  itens?: { produto: string }[];
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -293,16 +294,20 @@ export default function FinanceiroPage() {
           })}
         </div>
 
-        {/* Patrimônio */}
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Patrimônio</p>
+        {/* Patrimônio e ações em lote */}
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Patrimônio e ações</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
           <button onClick={() => setRel("patrimonio")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "patrimonio" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "patrimonio" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
             <div className="flex items-center gap-2" style={{ color: rel === "patrimonio" ? "var(--dourado-light)" : "var(--text)" }}><Building2 size={18} /><span style={{ fontWeight: 700 }}>Patrimônio</span></div>
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Máquinas, veículos, implementos e terras</p>
           </button>
+          <button onClick={() => setRel("lote")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "lote" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "lote" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
+            <div className="flex items-center gap-2" style={{ color: rel === "lote" ? "var(--dourado-light)" : "var(--text)" }}><Layers size={18} /><span style={{ fontWeight: 700 }}>Pagamento/recebimento em lote</span></div>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Filtre notas em aberto e dê baixa em várias de uma vez, com um comprovante único</p>
+          </button>
         </div>
 
-        {rel === "patrimonio" ? <PatrimonioView /> : <>
+        {rel === "patrimonio" ? <PatrimonioView /> : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -590,6 +595,193 @@ export default function FinanceiroPage() {
   );
 }
 
+const selStyleLote: React.CSSProperties = {
+  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
+};
+const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+
+/**
+ * Pagamento/recebimento em lote — filtra notas (despesa ou receita, aberta
+ * ou já baixada) por nota/documento, fornecedor, produto e datas; o usuário
+ * seleciona quais notas EM ABERTO quer baixar de uma vez, com um único
+ * pagamento (data, conta corrente, forma de pagamento, comprovante).
+ */
+function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
+  const [regs, setRegs] = useState<Lanc[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "despesa" | "receita">("todos");
+  const [numeroDocumento, setNumeroDocumento] = useState("");
+  const [fornecedor, setFornecedor] = useState("");
+  const [produto, setProduto] = useState("");
+  const [emissaoDe, setEmissaoDe] = useState("");
+  const [emissaoAte, setEmissaoAte] = useState("");
+  const [vencimentoDe, setVencimentoDe] = useState("");
+  const [vencimentoAte, setVencimentoAte] = useState("");
+
+  const [selecionados, setSelecionados] = useState<Set<number>>(new Set());
+  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [contaBancaria, setContaBancaria] = useState("");
+  const [formaPagamento, setFormaPagamento] = useState("");
+  const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
+  const [numeroComprovante, setNumeroComprovante] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+
+  const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const filtrados = useMemo(() => {
+    if (!regs) return [];
+    return regs.filter((r) =>
+      (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
+      (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+      (!fornecedor || (r.fornecedor || "").toLowerCase().includes(fornecedor.toLowerCase())) &&
+      (!produto || (r.itens || []).some((it) => (it.produto || "").toLowerCase().includes(produto.toLowerCase()))) &&
+      (!emissaoDe || (r.data_emissao || "") >= emissaoDe) && (!emissaoAte || (r.data_emissao || "") <= emissaoAte) &&
+      (!vencimentoDe || (r.data_vencimento || "") >= vencimentoDe) && (!vencimentoAte || (r.data_vencimento || "") <= vencimentoAte)
+    );
+  }, [regs, tipoFiltro, numeroDocumento, fornecedor, produto, emissaoDe, emissaoAte, vencimentoDe, vencimentoAte]);
+
+  const selecionaveis = useMemo(() => filtrados.filter((r) => !r.data_pagamento), [filtrados]);
+  const toggle = (id: number) => setSelecionados((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const toggleTodos = () => setSelecionados((p) =>
+    p.size === selecionaveis.length && selecionaveis.length ? new Set() : new Set(selecionaveis.map((r) => r.id))
+  );
+  const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
+
+  async function darBaixaEmLote() {
+    setMsg(null);
+    if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos uma nota em aberto." }); return; }
+    if (formaPagamento === "credito" && !dataVencimentoCartao) { setMsg({ tipo: "erro", texto: "Informe a data de vencimento do cartão." }); return; }
+    setSalvando(true);
+    try {
+      const r = await criarBaixaLote({
+        lancamento_ids: Array.from(selecionados), data_pagamento: dataPagamento,
+        conta_bancaria: contaBancaria || undefined, forma_pagamento: formaPagamento || undefined,
+        data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
+        numero_documento_pagamento: numeroComprovante || undefined,
+      });
+      setMsg({ tipo: "sucesso", texto: `${r.baixados} lançamento(s) baixado(s) com sucesso.` });
+      setSelecionados(new Set()); setNumeroComprovante("");
+      carregar();
+      onFeito?.();
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao dar baixa em lote" });
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
+  if (!regs) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Tipo</label>
+            <select style={selStyleLote} value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
+              <option value="todos">Despesas e receitas</option><option value="despesa">Só despesas (a pagar)</option><option value="receita">Só receitas (a receber)</option>
+            </select></div>
+          <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
+            <div style={{ position: "relative" }}>
+              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} placeholder="ex.: 4521 ou LC-2026-00012" />
+            </div></div>
+          <div><label style={labelStyleLote}>Fornecedor / cliente</label>
+            <input style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Produto</label>
+            <input style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={labelStyleLote}>Emissão — de</label><input type="date" style={selStyleLote} value={emissaoDe} onChange={(e) => setEmissaoDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Emissão — até</label><input type="date" style={selStyleLote} value={emissaoAte} onChange={(e) => setEmissaoAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
+        </div>
+      </div>
+
+      <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
+        <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
+          <span style={{ fontSize: "0.85rem" }}>{filtrados.length} nota(s) no filtro — {selecionados.size} selecionada(s) ({formatBRL(totalSelecionado)})</span>
+          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!selecionaveis.length}>
+            {selecionados.size === selecionaveis.length && selecionaveis.length ? "Limpar seleção" : `Selecionar todas em aberto (${selecionaveis.length})`}
+          </button>
+        </div>
+        <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead><tr><th></th><th>Nota / lançamento</th><th>Emissão</th><th>Vencimento</th><th>Status</th><th>Produtos</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+            <tbody>
+              {filtrados.map((r) => {
+                const aberto = !r.data_pagamento;
+                const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
+                return (
+                  <tr key={r.id} style={{ cursor: aberto ? "pointer" : "default" }} onClick={() => aberto && toggle(r.id)}>
+                    <td>{aberto && <input type="checkbox" checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} />}</td>
+                    <td style={{ fontSize: "0.78rem" }}>
+                      <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
+                      {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
+                      <br /><span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>{r.fornecedor || "—"} · {r.descricao}</span>
+                    </td>
+                    <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_emissao ? formatDate(r.data_emissao) : "—"}</td>
+                    <td style={{ fontSize: "0.75rem", whiteSpace: "nowrap" }}>{r.data_vencimento ? formatDate(r.data_vencimento) : "—"}</td>
+                    <td>
+                      <span style={{ fontSize: "0.72rem", fontWeight: 700, color: aberto ? "var(--amber)" : "var(--green-light)" }}>
+                        {aberto ? (r.tipo === "receita" ? "A receber" : "A pagar") : (r.tipo === "receita" ? "Recebido" : "Pago")}
+                      </span>
+                    </td>
+                    <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
+                  </tr>
+                );
+              })}
+              {!filtrados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {selecionados.size > 0 && (
+        <div className="card">
+          <div className="card-header mb-3">Pagamento único para {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</div>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div><label style={labelStyleLote}>Data do pagamento</label>
+              <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Conta corrente</label>
+              <select style={selStyleLote} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
+                <option value="">Selecione…</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
+              </select></div>
+            <div><label style={labelStyleLote}>Forma</label>
+              <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
+                <option value="">Selecione…</option>{Object.entries(LABEL_FORMA_PAGAMENTO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select></div>
+            {formaPagamento === "credito" ? (
+              <div><label style={labelStyleLote}>Vencimento do cartão</label>
+                <input type="date" style={selStyleLote} value={dataVencimentoCartao} onChange={(e) => setDataVencimentoCartao(e.target.value)} /></div>
+            ) : (
+              <div><label style={labelStyleLote}>Nº do comprovante de pagamento</label>
+                <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} /></div>
+            )}
+          </div>
+          {formaPagamento === "credito" && (
+            <div className="mb-3" style={{ maxWidth: "280px" }}>
+              <label style={labelStyleLote}>Nº do comprovante de pagamento</label>
+              <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} />
+            </div>
+          )}
+          {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+          <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
+            <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 type ItemPatrimonio = {
   id: number; tipo: string | null; nome: string; numero: string | null;
   atividade_cultura: string | null; placa: string | null; data_imobilizacao: string | null;
@@ -720,10 +912,14 @@ function TabelaContas({ rel, itens, onDarBaixa }: { rel: Rel; itens: Lanc[]; onD
   );
 }
 
+const LABEL_FORMA_PAGAMENTO: Record<string, string> = { pix: "Pix", transferencia: "Transferência", boleto: "Boleto", credito: "Crédito" };
+
 function BaixaModal({ lancamento, contasBancarias, onClose, onSalvo }: { lancamento: Lanc; contasBancarias: string[]; onClose: () => void; onSalvo: () => void }) {
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
   const [valorPago, setValorPago] = useState(String(lancamento.valor));
   const [contaBancaria, setContaBancaria] = useState("");
+  const [formaPagamento, setFormaPagamento] = useState("");
+  const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
   const [numeroDocPagamento, setNumeroDocPagamento] = useState("");
   const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
@@ -734,11 +930,13 @@ function BaixaModal({ lancamento, contasBancarias, onClose, onSalvo }: { lancame
 
   async function confirmar() {
     if (diferenca !== 0 && !confirmando) { setConfirmando(true); return; }
+    if (formaPagamento === "credito" && !dataVencimentoCartao) { setErro("Informe a data de vencimento do cartão."); return; }
     setSalvando(true); setErro(null);
     try {
       await marcarPagoFinanceiro(lancamento.id, {
         data_pagamento: dataPagamento, valor_pago: Number(valorPago) || 0,
         conta_bancaria: contaBancaria || undefined, numero_documento_pagamento: numeroDocPagamento || undefined,
+        forma_pagamento: formaPagamento || undefined, data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
       });
       onSalvo();
     } catch (e: any) {
@@ -767,6 +965,14 @@ function BaixaModal({ lancamento, contasBancarias, onClose, onSalvo }: { lancame
             </select></div>
           <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Nº documento de pagamento</label>
             <input style={inputStyle} value={numeroDocPagamento} onChange={(e) => setNumeroDocPagamento(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Forma de pagamento</label>
+            <select style={inputStyle} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
+              <option value="">Selecione…</option>{Object.entries(LABEL_FORMA_PAGAMENTO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select></div>
+          {formaPagamento === "credito" && (
+            <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Vencimento do cartão</label>
+              <input type="date" style={inputStyle} value={dataVencimentoCartao} onChange={(e) => setDataVencimentoCartao(e.target.value)} /></div>
+          )}
         </div>
         {diferenca !== 0 && (
           <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: diferenca < 0 ? "var(--green-light)" : "var(--amber)" }}>
