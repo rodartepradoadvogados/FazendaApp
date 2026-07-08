@@ -5,6 +5,14 @@ import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate } fro
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
+
+const COLUNAS_PESAGEM = [
+  { header: "Nº", key: "numero_matriz" }, { header: "Lote", key: "grupo_primario" },
+  { header: "Nº pesagens", key: "num_pesagens" }, { header: "1ª pesagem (data)", key: "primeira_data_fmt" },
+  { header: "1ª pesagem (kg)", key: "primeira_peso" }, { header: "Última pesagem (data)", key: "ultima_data_fmt" },
+  { header: "Última pesagem (kg)", key: "ultima_peso" }, { header: "GMD (kg/dia)", key: "gmd_kg_dia" }, { header: "GPD (kg/dia)", key: "gpd_kg_dia" },
+];
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -149,7 +157,14 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
       </div>
 
       <div className="card mt-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Scale size={14} /> Relatório de crescimento (GMD / GPD)</div>
+        <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+          <span className="flex items-center gap-2"><Scale size={14} /> Relatório de crescimento (GMD / GPD)</span>
+          <ExportarBotoes
+            titulo="Relatório de crescimento (GMD/GPD)" nomeArquivoBase="pesagem_corporal"
+            colunas={COLUNAS_PESAGEM}
+            linhas={(linhas || []).map((l) => ({ ...l, primeira_data_fmt: formatDate(l.primeira_data), ultima_data_fmt: formatDate(l.ultima_data) }))}
+          />
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <Campo label="Ver">
             <select style={inputStyle} value={relTipo} onChange={(e) => { setRelTipo(e.target.value as any); setRelAnimal(""); setRelLote(""); }}>
