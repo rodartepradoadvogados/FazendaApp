@@ -161,6 +161,24 @@ class ControleLeiteiro(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Pesagem corporal (peso vivo — acompanhamento de crescimento)
+# ---------------------------------------------------------------------------
+class PesagemCorporal(SQLModel, table=True):
+    """Uma pesagem corporal (peso vivo) de um animal — distinta da pesagem de leite."""
+
+    __tablename__ = "pesagem_corporal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    data_pesagem: date
+    peso_kg: float
+    del_dias: Optional[int] = None
+    idade_meses: Optional[float] = None
+    grupo_primario: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Conta Gerencial (Financeiro)
 # ---------------------------------------------------------------------------
 class ContaGerencial(SQLModel, table=True):
@@ -380,6 +398,29 @@ class EventoRealizado(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     evento_id: str = Field(index=True, unique=True)
     marcado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Solicitação de exclusão (fluxo de aprovação p/ não-administradores)
+# ---------------------------------------------------------------------------
+class SolicitacaoExclusao(SQLModel, table=True):
+    """
+    Pedido de exclusão feito por um operador (não-admin) — fica pendente até
+    um administrador aprovar (executa a exclusão de fato) ou rejeitar.
+    """
+
+    __tablename__ = "solicitacao_exclusao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str
+    id_alvo: str
+    titulo: Optional[str] = None  # descrição do alvo no momento do pedido (snapshot p/ exibição)
+    status: str = "pendente"       # pendente | aprovada | rejeitada
+    solicitado_por: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    decidido_por: Optional[str] = None
+    decidido_em: Optional[datetime] = None
+    motivo_rejeicao: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

@@ -1,13 +1,20 @@
 """
 Router de exclusões — apaga registros de qualquer tipo de lançamento com uma
-prévia de impacto antes de confirmar. Restrito a administradores.
+prévia de impacto antes de confirmar.
+
+Administradores excluem direto. Operadores só podem SOLICITAR a exclusão —
+o pedido fica pendente até um administrador aprovar (executa a exclusão de
+fato) ou rejeitar.
 """
 from __future__ import annotations
+
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import exigir_admin, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual,
@@ -19,6 +26,8 @@ from fazenda.models import (
     Parto,
     Sanidade,
     Servico,
+    SolicitacaoExclusao,
+    Usuario,
 )
 
 router = APIRouter(prefix="/exclusoes", tags=["exclusoes"])
@@ -242,9 +251,81 @@ def impacto(dados: ExclusaoIn, session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("/confirmar")
-def confirmar(dados: ExclusaoIn, session: Session = Depends(get_session)) -> dict:
+def confirmar(
+    dados: ExclusaoIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Admin exclui na hora. Operador só registra uma solicitação pendente."""
     itens, alvos = _alvos(dados.tipo, dados.id, session)
+
+    if user.papel == "admin":
+        for obj in alvos:
+            session.delete(obj)
+        session.commit()
+        return {"status": "excluido", "itens": itens}
+
+    solicitacao = SolicitacaoExclusao(
+        tipo=dados.tipo,
+        id_alvo=dados.id,
+        titulo=itens[0] if itens else f"{dados.tipo} #{dados.id}",
+        solicitado_por=user.username,
+    )
+    session.add(solicitacao)
+    session.commit()
+    return {"status": "solicitado", "itens": itens}
+
+
+@router.get("/pendentes", dependencies=[Depends(exigir_admin)])
+def listar_pendentes(session: Session = Depends(get_session)) -> list[dict]:
+    sols = session.exec(
+        select(SolicitacaoExclusao)
+        .where(SolicitacaoExclusao.status == "pendente")
+        .order_by(SolicitacaoExclusao.criado_em.desc())
+    ).all()
+    return [s.model_dump() for s in sols]
+
+
+@router.post("/pendentes/{sol_id}/aprovar", dependencies=[Depends(exigir_admin)])
+def aprovar_pendente(
+    sol_id: int,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    sol = session.get(SolicitacaoExclusao, sol_id)
+    if not sol or sol.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+
+    _, alvos = _alvos(sol.tipo, sol.id_alvo, session)
     for obj in alvos:
         session.delete(obj)
+    sol.status = "aprovada"
+    sol.decidido_por = user.username
+    sol.decidido_em = datetime.utcnow()
+    session.add(sol)
     session.commit()
-    return {"excluido": True, "itens": itens}
+    return {"aprovado": True}
+
+
+class RejeitarIn(BaseModel):
+    motivo: str | None = None
+
+
+@router.post("/pendentes/{sol_id}/rejeitar", dependencies=[Depends(exigir_admin)])
+def rejeitar_pendente(
+    sol_id: int,
+    dados: RejeitarIn,
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    sol = session.get(SolicitacaoExclusao, sol_id)
+    if not sol or sol.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+
+    sol.status = "rejeitada"
+    sol.decidido_por = user.username
+    sol.decidido_em = datetime.utcnow()
+    sol.motivo_rejeicao = dados.motivo
+    session.add(sol)
+    session.commit()
+    return {"rejeitado": True}

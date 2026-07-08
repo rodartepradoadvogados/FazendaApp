@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import exigir_admin, exigir_modulo, get_current_user, seed_admin
+from fazenda.auth import exigir_modulo, get_current_user, seed_admin
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -21,6 +21,7 @@ from fazenda.api.routers import (
     indicadores,
     lotes,
     movimentacoes,
+    notificacoes,
     parametros,
     producao,
     reproducao,
@@ -88,8 +89,11 @@ app.include_router(sanidade.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-# Exclusões são destrutivas — restritas a administradores.
-app.include_router(exclusoes.router, dependencies=[Depends(exigir_admin)])
+# Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
+# aprovar e rejeitar são restritos a administradores (gate por rota, dentro
+# do próprio router — ver exclusoes.py).
+app.include_router(exclusoes.router, dependencies=_protegido)
+app.include_router(notificacoes.router, dependencies=_protegido)
 
 
 @app.get("/")
