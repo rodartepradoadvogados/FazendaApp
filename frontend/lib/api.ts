@@ -410,6 +410,76 @@ export async function criarAplicacaoSanidade(dados: {
   return res.json();
 }
 
+// ── Princípio ativo / Doença / Evento sanitário (Configurações > Cadastro) ──
+function _crudNomeAtivo(caminho: string, rotulo: string) {
+  return {
+    listar: async () => {
+      const res = await authFetch(`${API}/cadastro/${caminho}`, { cache: "no-store" });
+      if (!res.ok) throw new Error(`${rotulo} error: ${res.status}`);
+      return res.json();
+    },
+    criar: async (dados: { nome: string; ativo?: boolean }) => {
+      const res = await authFetch(`${API}/cadastro/${caminho}`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao criar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+    atualizar: async (id: number, dados: { nome: string; ativo: boolean }) => {
+      const res = await authFetch(`${API}/cadastro/${caminho}/${id}`, {
+        method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+      });
+      if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro ao atualizar ${rotulo.toLowerCase()}`); }
+      return res.json();
+    },
+  };
+}
+const _principiosAtivos = _crudNomeAtivo("principios-ativos", "Princípio ativo");
+export const fetchPrincipiosAtivos = _principiosAtivos.listar;
+export const criarPrincipioAtivo = _principiosAtivos.criar;
+export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
+
+const _doencas = _crudNomeAtivo("doencas", "Doença");
+export const fetchDoencas = _doencas.listar;
+export const criarDoenca = _doencas.criar;
+export const atualizarDoenca = _doencas.atualizar;
+
+const _eventosSanitarios = _crudNomeAtivo("eventos-sanitarios", "Evento sanitário");
+export const fetchEventosSanitarios = _eventosSanitarios.listar;
+export const criarEventoSanitario = _eventosSanitarios.criar;
+export const atualizarEventoSanitario = _eventosSanitarios.atualizar;
+
+// ── Calendário sanitário (Sanidade) ──
+export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; dataFim?: string; eventoSanitarioId?: number }) {
+  const params = new URLSearchParams();
+  if (filtros?.dataInicio) params.set("data_inicio", filtros.dataInicio);
+  if (filtros?.dataFim) params.set("data_fim", filtros.dataFim);
+  if (filtros?.eventoSanitarioId) params.set("evento_sanitario_id", String(filtros.eventoSanitarioId));
+  const res = await authFetch(`${API}/sanidade/calendario?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Calendário sanitário error: ${res.status}`);
+  return res.json();
+}
+
+type CalendarioSanitarioPayload = {
+  evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
+  principio_ativo_id?: number; dosagem?: string; frequencia_valor: number; frequencia_unidade: string;
+  data_evento: string; observacao?: string; ativo?: boolean;
+};
+export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
+  const res = await authFetch(`${API}/sanidade/calendario`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar regra do calendário sanitário"); }
+  return res.json();
+}
+export async function atualizarCalendarioSanitario(id: number, dados: CalendarioSanitarioPayload) {
+  const res = await authFetch(`${API}/sanidade/calendario/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar regra do calendário sanitário"); }
+  return res.json();
+}
+
 export async function fetchEstoque() {
   const res = await authFetch(`${API}/estoque/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Estoque error: ${res.status}`);

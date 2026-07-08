@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchSanidade } from "@/lib/api";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, formatDate } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
@@ -9,6 +9,91 @@ const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
   { header: "Categoria", key: "categoria" }, { header: "Dose", key: "dose" }, { header: "Atividade", key: "atividade" },
 ];
+
+const COLUNAS_CALENDARIO = [
+  { header: "Evento", key: "evento_sanitario_nome" }, { header: "Categoria alvo", key: "categoria_alvo" },
+  { header: "Doença", key: "doenca_nome" }, { header: "Produto", key: "produto" }, { header: "Dosagem", key: "dosagem" },
+  { header: "Frequência", key: "frequenciaFmt" }, { header: "Próxima ocorrência", key: "proxima_ocorrencia_fmt" },
+];
+
+type RegraCalendario = {
+  id: number; evento_sanitario_id: number; evento_sanitario_nome: string; categoria_alvo: string | null;
+  doenca_nome: string | null; produto: string | null; principio_ativo_nome: string | null; dosagem: string | null;
+  frequencia_valor: number; frequencia_unidade: string; data_evento: string; proxima_ocorrencia: string; observacao: string | null;
+};
+
+const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
+
+function CalendarioSanitarioView() {
+  const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [eventos, setEventos] = useState<{ id: number; nome: string }[]>([]);
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
+  const [eventoId, setEventoId] = useState("");
+
+  useEffect(() => { fetchEventosSanitarios().then(setEventos).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchCalendarioSanitario({ dataInicio: ini || undefined, dataFim: fim || undefined, eventoSanitarioId: eventoId ? Number(eventoId) : undefined })
+      .then(setRegras).catch((e) => setError(e.message));
+  }, [ini, fim, eventoId]);
+
+  const linhasExport = (regras || []).map((r) => ({
+    ...r, frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
+    proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
+  }));
+
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Próxima ocorrência — de</label>
+            <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Próxima ocorrência — até</label>
+            <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Evento sanitário</label>
+            <select style={selStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
+              <option value="">Todos</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+            </select></div>
+        </div>
+      </div>
+
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!regras && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {regras && (
+        <div className="card">
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span>Regras do calendário sanitário ({regras.length})</span>
+            <ExportarBotoes titulo="Calendário sanitário" nomeArquivoBase="calendario_sanitario" colunas={COLUNAS_CALENDARIO} linhas={linhasExport} />
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
+            <table className="fazenda-table">
+              <thead><tr><th>Evento</th><th>Categoria alvo</th><th>Doença</th><th>Produto</th><th>Dosagem</th><th>Frequência</th><th>Próxima ocorrência</th></tr></thead>
+              <tbody>
+                {regras.map((r) => (
+                  <tr key={r.id}>
+                    <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.doenca_nome || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.produto || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.dosagem || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {LABEL_FREQ[r.frequencia_unidade]}</td>
+                    <td style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{formatDate(r.proxima_ocorrencia)}</td>
+                  </tr>
+                ))}
+                {!regras.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
 
 type Aplic = {
   numero: string; raca: string; produto: string; categoria: string;
@@ -18,7 +103,7 @@ type Aplic = {
 
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
 
-export default function SanidadePage() {
+function AplicacoesView() {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
@@ -69,12 +154,7 @@ export default function SanidadePage() {
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
-    <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Syringe size={22} style={{ color: "var(--dourado)" }} /> Sanidade</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Medicamentos aplicados — filtre por categoria, ano, produto ou animal.</p>
-      </div>
-
+    <>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o SANIDADE.csv</a>.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -165,6 +245,39 @@ export default function SanidadePage() {
           </div>
         </div>
       </>}
+    </>
+  );
+}
+
+const ABAS_SANIDADE = [
+  ["aplicacoes", "Aplicações", ClipboardList],
+  ["calendario", "Calendário sanitário", CalendarClock],
+] as const;
+
+export default function SanidadePage() {
+  const [aba, setAba] = useState<(typeof ABAS_SANIDADE)[number][0]>("aplicacoes");
+
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Syringe size={22} style={{ color: "var(--dourado)" }} /> Sanidade</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Medicamentos aplicados e calendário sanitário — filtre por categoria, data, produto, animal ou evento.</p>
+      </div>
+
+      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
+        {ABAS_SANIDADE.map(([id, label, Icon]) => (
+          <button key={id} onClick={() => setAba(id)}
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
+              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
+              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {aba === "aplicacoes" && <AplicacoesView />}
+      {aba === "calendario" && <CalendarioSanitarioView />}
     </div>
   );
 }

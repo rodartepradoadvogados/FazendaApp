@@ -12,10 +12,15 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Estoque, MovimentoEstoque, Sanidade
+from fazenda.models import (
+    CalendarioSanitario, Doenca, Estoque, EventoSanitario, MovimentoEstoque, PrincipioAtivo, Sanidade,
+)
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
+
+FREQUENCIAS = ["dias", "meses", "anos"]
 
 
 @router.get("/aplicacoes")
@@ -115,3 +120,100 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
 
     session.commit()
     return {"criados": criados, "avisos": avisos}
+
+
+# ---------------------------------------------------------------------------
+# Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
+# fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
+# ---------------------------------------------------------------------------
+def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str]]:
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+    principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
+    return eventos, doencas, principios
+
+
+def _serializar(c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict) -> dict:
+    return {
+        **c.model_dump(),
+        "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
+        "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
+        "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
+        "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
+    }
+
+
+@router.get("/calendario")
+def listar_calendario(
+    data_inicio: str = "", data_fim: str = "", evento_sanitario_id: int | None = None,
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    Lista as regras do calendário sanitário. O filtro de período compara com a
+    PRÓXIMA ocorrência projetada (não a data de referência original), já que
+    o objetivo é acompanhar o que está por vir — não o histórico já aplicado
+    (esse fica em /sanidade/aplicacoes).
+    """
+    eventos, doencas, principios = _nomes(session)
+    regras = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)).all()  # noqa: E712
+    saida = [_serializar(c, eventos, doencas, principios) for c in regras]
+    if evento_sanitario_id is not None:
+        saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
+    if data_inicio:
+        saida = [s for s in saida if s["proxima_ocorrencia"] >= data_inicio]
+    if data_fim:
+        saida = [s for s in saida if s["proxima_ocorrencia"] <= data_fim]
+    return sorted(saida, key=lambda s: s["proxima_ocorrencia"])
+
+
+class CalendarioSanitarioIn(BaseModel):
+    evento_sanitario_id: int
+    categoria_alvo: str | None = None
+    doenca_id: int | None = None
+    produto: str | None = None
+    principio_ativo_id: int | None = None
+    dosagem: str | None = None
+    frequencia_valor: int
+    frequencia_unidade: str
+    data_evento: date
+    observacao: str | None = None
+    ativo: bool = True
+
+
+def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
+    if not session.get(EventoSanitario, dados.evento_sanitario_id):
+        raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
+    if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
+        raise HTTPException(status_code=400, detail="Doença não encontrada")
+    if dados.principio_ativo_id is not None and not session.get(PrincipioAtivo, dados.principio_ativo_id):
+        raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
+    if dados.frequencia_unidade not in FREQUENCIAS:
+        raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
+    if dados.frequencia_valor <= 0:
+        raise HTTPException(status_code=400, detail="A frequência deve ser maior que zero")
+
+
+@router.post("/calendario")
+def criar_calendario(dados: CalendarioSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    _validar_calendario(dados, session)
+    c = CalendarioSanitario(**dados.model_dump())
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    eventos, doencas, principios = _nomes(session)
+    return _serializar(c, eventos, doencas, principios)
+
+
+@router.put("/calendario/{calendario_id}")
+def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    c = session.get(CalendarioSanitario, calendario_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    _validar_calendario(dados, session)
+    for campo, valor in dados.model_dump().items():
+        setattr(c, campo, valor)
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    eventos, doencas, principios = _nomes(session)
+    return _serializar(c, eventos, doencas, principios)
