@@ -413,6 +413,25 @@ export async function sugestaoLoteEvento(dados: { numero_matriz: string; categor
   return res.json();
 }
 
+// ── Serviço/IA: protocolo IATF (só agenda) e inseminação (o evento em si) ──
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo?: string }) {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao agendar protocolo IATF"); }
+  return res.json();
+}
+export async function criarServico(dados: {
+  numero_matriz: string; data_servico: string; tipo_servico?: string;
+  protocolo?: string; reprodutor?: string; responsavel?: string;
+}) {
+  const res = await authFetch(`${API}/reproducao/servico`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar serviço/inseminação"); }
+  return res.json();
+}
+
 // ── Parto / nascimento ──
 export async function criarParto(dados: {
   numero_matriz: string; data_parto: string; tipo_parto?: string;

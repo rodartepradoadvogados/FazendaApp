@@ -219,3 +219,82 @@ class TestMotivosDeMovimentacaoIncluemSecagemENascimento:
         motivos = c.get("/movimentacoes/motivos").json()
         assert "Secagem" in motivos
         assert "Nascimento" in motivos
+
+
+class TestProtocoloIatf:
+    def test_agenda_quatro_eventos_por_animal(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500", "501"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["eventos_criados"] == 8
+        assert corpo["animais"] == 2
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            from fazenda.models import AgendaManual
+            eventos = s.exec(select(AgendaManual).where(AgendaManual.numero_animal == "500")).all()
+            assert len(eventos) == 4
+            datas = sorted(e.data_evento for e in eventos)
+            assert datas == [date(2026, 7, 8), date(2026, 7, 15), date(2026, 7, 17), date(2026, 7, 19)]
+            assert all(e.categoria == "Reprodutivo" for e in eventos)
+
+    def test_sem_animais_da_400(self, client):
+        c, _ = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": [], "data_d0": "2026-07-08"})
+        assert r.status_code == 400
+
+
+class TestRegistrarServico:
+    def test_cria_servico_cio_natural(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="500", raca="Girolando", del_dias=80, ativo=True))
+            s.commit()
+
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "500", "data_servico": "2026-07-08", "tipo_servico": "Monta natural", "reprodutor": "Touro X",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["protocolo"] is None
+        assert corpo["ordem_tentativa"] == 1
+        assert corpo["ult_ocorrencia"] == 1
+        assert corpo["reprodutor"] == "Touro X"
+
+    def test_cria_servico_de_protocolo_iatf(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="500", raca="Girolando", ativo=True))
+            s.commit()
+
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": "Protocolo padrão",
+        })
+        assert r.json()["protocolo"] == "Protocolo padrão"
+
+    def test_segundo_servico_incrementa_tentativa_e_desmarca_anterior(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="500", raca="Girolando", ativo=True))
+            s.commit()
+
+        c.post("/reproducao/servico", json={"numero_matriz": "500", "data_servico": "2026-06-01"})
+        r2 = c.post("/reproducao/servico", json={"numero_matriz": "500", "data_servico": "2026-07-08"})
+        assert r2.json()["ordem_tentativa"] == 2
+        assert r2.json()["intervalo_tentativas"] == 37
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            servicos = s.exec(select(Servico).where(Servico.numero_matriz == "500")).all()
+            assert len(servicos) == 2
+            ativos = [sv for sv in servicos if sv.ult_ocorrencia == 1]
+            assert len(ativos) == 1
+            assert ativos[0].data_servico == date(2026, 7, 8)
+
+    def test_matriz_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/reproducao/servico", json={"numero_matriz": "nao-existe", "data_servico": "2026-07-08"})
+        assert r.status_code == 404

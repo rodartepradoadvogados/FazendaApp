@@ -52,11 +52,10 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ responsaveis, onSujo }: { responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
+export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   useEffect(() => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); }, []);
 
-  const [tipo, setTipo] = useState<"despesa" | "receita">("despesa");
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   const [centroCusto, setCentroCusto] = useState("");
   const [fornecedor, setFornecedor] = useState("");
@@ -266,13 +265,6 @@ export function FormFinanceiro({ responsaveis, onSujo }: { responsaveis: string[
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Reconhece vários produtos/serviços da mesma nota — os campos ficam abaixo, todos editáveis.</p>
       </div>
-
-      <Campo label="Tipo">
-        <select style={{ ...inputStyle, maxWidth: "16rem" }} value={tipo} onChange={(e) => setTipo(e.target.value as any)}>
-          <option value="despesa">Despesa (conta a pagar)</option>
-          <option value="receita">Receita (conta a receber)</option>
-        </select>
-      </Campo>
 
       {/* Produtos / serviços da nota */}
       <div className="mt-3 space-y-3">

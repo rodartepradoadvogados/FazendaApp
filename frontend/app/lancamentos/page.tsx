@@ -7,6 +7,7 @@ import {
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
+  criarProtocoloIatf, criarServico,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -145,13 +146,33 @@ const HORMONIOS: Record<string, string[]> = {
   cipionato: ["SincroCP"],
 };
 
-function FormServico({ animais }: { animais: AnimalRow[] }) {
+function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [um, setUm] = useState("");
-  const [protocolo, setProtocolo] = useState<"IATF" | "Cio">("IATF");
   const [d0, setD0] = useState("");
+  const [nomeProtocolo, setNomeProtocolo] = useState("Protocolo padrão");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
+    if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
+    if (!d0) { setErro("Informe a data do D0."); return; }
+    setSalvando(true);
+    try {
+      const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo });
+      setSucesso(`Protocolo agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos criados na Agenda (D0/D7/D9/D11).`);
+      setSel(new Set()); setUm("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao agendar protocolo IATF");
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   return (
     <>
@@ -168,62 +189,101 @@ function FormServico({ animais }: { animais: AnimalRow[] }) {
               </div>
             : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
         </Campo>
-        <Campo label="Serviço">
+        <Campo label="Protocolo">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
             <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
           </label>
           {emLote && <span style={nota}>{sel.size} animal(is) selecionado(s)</span>}
         </Campo>
-        <Campo label="Data do serviço / D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
-        <Campo label="Protocolo">
-          <select style={inputStyle} value={protocolo} onChange={(e) => setProtocolo(e.target.value as any)}>
-            <option value="IATF">Protocolo IATF</option>
-            <option value="Cio">Cio natural</option>
-          </select>
+        <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
+        <Campo label="Nome do protocolo"><input style={inputStyle} value={nomeProtocolo} onChange={(e) => setNomeProtocolo(e.target.value)} /></Campo>
+      </div>
+      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D11) é lançada à parte, na sub-aba Inseminação.</p>
+
+      <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+        <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
+          Cronograma IATF — vai para a Agenda
+        </div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th></tr></thead>
+            <tbody>
+              <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
+              <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
+              <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
+              <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
+      </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </>
+  );
+}
+
+function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
+  const [matriz, setMatriz] = useState("");
+  const [veioDeProtocolo, setVeioDeProtocolo] = useState(false);
+  const [nomeProtocolo, setNomeProtocolo] = useState("Protocolo padrão");
+  const [dataServico, setDataServico] = useState("");
+  const [touro, setTouro] = useState("");
+  const [responsavel, setResponsavel] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!matriz) { setErro("Selecione a matriz."); return; }
+    if (!dataServico) { setErro("Informe a data da inseminação."); return; }
+    setSalvando(true);
+    try {
+      const r = await criarServico({
+        numero_matriz: matriz, data_servico: dataServico,
+        tipo_servico: "IA", protocolo: veioDeProtocolo ? nomeProtocolo : undefined,
+        reprodutor: touro || undefined, responsavel: responsavel || undefined,
+      });
+      setSucesso(`Inseminação registrada (tentativa ${r.ordem_tentativa}${r.protocolo ? `, protocolo ${r.protocolo}` : " — cio natural"}).`);
+      setMatriz(""); setTouro(""); setVeioDeProtocolo(false);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao registrar inseminação");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
+        <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
+        <Campo label="Veio de um protocolo IATF já agendado?">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
+            <input type="checkbox" checked={veioDeProtocolo} onChange={(e) => setVeioDeProtocolo(e.target.checked)} /> Sim
+          </label>
         </Campo>
+        {veioDeProtocolo && <Campo label="Nome do protocolo"><input style={inputStyle} value={nomeProtocolo} onChange={(e) => setNomeProtocolo(e.target.value)} /></Campo>}
         <Campo label="Touro / sêmen (em estoque)">
-          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione o sêmen…</option>{TOUROS_ESTOQUE.map((t) => <option key={t}>{t}</option>)}</select>
+          <select style={inputStyle} value={touro} onChange={(e) => setTouro(e.target.value)}><option value="">Selecione o sêmen…</option>{TOUROS_ESTOQUE.map((t) => <option key={t}>{t}</option>)}</select>
         </Campo>
         <Campo label="Responsável / inseminador">
-          <select style={inputStyle} defaultValue=""><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
         </Campo>
       </div>
-      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Touro mostra o sêmen em estoque.</p>
-
-      {protocolo === "IATF" ? (
-        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-          <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
-            Cronograma IATF — será lançado na agenda
-          </div>
-          <div className="overflow-x-auto">
-            <table className="fazenda-table">
-              <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th><th>Produto (estoque)</th></tr></thead>
-              <tbody>
-                <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.progesterona.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td></td><td></td><td>Benzoato de estradiol — 2 ml</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.benzoato.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td></td><td></td><td>Acetato de buserelina — 2,5 ml</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.buserelina.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol — 2 ml</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.cloprostenol.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante</td><td>—</td></tr>
-                <tr><td></td><td></td><td>Cipionato de estradiol — 1 ml</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.cipionato.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td></td><td></td><td>Cloprostenol — 2 ml</td>
-                  <td><select style={{ ...inputStyle, padding: "0.25rem" }}>{HORMONIOS.cloprostenol.map((o) => <option key={o}>{o}</option>)}</select></td></tr>
-                <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td><td>—</td></tr>
-              </tbody>
-            </table>
-          </div>
-          <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na agenda para cada animal. A baixa de estoque dos hormônios entra junto com o banco permanente.</p>
-        </div>
-      ) : (
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Cio natural: registra a inseminação/cobertura na data do serviço, sem protocolo hormonal.
-        </p>
-      )}
-      <SalvarEmBreve />
+      <p style={nota}>
+        Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses).{" "}
+        {veioDeProtocolo ? "Marca esta inseminação como a etapa D11 do protocolo informado." : "Sem protocolo marcado: registra como cio natural, sem cronograma hormonal."}
+      </p>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </>
   );
 }
@@ -1055,7 +1115,8 @@ const TIPOS_GRUPOS = [
     id: "reprodutivo", label: "Reprodutivo", icon: Heart,
     desc: "Serviço/IA, diagnóstico de gestação ou parto/nascimento.",
     subs: [
-      { id: "servico", label: "Serviço / IA", icon: Heart, desc: "Inseminação, IATF ou cobertura — individual ou em lote." },
+      { id: "protocolo_iatf", label: "Protocolo IATF", icon: Heart, desc: "Agendar só o protocolo hormonal (D0/D7/D9/D11) na agenda — individual ou em lote." },
+      { id: "inseminacao", label: "Inseminação", icon: Heart, desc: "Registrar a inseminação/cobertura em si — cio natural ou de um protocolo já agendado." },
       { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
       { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
     ],
@@ -1070,7 +1131,14 @@ const TIPOS_GRUPOS = [
     ],
   },
   { id: "sanidade", label: "Sanidade", icon: Syringe, desc: "Aplicação de medicamento / manejo sanitário.", leaf: "sanidade" },
-  { id: "financeiro", label: "Financeiro", icon: Wallet, desc: "Lançamento de receita ou despesa.", leaf: "financeiro" },
+  {
+    id: "financeiro", label: "Financeiro", icon: Wallet,
+    desc: "Lançamento de receita ou despesa.",
+    subs: [
+      { id: "financeiro_despesa", label: "Contas a pagar (despesa)", icon: Wallet, desc: "Lançamento de despesa/conta a pagar." },
+      { id: "financeiro_receita", label: "Contas a receber (receita)", icon: Wallet, desc: "Lançamento de receita/conta a receber." },
+    ],
+  },
   { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque.", leaf: "estoque" },
   { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto.", leaf: "exclusao" },
 ];
@@ -1081,7 +1149,7 @@ const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) => (g.subs ? g.subs : [{ id: g.leaf
 const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.subs?.some((s) => s.id === id))?.id ?? "reprodutivo";
 
 export default function LancamentosPage() {
-  const [sel, setSel] = useState("servico");
+  const [sel, setSel] = useState("protocolo_iatf");
   const [sujo, setSujo] = useState(false);
   const trocarTipo = (novoId: string) => {
     if (novoId === sel) return;
@@ -1143,7 +1211,7 @@ export default function LancamentosPage() {
       <div className="card mb-4" style={{ display: "flex", gap: "0.6rem", alignItems: "flex-start", background: "rgba(94,26,46,0.18)" }}>
         <Info size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-          {sel === "financeiro" ? (
+          {sel === "financeiro_despesa" || sel === "financeiro_receita" ? (
             <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
           ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
@@ -1161,6 +1229,10 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Secagem já grava de verdade.</strong> Ao salvar, sugere mover a vaca para o lote das secas — você confirma antes da mudança.</>
           ) : sel === "parto" ? (
             <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG ainda são só calculadora.</>
+          ) : sel === "protocolo_iatf" ? (
+            <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
+          ) : sel === "inseminacao" ? (
+            <><strong style={{ color: "var(--text)" }}>Inseminação já grava de verdade.</strong> Registra a cobertura/IA (cio natural ou vinda de um protocolo IATF já agendado) e calcula a ordem/intervalo de tentativas.</>
           ) : (
             <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
             mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
@@ -1207,14 +1279,16 @@ export default function LancamentosPage() {
         <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
           <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
           <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-          {sel === "servico" && <FormServico animais={aptasServico} />}
+          {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
+          {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
           {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
           {sel === "parto" && <FormParto animais={animais} />}
           {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
           {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
           {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+          {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+          {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
           {sel === "exclusao" && <FormExclusao />}
         </div>
