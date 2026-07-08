@@ -76,6 +76,38 @@ class TestCadastroLotes:
         animais = client.get("/animais/").json()
         assert all(a["grupo_primario"] == "01 - Alta produção" for a in animais if a["numero"] in ("201", "202"))
 
+    def test_editar_codigo_realmente_muda_o_lote(self, client):
+        lote_id = next(l["id"] for l in client.get("/lotes/").json() if l["codigo"] == "01")
+        r = client.put(f"/lotes/{lote_id}", json={"codigo": "05", "nome": "Alta", "del_min": 0, "del_max": 100})
+        assert r.status_code == 200
+        assert r.json()["codigo"] == "05"
+
+        lotes = client.get("/lotes/").json()
+        assert any(l["codigo"] == "05" for l in lotes)
+        assert not any(l["codigo"] == "01" for l in lotes)
+
+    def test_editar_codigo_cascateia_rotulo_para_animais(self, client):
+        lote_id = next(l["id"] for l in client.get("/lotes/").json() if l["codigo"] == "01")
+        r = client.put(f"/lotes/{lote_id}", json={"codigo": "05", "nome": "Alta", "del_min": 0, "del_max": 100})
+        assert r.status_code == 200
+
+        animais = client.get("/animais/").json()
+        assert all(a["grupo_primario"] == "05 - Alta" for a in animais if a["numero"] in ("201", "202"))
+        # O outro lote não deve ser afetado.
+        assert next(a for a in animais if a["numero"] == "203")["grupo_primario"] == "02 - Baixa"
+
+    def test_editar_codigo_para_um_ja_existente_e_rejeitado(self, client):
+        lote_id = next(l["id"] for l in client.get("/lotes/").json() if l["codigo"] == "01")
+        r = client.put(f"/lotes/{lote_id}", json={"codigo": "02", "nome": "Alta", "del_min": 0, "del_max": 100})
+        assert r.status_code == 400
+
+    def test_editar_lote_mantendo_seu_proprio_codigo_funciona(self, client):
+        # Regressão: o próprio lote não pode ser confundido com "código duplicado".
+        lote_id = next(l["id"] for l in client.get("/lotes/").json() if l["codigo"] == "01")
+        r = client.put(f"/lotes/{lote_id}", json={"codigo": "01", "nome": "Alta", "del_min": 5, "del_max": 100})
+        assert r.status_code == 200
+        assert r.json()["del_min"] == 5
+
 
 class TestMovimentacoes:
     def test_lista_motivos_fixos(self, client):
