@@ -4,11 +4,11 @@ import { Truck, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
 import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
 
 type Fornecedor = {
-  id: number; nome: string; tipo: string; cnpj_cpf: string | null; telefone: string | null;
+  id: number; nome: string; tipo: string; categoria: string | null; cnpj_cpf: string | null; telefone: string | null;
   email: string | null; observacoes: string | null; ativo: boolean;
 };
-type Form = { nome: string; tipo: string; cnpj_cpf: string; telefone: string; email: string; observacoes: string; ativo: boolean };
-const formVazio: Form = { nome: "", tipo: "fornecedor", cnpj_cpf: "", telefone: "", email: "", observacoes: "", ativo: true };
+type Form = { nome: string; tipo: string; categoria: string; cnpj_cpf: string; telefone: string; email: string; observacoes: string; ativo: boolean };
+const formVazio: Form = { nome: "", tipo: "fornecedor", categoria: "", cnpj_cpf: "", telefone: "", email: "", observacoes: "", ativo: true };
 
 const TIPOS = [
   { v: "fornecedor", l: "Fornecedor" },
@@ -16,12 +16,25 @@ const TIPOS = [
   { v: "cliente", l: "Cliente" },
 ];
 
+// Mesma lista de fazenda.rules.categorias.CATEGORIAS_FORNECEDOR no backend.
+const CATEGORIAS_FORNECEDOR = [
+  "Ração e insumos alimentares",
+  "Sêmen e genética",
+  "Medicamentos e produtos veterinários",
+  "Equipamentos e manutenção",
+  "Combustível e transporte",
+  "Serviços veterinários/técnicos",
+  "Energia e utilidades",
+  "Embalagens e materiais",
+  "Outros",
+];
+
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
-  return { nome: f.nome.trim(), tipo: f.tipo, cnpj_cpf: s(f.cnpj_cpf), telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes), ativo: f.ativo };
+  return { nome: f.nome.trim(), tipo: f.tipo, categoria: s(f.categoria), cnpj_cpf: s(f.cnpj_cpf), telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes), ativo: f.ativo };
 }
 
 export default function CadastroFornecedores() {
@@ -37,7 +50,7 @@ export default function CadastroFornecedores() {
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (f: Fornecedor) => {
-    setForm({ nome: f.nome, tipo: f.tipo, cnpj_cpf: f.cnpj_cpf ?? "", telefone: f.telefone ?? "", email: f.email ?? "", observacoes: f.observacoes ?? "", ativo: f.ativo });
+    setForm({ nome: f.nome, tipo: f.tipo, categoria: f.categoria ?? "", cnpj_cpf: f.cnpj_cpf ?? "", telefone: f.telefone ?? "", email: f.email ?? "", observacoes: f.observacoes ?? "", ativo: f.ativo });
     setEditando(f.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
@@ -75,13 +88,14 @@ export default function CadastroFornecedores() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th>Tipo</th><th>CNPJ/CPF</th><th>Telefone</th><th>Email</th><th></th></tr></thead>
+            <thead><tr><th>Nome</th><th>Tipo</th><th>Categoria</th><th>CNPJ/CPF</th><th>Telefone</th><th>Email</th><th></th></tr></thead>
             <tbody>
               {itens.map((f) => (
                 <Fragment key={f.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{f.nome}{!f.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                     <td style={{ textTransform: "capitalize" }}>{f.tipo}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{f.categoria || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{f.cnpj_cpf || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{f.telefone || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{f.email || "—"}</td>
@@ -92,13 +106,13 @@ export default function CadastroFornecedores() {
                     </td>
                   </tr>
                   {editando === f.id && (
-                    <tr><td colSpan={6} style={{ padding: 0 }}>
+                    <tr><td colSpan={7} style={{ padding: 0 }}>
                       <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />
                     </td></tr>
                   )}
                 </Fragment>
               ))}
-              {!itens.length && !editando && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum fornecedor cadastrado ainda.</td></tr>}
+              {!itens.length && !editando && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum fornecedor cadastrado ainda.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -117,6 +131,11 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
         <div><label style={labelStyle}>Tipo</label>
           <select style={inputStyle} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
             {TIPOS.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+          </select></div>
+        <div><label style={labelStyle}>Categoria</label>
+          <select style={inputStyle} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
+            <option value="">Selecione…</option>
+            {CATEGORIAS_FORNECEDOR.map((c) => <option key={c} value={c}>{c}</option>)}
           </select></div>
         <div><label style={labelStyle}>CNPJ/CPF</label><input style={inputStyle} value={form.cnpj_cpf} onChange={(e) => setForm({ ...form, cnpj_cpf: e.target.value })} /></div>
         <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>

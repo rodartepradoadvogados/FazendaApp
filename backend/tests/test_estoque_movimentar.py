@@ -89,3 +89,29 @@ class TestMovimentarEstoque:
         r = client.get("/estoque/movimentos")
         assert r.json()["total"] == 1
         assert r.json()["movimentos"][0]["nome_item"] == "Borgal 50ml"
+
+
+class TestCriarItemEstoque:
+    def test_cria_item_com_campos_completos(self, client):
+        r = client.post("/estoque/", json={
+            "nome": "Sal mineral", "categoria": "Alimento", "unidade": "saca 30kg",
+            "quantidade": 10, "estoque_minimo": 5, "valor_unitario": 80.0,
+            "carencia_dias": 0, "centro_custo_padrao": "Pecuária",
+            "conta_gerencial_despesa_padrao": "3.01.01.03",
+            "exibir_necessidade_compra_agenda": True,
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["nome"] == "Sal mineral"
+        assert corpo["valor_total"] == 800.0
+        assert corpo["ativo"] is True
+        assert corpo["exibir_necessidade_compra_agenda"] is True
+        assert corpo["conta_gerencial_despesa_padrao"] == "3.01.01.03"
+
+    def test_nome_duplicado_da_409(self, client):
+        r = client.post("/estoque/", json={"nome": "Borgal 50ml"})
+        assert r.status_code == 409
+
+    def test_marca_abaixo_minimo_na_criacao(self, client):
+        r = client.post("/estoque/", json={"nome": "Concentrado", "quantidade": 2, "estoque_minimo": 10})
+        assert r.json()["abaixo_minimo"] is True

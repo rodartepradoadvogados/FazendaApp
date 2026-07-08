@@ -27,6 +27,63 @@ def listar_estoque(session: Session = Depends(get_session)) -> dict:
     return {"itens": itens, "total": len(itens)}
 
 
+class EstoqueIn(BaseModel):
+    nome: str
+    categoria: str | None = None
+    numero_produto: str | None = None
+    unidade: str | None = None
+    quantidade: float | None = None
+    estoque_minimo: float | None = None
+    valor_unitario: float | None = None
+    local_armazenamento: str | None = None
+    ensacado: bool | None = None
+    kg_por_saco: float | None = None
+    fornecedor_id: int | None = None
+    ativo: bool = True
+    observacao: str | None = None
+    carencia_dias: int | None = None
+    centro_custo_padrao: str | None = None
+    conta_gerencial_despesa_padrao: str | None = None
+    conta_gerencial_receita_padrao: str | None = None
+    exibir_necessidade_compra_agenda: bool = False
+
+
+@router.post("/", status_code=201)
+def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)) -> dict:
+    """Cadastra um item de estoque novo (não existe ainda um com esse nome)."""
+    existente = session.exec(select(Estoque).where(Estoque.nome == dados.nome)).first()
+    if existente:
+        raise HTTPException(status_code=409, detail=f'Já existe um item de estoque chamado "{dados.nome}"')
+
+    valor_total = (dados.quantidade or 0) * (dados.valor_unitario or 0) if dados.quantidade and dados.valor_unitario else None
+    item = Estoque(
+        nome=dados.nome,
+        categoria=dados.categoria,
+        numero_produto=dados.numero_produto,
+        unidade=dados.unidade,
+        quantidade=dados.quantidade,
+        estoque_minimo=dados.estoque_minimo,
+        valor_unitario=dados.valor_unitario,
+        valor_total=valor_total,
+        abaixo_minimo=(dados.quantidade is not None and dados.estoque_minimo is not None and dados.quantidade < dados.estoque_minimo),
+        local_armazenamento=dados.local_armazenamento,
+        ensacado=dados.ensacado,
+        kg_por_saco=dados.kg_por_saco,
+        fornecedor_id=dados.fornecedor_id,
+        ativo=dados.ativo,
+        observacao=dados.observacao,
+        carencia_dias=dados.carencia_dias,
+        centro_custo_padrao=dados.centro_custo_padrao,
+        conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
+        conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
+        exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
 @router.get("/movimentos")
 def listar_movimentos(session: Session = Depends(get_session)) -> dict:
     """Histórico de entradas/saídas lançadas manualmente."""

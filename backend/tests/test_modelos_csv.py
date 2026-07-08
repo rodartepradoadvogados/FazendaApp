@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers.importar import CATEGORIAS_EXISTENTES, CATEGORIAS_NOVAS
@@ -74,7 +74,8 @@ class TestModelosCategoriasNovas:
                 s.commit()
 
         content = _csv_de_modelo(cfg["colunas_csv"], cfg["exemplo"])
-        r = c.post(f"/importar/{categoria}", files={"file": ("modelo.csv", content, "text/csv")})
+        extra = {"data_controle": "2026-07-08"} if cfg.get("precisa_data_controle") else {}
+        r = c.post(f"/importar/{categoria}", files={"file": ("modelo.csv", content, "text/csv")}, data=extra)
         assert r.status_code == 200
         d = r.json()
         assert not d.get("erros"), f"{categoria}: modelo gerou erro(s): {d.get('erros')}"
@@ -114,3 +115,130 @@ class TestPlanoContaGerencialReal:
         assert "2.01.01.01" in codigos
         # O grupo "2.01 - Pecuária" é inativo (não postável) e não deve aparecer.
         assert "2.01" not in codigos
+
+
+class TestControleLeiteiroSimplificado:
+    def test_calcula_total_e_puxa_del_da_ficha(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Animal, ControleLeiteiro
+
+        with Session(engine) as s:
+            s.add(Animal(numero="464", ativo=True, del_dias=120))
+            s.commit()
+
+        content = _csv_de_modelo(["numero_matriz", "ordenha1_kg", "ordenha2_kg"], ["464", "14,5", "13,0"])
+        r = c.post(
+            "/importar/controle_leiteiro_simples",
+            files={"file": ("modelo.csv", content, "text/csv")},
+            data={"data_controle": "2026-07-08"},
+        )
+        assert r.status_code == 200
+        assert r.json()["criados"] == 1
+        assert r.json()["erros"] == []
+
+        with Session(engine) as s:
+            registro = s.exec(select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == "464")).first()
+            assert registro.producao_kg == 27.5
+            assert registro.del_no_controle == 120
+            assert registro.data_controle == date(2026, 7, 8)
+
+    def test_linha_sem_numero_da_erro_sem_travar_arquivo(self, client):
+        c, _ = client
+        texto = "numero_matriz;ordenha1_kg;ordenha2_kg\r\n;14,5;13,0\r\n464;10,0;9,0\r\n"
+        r = c.post(
+            "/importar/controle_leiteiro_simples",
+            files={"file": ("modelo.csv", texto.encode("windows-1252"), "text/csv")},
+            data={"data_controle": "2026-07-08"},
+        )
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["criados"] == 1
+        assert len(corpo["erros"]) == 1
+
+
+class TestAnimaisCadastroEmLote:
+    def test_cria_e_atualiza_por_numero(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import Animal
+
+        texto = (
+            "numero;nome;sexo;raca;data_nasc;lote;data_entrada\r\n"
+            "465;Mimosa;F;Girolando;10/03/2024;01 - BEZ 1 (0 A 30);10/03/2024\r\n"
+        )
+        r = c.post("/importar/animais_cadastro", files={"file": ("modelo.csv", texto.encode("windows-1252"), "text/csv")})
+        assert r.status_code == 200
+        assert r.json()["criados"] == 1
+
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "465")).first()
+            assert animal.nome == "Mimosa"
+            assert animal.sexo == "F"
+            assert animal.grupo_primario == "01 - BEZ 1 (0 A 30)"
+            assert animal.grupo_manual is True
+            assert animal.data_nasc == date(2024, 3, 10)
+
+        # Reenvio com lote diferente atualiza em vez de duplicar.
+        texto2 = (
+            "numero;nome;sexo;raca;data_nasc;lote;data_entrada\r\n"
+            "465;Mimosa;F;Girolando;10/03/2024;02 - BEZ 2;10/03/2024\r\n"
+        )
+        r2 = c.post("/importar/animais_cadastro", files={"file": ("modelo.csv", texto2.encode("windows-1252"), "text/csv")})
+        assert r2.json()["atualizados"] == 1
+        with Session(engine) as s:
+            animais = s.exec(select(Animal).where(Animal.numero == "465")).all()
+            assert len(animais) == 1
+            assert animais[0].grupo_primario == "02 - BEZ 2"
+
+    def test_linha_sem_numero_da_erro(self, client):
+        c, _ = client
+        texto = "numero;nome;sexo;raca;data_nasc;lote;data_entrada\r\n;Mimosa;F;Girolando;;;\r\n"
+        r = c.post("/importar/animais_cadastro", files={"file": ("modelo.csv", texto.encode("windows-1252"), "text/csv")})
+        assert r.status_code == 200
+        assert r.json()["erros"]
+
+
+class TestBackfillFornecedoresEstoque:
+    def test_cadastra_fornecedores_e_itens_faltantes(self, client):
+        c, engine = client
+        from fazenda.models import ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Sanidade
+
+        with Session(engine) as s:
+            s.add(ContaGerencial(fornecedor_cliente="Agropecuária Central", valor_total=100))
+            s.add(ContaGerencial(fornecedor_cliente="Agropecuária Central", valor_total=50))  # duplicado, não deve duplicar
+            s.add(ContaGerencial(fornecedor_cliente=None, valor_total=10))
+            s.add(CurvaABC(produto="Sal mineral"))
+            s.add(LancamentoItem(numero_lancamento="LC-1", produto="Concentrado protéico", valor_total=10))
+            s.add(Dieta(lote=1, ingrediente="Silagem"))
+            s.add(Sanidade(numero_matriz="1", produto="Vacina X"))
+            # Já existentes — não devem ser recriados nem duplicados.
+            s.add(Fornecedor(nome="Agropecuária Central", tipo="fornecedor"))
+            s.add(Estoque(nome="Sal mineral", quantidade=100))
+            s.commit()
+
+        r = c.post("/importar/backfill")
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["total_fornecedores_criados"] == 0  # já existia
+        assert set(corpo["estoque_criados"]) == {"Concentrado protéico", "Silagem", "Vacina X"}
+        assert corpo["total_estoque_criados"] == 3
+
+        with Session(engine) as s:
+            fornecedores = s.exec(select(Fornecedor)).all()
+            assert len(fornecedores) == 1  # não duplicou o já existente
+            nomes_estoque = {e.nome for e in s.exec(select(Estoque)).all()}
+            assert nomes_estoque == {"Sal mineral", "Concentrado protéico", "Silagem", "Vacina X"}
+
+    def test_idempotente_ao_rodar_duas_vezes(self, client):
+        c, engine = client
+        from fazenda.models import ContaGerencial
+
+        with Session(engine) as s:
+            s.add(ContaGerencial(fornecedor_cliente="Fornecedor Novo", valor_total=100))
+            s.commit()
+
+        r1 = c.post("/importar/backfill")
+        assert r1.json()["total_fornecedores_criados"] == 1
+        r2 = c.post("/importar/backfill")
+        assert r2.json()["total_fornecedores_criados"] == 0

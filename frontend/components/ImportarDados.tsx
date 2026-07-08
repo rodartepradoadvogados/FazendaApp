@@ -1,9 +1,9 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Upload as UploadIcon, Download, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet } from "lucide-react";
-import { fetchModelosImportar, importarCSV, uploadCSV } from "@/lib/api";
+import { Upload as UploadIcon, Download, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet, Wand2 } from "lucide-react";
+import { fetchModelosImportar, importarCSV, uploadCSV, backfillFornecedoresEstoque } from "@/lib/api";
 
-type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string };
+type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string; precisa_data_controle?: boolean };
 type Status = "idle" | "uploading" | "ok" | "error";
 type Estado = { status: Status; msg: string };
 
@@ -32,13 +32,34 @@ export default function ImportarDados() {
   const [error, setError] = useState<string | null>(null);
   const [estados, setEstados] = useState<Record<string, Estado>>({});
   const [dragging, setDragging] = useState<string | null>(null);
+  const [datasControle, setDatasControle] = useState<Record<string, string>>({});
+  const [backfill, setBackfill] = useState<{ status: "idle" | "rodando" | "ok" | "error"; msg: string; detalhe?: { fornecedores: string[]; estoque: string[] } }>({ status: "idle", msg: "" });
 
   useEffect(() => { fetchModelosImportar().then(setModelos).catch((e) => setError(e.message)); }, []);
 
-  const handleNova = useCallback(async (categoria: string, file: File) => {
+  const rodarBackfill = useCallback(async () => {
+    setBackfill({ status: "rodando", msg: "Analisando dados já importados…" });
+    try {
+      const r = await backfillFornecedoresEstoque();
+      setBackfill({
+        status: "ok",
+        msg: `${r.total_fornecedores_criados} fornecedor(es) e ${r.total_estoque_criados} item(ns) de estoque cadastrados automaticamente.`,
+        detalhe: { fornecedores: r.fornecedores_criados, estoque: r.estoque_criados },
+      });
+    } catch (e: any) {
+      setBackfill({ status: "error", msg: e.message });
+    }
+  }, []);
+
+  const handleNova = useCallback(async (categoria: string, file: File, precisaData?: boolean) => {
+    if (precisaData && !datasControle[categoria]) {
+      setEstados((p) => ({ ...p, [categoria]: { status: "error", msg: "Escolha a data do controle antes de enviar o arquivo." } }));
+      return;
+    }
     setEstados((p) => ({ ...p, [categoria]: { status: "uploading", msg: "Enviando…" } }));
     try {
-      const res = await importarCSV(categoria, file);
+      const extra = precisaData ? { data_controle: datasControle[categoria] } : undefined;
+      const res = await importarCSV(categoria, file, extra);
       const partes: string[] = [];
       if (res.criados !== undefined) partes.push(`${res.criados} criados`);
       if (res.atualizados !== undefined) partes.push(`${res.atualizados} atualizados`);
@@ -47,7 +68,7 @@ export default function ImportarDados() {
     } catch (e: any) {
       setEstados((p) => ({ ...p, [categoria]: { status: "error", msg: e.message } }));
     }
-  }, []);
+  }, [datasControle]);
 
   const handleExistente = useCallback(async (categoria: string, tipoUpload: string, file: File) => {
     setEstados((p) => ({ ...p, [categoria]: { status: "uploading", msg: "Enviando…" } }));
@@ -112,6 +133,40 @@ export default function ImportarDados() {
         </p>
       </div>
 
+      <div className="card mb-6" style={{ borderLeft: "3px solid var(--dourado)" }}>
+        <div className="flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
+          <div>
+            <p style={{ fontWeight: 700, fontSize: "0.9rem" }} className="flex items-center gap-2"><Wand2 size={16} style={{ color: "var(--dourado)" }} /> Cadastro automático a partir do que já foi importado</p>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.2rem" }}>
+              Procura fornecedores e itens de estoque citados em lançamentos financeiros, curva ABC, dieta e sanidade
+              que ainda não têm cadastro próprio, e cria o cadastro básico deles automaticamente. Não duplica nada
+              que já existe — pode rodar quantas vezes quiser.
+            </p>
+          </div>
+          <button className="btn-primary" style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.4rem", flexShrink: 0 }}
+            onClick={rodarBackfill} disabled={backfill.status === "rodando"}>
+            {backfill.status === "rodando" ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <Wand2 size={14} />}
+            {backfill.status === "rodando" ? "Analisando…" : "Detectar e cadastrar"}
+          </button>
+        </div>
+        {backfill.status !== "idle" && backfill.status !== "rodando" && (
+          <div className="flex items-start gap-2 mt-3 p-2 rounded-lg"
+            style={{ background: backfill.status === "ok" ? "rgba(46,125,82,0.15)" : "rgba(192,57,43,0.15)",
+              border: `1px solid ${backfill.status === "ok" ? "var(--green)" : "var(--red)"}`, fontSize: "0.78rem" }}>
+            {backfill.status === "ok" ? <CheckCircle size={15} style={{ color: "var(--green-light)", flexShrink: 0, marginTop: "1px" }} /> : <XCircle size={15} style={{ color: "var(--red)", flexShrink: 0, marginTop: "1px" }} />}
+            <div>
+              <span style={{ color: backfill.status === "ok" ? "var(--green-light)" : "#E07070" }}>{backfill.msg}</span>
+              {backfill.detalhe && (backfill.detalhe.fornecedores.length > 0 || backfill.detalhe.estoque.length > 0) && (
+                <p style={{ color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {backfill.detalhe.fornecedores.length > 0 && <>Fornecedores: {backfill.detalhe.fornecedores.join(", ")}. </>}
+                  {backfill.detalhe.estoque.length > 0 && <>Estoque: {backfill.detalhe.estoque.join(", ")}.</>}
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {error && <div className="alert-critico mb-4"><span>Sem dados: {error}.</span></div>}
       {!modelos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -134,7 +189,16 @@ export default function ImportarDados() {
                     <Download size={13} /> Baixar modelo (com exemplo)
                   </button>
                 )}
-                <Dropzone id={id} onFile={(f) => handleNova(id, f)} />
+                {m.precisa_data_controle && (
+                  <div className="mb-2">
+                    <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>
+                      Data do controle (uma só para todo o arquivo)
+                    </label>
+                    <input type="date" value={datasControle[id] || ""} onChange={(e) => setDatasControle((p) => ({ ...p, [id]: e.target.value }))}
+                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                  </div>
+                )}
+                <Dropzone id={id} onFile={(f) => handleNova(id, f, m.precisa_data_controle)} />
               </div>
             ))}
           </div>

@@ -385,6 +385,21 @@ class AgendaEngine:
                 ref=conta.get("numero_lancamento") or conta.get("numero_nota"),
             ))
 
+        # 5b. NECESSIDADE DE COMPRA — só para itens marcados no cadastro
+        # ("Exibir necessidade de compra na agenda") e abaixo do estoque mínimo.
+        for item in estoque:
+            if not item.get("exibir_necessidade_compra_agenda"):
+                continue
+            minimo = item.get("estoque_minimo")
+            qtd = item.get("quantidade")
+            if minimo is None or qtd is None or qtd >= minimo:
+                continue
+            eventos.append(AgendaItem(
+                data=data_referencia,
+                categoria="Gestão/Financeiro",
+                descricao=f"Comprar {item['nome']} — estoque abaixo do mínimo ({qtd} de {minimo} {item.get('unidade') or ''})",
+            ))
+
         # 6. EVENTOS MANUAIS
         for ev in eventos_manuais:
             data_ev = ev.get("data_evento")

@@ -483,3 +483,29 @@ class TestAgendaEngine:
         partos_prov = [e for e in res.eventos if e.descricao.startswith("Parto provável")]
         assert len(partos_prov) == 1
         assert partos_prov[0].numero_animal == "500"
+
+
+class TestNecessidadeDeCompra:
+    def _calcular(self, estoque):
+        from fazenda.rules.agenda_engine import AgendaEngine
+        return AgendaEngine().calcular(date(2026, 7, 7), [], [], [], estoque, [], [])
+
+    def test_gera_evento_quando_marcado_e_abaixo_do_minimo(self):
+        estoque = [{"nome": "Sal mineral", "quantidade": 2, "estoque_minimo": 10,
+                    "unidade": "kg", "exibir_necessidade_compra_agenda": True}]
+        res = self._calcular(estoque)
+        compras = [e for e in res.eventos if e.descricao.startswith("Comprar")]
+        assert len(compras) == 1
+        assert "Sal mineral" in compras[0].descricao
+        assert compras[0].categoria == "Gestão/Financeiro"
+
+    def test_nao_gera_se_nao_marcado(self):
+        estoque = [{"nome": "Sal mineral", "quantidade": 2, "estoque_minimo": 10, "unidade": "kg"}]
+        res = self._calcular(estoque)
+        assert not [e for e in res.eventos if e.descricao.startswith("Comprar")]
+
+    def test_nao_gera_se_acima_do_minimo(self):
+        estoque = [{"nome": "Sal mineral", "quantidade": 20, "estoque_minimo": 10,
+                    "unidade": "kg", "exibir_necessidade_compra_agenda": True}]
+        res = self._calcular(estoque)
+        assert not [e for e in res.eventos if e.descricao.startswith("Comprar")]

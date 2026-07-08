@@ -183,14 +183,14 @@ export async function fetchFornecedores() {
   if (!res.ok) throw new Error(`Fornecedores error: ${res.status}`);
   return res.json();
 }
-export async function criarFornecedor(dados: { nome: string; tipo: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function criarFornecedor(dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/fornecedores`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fornecedor"); }
   return res.json();
 }
-export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
+export async function atualizarFornecedor(id: number, dados: { nome: string; tipo: string; categoria?: string; cnpj_cpf?: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean }) {
   const res = await authFetch(`${API}/cadastro/fornecedores/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -216,6 +216,13 @@ export async function atualizarAnimalFicha(numero: string, dados: Record<string,
 export async function fetchItensEstoqueCadastro() {
   const res = await authFetch(`${API}/cadastro/estoque-itens`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Itens de estoque error: ${res.status}`);
+  return res.json();
+}
+export async function criarItemEstoque(dados: Record<string, unknown>) {
+  const res = await authFetch(`${API}/estoque/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
   return res.json();
 }
 export async function atualizarMetaEstoque(id: number, dados: { ensacado?: boolean | null; kg_por_saco?: number | null; fornecedor_id?: number | null }) {
@@ -467,11 +474,18 @@ export async function fetchModelosImportar() {
   return res.json();
 }
 
-export async function importarCSV(categoria: string, file: File) {
+export async function importarCSV(categoria: string, file: File, extra?: Record<string, string>) {
   const form = new FormData();
   form.append("file", file);
+  Object.entries(extra || {}).forEach(([k, v]) => form.append(k, v));
   const res = await authFetch(`${API}/importar/${categoria}`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar"); }
+  return res.json();
+}
+
+export async function backfillFornecedoresEstoque() {
+  const res = await authFetch(`${API}/importar/backfill`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rodar o backfill"); }
   return res.json();
 }
 
