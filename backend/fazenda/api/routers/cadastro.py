@@ -15,7 +15,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Estoque, FolhaPagamento, Fornecedor, Pessoa
+from fazenda.models import Animal, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, Pessoa, PrincipioAtivo
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
@@ -286,3 +286,91 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     session.commit()
     session.refresh(item)
     return item.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Princípio ativo / Doença / Evento sanitário — cadastros de apoio ao
+# Calendário sanitário (Sanidade). Seed inicial com os nomes já usados no
+# protocolo padrão da fazenda (manejo sazonal + vacinas por fase fisiológica).
+# ---------------------------------------------------------------------------
+SEED_EVENTOS_SANITARIOS = [
+    "Vermífugo", "Reprodutiva (Primovacinação)", "Reprodutiva (Reforço)", "Clostridiose",
+    "Diarreia Neonatal", "Botulismo", "Tifopasteurina", "Leptospirose",
+    "Exames de Tuberculose e Brucelose", "Febre Aftosa", "Raiva", "Brucelose B19", "Brucelose RB51",
+]
+SEED_DOENCAS = [
+    "Brucelose", "Clostridiose", "Diarreia Neonatal", "Botulismo", "Pasteurelose", "Verminose",
+    "Leptospirose", "Tuberculose", "Febre Aftosa", "Raiva",
+]
+# Pequeno exemplo — só para ilustrar o vínculo com produtos já no Estoque.
+SEED_PRINCIPIOS_ATIVOS = ["Ivermectina", "Cepa B19 (Brucella abortus atenuada)"]
+
+
+def seed_cadastro_sanitario(session: Session) -> None:
+    """Cria os cadastros sanitários padrão se as tabelas ainda estiverem vazias (idempotente)."""
+    if not session.exec(select(EventoSanitario)).first():
+        for nome in SEED_EVENTOS_SANITARIOS:
+            session.add(EventoSanitario(nome=nome))
+    if not session.exec(select(Doenca)).first():
+        for nome in SEED_DOENCAS:
+            session.add(Doenca(nome=nome))
+    if not session.exec(select(PrincipioAtivo)).first():
+        for nome in SEED_PRINCIPIOS_ATIVOS:
+            session.add(PrincipioAtivo(nome=nome))
+    session.commit()
+
+
+class NomeAtivoIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+def _crud_nome_ativo(model):
+    """Fábrica de CRUD idêntico para os 3 cadastros simples (nome + ativo)."""
+
+    def listar(session: Session = Depends(get_session)) -> list[dict]:
+        return [m.model_dump() for m in session.exec(select(model).order_by(model.nome)).all()]
+
+    def criar(dados: NomeAtivoIn, session: Session = Depends(get_session)) -> dict:
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        if session.exec(select(model).where(model.nome == nome)).first():
+            raise HTTPException(status_code=409, detail=f"Já existe um registro com o nome '{nome}'")
+        obj = model(nome=nome, ativo=dados.ativo)
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    def atualizar(item_id: int, dados: NomeAtivoIn, session: Session = Depends(get_session)) -> dict:
+        obj = session.get(model, item_id)
+        if not obj:
+            raise HTTPException(status_code=404, detail="Registro não encontrado")
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        obj.nome = nome
+        obj.ativo = dados.ativo
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    return listar, criar, atualizar
+
+
+_listar_principios, _criar_principio, _atualizar_principio = _crud_nome_ativo(PrincipioAtivo)
+router.get("/principios-ativos")(_listar_principios)
+router.post("/principios-ativos")(_criar_principio)
+router.put("/principios-ativos/{item_id}")(_atualizar_principio)
+
+_listar_doencas, _criar_doenca, _atualizar_doenca = _crud_nome_ativo(Doenca)
+router.get("/doencas")(_listar_doencas)
+router.post("/doencas")(_criar_doenca)
+router.put("/doencas/{item_id}")(_atualizar_doenca)
+
+_listar_eventos, _criar_evento, _atualizar_evento = _crud_nome_ativo(EventoSanitario)
+router.get("/eventos-sanitarios")(_listar_eventos)
+router.post("/eventos-sanitarios")(_criar_evento)
+router.put("/eventos-sanitarios/{item_id}")(_atualizar_evento)

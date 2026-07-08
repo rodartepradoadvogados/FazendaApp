@@ -501,6 +501,63 @@ class Sanidade(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Cadastros de apoio ao Calendário sanitário (Configurações > Cadastro).
+# ---------------------------------------------------------------------------
+class PrincipioAtivo(SQLModel, table=True):
+    __tablename__ = "principio_ativo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Doenca(SQLModel, table=True):
+    __tablename__ = "doenca"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EventoSanitario(SQLModel, table=True):
+    """Nome do evento/protocolo sanitário (ex.: Vermífugo, Brucelose B19, Leptospirose)."""
+
+    __tablename__ = "evento_sanitario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CalendarioSanitario(SQLModel, table=True):
+    """
+    Uma regra do calendário sanitário da fazenda — sazonal/de rebanho (ex.:
+    vermífugo a cada 4 meses para bezerras) ou por fase fisiológica (ex.:
+    Brucelose B19 no nascimento). `data_evento` é a data de referência; a
+    recorrência (frequencia_valor/unidade) projeta a próxima ocorrência.
+    """
+
+    __tablename__ = "calendario_sanitario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    evento_sanitario_id: int = Field(foreign_key="evento_sanitario.id")
+    categoria_alvo: Optional[str] = None  # ex.: "Bezerras (até 4 a 8 meses)"
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
+    produto: Optional[str] = None  # nome do item de estoque (medicamento/vacina)
+    principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
+    dosagem: Optional[str] = None  # texto livre — ex.: "2 mL a 5 mL (conforme bula)"
+    frequencia_valor: int
+    frequencia_unidade: str  # "dias" | "meses" | "anos"
+    data_evento: date  # data de referência do evento (base da recorrência)
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Secagem(SQLModel, table=True):
     """Registro de secagem de uma vaca — produto(s) usado(s) entram como Sanidade (atividade='Secagem')."""
 

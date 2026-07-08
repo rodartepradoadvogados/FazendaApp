@@ -205,3 +205,50 @@ class TestFolhaPagamento:
         assert r.status_code == 200
         assert r.json()["status"] == "pago"
         assert r.json()["data_pagamento"] == "2026-07-05"
+
+
+class TestCadastroSanitario:
+    """Princípio ativo / Doença / Evento sanitário — cadastros simples nome+ativo."""
+
+    def test_seed_cria_eventos_doencas_e_principios_padrao(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_cadastro_sanitario
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+        eventos = c.get("/cadastro/eventos-sanitarios").json()
+        doencas = c.get("/cadastro/doencas").json()
+        principios = c.get("/cadastro/principios-ativos").json()
+        assert any(e["nome"] == "Vermífugo" for e in eventos)
+        assert any(d["nome"] == "Brucelose" for d in doencas)
+        assert len(principios) >= 1
+
+    def test_seed_e_idempotente(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_cadastro_sanitario
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+            seed_cadastro_sanitario(s)
+        n1 = len(c.get("/cadastro/eventos-sanitarios").json())
+        with Session(engine) as s:
+            seed_cadastro_sanitario(s)
+        n2 = len(c.get("/cadastro/eventos-sanitarios").json())
+        assert n1 == n2
+
+    def test_cria_e_atualiza_doenca(self, client):
+        c, engine = client
+        doenca_id = c.post("/cadastro/doencas", json={"nome": "Raiva bovina"}).json()["id"]
+        r = c.put(f"/cadastro/doencas/{doenca_id}", json={"nome": "Raiva bovina", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+    def test_nao_permite_evento_sanitario_duplicado(self, client):
+        c, engine = client
+        c.post("/cadastro/eventos-sanitarios", json={"nome": "Vacina X"})
+        r = c.post("/cadastro/eventos-sanitarios", json={"nome": "Vacina X"})
+        assert r.status_code == 409
+
+    def test_cria_principio_ativo(self, client):
+        c, engine = client
+        r = c.post("/cadastro/principios-ativos", json={"nome": "Doramectina"})
+        assert r.status_code == 200
+        assert "Doramectina" in [p["nome"] for p in c.get("/cadastro/principios-ativos").json()]
