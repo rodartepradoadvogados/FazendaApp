@@ -8,6 +8,10 @@ const COLUNAS_RANKING = [
   { header: "Vaca", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Média (kg)", key: "media" },
   { header: "Pico (kg)", key: "pico" }, { header: "Última (kg)", key: "ultima" }, { header: "Pesagens", key: "n" },
 ];
+const COLUNAS_FILTRADOS = [
+  { header: "Vaca", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Data", key: "dataFmt" },
+  { header: "DEL (dias)", key: "del" }, { header: "Produção (kg)", key: "producaoFmt" },
+];
 
 type Ctrl = { numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null };
 
@@ -101,6 +105,11 @@ export default function ProducaoPage() {
     }).sort((a, b) => b.media - a.media);
   }, [comProd]);
 
+  const filtradosExport = useMemo(() => filtrados.map((r) => ({
+    ...r, dataFmt: r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—",
+    producaoFmt: r.producao_kg != null ? r.producao_kg : "—",
+  })), [filtrados]);
+
   const ultimaData = serie.length ? serie[serie.length - 1] : null;
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
@@ -160,7 +169,7 @@ export default function ProducaoPage() {
             </div>
           </div>
 
-          <div className="card">
+          <div className="card mb-4">
             <div className="card-header mb-3 flex items-center justify-between">
               <span>Ranking de Produção (top 20 por média)</span>
               <ExportarBotoes titulo="Ranking de Produção Leiteira" nomeArquivoBase="ranking_producao" colunas={COLUNAS_RANKING} linhas={ranking} />
@@ -179,6 +188,30 @@ export default function ProducaoPage() {
                 ))}
               </tbody>
             </table>
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Registros filtrados ({filtrados.length})</span>
+              <ExportarBotoes titulo="Produção filtrada — Controle leiteiro" nomeArquivoBase="producao_filtrada" colunas={COLUNAS_FILTRADOS} linhas={filtradosExport} />
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Vaca</th><th>Raça</th><th>Data</th><th>DEL (dias)</th><th>Produção (kg)</th></tr></thead>
+                <tbody>
+                  {filtrados.map((r, i) => (
+                    <tr key={`${r.numero}-${r.data}-${i}`}>
+                      <td style={{ fontWeight: 700 }}>{r.numero}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{r.raca}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td>{r.del ?? "—"}</td>
+                      <td>{r.producao_kg != null ? `${r.producao_kg} kg` : "—"}</td>
+                    </tr>
+                  ))}
+                  {!filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>
       )}

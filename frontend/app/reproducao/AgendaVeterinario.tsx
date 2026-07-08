@@ -2,6 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, ChevronRight, ChevronUp, Stethoscope, AlertTriangle, Check, X } from "lucide-react";
 import { fetchAgendaVeterinario, registrarReconfirmacao } from "@/lib/api";
+import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -152,9 +153,25 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
   reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: () => void;
 }) {
   const ord = useOrdenacao(itens);
+  const colunasExport = [
+    { header: "Matriz", key: "numero_matriz" }, { header: "Categoria", key: "categoria" },
+    { header: "Peso (kg)", key: "peso" }, { header: "Dias insem.", key: "dias_inseminada" },
+    { header: "Data serviço", key: "data_servico_fmt" }, { header: "Toque", key: "tocada_fmt" },
+    { header: "Reconfirmação", key: "reconfirmada_fmt" },
+    ...(cfg.extra === "atrasada" ? [{ header: "Situação", key: "situacao_fmt" }] : []),
+    ...(cfg.extra === "dias_para_parto" ? [{ header: "Dias p/ parto", key: "dias_para_parto" }] : []),
+    ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
+  ];
+  const linhasExport = ord.linhasOrdenadas.map((it) => ({
+    ...it, data_servico_fmt: fmtDia(it.data_servico), tocada_fmt: it.tocada ? "Sim" : "—",
+    reconfirmada_fmt: it.reconfirmada ? "Sim" : "—", situacao_fmt: it.atrasada ? "Atrasada" : "No prazo",
+  }));
   return (
     <div className="card mb-3" style={{ overflowX: "auto" }}>
-      <div className="card-header mb-2">{cfg.label}</div>
+      <div className="card-header mb-2 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+        <span>{cfg.label}</span>
+        <ExportarBotoes titulo={`Agenda do veterinário — ${cfg.label}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${cfg.key}`} />
+      </div>
       <table className="fazenda-table">
         <thead><tr>
           <Th label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
