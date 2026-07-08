@@ -1,5 +1,5 @@
 """
-Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 9
+Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 10
 listas para orientar a visita reprodutiva. Machos, bezerras e novilhas com
 peso confirmado abaixo de 260 kg nunca entram em nenhuma lista.
 
@@ -9,6 +9,10 @@ Parâmetros de análise (documentados aqui para aparecerem também na tela):
     fica marcada como "toque atrasado".
   - Inseminada com 60 dias ou mais: reconfirmar; se não tiver reconfirmação
     nessa fase, fica marcada como "atrasada para reconfirmação".
+  - Vazias por diagnóstico (10ª lista): diagnóstico negativo no toque OU
+    perda de prenhez confirmada na reconfirmação — precisam de novo serviço.
+    Fica separada de "pendentes de classificação", que é só para dado
+    faltante (peso não registrado, sem histórico de serviço).
 """
 from __future__ import annotations
 
@@ -42,7 +46,8 @@ def classificar_rebanho(
     listas: dict[str, list[dict]] = {
         "inseminadas_1_29": [], "inseminadas_30_59": [], "inseminadas_60_mais": [],
         "novilhas_aptas_vazias": [], "novilhas_gestantes": [], "verificar_aptidao": [],
-        "verificar_pre_parto": [], "vacas_gestantes": [], "pendentes_classificacao": [],
+        "verificar_pre_parto": [], "vacas_gestantes": [],
+        "vazias_por_diagnostico": [], "pendentes_classificacao": [],
     }
 
     for animal in animais:
@@ -113,16 +118,20 @@ def classificar_rebanho(
             classificado = True
 
         if not classificado:
-            if categoria == "novilha" and peso is None:
-                motivo = "Novilha sem peso registrado — não é possível confirmar aptidão."
-            elif negativo_toque:
+            if negativo_toque:
                 motivo = f"{categoria.capitalize()} com diagnóstico negativo no toque, aguardando novo serviço."
+                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
             elif perda_prenhez:
                 motivo = "Perda de prenhez confirmada na reconfirmação, aguardando novo serviço."
+                listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
+            elif categoria == "novilha" and peso is None:
+                motivo = "Novilha sem peso registrado — não é possível confirmar aptidão."
+                listas["pendentes_classificacao"].append({**base, "motivo": motivo})
             elif not servico:
                 motivo = f"{categoria.capitalize()} sem histórico de serviço nem diagnóstico de gestação registrado."
+                listas["pendentes_classificacao"].append({**base, "motivo": motivo})
             else:
                 motivo = "Dados insuficientes para classificar."
-            listas["pendentes_classificacao"].append({**base, "motivo": motivo})
+                listas["pendentes_classificacao"].append({**base, "motivo": motivo})
 
     return listas

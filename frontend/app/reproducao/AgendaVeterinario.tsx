@@ -54,7 +54,8 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
   { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
   { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
   { key: "verificar_pre_parto", label: "Verificar pré-parto (31–60 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
-  { key: "pendentes_classificacao", label: "Pendentes de classificação", color: "var(--text-muted)", extra: "motivo" },
+  { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo" },
+  { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo" },
 ];
 
 function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: () => void; onCancelar: () => void }) {
