@@ -19,6 +19,8 @@ from fazenda.api.routers import (
     exclusoes,
     financeiro,
     indicadores,
+    lotes,
+    movimentacoes,
     parametros,
     producao,
     reproducao,
@@ -83,6 +85,9 @@ app.include_router(producao.router, dependencies=_protegido)
 app.include_router(reproducao.router, dependencies=_protegido)
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(sanidade.router, dependencies=_protegido)
+# Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
+app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
+app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 # Exclusões são destrutivas — restritas a administradores.
 app.include_router(exclusoes.router, dependencies=[Depends(exigir_admin)])
 

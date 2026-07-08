@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Users, Layers } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
+import CadastroLotes from "@/components/CadastroLotes";
 
-type Aba = "parametros" | "upload" | "usuarios";
+type Aba = "cadastro" | "parametros" | "upload" | "usuarios";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -14,6 +15,7 @@ export default function ConfiguracoesPage() {
 
   useEffect(() => {
     const abas: { id: Aba; label: string; icon: any }[] = [];
+    if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers });
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users });
@@ -46,6 +48,7 @@ export default function ConfiguracoesPage() {
         ))}
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
+        {aba === "cadastro" && <CadastroLotes />}
         {aba === "parametros" && <ParametrosPage />}
         {aba === "upload" && <UploadPage />}
         {aba === "usuarios" && <UsuariosPage />}

@@ -130,8 +130,12 @@ async def _upsert_geral(content: bytes, session: Session) -> dict:
         ).first()
 
         if existing:
-            # Atualiza campos
+            # Atualiza campos — exceto o lote, se ele já foi definido manualmente
+            # (ver Animal.grupo_manual): uma movimentação feita no site não pode
+            # ser silenciosamente revertida pelo próximo upload do GERAL.csv.
             for field in animal_novo.model_fields_set:
+                if field in ("grupo_primario", "grupo_raw") and existing.grupo_manual:
+                    continue
                 setattr(existing, field, getattr(animal_novo, field))
             session.add(existing)
             updated += 1

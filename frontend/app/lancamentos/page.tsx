@@ -5,6 +5,7 @@ import {
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, ehAdmin } from "@/lib/api";
+import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
@@ -24,13 +25,6 @@ const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : "");
 const LACT = ["01", "02", "03"];
 const IDADE_MIN_SERVICO = 13; // meses — abaixo disso a fêmea não é apta a serviço
-
-// Pessoas que podem aparecer como responsável / inseminador.
-const RESPONSAVEIS = [
-  "Jairo Nasser (proprietário)", "Alexandre Rodarte (CEO)", "Alexandre Scarpa (consultor)",
-  "Leomir Bonfim (funcionário)", "Alane dos Santos (funcionária)", "Valéria Bonfim (funcionária)",
-  "Jorbeson Nunes (funcionário)", "Huerik (veterinário COMIGO)", "Carlos Alpha/ABS (veterinário Alpha/ABS)",
-];
 // Sêmen (touros) atualmente em estoque — usados na seleção do touro em Serviço/IA.
 const TOUROS_ESTOQUE = [
   "COORS", "GUINESS", "ABS LABEL", "CAMPEAO FI", "DESCONHECIDO", "HAGEN", "JAG", "LUZIO", "METEORO",

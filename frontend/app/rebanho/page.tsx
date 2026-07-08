@@ -1,9 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import MovimentarAnimais from "@/components/MovimentarAnimais";
+import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 
 type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
@@ -18,7 +20,7 @@ const SIT_CORES: Record<string, string> = {
 const LACTACAO = ["01", "02", "03"];
 const cod = (g: string | null) => (g && g.length >= 2 && /\d\d/.test(g.slice(0, 2)) ? g.slice(0, 2) : null);
 
-export default function RebanhoPage() {
+function RebanhoVisaoGeral() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fGrupo, setFGrupo] = useState("");
@@ -185,6 +187,31 @@ export default function RebanhoPage() {
       )}
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
+    </div>
+  );
+}
+
+export default function RebanhoPage() {
+  const [aba, setAba] = useState<"visao" | "mover" | "historico">("visao");
+
+  return (
+    <div className="px-6 pt-6">
+      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+        {([["visao", "Rebanho", Beef], ["mover", "Movimentar animais", ArrowRightLeft], ["historico", "Histórico", History]] as const).map(([k, label, Icon]) => (
+          <button key={k} onClick={() => setAba(k)}
+            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+              border: "1px solid " + (aba === k ? "var(--dourado)" : "var(--border)"),
+              background: aba === k ? "rgba(94,26,46,0.4)" : "transparent",
+              color: aba === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === k ? 700 : 500 }}>
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+      <div style={{ margin: "0 -1.5rem" }}>
+        {aba === "visao" && <RebanhoVisaoGeral />}
+        {aba === "mover" && <MovimentarAnimais />}
+        {aba === "historico" && <HistoricoMovimentacoes />}
+      </div>
     </div>
   );
 }
