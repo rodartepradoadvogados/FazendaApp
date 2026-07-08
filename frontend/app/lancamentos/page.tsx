@@ -2,12 +2,13 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby,
-  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle,
+  Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, ehAdmin } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { FormExclusao } from "@/components/FormExclusao";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
@@ -672,9 +673,13 @@ const TIPOS = [
   { id: "financeiro", label: "Financeiro", icon: Wallet, desc: "Lançamento de receita ou despesa." },
   { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque." },
 ];
+const TIPO_EXCLUSAO = { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto." };
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("animal");
+  const [souAdmin, setSouAdmin] = useState(false);
+  useEffect(() => { setSouAdmin(ehAdmin()); }, []);
+  const tiposVisiveis = souAdmin ? [...TIPOS, TIPO_EXCLUSAO] : TIPOS;
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
@@ -710,7 +715,7 @@ export default function LancamentosPage() {
     const idade = (a as any).idade_meses;
     return idade == null || idade >= IDADE_MIN_SERVICO;
   }), [animais]);
-  const tipo = TIPOS.find((t) => t.id === sel)!;
+  const tipo = tiposVisiveis.find((t) => t.id === sel)!;
 
   return (
     <div className="p-6 animate-in">
@@ -724,6 +729,8 @@ export default function LancamentosPage() {
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro" ? (
             <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
+          ) : sel === "exclusao" ? (
+            <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Busque o registro, confira o que será impactado e só depois confirme.</>
           ) : (
             <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
             mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
@@ -734,7 +741,7 @@ export default function LancamentosPage() {
       <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-4">
         <div className="card" style={{ padding: "0.5rem", alignSelf: "start" }}>
           <div className="space-y-1">
-            {TIPOS.map((t) => {
+            {tiposVisiveis.map((t) => {
               const Icon = t.icon; const ativo = t.id === sel;
               return (
                 <button key={t.id} onClick={() => setSel(t.id)}
@@ -759,6 +766,7 @@ export default function LancamentosPage() {
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
+          {sel === "exclusao" && <FormExclusao />}
         </div>
       </div>
     </div>

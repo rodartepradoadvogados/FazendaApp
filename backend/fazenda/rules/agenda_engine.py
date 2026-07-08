@@ -10,6 +10,7 @@ AgendaEngine.calcular(data_referencia) → AgendaResult com:
 """
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 from typing import Any
@@ -36,6 +37,13 @@ class AgendaItem:
     numero_animal: str | None = None
     observacao: str | None = None
     fonte: str = "auto"  # "auto" ou "manual"
+    ref: str | None = None  # referência p/ agrupar (ex.: nº do lançamento financeiro)
+
+    @property
+    def chave(self) -> str:
+        """Hash estável do evento — identidade usada para marcar 'realizado'."""
+        bruto = f"{self.data.isoformat()}|{self.categoria}|{self.descricao}|{self.numero_animal or ''}"
+        return hashlib.sha1(bruto.encode()).hexdigest()[:16]
 
     @property
     def cor(self) -> str:
@@ -86,6 +94,7 @@ class AgendaEngine:
         estoque: list[dict],
         contas: list[dict],
         eventos_manuais: list[dict],
+        dias_contas_a_pagar: int = DIAS_CONTAS_A_PAGAR,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -327,8 +336,8 @@ class AgendaEngine:
             descricao="Pesagem de bezerros / recria",
         ))
 
-        # 5. CONTAS A PAGAR (próximos 10 dias)
-        limite_contas = data_referencia + timedelta(days=DIAS_CONTAS_A_PAGAR)
+        # 5. CONTAS A PAGAR (próximos N dias — padrão 10, ou o período pedido pelo front)
+        limite_contas = data_referencia + timedelta(days=dias_contas_a_pagar)
         contas_proximas = [
             c for c in contas
             if c.get("data_vencimento")
@@ -342,6 +351,7 @@ class AgendaEngine:
                 categoria="Gestão/Financeiro",
                 descricao=f"Conta a pagar: {conta.get('descricao', '')} — R$ {conta.get('valor_total', 0):,.2f}",
                 observacao=conta.get("fornecedor_cliente"),
+                ref=conta.get("numero_lancamento") or conta.get("numero_nota"),
             ))
 
         # 6. EVENTOS MANUAIS

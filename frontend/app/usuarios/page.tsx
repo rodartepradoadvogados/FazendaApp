@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Users, AlertTriangle, UserPlus, Check } from "lucide-react";
-import { fetchUsuarios, criarUsuario, atualizarUsuario } from "@/lib/api";
+import { Users, AlertTriangle, UserPlus, Check, Pencil, X } from "lucide-react";
+import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario } from "@/lib/api";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -26,6 +26,7 @@ export default function UsuariosPage() {
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
   const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
   const [salvando, setSalvando] = useState(false);
+  const [editando, setEditando] = useState<any | null>(null);
 
   const carregar = () => fetchUsuarios().then(setUsuarios).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -47,6 +48,8 @@ export default function UsuariosPage() {
     try { await atualizarUsuario(u.id, { ativo: !u.ativo }); carregar(); }
     catch (e: any) { setError(e.message); }
   };
+
+  const meuId = getUsuario()?.id;
 
   return (
     <div className="p-6 animate-in">
@@ -105,7 +108,7 @@ export default function UsuariosPage() {
           <div className="card-header mb-3">Usuários cadastrados</div>
           {!usuarios ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
             <table className="fazenda-table">
-              <thead><tr><th>Login</th><th>Nome</th><th>Acesso</th><th>Ativo</th></tr></thead>
+              <thead><tr><th>Login</th><th>Nome</th><th>Acesso</th><th>Ativo</th><th></th></tr></thead>
               <tbody>
                 {usuarios.map((u) => (
                   <tr key={u.id}>
@@ -115,15 +118,109 @@ export default function UsuariosPage() {
                       {u.papel === "admin" ? "Administrador (tudo)" : `${(u.permissoes || []).length} módulos${(u.permissoes || []).includes("financeiro") ? "" : " · sem financeiro"}`}
                     </td>
                     <td>
-                      <button onClick={() => toggleAtivo(u)} className="btn-ghost" style={{ fontSize: "0.7rem", color: u.ativo ? "var(--green-light)" : "var(--red)" }}>
+                      <button onClick={() => toggleAtivo(u)} className="btn-ghost" style={{ fontSize: "0.7rem", color: u.ativo ? "var(--green-light)" : "var(--red)" }} disabled={u.id === meuId}>
                         {u.ativo ? "Ativo" : "Inativo"}
                       </button>
+                    </td>
+                    <td>
+                      <button onClick={() => setEditando(u)} className="btn-ghost" style={{ fontSize: "0.7rem" }}><Pencil size={13} /> Editar</button>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           )}
+        </div>
+      </div>
+
+      {editando && (
+        <EditarUsuarioModal
+          usuario={editando}
+          souEu={editando.id === meuId}
+          onClose={() => setEditando(null)}
+          onSalvo={() => { setEditando(null); carregar(); }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any; souEu: boolean; onClose: () => void; onSalvo: () => void }) {
+  const [username, setUsername] = useState(usuario.username);
+  const [nome, setNome] = useState(usuario.nome || "");
+  const [papel, setPapel] = useState<"admin" | "operador">(usuario.papel);
+  const [perms, setPerms] = useState<Set<string>>(new Set(usuario.papel === "admin" ? TODOS : usuario.permissoes || []));
+  const [ativo, setAtivo] = useState<boolean>(usuario.ativo);
+  const [novaSenha, setNovaSenha] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const toggle = (k: string) => setPerms((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; });
+
+  const salvar = async () => {
+    setSalvando(true); setErro(null);
+    try {
+      await atualizarUsuario(usuario.id, {
+        username: username.trim(), nome: nome.trim() || undefined, papel,
+        permissoes: papel === "admin" ? TODOS : Array.from(perms),
+        ativo, ...(novaSenha ? { senha: novaSenha } : {}),
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div onClick={onClose} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
+      <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "480px", maxWidth: "95vw", maxHeight: "88vh", overflowY: "auto" }}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>Editar usuário</div>
+          <button onClick={onClose} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
+        </div>
+        <div className="space-y-3">
+          <div><label style={lbl}>Usuário (login)</label><input style={inp} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
+          <div><label style={lbl}>Nome</label><input style={inp} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+          <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
+          <div><label style={lbl}>Tipo</label>
+            <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
+              <option value="admin">Administrador (acesso total + gerencia usuários)</option>
+              <option value="operador">Operador (você escolhe os módulos)</option>
+            </select>
+          </div>
+
+          {papel === "operador" && (
+            <div>
+              <div className="flex items-center justify-between mb-1">
+                <label style={lbl}>Módulos liberados</label>
+                <div className="flex gap-2">
+                  <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setPerms(new Set(TODOS))}>Acesso total</button>
+                  <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setPerms(new Set(TODOS.filter((k) => k !== "financeiro")))}>Sem financeiro</button>
+                  <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setPerms(new Set(["capa"]))}>Limpar</button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem" }}>
+                {MODULOS.map((m) => (
+                  <label key={m.key} className="flex items-center gap-2" style={{ fontSize: "0.8rem", opacity: m.key === "capa" ? 0.7 : 1 }}>
+                    <input type="checkbox" checked={perms.has(m.key)} disabled={m.key === "capa"} onChange={() => toggle(m.key)} /> {m.label}
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <div>
+            <label style={{ ...lbl, display: "flex", alignItems: "center", gap: "0.4rem" }}>
+              <input type="checkbox" checked={ativo} disabled={souEu} onChange={(e) => setAtivo(e.target.checked)} /> Ativo
+            </label>
+            {souEu && <p style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Você não pode desativar a si mesmo.</p>}
+          </div>
+
+          {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+
+          <div className="flex items-center gap-3 mt-2">
+            <button className="btn-primary" onClick={salvar} disabled={salvando || !username}><Check size={15} /> Salvar</button>
+            <button className="btn-ghost" onClick={onClose}>Cancelar</button>
+          </div>
         </div>
       </div>
     </div>

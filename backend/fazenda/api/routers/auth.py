@@ -30,6 +30,7 @@ class NovoUsuario(BaseModel):
 
 
 class EditarUsuario(BaseModel):
+    username: str | None = None
     nome: str | None = None
     papel: str | None = None
     permissoes: list[str] | None = None
@@ -84,6 +85,10 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
     u = session.get(Usuario, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if dados.username is not None and dados.username != u.username:
+        if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
+            raise HTTPException(status_code=400, detail="Já existe um usuário com esse login")
+        u.username = dados.username
     if dados.nome is not None:
         u.nome = dados.nome
     if dados.papel is not None:

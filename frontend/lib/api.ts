@@ -106,10 +106,27 @@ export async function checkHealth(): Promise<boolean> {
   }
 }
 
-export async function fetchAgenda(data?: string) {
-  const url = data ? `${API}/agenda/?data=${data}` : `${API}/agenda/`;
+export async function fetchAgenda(data?: string, dias?: number) {
+  const qs = new URLSearchParams();
+  if (data) qs.set("data", data);
+  if (dias) qs.set("dias", String(dias));
+  const url = `${API}/agenda/${qs.toString() ? `?${qs}` : ""}`;
   const res = await authFetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Agenda error: ${res.status}`);
+  return res.json();
+}
+
+export async function marcarEventoRealizado(eventoId: string) {
+  const res = await authFetch(`${API}/agenda/realizados`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ evento_id: eventoId }),
+  });
+  if (!res.ok) throw new Error("Erro ao marcar como realizado");
+  return res.json();
+}
+
+export async function desmarcarEventoRealizado(eventoId: string) {
+  const res = await authFetch(`${API}/agenda/realizados/${eventoId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error("Erro ao desfazer");
   return res.json();
 }
 
@@ -261,6 +278,39 @@ export async function addEventoManual(data: {
   if (data.observacao) qs.set("observacao", data.observacao);
   const res = await authFetch(`${API}/agenda/manual?${qs}`, { method: "POST" });
   if (!res.ok) throw new Error("Erro ao adicionar evento");
+  return res.json();
+}
+
+// ── Exclusões (restrito a administradores) ──
+export async function fetchTiposExclusao() {
+  const res = await authFetch(`${API}/exclusoes/tipos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tipos de exclusão error: ${res.status}`);
+  return res.json();
+}
+export async function buscarExclusao(tipo: string, termo: string) {
+  const qs = new URLSearchParams({ tipo, termo });
+  const res = await authFetch(`${API}/exclusoes/buscar?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Busca de exclusão error: ${res.status}`);
+  return res.json();
+}
+// FastAPI 422 traz "detail" como lista de erros de validação, não string — normaliza para texto.
+function detalheErro(d: any, fallback: string): string {
+  if (typeof d?.detail === "string") return d.detail;
+  if (Array.isArray(d?.detail)) return d.detail.map((e: any) => e.msg || JSON.stringify(e)).join("; ");
+  return fallback;
+}
+export async function impactoExclusao(tipo: string, id: string) {
+  const res = await authFetch(`${API}/exclusoes/impacto`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao calcular impacto")); }
+  return res.json();
+}
+export async function confirmarExclusao(tipo: string, id: string) {
+  const res = await authFetch(`${API}/exclusoes/confirmar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao excluir")); }
   return res.json();
 }
 
