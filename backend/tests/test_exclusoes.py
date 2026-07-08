@@ -78,7 +78,7 @@ class TestExclusaoAnimal:
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "animal", "id": "999"})
         assert r.status_code == 200
-        assert r.json()["excluido"] is True
+        assert r.json()["status"] == "excluido"
 
         with _sessao(engine) as s:
             from sqlmodel import select
@@ -130,7 +130,7 @@ class TestExclusaoFinanceiro:
 
         r = c.post("/exclusoes/confirmar", json={"tipo": "financeiro", "id": str(id_)})
         assert r.status_code == 200
-        assert r.json()["excluido"] is True
+        assert r.json()["status"] == "excluido"
 
 
 class TestBusca:

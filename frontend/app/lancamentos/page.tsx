@@ -1,15 +1,16 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby,
+  ClipboardList, Info, Beef, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2,
 } from "lucide-react";
-import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, ehAdmin } from "@/lib/api";
+import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
+import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
 
@@ -731,17 +732,37 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
   );
 }
 
-const TIPOS = [
-  { id: "animal", label: "Animal (ficha)", icon: Beef, desc: "Cadastro/atualização de um animal do rebanho." },
-  { id: "servico", label: "Serviço / IA", icon: Heart, desc: "Inseminação, IATF ou cobertura — individual ou em lote." },
-  { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
-  { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
-  { id: "producao", label: "Controle leiteiro", icon: Milk, desc: "Pesagem de leite por vaca ou por lote." },
-  { id: "sanidade", label: "Sanidade", icon: Syringe, desc: "Aplicação de medicamento / manejo sanitário." },
-  { id: "financeiro", label: "Financeiro", icon: Wallet, desc: "Lançamento de receita ou despesa." },
-  { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque." },
+// Tipos de lançamento, agrupados: alguns grupos (Reprodutivo, Produção) têm uma
+// camada inferior de sub-tipos, para economizar abas no menu.
+const TIPOS_GRUPOS = [
+  { id: "animal", label: "Animal (ficha)", icon: Beef, desc: "Cadastro/atualização de um animal do rebanho.", leaf: "animal" },
+  {
+    id: "reprodutivo", label: "Reprodutivo", icon: Heart,
+    desc: "Serviço/IA, diagnóstico de gestação ou parto/nascimento.",
+    subs: [
+      { id: "servico", label: "Serviço / IA", icon: Heart, desc: "Inseminação, IATF ou cobertura — individual ou em lote." },
+      { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
+      { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
+    ],
+  },
+  {
+    id: "producao", label: "Produção", icon: Milk,
+    desc: "Controle leiteiro ou pesagem corporal.",
+    subs: [
+      { id: "controle", label: "Controle leiteiro", icon: Milk, desc: "Pesagem de leite por vaca ou por lote." },
+      { id: "pesagem", label: "Pesagem corporal", icon: Scale, desc: "Peso vivo por animal ou por lote — acompanha o crescimento do rebanho." },
+    ],
+  },
+  { id: "sanidade", label: "Sanidade", icon: Syringe, desc: "Aplicação de medicamento / manejo sanitário.", leaf: "sanidade" },
+  { id: "financeiro", label: "Financeiro", icon: Wallet, desc: "Lançamento de receita ou despesa.", leaf: "financeiro" },
+  { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque.", leaf: "estoque" },
+  { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto.", leaf: "exclusao" },
 ];
-const TIPO_EXCLUSAO = { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto." };
+
+// Lista achatada de sub-tipos (folhas), usada para saber qual formulário renderizar.
+const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) => (g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]));
+// Grupo dono de um determinado sub-tipo (folha).
+const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.subs?.some((s) => s.id === id))?.id ?? "animal";
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("animal");
@@ -752,15 +773,12 @@ export default function LancamentosPage() {
     setSujo(false);
     setSel(novoId);
   };
-  const [souAdmin, setSouAdmin] = useState(false);
-  useEffect(() => { setSouAdmin(ehAdmin()); }, []);
   // Avisa também ao fechar a aba/recarregar/sair do site com dados não salvos.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (sujo) { e.preventDefault(); e.returnValue = ""; } };
     window.addEventListener("beforeunload", handler);
     return () => window.removeEventListener("beforeunload", handler);
   }, [sujo]);
-  const tiposVisiveis = souAdmin ? [...TIPOS, TIPO_EXCLUSAO] : TIPOS;
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
   const [servicos, setServicos] = useState<any[]>([]);
@@ -796,7 +814,8 @@ export default function LancamentosPage() {
     const idade = (a as any).idade_meses;
     return idade == null || idade >= IDADE_MIN_SERVICO;
   }), [animais]);
-  const tipo = tiposVisiveis.find((t) => t.id === sel)!;
+  const tipo = TIPOS_LEAFS.find((t) => t.id === sel)!;
+  const grupoAtivo = grupoDoSel(sel);
 
   return (
     <div className="p-6 animate-in">
@@ -810,10 +829,12 @@ export default function LancamentosPage() {
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
           {sel === "financeiro" ? (
             <><strong style={{ color: "var(--text)" }}>Financeiro já grava de verdade.</strong> Os lançamentos aqui vão para o banco permanente e aparecem nas 5 abas de contas do menu Financeiro.</>
-          ) : sel === "producao" ? (
+          ) : sel === "controle" ? (
             <><strong style={{ color: "var(--text)" }}>Controle leiteiro já grava de verdade.</strong> As pesagens lançadas aqui vão para o banco permanente.</>
+          ) : sel === "pesagem" ? (
+            <><strong style={{ color: "var(--text)" }}>Pesagem corporal já grava de verdade.</strong> Os pesos lançados aqui vão para o banco permanente e alimentam o relatório de GMD/GPD logo abaixo.</>
           ) : sel === "exclusao" ? (
-            <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Busque o registro, confira o que será impactado e só depois confirme.</>
+            <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Administradores excluem na hora; os demais usuários só solicitam, e a exclusão fica pendente de aprovação.</>
           ) : (
             <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
             mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
@@ -824,15 +845,34 @@ export default function LancamentosPage() {
       <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-4">
         <div className="card" style={{ padding: "0.5rem", alignSelf: "start" }}>
           <div className="space-y-1">
-            {tiposVisiveis.map((t) => {
-              const Icon = t.icon; const ativo = t.id === sel;
+            {TIPOS_GRUPOS.map((g) => {
+              const Icon = g.icon;
+              const ativo = g.id === grupoAtivo;
+              const alvo = g.subs ? (ativo ? sel : g.subs[0].id) : g.leaf!;
               return (
-                <button key={t.id} onClick={() => trocarTipo(t.id)}
-                  style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
-                    border: "1px solid " + (ativo ? "var(--dourado)" : "transparent"), background: ativo ? "rgba(94,26,46,0.4)" : "transparent",
-                    color: ativo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.85rem", fontWeight: ativo ? 700 : 500 }}>
-                  <Icon size={16} /> {t.label}
-                </button>
+                <div key={g.id}>
+                  <button onClick={() => trocarTipo(alvo)}
+                    style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+                      border: "1px solid " + (ativo ? "var(--dourado)" : "transparent"), background: ativo ? "rgba(94,26,46,0.4)" : "transparent",
+                      color: ativo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.85rem", fontWeight: ativo ? 700 : 500 }}>
+                    <Icon size={16} /> {g.label}
+                  </button>
+                  {ativo && g.subs && (
+                    <div className="space-y-1" style={{ paddingLeft: "1.4rem", marginTop: "0.2rem" }}>
+                      {g.subs.map((s) => {
+                        const SIcon = s.icon; const subAtivo = s.id === sel;
+                        return (
+                          <button key={s.id} onClick={() => trocarTipo(s.id)}
+                            style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
+                              border: "1px solid " + (subAtivo ? "var(--dourado)" : "transparent"), background: subAtivo ? "rgba(94,26,46,0.3)" : "transparent",
+                              color: subAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.78rem", fontWeight: subAtivo ? 700 : 500 }}>
+                            <SIcon size={13} /> {s.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -845,7 +885,8 @@ export default function LancamentosPage() {
           {sel === "servico" && <FormServico animais={aptasServico} />}
           {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
           {sel === "parto" && <FormParto animais={animais} />}
-          {sel === "producao" && <FormControle animais={animais} lotesLact={lotesLact} />}
+          {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
+          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
           {sel === "sanidade" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "financeiro" && <FormFinanceiro responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}

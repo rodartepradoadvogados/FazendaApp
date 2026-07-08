@@ -247,6 +247,30 @@ export async function criarControlesLeiteiros(dados: {
   return res.json();
 }
 
+// ── Pesagem corporal (peso vivo) ──
+export async function criarPesagensCorporais(dados: {
+  data_pesagem: string;
+  entradas: { numero_matriz: string; peso_kg: number }[];
+}) {
+  const res = await authFetch(`${API}/producao/pesagens`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
+  return res.json();
+}
+export async function fetchRelatorioPesagemCorporal(params?: {
+  numero_matriz?: string; grupo?: string; data_inicio?: string; data_fim?: string;
+}) {
+  const qs = new URLSearchParams();
+  if (params?.numero_matriz) qs.set("numero_matriz", params.numero_matriz);
+  if (params?.grupo) qs.set("grupo", params.grupo);
+  if (params?.data_inicio) qs.set("data_inicio", params.data_inicio);
+  if (params?.data_fim) qs.set("data_fim", params.data_fim);
+  const res = await authFetch(`${API}/producao/pesagens/relatorio?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de pesagem error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchLancamentos() {
   const res = await authFetch(`${API}/financeiro/lancamentos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Financeiro error: ${res.status}`);
@@ -346,7 +370,7 @@ export async function addEventoManual(data: {
   return res.json();
 }
 
-// ── Exclusões (restrito a administradores) ──
+// ── Exclusões (busca/solicitação abertas a todos; aprovar/rejeitar só admin) ──
 export async function fetchTiposExclusao() {
   const res = await authFetch(`${API}/exclusoes/tipos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Tipos de exclusão error: ${res.status}`);
@@ -376,6 +400,30 @@ export async function confirmarExclusao(tipo: string, id: string) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ tipo, id }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao excluir")); }
+  return res.json();
+}
+export async function fetchPendentesExclusao() {
+  const res = await authFetch(`${API}/exclusoes/pendentes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pendências de exclusão error: ${res.status}`);
+  return res.json();
+}
+export async function aprovarExclusao(id: number) {
+  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/aprovar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao aprovar")); }
+  return res.json();
+}
+export async function rejeitarExclusao(id: number, motivo?: string) {
+  const res = await authFetch(`${API}/exclusoes/pendentes/${id}/rejeitar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ motivo }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(detalheErro(d, "Erro ao rejeitar")); }
+  return res.json();
+}
+
+// ── Notificações (sininho) ──
+export async function fetchNotificacoes() {
+  const res = await authFetch(`${API}/notificacoes/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Notificações error: ${res.status}`);
   return res.json();
 }
 

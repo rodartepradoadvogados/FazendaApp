@@ -3,6 +3,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
+import { NotificationBell } from "@/components/NotificationBell";
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -33,6 +34,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
       <Sidebar />
+      <NotificationBell />
       <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
     </div>
   );

@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, Trash2, AlertTriangle, X, Check } from "lucide-react";
-import { fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao } from "@/lib/api";
+import { Search, Trash2, AlertTriangle, X, Check, Clock, ThumbsUp, ThumbsDown } from "lucide-react";
+import {
+  fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao,
+  fetchPendentesExclusao, aprovarExclusao, rejeitarExclusao, ehAdmin, formatDate,
+} from "@/lib/api";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -10,10 +13,13 @@ const inputStyle: React.CSSProperties = {
 
 type Candidato = { id: string; titulo: string; subtitulo: string };
 type Tipo = { id: string; label: string };
+type Pendente = { id: number; tipo: string; id_alvo: string; titulo: string | null; solicitado_por: string | null; criado_em: string };
 
 /**
  * Aba de Exclusão: escolhe o tipo de registro, busca e seleciona o alvo, e
  * antes de excluir mostra tudo o que será impactado — só então confirma.
+ * Administradores excluem na hora; os demais usuários só registram uma
+ * solicitação, que fica pendente de aprovação (ver painel abaixo, admin-only).
  */
 export function FormExclusao() {
   const [tipos, setTipos] = useState<Tipo[]>([]);
@@ -28,6 +34,32 @@ export function FormExclusao() {
   const [impacto, setImpacto] = useState<string[] | null>(null);
   const [carregandoImpacto, setCarregandoImpacto] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
+
+  const [souAdmin, setSouAdmin] = useState(false);
+  const [pendentes, setPendentes] = useState<Pendente[] | null>(null);
+  const [decidindo, setDecidindo] = useState<number | null>(null);
+
+  const carregarPendentes = () => {
+    if (!ehAdmin()) return;
+    fetchPendentesExclusao().then(setPendentes).catch(() => {});
+  };
+  useEffect(() => {
+    setSouAdmin(ehAdmin());
+    carregarPendentes();
+  }, []);
+
+  const aprovar = async (id: number) => {
+    setDecidindo(id);
+    try { await aprovarExclusao(id); carregarPendentes(); }
+    catch (e: any) { setErro(e.message); }
+    finally { setDecidindo(null); }
+  };
+  const rejeitar = async (id: number) => {
+    setDecidindo(id);
+    try { await rejeitarExclusao(id); carregarPendentes(); }
+    catch (e: any) { setErro(e.message); }
+    finally { setDecidindo(null); }
+  };
 
   useEffect(() => { fetchTiposExclusao().then(setTipos).catch(() => {}); }, []);
 
@@ -57,8 +89,8 @@ export function FormExclusao() {
     if (!alvo) return;
     setExcluindo(true); setErro(null);
     try {
-      await confirmarExclusao(tipo, String(alvo.id));
-      setMsg(`Excluído: ${alvo.titulo}`);
+      const r = await confirmarExclusao(tipo, String(alvo.id));
+      setMsg(r.status === "excluido" ? `Excluído: ${alvo.titulo}` : `Solicitação enviada: ${alvo.titulo}. Aguarda aprovação de um administrador.`);
       setAlvo(null); setImpacto(null);
       buscar(tipo, termo);
     } catch (e: any) { setErro(e.message); }
@@ -69,8 +101,44 @@ export function FormExclusao() {
     <>
       <div className="alert-critico mb-3" style={{ alignItems: "flex-start" }}>
         <AlertTriangle size={16} style={{ marginTop: "0.1rem", flexShrink: 0 }} />
-        <span>Exclusão é permanente e restrita a administradores. Escolha o tipo, encontre o registro e confira o impacto antes de confirmar.</span>
+        <span>
+          {souAdmin
+            ? "Exclusão é permanente. Escolha o tipo, encontre o registro e confira o impacto antes de confirmar."
+            : "Escolha o tipo, encontre o registro e confira o impacto — a exclusão fica pendente de aprovação de um administrador."}
+        </span>
       </div>
+
+      {souAdmin && (
+        <div className="card mb-3">
+          <div className="card-header mb-2 flex items-center gap-2"><Clock size={14} /> Pendências de exclusão {pendentes ? `(${pendentes.length})` : ""}</div>
+          {!pendentes?.length ? (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma solicitação pendente.</p>
+          ) : (
+            <div className="space-y-2">
+              {pendentes.map((p) => (
+                <div key={p.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.75rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: "8px" }}>
+                  <div>
+                    <div style={{ fontSize: "0.85rem", fontWeight: 700 }}>{p.titulo || `${p.tipo} #${p.id_alvo}`}</div>
+                    <div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
+                      Solicitado por {p.solicitado_por || "—"} em {formatDate(p.criado_em.slice(0, 10))}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button className="btn-primary" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                      onClick={() => aprovar(p.id)} disabled={decidindo === p.id}>
+                      <ThumbsUp size={13} /> Aprovar
+                    </button>
+                    <button className="btn-ghost" style={{ fontSize: "0.75rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                      onClick={() => rejeitar(p.id)} disabled={decidindo === p.id}>
+                      <ThumbsDown size={13} /> Rejeitar
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div>
@@ -126,11 +194,13 @@ export function FormExclusao() {
         <div onClick={() => { setAlvo(null); setImpacto(null); }} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "460px", maxWidth: "95vw" }}>
             <div className="flex items-center justify-between mb-3">
-              <div className="card-header" style={{ margin: 0, color: "var(--red)" }}>Confirmar exclusão</div>
+              <div className="card-header" style={{ margin: 0, color: "var(--red)" }}>{souAdmin ? "Confirmar exclusão" : "Solicitar exclusão"}</div>
               <button onClick={() => { setAlvo(null); setImpacto(null); }} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
             <p style={{ fontSize: "0.85rem", marginBottom: "0.6rem" }}>{alvo.titulo}</p>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Isto vai excluir permanentemente:</p>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+              {souAdmin ? "Isto vai excluir permanentemente:" : "Se aprovado por um administrador, isto vai excluir permanentemente:"}
+            </p>
             {carregandoImpacto ? (
               <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Calculando impacto…</p>
             ) : (
@@ -141,7 +211,7 @@ export function FormExclusao() {
             {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erro}</p>}
             <div className="flex items-center gap-3">
               <button className="btn-primary" style={{ background: "var(--red)" }} onClick={excluir} disabled={excluindo || carregandoImpacto}>
-                <Check size={14} /> {excluindo ? "Excluindo…" : "Confirmar exclusão"}
+                <Check size={14} /> {excluindo ? "Enviando…" : souAdmin ? "Confirmar exclusão" : "Solicitar exclusão"}
               </button>
               <button className="btn-ghost" onClick={() => { setAlvo(null); setImpacto(null); }}>Cancelar</button>
             </div>
