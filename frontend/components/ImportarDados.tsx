@@ -1,11 +1,31 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Upload as UploadIcon, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet } from "lucide-react";
+import { Upload as UploadIcon, Download, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet } from "lucide-react";
 import { fetchModelosImportar, importarCSV, uploadCSV } from "@/lib/api";
 
-type Modelo = { label: string; colunas?: string[]; tipo_upload?: string };
+type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string };
 type Status = "idle" | "uploading" | "ok" | "error";
 type Estado = { status: Status; msg: string };
+
+// Mesma convenção de todo CSV do site: separador ";", Windows-1252. Os
+// caracteres acentuados usados aqui (é, ã, ç, º…) têm o mesmo valor de byte
+// em Windows-1252 e em Unicode/Latin-1, então basta truncar em 1 byte.
+function baixarModeloCSV(nomeArquivo: string, colunas: string[], exemplo?: string[]) {
+  const linhas = [colunas.join(";")];
+  if (exemplo?.length) linhas.push(exemplo.join(";"));
+  const texto = linhas.join("\r\n") + "\r\n";
+  const bytes = new Uint8Array(texto.length);
+  for (let i = 0; i < texto.length; i++) bytes[i] = texto.charCodeAt(i) & 0xff;
+  const blob = new Blob([bytes], { type: "text/csv;charset=windows-1252" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomeArquivo;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 
 export default function ImportarDados() {
   const [modelos, setModelos] = useState<{ novas: Record<string, Modelo>; existentes: Record<string, Modelo> } | null>(null);
@@ -101,13 +121,19 @@ export default function ImportarDados() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
             {Object.entries(modelos.novas).map(([id, m]) => (
               <div key={id} className="card">
-                <div className="flex items-start gap-3 mb-3">
+                <div className="flex items-start gap-3 mb-2">
                   <FileText size={18} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "2px" }} />
                   <div>
                     <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>{m.label}</p>
                     <p style={{ color: "var(--text-muted)", fontSize: "0.74rem" }}>Colunas: {(m.colunas || []).join(", ")}</p>
                   </div>
                 </div>
+                {m.colunas_csv && (
+                  <button onClick={() => baixarModeloCSV(`modelo_${id}.csv`, m.colunas_csv!, m.exemplo)}
+                    className="flex items-center gap-1 mb-3" style={{ fontSize: "0.75rem", color: "var(--dourado-light)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                    <Download size={13} /> Baixar modelo (com exemplo)
+                  </button>
+                )}
                 <Dropzone id={id} onFile={(f) => handleNova(id, f)} />
               </div>
             ))}
@@ -117,10 +143,16 @@ export default function ImportarDados() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             {Object.entries(modelos.existentes).map(([id, m]) => (
               <div key={id} className="card">
-                <div className="flex items-start gap-3 mb-3">
+                <div className="flex items-start gap-3 mb-2">
                   <FileText size={18} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "2px" }} />
                   <p style={{ fontWeight: 700, fontSize: "0.9rem" }}>{m.label}</p>
                 </div>
+                {m.colunas_csv && (
+                  <button onClick={() => baixarModeloCSV(`modelo_${id}.csv`, m.colunas_csv!, m.exemplo)}
+                    className="flex items-center gap-1 mb-3" style={{ fontSize: "0.75rem", color: "var(--dourado-light)", background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+                    <Download size={13} /> Baixar modelo (com exemplo)
+                  </button>
+                )}
                 <Dropzone id={id} onFile={(f) => handleExistente(id, m.tipo_upload!, f)} />
               </div>
             ))}

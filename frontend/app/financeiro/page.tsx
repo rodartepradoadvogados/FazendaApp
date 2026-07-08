@@ -1,9 +1,9 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2,
 } from "lucide-react";
-import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
+import { fetchLancamentos, marcarPagoFinanceiro, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio, formatBRL, formatDate } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
@@ -55,9 +55,20 @@ export default function FinanceiroPage() {
   const toggleExp = (k: string) => setExp((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
   const [contasBancarias, setContasBancarias] = useState<string[]>([]);
   const [baixaAlvo, setBaixaAlvo] = useState<Lanc | null>(null);
+  const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string; nivel: number }[]>([]);
+  const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
 
   const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
-  useEffect(() => { recarregar(); fetchOpcoesFinanceiro().then((d) => setContasBancarias(d.contas_bancarias || [])).catch(() => {}); }, []);
+  useEffect(() => {
+    recarregar();
+    fetchOpcoesFinanceiro().then((d) => setContasBancarias(d.contas_bancarias || [])).catch(() => {});
+    fetchPlanoContas().then(setPlanoContas).catch(() => {});
+  }, []);
+
+  // Nome real de cada código do plano de contas — usado para dar nome à
+  // hierarquia no DRE e no detalhamento por conta do Fluxo de Caixa, em vez
+  // de mostrar só o código ou a descrição solta de cada lançamento.
+  const nomePorCodigo = useMemo(() => new Map(planoContas.map((p) => [p.codigo, p.nome])), [planoContas]);
 
   useEffect(() => {
     if (regs && !inicio) {
@@ -127,20 +138,78 @@ export default function FinanceiroPage() {
     });
   }, [filtrados, rel]);
 
-  // DRE por conta gerencial — agrupa pela conta do plano de contas, mostrando
-  // o NOME da conta (descrição) em vez do código, que é pouco legível.
-  const dreContas = useMemo(() => {
-    const by = new Map<string, { conta: string; nome: string; codigo: string; receitas: number; despesas: number }>();
+  // Fluxo de caixa diário (mesma lógica do mensal, por data em vez de mês) —
+  // acompanhamento dia a dia, igual ao extrato bancário.
+  const fluxoDiario = useMemo(() => {
+    const by = new Map<string, { dia: string; entradas: number; saidas: number }>();
     filtrados.forEach((r) => {
-      const codigo = r.conta_completa || r.codigo_conta || "";
-      const nome = r.descricao || codigo || "(sem conta)";
-      const k = codigo || nome;
-      const e = by.get(k) ?? { conta: k, nome, codigo, receitas: 0, despesas: 0 };
-      if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
-      by.set(k, e);
+      const d = campoData(r); if (!d) return;
+      const e = by.get(d) ?? { dia: d, entradas: 0, saidas: 0 };
+      if (r.tipo === "receita") e.entradas += r.valor; else e.saidas += r.valor;
+      by.set(d, e);
     });
-    return Array.from(by.values()).map((x) => ({ ...x, saldo: x.receitas - x.despesas })).sort((a, b) => (b.receitas + b.despesas) - (a.receitas + a.despesas));
-  }, [filtrados]);
+    let acc = 0;
+    return Array.from(by.values()).sort((a, b) => a.dia.localeCompare(b.dia)).map((x) => {
+      acc += x.entradas - x.saidas;
+      return { ...x, saldo: x.entradas - x.saidas, acumulado: Math.round(acc) };
+    });
+  }, [filtrados, rel]);
+
+  // Propaga o valor de um lançamento por TODOS os níveis do código (ex.:
+  // "2.01.01.01" também soma em "2.01.01", "2.01" e "2") — é assim que uma
+  // conta de grupo (sem lançamento direto) mostra o total dos filhos.
+  const propagarPorHierarquia = (codigoFolha: string): string[] => {
+    const partes = codigoFolha.split(".");
+    return partes.map((_, i) => partes.slice(0, i + 1).join("."));
+  };
+
+  // DRE por conta gerencial — hierárquico, usando o NOME real do plano de
+  // contas (Configurações > Importar dados). Lançamentos sem conta classificada
+  // continuam aparecendo à parte, por descrição (comportamento antigo).
+  const dreContas = useMemo(() => {
+    const by = new Map<string, { conta: string; nome: string; codigo: string; nivel: number; receitas: number; despesas: number }>();
+    filtrados.forEach((r) => {
+      const codigoFolha = r.conta_completa || r.codigo_conta || "";
+      if (!codigoFolha) {
+        const k = r.descricao || "(sem conta)";
+        const e = by.get(k) ?? { conta: k, nome: k, codigo: "", nivel: 0, receitas: 0, despesas: 0 };
+        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        by.set(k, e);
+        return;
+      }
+      const niveis = propagarPorHierarquia(codigoFolha);
+      niveis.forEach((codigo, i) => {
+        const nome = nomePorCodigo.get(codigo) || (i === niveis.length - 1 ? (r.descricao || codigo) : codigo);
+        const e = by.get(codigo) ?? { conta: codigo, nome, codigo, nivel: i + 1, receitas: 0, despesas: 0 };
+        if (r.tipo === "receita") e.receitas += r.valor; else e.despesas += r.valor;
+        by.set(codigo, e);
+      });
+    });
+    return Array.from(by.values()).map((x) => ({ ...x, saldo: x.receitas - x.despesas })).sort((a, b) => a.conta.localeCompare(b.conta));
+  }, [filtrados, nomePorCodigo]);
+
+  // Meses presentes no período filtrado (para as colunas do detalhamento).
+  const mesesFluxo = useMemo(() => Array.from(new Set(filtrados.map(campoMes).filter(Boolean))).sort() as string[], [filtrados, rel]);
+
+  // Detalhamento por conta do Fluxo de Caixa — mesma hierarquia do DRE, mas
+  // com uma coluna por mês (igual ao "Fluxo mensal detalhado" de referência).
+  const detalhePorContaMensal = useMemo(() => {
+    const by = new Map<string, { codigo: string; nome: string; nivel: number; porMes: Record<string, number>; total: number }>();
+    filtrados.forEach((r) => {
+      const codigoFolha = r.conta_completa || r.codigo_conta || "";
+      const mes = campoMes(r);
+      if (!codigoFolha || !mes) return;
+      const niveis = propagarPorHierarquia(codigoFolha);
+      niveis.forEach((codigo, i) => {
+        const nome = nomePorCodigo.get(codigo) || (i === niveis.length - 1 ? (r.descricao || codigo) : codigo);
+        const e = by.get(codigo) ?? { codigo, nome, nivel: i + 1, porMes: {}, total: 0 };
+        e.porMes[mes] = Math.round(((e.porMes[mes] || 0) + r.valor) * 100) / 100;
+        e.total = Math.round((e.total + r.valor) * 100) / 100;
+        by.set(codigo, e);
+      });
+    });
+    return Array.from(by.values()).sort((a, b) => a.codigo.localeCompare(b.codigo));
+  }, [filtrados, nomePorCodigo, rel]);
 
   // Livro caixa (cronológico com saldo acumulado)
   const livro = useMemo(() => {
@@ -266,10 +335,25 @@ export default function FinanceiroPage() {
           </>}
         </div>
 
+        {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
+        {rel === "fluxo" && (
+          <div className="flex items-center gap-2 mb-3">
+            {(["mensal", "diario"] as const).map((v) => (
+              <button key={v} onClick={() => setVisaoFluxo(v)}
+                style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (visaoFluxo === v ? "var(--dourado)" : "var(--border)"),
+                  background: visaoFluxo === v ? "var(--dourado)" : "transparent",
+                  color: visaoFluxo === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: visaoFluxo === v ? 700 : 400 }}>
+                {v === "mensal" ? "Mensal" : "Diário"}
+              </button>
+            ))}
+          </div>
+        )}
+
         {/* Gráfico do consolidado */}
         <div className="card mb-4">
-          <div className="card-header mb-3">{rel === "fluxo" ? "Fluxo de Caixa (entradas × saídas × acumulado)" : rel === "dre" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
-          {rel === "fluxo" && (
+          <div className="card-header mb-3">{rel === "fluxo" ? `Fluxo de Caixa ${visaoFluxo === "diario" ? "diário" : "mensal"} (entradas × saídas × acumulado)` : rel === "dre" ? "Receita × Despesa × Resultado" : "Saldo Acumulado"}</div>
+          {rel === "fluxo" && visaoFluxo === "mensal" && (
             <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={fluxoMensal}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
@@ -280,6 +364,20 @@ export default function FinanceiroPage() {
                 <Bar dataKey="entradas" name="Entradas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="saidas" name="Saídas" fill="var(--red)" radius={[2, 2, 0, 0]} />
                 <Line type="monotone" dataKey="acumulado" name="Acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={{ r: 2 }} />
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+          {rel === "fluxo" && visaoFluxo === "diario" && (
+            <ResponsiveContainer width="100%" height={280}>
+              <ComposedChart data={fluxoDiario.filter((_, i) => i % Math.ceil(fluxoDiario.length / 200 || 1) === 0)}>
+                <CartesianGrid stroke="var(--border)" vertical={false} />
+                <XAxis dataKey="dia" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
+                <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+                <Bar dataKey="entradas" name="Entradas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
+                <Bar dataKey="saidas" name="Saídas" fill="var(--red)" radius={[2, 2, 0, 0]} />
+                <Line type="monotone" dataKey="acumulado" name="Acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
           )}
@@ -307,21 +405,21 @@ export default function FinanceiroPage() {
         </div>
 
         {/* Detalhamento do relatório */}
-        <div className="card">
+        <div className="card mb-4">
           <div className="card-header mb-3">
-            {rel === "fluxo" ? "Fluxo Mensal" : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
+            {rel === "fluxo" ? `Fluxo ${visaoFluxo === "diario" ? "Diário" : "Mensal"}` : rel === "dre" ? "Detalhamento por Conta Gerencial" : "Lançamentos"}
             {rel !== "livro" && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}> (clique numa linha para ver os lançamentos)</span>}
           </div>
-          <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : undefined }}>
-            {rel === "fluxo" && (
+          <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : "460px" }}>
+            {rel === "fluxo" && visaoFluxo === "mensal" && (
               <table className="fazenda-table">
                 <thead><tr><th></th><th>Mês</th><th style={{ textAlign: "right" }}>Entradas</th><th style={{ textAlign: "right" }}>Saídas</th><th style={{ textAlign: "right" }}>Saldo</th><th style={{ textAlign: "right" }}>Acumulado</th></tr></thead>
                 <tbody>{fluxoMensal.map((m) => {
                   const aberto = exp.has("fluxo:" + m.mes);
                   const itens = aberto ? filtrados.filter((r) => campoMes(r) === m.mes).sort((a, b) => ((a.data_pagamento || "") < (b.data_pagamento || "") ? -1 : 1)) : [];
                   return (
-                    <>
-                      <tr key={m.mes} onClick={() => toggleExp("fluxo:" + m.mes)} style={{ cursor: "pointer" }}>
+                    <Fragment key={m.mes}>
+                      <tr onClick={() => toggleExp("fluxo:" + m.mes)} style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
                         <td style={{ fontWeight: 600 }}>{m.mes}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
@@ -337,25 +435,62 @@ export default function FinanceiroPage() {
                           <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
                       ))}
-                    </>
+                    </Fragment>
+                  );
+                })}</tbody>
+              </table>
+            )}
+            {rel === "fluxo" && visaoFluxo === "diario" && (
+              <table className="fazenda-table">
+                <thead><tr><th></th><th>Data</th><th style={{ textAlign: "right" }}>Entradas</th><th style={{ textAlign: "right" }}>Saídas</th><th style={{ textAlign: "right" }}>Saldo diário</th><th style={{ textAlign: "right" }}>Saldo acumulado</th></tr></thead>
+                <tbody>{fluxoDiario.map((m) => {
+                  const aberto = exp.has("fluxodia:" + m.dia);
+                  const itens = aberto ? filtrados.filter((r) => campoData(r) === m.dia) : [];
+                  return (
+                    <Fragment key={m.dia}>
+                      <tr onClick={() => toggleExp("fluxodia:" + m.dia)} style={{ cursor: "pointer" }}>
+                        <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
+                        <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fmtDia(m.dia)}</td>
+                        <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
+                        <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
+                        <td style={{ textAlign: "right", fontWeight: 700, color: "var(--dourado-light)" }}>{formatBRL(m.acumulado)}</td>
+                      </tr>
+                      {aberto && itens.map((r, i) => (
+                        <tr key={m.dia + ":" + i} style={{ background: "var(--surface-2)" }}>
+                          <td></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{r.descricao}</td>
+                          <td colSpan={2} style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.fornecedor}</td>
+                          <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
+                        </tr>
+                      ))}
+                    </Fragment>
                   );
                 })}</tbody>
               </table>
             )}
             {rel === "dre" && (<>
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência). Clique numa conta <span style={{ color: "var(--text-muted)" }}>▾</span> para ver os lançamentos.
+                Resultado por <strong>conta gerencial</strong> do seu plano de contas (por competência), com a
+                hierarquia completa — uma conta de grupo soma o total das contas abaixo dela. Clique numa conta{" "}
+                <span style={{ color: "var(--text-muted)" }}>▾</span> para ver os lançamentos.
               </p>
               <table className="fazenda-table">
                 <thead><tr><th></th><th>Conta gerencial</th><th style={{ textAlign: "right" }}>Receitas</th><th style={{ textAlign: "right" }}>Despesas</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
                 <tbody>{dreContas.map((c) => {
                   const aberto = exp.has("dre:" + c.conta);
-                  const itens = aberto ? filtrados.filter((r) => (r.conta_completa || r.codigo_conta || "") === c.conta).sort((a, b) => b.valor - a.valor) : [];
+                  const itens = aberto ? filtrados.filter((r) => {
+                    const codigo = r.conta_completa || r.codigo_conta || "";
+                    if (!c.codigo) return (r.descricao || "(sem conta)") === c.conta;
+                    return codigo === c.codigo || codigo.startsWith(c.codigo + ".");
+                  }).sort((a, b) => b.valor - a.valor) : [];
                   return (
-                    <>
-                      <tr key={c.conta} onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
+                    <Fragment key={c.conta}>
+                      <tr onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
-                        <td style={{ fontWeight: 600 }}>{c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}</td>
+                        <td style={{ fontWeight: c.nivel <= 1 ? 700 : 600, paddingLeft: `${Math.max(0, c.nivel - 1) * 1.1}rem` }}>
+                          {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
+                        </td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{c.receitas ? formatBRL(c.receitas) : "—"}</td>
                         <td style={{ textAlign: "right", color: "var(--red)" }}>{c.despesas ? formatBRL(c.despesas) : "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 700, color: c.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(c.saldo)}</td>
@@ -367,7 +502,7 @@ export default function FinanceiroPage() {
                           <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
                       ))}
-                    </>
+                    </Fragment>
                   );
                 })}</tbody>
               </table>
@@ -390,6 +525,44 @@ export default function FinanceiroPage() {
             {rel === "livro" && livro.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {livro.length} — refine o período.</p>}
           </div>
         </div>
+
+        {/* Detalhamento por conta gerencial, mês a mês — só no Fluxo de Caixa */}
+        {rel === "fluxo" && mesesFluxo.length > 0 && (
+          <div className="card">
+            <div className="card-header mb-3">Detalhamento por conta gerencial (mês a mês)</div>
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+              Mesma hierarquia do plano de contas — uma conta de grupo soma o total das contas abaixo dela.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead>
+                  <tr>
+                    <th>Conta</th><th style={{ textAlign: "right" }}>Total</th>
+                    {mesesFluxo.map((m) => <th key={m} style={{ textAlign: "right" }}>{fmtMes(m)}</th>)}
+                  </tr>
+                </thead>
+                <tbody>
+                  {detalhePorContaMensal.map((c) => (
+                    <tr key={c.codigo}>
+                      <td style={{ fontWeight: c.nivel <= 1 ? 700 : 500, fontSize: "0.82rem", paddingLeft: `${Math.max(0, c.nivel - 1) * 1.1}rem`, whiteSpace: "nowrap" }}>
+                        {c.nome}<span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.7rem", marginLeft: "0.4rem" }}>{c.codigo}</span>
+                      </td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{formatBRL(c.total)}</td>
+                      {mesesFluxo.map((m) => (
+                        <td key={m} style={{ textAlign: "right", fontSize: "0.78rem", color: (c.porMes[m] || 0) === 0 ? "var(--text-muted)" : undefined }}>
+                          {c.porMes[m] ? formatBRL(c.porMes[m]) : "—"}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                  {!detalhePorContaMensal.length && (
+                    <tr><td colSpan={2 + mesesFluxo.length} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento com conta gerencial classificada neste período.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
         </>}
         </>}
       </>}

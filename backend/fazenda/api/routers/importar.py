@@ -30,10 +30,14 @@ CATEGORIAS_NOVAS = {
     "pesagem": {
         "label": "Histórico de pesagem corporal",
         "colunas": ["numero_matriz", "data_pesagem (DD/MM/AAAA)", "peso_kg"],
+        "colunas_csv": ["numero_matriz", "data_pesagem", "peso_kg"],
+        "exemplo": ["464", "08/07/2026", "350"],
     },
     "financeiro": {
         "label": "Financeiro simplificado (uma parcela à vista por linha)",
         "colunas": ["data (DD/MM/AAAA)", "tipo (receita/despesa)", "descricao", "valor", "fornecedor_cliente"],
+        "colunas_csv": ["data", "tipo", "descricao", "valor", "fornecedor_cliente"],
+        "exemplo": ["08/07/2026", "despesa", "Ração concentrada", "1500,00", "Agropecuária Central"],
     },
     "estoque_movimento": {
         "label": "Movimentação de estoque simplificada",
@@ -41,23 +45,103 @@ CATEGORIAS_NOVAS = {
             "nome_item", "movimento (Aplicação/Saída de ajuste/Entrada de ajuste/Entrada de cortesia/Doação)",
             "quantidade", "unidade", "data_movimento (DD/MM/AAAA)", "observacao",
         ],
+        "colunas_csv": ["nome_item", "movimento", "quantidade", "unidade", "data_movimento", "observacao"],
+        "exemplo": ["Ração concentrada", "Saída de ajuste", "50", "kg", "08/07/2026", "Consumo do dia"],
     },
     "produtos_estoque": {
         "label": "Cadastro de sêmen/medicamento/hormônio/alimento",
         "colunas": ["nome", "categoria", "unidade", "ensacado (Sim/Não)", "kg_por_saco", "fornecedor_nome"],
+        "colunas_csv": ["nome", "categoria", "unidade", "ensacado", "kg_por_saco", "fornecedor_nome"],
+        "exemplo": ["Sal mineral", "alimento", "kg", "Sim", "25", ""],
     },
     "fornecedores": {
         "label": "Fornecedores, fabricantes e clientes",
         "colunas": ["nome", "tipo (fornecedor/fabricante/cliente)", "cnpj_cpf", "telefone", "email"],
+        "colunas_csv": ["nome", "tipo", "cnpj_cpf", "telefone", "email"],
+        "exemplo": ["Agropecuária Central", "fornecedor", "12.345.678/0001-00", "(67) 3222-1000", "contato@agropecuaria.com.br"],
     },
 }
 
 # Categorias que já têm parser rico do Ideagri — seguem usando POST /upload/{tipo}.
+# colunas_csv/exemplo usam os nomes EXATOS de coluna que cada parser real lê
+# (fazenda/parsers/*.py), para o modelo baixado já vir pronto para reenviar.
 CATEGORIAS_EXISTENTES = {
-    "animais": {"label": "Animais / rebanho geral", "tipo_upload": "geral"},
-    "reprodutivo": {"label": "Reprodutivo (serviços e partos)", "tipo_upload": "reprodutivo"},
-    "producao_leiteira": {"label": "Produção / controle leiteiro", "tipo_upload": "controle_leiteiro"},
-    "sanitario": {"label": "Sanitário", "tipo_upload": "sanidade"},
+    "animais": {
+        "label": "Animais / rebanho geral", "tipo_upload": "geral",
+        "colunas_csv": [
+            "Nº animal", "Dt. nasc.", "Idade em meses", "Grupos atuais", "Categoria completa",
+            "Categoria abreviada", "Sit. rep.", "DEL", "Dt. últ. leite", "Últ. CL (kg)", "Dt. últ. diag.", "Diag.",
+        ],
+        "exemplo": ["464", "15/03/2022", "52", "01 - Alta", "Vaca em lactação", "Vaca", "Ins.", "120", "07/07/2026", "28,5", "20/05/2026", "POSITIVO"],
+    },
+    "reprodutivo": {
+        "label": "Reprodutivo (serviços e partos)", "tipo_upload": "reprodutivo",
+        "colunas_csv": [
+            "NÚMERO DA MATRIZ", "RAÇA DA MATRIZ", "DATA DE NASCIMENTO", "DATA DO ÚLTIMO PARTO", "ORDEM DE PARTO",
+            "DATA DO SERVIÇO", "TIPO DO SERVIÇO", "PROTOCOLO", "REPRODUTOR", "ORDEM DE TENTATIVA",
+            "INTERVALO ENTRE TENTATIVAS", "DATA DO DIAGNOSTICO", "DIAGNÓSTICO", "DATA DA PERDA DE PRENHEZ", "PEV",
+            "CATEGORIA", "PRODUÇÃO LACTAÇÃO ANTERIOR", "DURAÇÃO DA LACTAÇÃO ANTERIOR (D", "PERIODO SECO ANTERIOR (DIAS)",
+            "PARTO_REAL", "TIPO_PARTO_REAL", "SEXO CRIA 1 - ÚLTIMO PARTO REAL", "SEXO CRIA 2 - ÚLTIMO PARTO REAL",
+            "RETENÇÃO DE PLACENTA", "GEMELAR ÚLTIMO PARTO",
+        ],
+        "exemplo": [
+            "464", "Girolando", "15/03/2020", "01/05/2026", "3", "03/07/2026", "IATF", "Protocolo padrão", "COORS",
+            "1", "", "", "", "", "283", "Vaca", "32", "305", "60", "", "", "", "", "", "",
+        ],
+    },
+    "producao_leiteira": {
+        "label": "Produção / controle leiteiro", "tipo_upload": "controle_leiteiro",
+        "colunas_csv": ["NUMERO", "NOME_RESUMIDO", "RGD", "RACA", "DATA_LEITE", "PESO_TOTAL_LEITE", "DATA_ULTIMO_PARTO", "DATA_BAIXA"],
+        "exemplo": ["464", "Estrela", "", "Girolando", "08/07/2026", "28,5", "01/05/2026", ""],
+    },
+    "sanitario": {
+        "label": "Sanitário", "tipo_upload": "sanidade",
+        "colunas_csv": ["Nº animal", "Nome", "Dt. nasc.", "Sx", "Raça", "Dt. aplic.", "Produto aplic.", "Dose", "Lote", "Atividade", "Obs. aplic."],
+        "exemplo": ["464", "Estrela", "15/03/2020", "F", "Girolando", "08/07/2026", "Ivermectina", "10", "L123", "Vacas em lactação", ""],
+    },
+    "estoque": {
+        "label": "Estoque (inventário completo)", "tipo_upload": "estoque",
+        "colunas_csv": ["Categoria", "Número", "Nome", "Quantidade", "Estoque mínimo", "Unidade", "Valor médio unitário", "Valor total", "LOCALARMAZENAMENTO"],
+        "exemplo": ["Alimento", "1001", "Ração concentrada", "5000", "500", "kg", "2,50", "12500", ""],
+    },
+    "dieta": {
+        "label": "Dieta (plano alimentar por lote)", "tipo_upload": "dieta",
+        "colunas_csv": ["Lote", "Categoria", "Qtde Silagem (kg)", "Qtde Concentrado (kg)", "Qtde Sal Mineral (kg)"],
+        "exemplo": ["01", "Vaca em lactação", "25", "6", "0,15"],
+    },
+    "curva_abc": {
+        "label": "Curva ABC (Pareto de compras)", "tipo_upload": "curva_abc",
+        "colunas_csv": [
+            "Item", "Classificação", "Produto/Serviço", "UN", "Preço unitário", "Qtde", "Vlr. da compra",
+            "Valor da compra acumulado", "% sobre valor total acumulado", "% sobre valor total",
+        ],
+        "exemplo": ["1", "A", "Ração concentrada", "kg", "2,50", "5000", "12500,00", "12500,00", "45,2", "45,2"],
+    },
+    "conta_gerencial": {
+        "label": "Financeiro completo (conta gerencial)", "tipo_upload": "conta_gerencial",
+        "colunas_csv": [
+            "Conta gerencial", "Descrição", "Data venc.", "Data pag. / receb.", "Data comp.", "Fornecedor / cliente",
+            "Nº da nota", "Parcela", "Valor total da parcela", "Valor parcela aprop. ct. gerencial",
+            "Valor aprop. centros de custos", "Valor pago receb.", "TIPO", "Centro de custo", "DATAEMISSAO",
+        ],
+        "exemplo": [
+            "3.01.01.01", "Ração concentrada", "10/07/2026", "08/07/2026", "30/06/2026", "Agropecuária Central",
+            "1234", "1/1", "1500,00", "1500,00", "1500,00", "1500,00", "2", "PL", "05/07/2026",
+        ],
+    },
+    "plano_conta_gerencial": {
+        "label": "Plano de contas gerenciais", "tipo_upload": "plano_conta_gerencial",
+        "colunas_csv": ["Nº ct. ger.", "Nome ct. ger.", "Ativa", "Part. ativ.", "Fluxo", "Tipo F/V"],
+        "exemplo": ["3.01.01.01", "Concentrado protéico", "Sim", "Sim", "Sim", "Variável"],
+    },
+    "patrimonio": {
+        "label": "Patrimônio (bens/imobilizado)", "tipo_upload": "patrimonio",
+        "colunas_csv": [
+            "Tipo patr.", "Nome Patr.", "Nº patr.", "Ativ. cul.", "Placa", "Dt. imob.", "Mét. depr.",
+            "Vd. útil", "Vlr. res.", "Quant.", "Uni.", "Vlr. tot.", "Dt. baixa pat.",
+        ],
+        "exemplo": ["Veículo", "Caminhonete Hilux", "V001", "Pecuária", "ABC-1234", "10/01/2020", "Linear", "5 anos", "20000", "1", "un", "150000", ""],
+    },
 }
 
 

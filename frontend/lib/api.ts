@@ -412,6 +412,12 @@ export async function fetchOpcoesFinanceiro() {
   return res.json();
 }
 
+export async function fetchPlanoContas() {
+  const res = await authFetch(`${API}/financeiro/plano-contas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Plano de contas error: ${res.status}`);
+  return res.json();
+}
+
 export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
