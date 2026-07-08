@@ -61,6 +61,44 @@ function addDias(iso: string, n: number): string {
 // Seleção de animal via tabela clara (Nº · Grupo · Categoria · Sit. Rep. · DEL).
 const SelectAnimal = AnimalPicker;
 
+// Seleção de VÁRIOS animais de uma vez, com a mesma tabela estilizada (cabeçalho
+// vinho/dourado via .fazenda-table) usada em Rebanho > Baixar animal / Movimentar
+// animais — substitui listas de checkbox simples/brancas por esta, mais clara.
+function SelecaoAnimaisTabela({ animais, selecionados, toggle, toggleTodos, colunas }: {
+  animais: AnimalRow[];
+  selecionados: Set<string>;
+  toggle: (numero: string) => void;
+  toggleTodos: () => void;
+  colunas: { header: string; render: (a: AnimalRow) => React.ReactNode }[];
+}) {
+  return (
+    <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+      <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
+        <span style={{ fontSize: "0.85rem" }}>{animais.length} animal(is) — {selecionados.size} selecionado(s)</span>
+        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!animais.length}>
+          {selecionados.size === animais.length && animais.length ? "Limpar seleção" : "Selecionar todos"}
+        </button>
+      </div>
+      <div className="overflow-x-auto" style={{ maxHeight: "260px" }}>
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}</tr></thead>
+          <tbody>
+            {animais.map((a) => (
+              <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
+                <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
+                {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem" }}>{c.render(a)}</td>)}
+              </tr>
+            ))}
+            {!animais.length && (
+              <tr><td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal disponível.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 const SalvarEmBreve = () => (
   <div className="flex items-center gap-3 mt-4" style={{ flexWrap: "wrap" }}>
     <button className="btn-primary" disabled style={{ opacity: 0.55, cursor: "not-allowed" }}>Salvar (em breve)</button>
@@ -156,6 +194,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -177,26 +216,22 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Matriz (nº)">
-          {emLote
-            ? <div style={{ ...inputStyle, padding: "0.4rem", maxHeight: "8rem", overflowY: "auto" }}>
-                {animais.map((a) => (
-                  <label key={a.numero} className="flex items-center gap-2" style={{ fontSize: "0.8rem", padding: "0.15rem 0" }}>
-                    <input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} />
-                    {a.numero} · {a.grupo_primario || "—"}
-                  </label>
-                ))}
-              </div>
-            : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
-        </Campo>
         <Campo label="Protocolo">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
             <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
           </label>
-          {emLote && <span style={nota}>{sel.size} animal(is) selecionado(s)</span>}
         </Campo>
         <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
         <Campo label="Nome do protocolo"><input style={inputStyle} value={nomeProtocolo} onChange={(e) => setNomeProtocolo(e.target.value)} /></Campo>
+      </div>
+      <div className="mt-3">
+        <label style={lbl}>Matriz (nº)</label>
+        {emLote
+          ? <SelecaoAnimaisTabela
+              animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
+              colunas={[{ header: "Lote", render: (a) => a.grupo_primario || "—" }]}
+            />
+          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
       </div>
       <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D11) é lançada à parte, na sub-aba Inseminação.</p>
 
@@ -291,35 +326,41 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
 function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
   // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar).
   const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
-  const [matriz, setMatriz] = useState("");
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleTodos = () => setSelecionados((p) => (p.size === servidas.length && servidas.length ? new Set() : new Set(servidas.map((a) => a.numero))));
   const [data, setData] = useState("");
   const [metodo, setMetodo] = useState("");
   const [resultado, setResultado] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-  // Data da última IA/cobertura vem automaticamente do histórico da matriz.
-  const ultimoServico = matriz ? ultServico[matriz] || "" : "";
-  const ultimoLabel = ultimoServico ? new Date(ultimoServico + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
-  const aviso30 = useMemo(() => {
-    if (!data || !ultimoServico) return false;
-    const dias = (new Date(data + "T00:00:00").getTime() - new Date(ultimoServico + "T00:00:00").getTime()) / 86400000;
-    return dias >= 0 && dias < 30;
-  }, [data, ultimoServico]);
+  // Animais selecionados com menos de 30 dias desde a última inseminação/cobertura.
+  const animaisComAviso = useMemo(() => {
+    if (!data) return [];
+    return Array.from(selecionados).filter((n) => {
+      const us = ultServico[n];
+      if (!us) return false;
+      const dias = (new Date(data + "T00:00:00").getTime() - new Date(us + "T00:00:00").getTime()) / 86400000;
+      return dias >= 0 && dias < 30;
+    });
+  }, [selecionados, data, ultServico]);
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!matriz || !data || !resultado) { setErro("Selecione a matriz, a data e o resultado do diagnóstico."); return; }
+    if (!selecionados.size || !data || !resultado) { setErro("Selecione ao menos uma matriz, a data e o resultado do diagnóstico."); return; }
     setSalvando(true);
     try {
-      await salvarDiagnostico({ numero_matriz: matriz, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+      for (const numero of selecionados) {
+        await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+      }
       setSucesso(
         resultado === "retoque"
-          ? `Diagnóstico salvo. ${matriz} entrou na agenda para retoque.`
-          : `Diagnóstico de ${matriz} salvo com sucesso.`
+          ? `Diagnóstico salvo para ${selecionados.size} animal(is). Entraram na agenda para retoque.`
+          : `Diagnóstico salvo para ${selecionados.size} animal(is).`
       );
-      setMatriz(""); setData(""); setMetodo(""); setResultado("");
+      setSelecionados(new Set()); setData(""); setMetodo(""); setResultado("");
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar diagnóstico");
     } finally {
@@ -329,11 +370,18 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Matriz / novilha (servidas)">
-          <SelectAnimal animais={servidas} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz servida…" />
-        </Campo>
-        <Campo label="Última IA / cobertura (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={ultimoLabel} readOnly /></Campo>
+      <Campo label="Matriz / novilha (servidas) — pode selecionar várias" full>
+        <SelecaoAnimaisTabela
+          animais={servidas} selecionados={selecionados} toggle={toggle} toggleTodos={toggleTodos}
+          colunas={[
+            { header: "Lote", render: (a) => a.grupo_primario || "—" },
+            { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+            { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
+          ]}
+        />
+      </Campo>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
         <Campo label="Método">
           <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
@@ -350,20 +398,22 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
         </Campo>
       </div>
 
-      {aviso30 && (
+      {animaisComAviso.length > 0 && (
         <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
           <AlertTriangle size={16} style={{ color: "var(--amber)", marginTop: "0.1rem" }} />
-          <span style={{ fontSize: "0.8rem" }}>Animal com menos de 30 dias da última inseminação/cobertura. Deseja confirmar?</span>
+          <span style={{ fontSize: "0.8rem" }}>
+            {animaisComAviso.length} animal(is) com menos de 30 dias da última inseminação/cobertura: {animaisComAviso.join(", ")}. Deseja confirmar mesmo assim?
+          </span>
         </div>
       )}
       {resultado === "negativo" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          Ao confirmar, o animal fica como <strong>vazia</strong> e será colocado para observação no próximo serviço.
+          Ao confirmar, os animais ficam como <strong>vazia</strong> e serão colocados para observação no próximo serviço.
         </p>
       )}
       {resultado === "retoque" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-          O animal entra na <strong>agenda para retoque</strong>, no dia do próximo serviço.
+          Os animais entram na <strong>agenda para retoque</strong>, no dia do próximo serviço.
         </p>
       )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
