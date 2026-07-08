@@ -22,7 +22,7 @@ const vazio = {
   exibir_necessidade_compra_agenda: false,
 };
 
-export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: () => void; onCancelar: () => void }) {
+export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (item?: any) => void; onCancelar: () => void }) {
   const [form, setForm] = useState(vazio);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [contas, setContas] = useState<ContaGerencial[]>([]);
@@ -42,7 +42,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: ()
     try {
       const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
       const str = (v: string) => (v.trim() === "" ? undefined : v.trim());
-      await criarItemEstoque({
+      const criado = await criarItemEstoque({
         nome: form.nome.trim(),
         numero_produto: str(form.numero_produto),
         categoria: str(form.categoria),
@@ -63,7 +63,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: ()
         exibir_necessidade_compra_agenda: form.exibir_necessidade_compra_agenda,
       });
       setForm(vazio);
-      onCriado();
+      onCriado(criado);
     } catch (e: any) {
       setErro(e.message || "Erro ao cadastrar item");
     } finally {

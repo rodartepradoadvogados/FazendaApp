@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
-import { fetchOpcoesFinanceiro, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL } from "@/lib/api";
+import { fetchOpcoesFinanceiro, fetchEstoque, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL } from "@/lib/api";
+import { Modal } from "@/components/Modal";
+import NovoItemEstoque from "@/components/NovoItemEstoque";
+import NovaContaGerencial from "@/components/NovaContaGerencial";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -54,7 +57,22 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  */
 export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
-  useEffect(() => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); }, []);
+  const carregarOpcoes = () => fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {});
+  useEffect(() => { carregarOpcoes(); }, []);
+
+  const [produtosEstoque, setProdutosEstoque] = useState<string[]>([]);
+  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => i.nome))).catch(() => {});
+  useEffect(() => { carregarEstoque(); }, []);
+  const sugestoesProduto = useMemo(
+    () => Array.from(new Set([...produtosEstoque, ...opcoes.produtos])).sort(),
+    [produtosEstoque, opcoes.produtos]
+  );
+
+  // Modal "+ Adicionar" (novo produto de estoque ou nova conta gerencial),
+  // aberto a partir de um item específico da nota — o item fica marcado em
+  // `adicionarPara` para saber onde aplicar o resultado ao salvar.
+  const [adicionarPara, setAdicionarPara] = useState<number | null>(null);
+  const [modoAdicionar, setModoAdicionar] = useState<"produto" | "conta">("produto");
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   const [centroCusto, setCentroCusto] = useState("");
@@ -285,7 +303,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               </Campo>
               <Campo label="Produto">
                 <input list={`fin-produtos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Ração concentrada 25kg" />
-                <datalist id={`fin-produtos-${idx}`}>{opcoes.produtos.map((p) => <option key={p} value={p} />)}</datalist>
+                <datalist id={`fin-produtos-${idx}`}>{sugestoesProduto.map((p) => <option key={p} value={p} />)}</datalist>
               </Campo>
               <Campo label="Descrição (opcional)">
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
@@ -299,6 +317,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                   onChange={(e) => atualizarItem(idx, { valor_total: e.target.value, valorTotalManual: true })} />
               </Campo>
             </div>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
+              onClick={() => { setAdicionarPara(idx); setModoAdicionar("produto"); }}>
+              <Plus size={13} /> Adicionar produto ou conta gerencial novo(a)
+            </button>
           </div>
         ))}
         <button type="button" className="btn-ghost" onClick={acrescentarItem} style={{ fontSize: "0.8rem" }}>
@@ -426,6 +448,47 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
           {salvando ? "Salvando…" : "Salvar lançamento"}
         </button>
       </div>
+
+      {adicionarPara !== null && (
+        <Modal title="Adicionar produto ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
+          <div className="flex items-center gap-2 mb-3">
+            <button type="button" onClick={() => setModoAdicionar("produto")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionar === "produto" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
+              Novo produto (estoque)
+            </button>
+            <button type="button" onClick={() => setModoAdicionar("conta")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionar === "conta" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionar === "conta" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionar === "conta" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "conta" ? 700 : 500 }}>
+              Nova conta gerencial
+            </button>
+          </div>
+          {modoAdicionar === "produto" ? (
+            <NovoItemEstoque
+              onCriado={(item) => {
+                if (item?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: item.nome });
+                carregarEstoque();
+                setAdicionarPara(null);
+              }}
+              onCancelar={() => setAdicionarPara(null)}
+            />
+          ) : (
+            <NovaContaGerencial
+              tipoSugerido={tipo}
+              onCriado={(conta) => {
+                if (adicionarPara !== null) atualizarItem(adicionarPara, { codigo_conta_gerencial: conta.codigo, nome_conta_gerencial: conta.nome });
+                carregarOpcoes();
+                setAdicionarPara(null);
+              }}
+              onCancelar={() => setAdicionarPara(null)}
+            />
+          )}
+        </Modal>
+      )}
 
       {confirmando && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
