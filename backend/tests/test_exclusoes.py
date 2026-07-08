@@ -151,3 +151,46 @@ class TestBusca:
         c, _ = client
         r = c.get("/exclusoes/buscar", params={"tipo": "invalido"})
         assert r.status_code == 400
+
+
+class TestBuscaComFiltroDeData:
+    def test_filtra_servico_por_periodo(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Servico(numero_matriz="111", data_servico=date(2026, 1, 10)))
+            s.add(Servico(numero_matriz="222", data_servico=date(2026, 3, 10)))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "servico", "data_inicio": "2026-02-01", "data_fim": "2026-04-01"})
+        assert r.status_code == 200
+        numeros = {row["titulo"].split(" — ")[0] for row in r.json()}
+        assert numeros == {"222"}
+
+    def test_sem_filtro_de_data_traz_tudo(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Servico(numero_matriz="111", data_servico=date(2026, 1, 10)))
+            s.add(Servico(numero_matriz="222", data_servico=date(2026, 3, 10)))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "servico"})
+        assert len(r.json()) == 2
+
+    def test_registro_sem_data_some_quando_ha_filtro_de_periodo(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Servico(numero_matriz="333", data_servico=None))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "servico", "data_inicio": "2026-01-01", "data_fim": "2026-12-31"})
+        assert r.json() == []
+
+    def test_tipo_estoque_ignora_filtro_de_data(self, client):
+        c, engine = client
+        from fazenda.models import Estoque
+        with _sessao(engine) as s:
+            s.add(Estoque(nome="Ração"))
+            s.commit()
+
+        r = c.get("/exclusoes/buscar", params={"tipo": "estoque", "data_inicio": "2026-01-01", "data_fim": "2026-12-31"})
+        assert len(r.json()) == 1

@@ -519,8 +519,8 @@ export async function fetchTiposExclusao() {
   if (!res.ok) throw new Error(`Tipos de exclusão error: ${res.status}`);
   return res.json();
 }
-export async function buscarExclusao(tipo: string, termo: string) {
-  const qs = new URLSearchParams({ tipo, termo });
+export async function buscarExclusao(tipo: string, termo: string, dataInicio = "", dataFim = "") {
+  const qs = new URLSearchParams({ tipo, termo, data_inicio: dataInicio, data_fim: dataFim });
   const res = await authFetch(`${API}/exclusoes/buscar?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Busca de exclusão error: ${res.status}`);
   return res.json();

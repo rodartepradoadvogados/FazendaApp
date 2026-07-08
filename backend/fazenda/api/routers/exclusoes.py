@@ -56,13 +56,29 @@ def _contem(termo: str, *valores) -> bool:
     return any(termo in str(v).lower() for v in valores if v is not None)
 
 
+def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:
+    """Filtro de data opcional — sem data de referência no registro, ou sem filtro definido, não exclui nada."""
+    if not data_inicio and not data_fim:
+        return True
+    if data_ref is None:
+        return False
+    ref = data_ref.isoformat()
+    if data_inicio and ref < data_inicio:
+        return False
+    if data_fim and ref > data_fim:
+        return False
+    return True
+
+
 @router.get("/buscar")
 def buscar(
     tipo: str = Query(...),
     termo: str = Query(""),
+    data_inicio: str = Query(""),
+    data_fim: str = Query(""),
     session: Session = Depends(get_session),
 ) -> list[dict]:
-    """Lista candidatos a exclusão de um tipo, filtrados por um termo de busca."""
+    """Lista candidatos a exclusão de um tipo, filtrados por um termo de busca e, opcionalmente, por período."""
     if tipo == "animal":
         rows = session.exec(select(Animal)).all()
         out = [
@@ -79,7 +95,9 @@ def buscar(
                 "titulo": f"{s.numero_matriz} — {s.data_servico.isoformat() if s.data_servico else '—'}",
                 "subtitulo": f"{s.tipo_servico or '—'} · {s.reprodutor or '—'} · diag: {s.diagnostico or '—'}",
             }
-            for s in rows if _contem(termo, s.numero_matriz, s.reprodutor, s.diagnostico, s.tipo_servico)
+            for s in rows
+            if _contem(termo, s.numero_matriz, s.reprodutor, s.diagnostico, s.tipo_servico)
+            and _dentro_periodo(s.data_servico, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
@@ -91,7 +109,8 @@ def buscar(
                 "titulo": f"{p.numero_matriz} — {p.data_parto.isoformat() if p.data_parto else '—'}",
                 "subtitulo": f"Parto nº{p.ordem_parto or '?'} · {p.tipo_parto or '—'}",
             }
-            for p in rows if _contem(termo, p.numero_matriz, p.tipo_parto)
+            for p in rows
+            if _contem(termo, p.numero_matriz, p.tipo_parto) and _dentro_periodo(p.data_parto, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
@@ -103,7 +122,8 @@ def buscar(
                 "titulo": f"{c.numero_matriz} — {c.data_controle.isoformat() if c.data_controle else '—'}",
                 "subtitulo": f"{c.producao_kg or 0} kg",
             }
-            for c in rows if _contem(termo, c.numero_matriz)
+            for c in rows
+            if _contem(termo, c.numero_matriz) and _dentro_periodo(c.data_controle, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
@@ -115,7 +135,8 @@ def buscar(
                 "titulo": f"{s.numero_matriz} — {s.data_aplicacao.isoformat() if s.data_aplicacao else '—'}",
                 "subtitulo": s.produto,
             }
-            for s in rows if _contem(termo, s.numero_matriz, s.produto)
+            for s in rows
+            if _contem(termo, s.numero_matriz, s.produto) and _dentro_periodo(s.data_aplicacao, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
@@ -128,7 +149,11 @@ def buscar(
                 "subtitulo": f"R$ {c.valor_total or 0:,.2f} · {c.fornecedor_cliente or '—'}"
                 + (f" · parcela {c.parcela_num}/{c.parcela_total}" if (c.parcela_total or 1) > 1 else ""),
             }
-            for c in rows if _contem(termo, c.numero_lancamento, c.descricao, c.fornecedor_cliente, c.numero_nota)
+            for c in rows
+            if _contem(termo, c.numero_lancamento, c.descricao, c.fornecedor_cliente, c.numero_nota)
+            and _dentro_periodo(
+                c.data_vencimento or c.data_competencia or c.data_emissao, data_inicio, data_fim
+            )
         ]
         return out[:200]
 
@@ -148,7 +173,8 @@ def buscar(
                 "titulo": f"{ev.data_evento.isoformat()} — {ev.descricao}",
                 "subtitulo": ev.categoria,
             }
-            for ev in rows if _contem(termo, ev.descricao, ev.numero_animal)
+            for ev in rows
+            if _contem(termo, ev.descricao, ev.numero_animal) and _dentro_periodo(ev.data_evento, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 

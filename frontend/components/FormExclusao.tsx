@@ -25,6 +25,8 @@ export function FormExclusao() {
   const [tipos, setTipos] = useState<Tipo[]>([]);
   const [tipo, setTipo] = useState("");
   const [termo, setTermo] = useState("");
+  const [dataInicio, setDataInicio] = useState("");
+  const [dataFim, setDataFim] = useState("");
   const [resultados, setResultados] = useState<Candidato[]>([]);
   const [buscando, setBuscando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -63,20 +65,23 @@ export function FormExclusao() {
 
   useEffect(() => { fetchTiposExclusao().then(setTipos).catch(() => {}); }, []);
 
-  const buscar = async (t: string, q: string) => {
+  const TIPOS_SEM_DATA = new Set(["animal", "estoque"]);
+  const temFiltroData = tipo && !TIPOS_SEM_DATA.has(tipo);
+
+  const buscar = async (t: string, q: string, ini: string, fim: string) => {
     if (!t) { setResultados([]); return; }
     setBuscando(true); setErro(null);
-    try { setResultados(await buscarExclusao(t, q)); }
+    try { setResultados(await buscarExclusao(t, q, TIPOS_SEM_DATA.has(t) ? "" : ini, TIPOS_SEM_DATA.has(t) ? "" : fim)); }
     catch (e: any) { setErro(e.message); }
     finally { setBuscando(false); }
   };
 
   useEffect(() => {
     if (!tipo) return;
-    const h = setTimeout(() => buscar(tipo, termo), 250);
+    const h = setTimeout(() => buscar(tipo, termo, dataInicio, dataFim), 250);
     return () => clearTimeout(h);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tipo, termo]);
+  }, [tipo, termo, dataInicio, dataFim]);
 
   const escolher = async (c: Candidato) => {
     setAlvo(c); setImpacto(null); setErro(null); setMsg(null); setCarregandoImpacto(true);
@@ -92,7 +97,7 @@ export function FormExclusao() {
       const r = await confirmarExclusao(tipo, String(alvo.id));
       setMsg(r.status === "excluido" ? `Excluído: ${alvo.titulo}` : `Solicitação enviada: ${alvo.titulo}. Aguarda aprovação de um administrador.`);
       setAlvo(null); setImpacto(null);
-      buscar(tipo, termo);
+      buscar(tipo, termo, dataInicio, dataFim);
     } catch (e: any) { setErro(e.message); }
     finally { setExcluindo(false); }
   };
@@ -143,7 +148,7 @@ export function FormExclusao() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <div>
           <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Tipo de lançamento</label>
-          <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value); setTermo(""); setAlvo(null); setImpacto(null); }}>
+          <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value); setTermo(""); setDataInicio(""); setDataFim(""); setAlvo(null); setImpacto(null); }}>
             <option value="">Selecione…</option>
             {tipos.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
           </select>
@@ -156,6 +161,18 @@ export function FormExclusao() {
               <input style={{ ...inputStyle, paddingLeft: "2rem" }} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="número, nome, descrição…" />
             </div>
           </div>
+        )}
+        {temFiltroData && (
+          <>
+            <div>
+              <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Data de</label>
+              <input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
+            </div>
+            <div>
+              <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Data até</label>
+              <input type="date" style={inputStyle} value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+            </div>
+          </>
         )}
       </div>
 

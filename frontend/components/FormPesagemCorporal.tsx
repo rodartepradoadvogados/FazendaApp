@@ -4,6 +4,7 @@ import { Scale } from "lucide-react";
 import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -35,6 +36,7 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
   const [sucesso, setSucesso] = useState<string | null>(null);
 
   const vacasDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : []), [animais, lote]);
+  const ordVacas = useOrdenacao(vacasDoLote);
 
   function limpar() {
     setPeso("");
@@ -112,9 +114,15 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
           <div className="card-header m-3">Animais do lote {lote} ({vacasDoLote.length})</div>
           <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Nº</th><th style={{ textAlign: "right" }}>Idade (meses)</th><th style={{ textAlign: "right" }}>Peso (kg)</th></tr></thead>
+              <thead>
+                <tr>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
+                  <ThOrdenavel label="Idade (meses)" campo="idade_meses" coluna={ordVacas.coluna} dir={ordVacas.dir} ordenar={ordVacas.ordenar} />
+                  <th style={{ textAlign: "right" }}>Peso (kg)</th>
+                </tr>
+              </thead>
               <tbody>
-                {vacasDoLote.map((a) => (
+                {ordVacas.linhasOrdenadas.map((a) => (
                   <tr key={a.numero}>
                     <td style={{ fontWeight: 700 }}>{a.numero}</td>
                     <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{(a as any).idade_meses ?? "—"}</td>
