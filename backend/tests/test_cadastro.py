@@ -459,3 +459,42 @@ class TestMotivoBaixa:
         opcoes = c.get("/baixas/motivos").json()
         assert "Motivo Descontinuado" not in opcoes["motivos_doenca"]
         assert "Mastite" in opcoes["motivos_doenca"]
+
+
+class TestServicoCadastro:
+    """Cadastro de Serviços (lançamento financeiro > produto ou serviço) — nome+ativo."""
+
+    def test_seed_cria_servicos_padrao(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_servicos
+        with Session(engine) as s:
+            seed_servicos(s)
+        servicos = c.get("/cadastro/servicos").json()
+        assert any(s["nome"] == "Frete" for s in servicos)
+        assert any(s["nome"] == "Manutenção em tratores" for s in servicos)
+        assert len(servicos) == 9
+
+    def test_seed_e_idempotente(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_servicos
+        with Session(engine) as s:
+            seed_servicos(s)
+            seed_servicos(s)
+        n1 = len(c.get("/cadastro/servicos").json())
+        with Session(engine) as s:
+            seed_servicos(s)
+        n2 = len(c.get("/cadastro/servicos").json())
+        assert n1 == n2
+
+    def test_cria_edita_e_desativa_servico(self, client):
+        c, engine = client
+        servico_id = c.post("/cadastro/servicos", json={"nome": "Limpeza de silo"}).json()["id"]
+        r = c.put(f"/cadastro/servicos/{servico_id}", json={"nome": "Limpeza de silo", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+    def test_nao_permite_servico_duplicado(self, client):
+        c, engine = client
+        c.post("/cadastro/servicos", json={"nome": "Roçagem"})
+        r = c.post("/cadastro/servicos", json={"nome": "Roçagem"})
+        assert r.status_code == 409

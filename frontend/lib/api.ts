@@ -409,6 +409,27 @@ export async function atualizarMotivoBaixa(id: number, dados: { nome: string; at
   return res.json();
 }
 
+// ── Cadastro de Serviços (lançamento financeiro > produto ou serviço) ──
+export async function fetchServicosCadastro() {
+  const res = await authFetch(`${API}/cadastro/servicos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Serviços error: ${res.status}`);
+  return res.json();
+}
+export async function criarServicoCadastro(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/servicos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar serviço"); }
+  return res.json();
+}
+export async function atualizarServicoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/servicos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  return res.json();
+}
+
 // ── Baixa de animal (Rebanho > Baixar animal) ──
 export async function fetchOpcoesBaixa() {
   const res = await authFetch(`${API}/baixas/motivos`, { cache: "no-store" });

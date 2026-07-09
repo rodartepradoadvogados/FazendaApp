@@ -185,6 +185,31 @@ class TestLancamentoMultiplosItens:
             assert parcela.valor_total == 1055.0
             assert "Ração concentrada" in parcela.descricao and "Sal mineral" in parcela.descricao
 
+    def test_tipo_item_e_persistido_por_linha(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [
+                {"produto": "Ração concentrada", "tipo_item": "produto", "valor_total": 500.0},
+                {"produto": "Frete", "tipo_item": "servico", "valor_total": 150.0},
+            ],
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        with Session(engine) as s:
+            from sqlmodel import select
+            itens = s.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento == corpo["numero_lancamento"])).all()
+            por_nome = {i.produto: i.tipo_item for i in itens}
+            assert por_nome == {"Ração concentrada": "produto", "Frete": "servico"}
+
+    def test_rejeita_tipo_item_invalido(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "X", "tipo_item": "outro", "valor_total": 100.0}],
+        })
+        assert r.status_code == 400
+
     def test_desconto_reduz_o_valor_liquido(self, client):
         c, _ = client
         r = c.post("/financeiro/lancamentos", json={
