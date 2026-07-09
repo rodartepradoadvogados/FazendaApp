@@ -158,6 +158,42 @@ class Servico(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Protocolo IATF — lançamento do protocolo hormonal (D0/D7/D9/D11) em um ou
+# vários animais de uma vez. Cada etapa de cada animal vira uma "aplicação"
+# rastreável (aparece agrupada na Agenda, marcada como realizada individualmente).
+# A inseminação em si (D11) continua sendo lançada à parte em Servico — ver
+# fazenda.api.routers.reproducao.registrar_servico, que resolve a aplicação
+# de D11 correspondente automaticamente quando o protocolo é informado.
+# ---------------------------------------------------------------------------
+class ProtocoloIatfLancamento(SQLModel, table=True):
+    """Um lançamento de protocolo IATF em lote — o "cabeçalho" (nome + data do D0)."""
+
+    __tablename__ = "protocolo_iatf_lancamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome_protocolo: str
+    data_d0: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProtocoloIatfAplicacao(SQLModel, table=True):
+    """Uma etapa (D0/D7/D9/D11) de um animal dentro de um lançamento de protocolo IATF."""
+
+    __tablename__ = "protocolo_iatf_aplicacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lancamento_id: int = Field(foreign_key="protocolo_iatf_lancamento.id")
+    numero_matriz: str = Field(index=True)
+    dia: int  # 0, 7, 9 ou 11
+    descricao: str  # hormônio/ação do dia (D11 = "Inseminação (IATF)")
+    data_prevista: date
+    realizada: bool = False
+    data_realizacao: Optional[date] = None
+
+
+# ---------------------------------------------------------------------------
 # Parto
 # ---------------------------------------------------------------------------
 class Parto(SQLModel, table=True):

@@ -116,9 +116,10 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
-export async function marcarEventoRealizado(eventoId: string) {
+export async function marcarEventoRealizado(eventoId: string, animais?: string[]) {
   const res = await authFetch(`${API}/agenda/realizados`, {
-    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ evento_id: eventoId }),
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ evento_id: eventoId, animais: animais || undefined }),
   });
   if (!res.ok) throw new Error("Erro ao marcar como realizado");
   return res.json();
@@ -749,6 +750,11 @@ export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: st
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao agendar protocolo IATF"); }
+  return res.json();
+}
+export async function fetchProtocolosIatfAtivos() {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf/ativos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos IATF ativos error: ${res.status}`);
   return res.json();
 }
 export async function criarServico(dados: {

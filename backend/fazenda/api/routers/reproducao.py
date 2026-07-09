@@ -11,7 +11,9 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import AgendaManual, Animal, Parto, PesagemCorporal, Servico
+from fazenda.models import (
+    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, Servico,
+)
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.reproducao_analise import analisar_servicos
 
@@ -223,24 +225,69 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
     """
     Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11) — não cria o serviço em si.
     A inseminação de fato (D11) é lançada à parte em POST /reproducao/servico,
-    para separar "marcar o protocolo" de "a vaca foi inseminada".
+    para separar "marcar o protocolo" de "a vaca foi inseminada". Cada etapa de
+    cada animal vira uma ProtocoloIatfAplicacao rastreável — a Agenda agrupa
+    por (lançamento, dia) em vez de mostrar uma linha por animal.
     """
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
+    lancamento = ProtocoloIatfLancamento(nome_protocolo=dados.protocolo, data_d0=dados.data_d0)
+    session.add(lancamento)
+    session.flush()  # garante lancamento.id antes de criar as aplicações
+
     eventos_criados = 0
     for numero in dados.animais:
         for dias, descricao in PASSOS_PROTOCOLO_IATF:
-            session.add(AgendaManual(
-                data_evento=dados.data_d0 + timedelta(days=dias),
-                descricao=f"{dados.protocolo} — {descricao}",
-                categoria="Reprodutivo",
-                numero_animal=numero,
+            session.add(ProtocoloIatfAplicacao(
+                lancamento_id=lancamento.id,
+                numero_matriz=numero,
+                dia=dias,
+                descricao=descricao,
+                data_prevista=dados.data_d0 + timedelta(days=dias),
             ))
             eventos_criados += 1
 
     session.commit()
-    return {"criado": True, "eventos_criados": eventos_criados, "animais": len(dados.animais)}
+    return {"criado": True, "lancamento_id": lancamento.id, "eventos_criados": eventos_criados, "animais": len(dados.animais)}
+
+
+@router.get("/protocolo-iatf/ativos")
+def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> list[dict]:
+    """
+    Protocolos IATF com pelo menos uma etapa ainda não realizada — para ver de
+    relance em qual dia (D0/D7/D9/D11) está cada animal em andamento.
+    """
+    lancamentos = session.exec(select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc())).all()
+    aplicacoes = session.exec(select(ProtocoloIatfAplicacao)).all()
+    por_lancamento: dict[int, list[ProtocoloIatfAplicacao]] = {}
+    for ap in aplicacoes:
+        por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+
+    ativos = []
+    for lanc in lancamentos:
+        aps = por_lancamento.get(lanc.id, [])
+        pendentes = [a for a in aps if not a.realizada]
+        if not pendentes:
+            continue
+        por_animal: dict[str, list[ProtocoloIatfAplicacao]] = {}
+        for ap in aps:
+            por_animal.setdefault(ap.numero_matriz, []).append(ap)
+        animais_status = []
+        for numero, aps_animal in sorted(por_animal.items()):
+            proxima = min((a for a in aps_animal if not a.realizada), key=lambda a: a.dia, default=None)
+            animais_status.append({
+                "numero_matriz": numero,
+                "etapa_atual": f"D{proxima.dia}" if proxima else "Concluído",
+                "data_etapa_atual": proxima.data_prevista.isoformat() if proxima else None,
+            })
+        ativos.append({
+            "lancamento_id": lanc.id,
+            "nome_protocolo": lanc.nome_protocolo,
+            "data_d0": lanc.data_d0.isoformat(),
+            "animais": animais_status,
+        })
+    return ativos
 
 
 class ServicoIn(BaseModel):
@@ -287,6 +334,26 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session))
         ult_ocorrencia=1,
     )
     session.add(servico)
+
+    # Veio de um protocolo IATF: resolve automaticamente a aplicação D11 em
+    # aberto correspondente — a Agenda para de lembrar essa etapa sozinha,
+    # sem exigir um segundo clique de "marcar realizado" separado.
+    if dados.protocolo:
+        aplicacao_d11 = session.exec(
+            select(ProtocoloIatfAplicacao)
+            .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
+            .where(
+                ProtocoloIatfAplicacao.numero_matriz == dados.numero_matriz,
+                ProtocoloIatfAplicacao.dia == 11,
+                ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
+                ProtocoloIatfLancamento.nome_protocolo == dados.protocolo,
+            )
+        ).first()
+        if aplicacao_d11:
+            aplicacao_d11.realizada = True
+            aplicacao_d11.data_realizacao = dados.data_servico
+            session.add(aplicacao_d11)
+
     session.commit()
     session.refresh(servico)
     return servico.model_dump()

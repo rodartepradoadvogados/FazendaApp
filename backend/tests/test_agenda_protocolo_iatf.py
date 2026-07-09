@@ -1,0 +1,139 @@
+"""
+Testes do protocolo IATF na Agenda: eventos agrupados por (lançamento, dia)
+em vez de um por animal, retroativo não mostra passos já vencidos, e marcar
+"realizado" (total ou parcial) resolve só as aplicações certas.
+"""
+from __future__ import annotations
+
+from datetime import date
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine, select
+
+import fazenda.database as database
+from fazenda.models import ProtocoloIatfAplicacao
+
+
+@pytest.fixture
+def client():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+def _lancar(c, animais, data_d0="2026-07-08", protocolo="IATF 08/07 a 19/07"):
+    return c.post("/reproducao/protocolo-iatf", json={"animais": animais, "data_d0": data_d0, "protocolo": protocolo}).json()
+
+
+class TestEventoAgrupado:
+    def test_evento_iatf_agrupa_animais_do_mesmo_dia(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701", "702"])
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e["id"].endswith("_0") and e.get("tipo") == "protocolo_iatf")
+        assert set(d0["animais"]) == {"700", "701", "702"}
+        assert d0["numero_animal"] is None
+
+    def test_descricao_tem_nome_do_protocolo_e_dia(self, client):
+        c, engine = client
+        _lancar(c, ["700"], protocolo="IATF 03/07/26 A 14/07/26")
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d7 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 7)
+        assert d7["descricao"] == "IATF 03/07/26 A 14/07/26 — D7"
+
+    def test_observacao_mostra_proxima_etapa(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert "D7" in d0["observacao"]
+        d11 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 11)
+        assert d11["observacao"] is None  # última etapa, não há próxima
+
+    def test_hormonio_do_dia_exposto(self, client):
+        c, engine = client
+        _lancar(c, ["700"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert "progesterona" in d0["hormonio"].lower()
+
+
+class TestRetroativoSoMostraFuturos:
+    def test_lancamento_retroativo_esconde_etapas_ja_passadas(self, client):
+        c, engine = client
+        # D0 lançado há mais de 11 dias: D0/D7/D9/D11 já passaram, exceto nenhum.
+        _lancar(c, ["700"], data_d0="2026-06-01")
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        iatf = [e for e in eventos if e.get("tipo") == "protocolo_iatf"]
+        assert iatf == []  # todas as datas (01/06, 08/06, 10/06, 12/06) já passaram
+
+    def test_lancamento_retroativo_mostra_so_etapas_futuras(self, client):
+        c, engine = client
+        # D0 em 01/07: D0(01/07) e D7(08/07) já passaram/são hoje-1, D9(10/07) e D11(12/07) são futuros.
+        _lancar(c, ["700"], data_d0="2026-07-01")
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
+        dias_presentes = sorted(e["dia"] for e in eventos if e.get("tipo") == "protocolo_iatf")
+        assert dias_presentes == [9, 11]
+
+
+class TestMarcarRealizadoIatf:
+    def test_marcar_grupo_inteiro_some_da_agenda(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+
+        r = c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+        assert r.status_code == 200
+
+        with Session(engine) as s:
+            aps = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 0)).all()
+            assert all(a.realizada for a in aps)
+
+        eventos2 = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        assert not any(e.get("tipo") == "protocolo_iatf" and e["dia"] == 0 for e in eventos2)
+
+    def test_marcar_apenas_um_animal_mantem_o_resto_pendente(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+
+        c.post("/agenda/realizados", json={"evento_id": d0["id"], "animais": ["700"]})
+
+        with Session(engine) as s:
+            ap700 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "700", ProtocoloIatfAplicacao.dia == 0)).first()
+            ap701 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "701", ProtocoloIatfAplicacao.dia == 0)).first()
+            assert ap700.realizada is True
+            assert ap701.realizada is False
+
+        eventos2 = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0_depois = next(e for e in eventos2 if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert d0_depois["animais"] == ["701"]

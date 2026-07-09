@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe } from "lucide-react";
 import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -47,6 +47,24 @@ export default function AgendaPage() {
   // Painéis recolhíveis (candidatas IATF, BST aptos, BST excluídos) — começam recolhidos.
   const [paineis, setPaineis] = useState<Set<string>>(new Set());
   const togglePainel = (k: string) => setPaineis(p => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
+  // Protocolo IATF: grupo (lançamento+dia) expandido mostra os animais + hormônio do dia.
+  const [iatfAbertos, setIatfAbertos] = useState<Set<string>>(new Set());
+  const toggleIatf = (id: string) => setIatfAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [iatfChecks, setIatfChecks] = useState<Record<string, Set<string>>>({});
+  const abrirIatf = (id: string, animais: string[]) => {
+    setIatfChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+    toggleIatf(id);
+  };
+  const toggleAnimalIatf = (id: string, numero: string) => setIatfChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+  // "Deseja cumprir essa atividade?" — confirmação antes de marcar realizado,
+  // em vez de agir no primeiro clique.
+  const [confirmando, setConfirmando] = useState<Set<string>>(new Set());
+  const pedirConfirmacao = (chave: string) => setConfirmando((p) => new Set(p).add(chave));
+  const cancelarConfirmacao = (chave: string) => setConfirmando((p) => { const n = new Set(p); n.delete(chave); return n; });
 
   // Janela de contas a pagar/receber que o backend calcula: 10 dias por padrão,
   // ou até a data "Até" escolhida (se o usuário ampliar o período).
@@ -76,11 +94,30 @@ export default function AgendaPage() {
   const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
 
   const [marcando, setMarcando] = useState<Set<string>>(new Set());
-  const marcarRealizado = async (eventoId: string) => {
+  const marcarRealizado = async (eventoId: string, animais?: string[]) => {
     setMarcando((p) => new Set(p).add(eventoId));
-    try { await marcarEventoRealizado(eventoId); await carregar(); }
+    try { await marcarEventoRealizado(eventoId, animais); cancelarConfirmacao(eventoId); await carregar(); }
     catch (e: any) { alert(e.message); }
     finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
+  };
+
+  // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
+  // Sim/Não") em vez de agir direto no primeiro clique.
+  const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
+    if (confirmando.has(chave)) {
+      return (
+        <span className="flex items-center gap-1" style={{ fontSize: "0.68rem" }} onClick={(e) => e.stopPropagation()}>
+          Cumpriu?
+          <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.3rem" }} disabled={marcando.has(chave)} onClick={onConfirmar}>Sim</button>
+          <button className="btn-ghost" style={{ padding: "0.1rem 0.3rem" }} onClick={() => cancelarConfirmacao(chave)}>Não</button>
+        </span>
+      );
+    }
+    return (
+      <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(chave)} onClick={(e) => { e.stopPropagation(); pedirConfirmacao(chave); }}>
+        <CheckCircle2 size={12} /> {compacto ? "" : "Realizado"}
+      </button>
+    );
   };
 
   const handleAddEvento = async () => {
@@ -104,7 +141,9 @@ export default function AgendaPage() {
       const financeiroPorRef = new Map<string, any[]>();
       const linhas: any[] = [];
       evs.forEach((e: any) => {
-        if (e.categoria === "Gestão/Financeiro" && e.ref) {
+        if (e.tipo === "protocolo_iatf") {
+          linhas.push({ tipo: "iatf", e });
+        } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
         } else {
@@ -136,11 +175,75 @@ export default function AgendaPage() {
                           <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                           <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                           <td>
-                            <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(e.id)} onClick={() => marcarRealizado(e.id)}>
-                              <CheckCircle2 size={12} /> Realizado
-                            </button>
+                            <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                           </td>
                         </tr>
+                      );
+                    }
+                    if (linha.tipo === "iatf") {
+                      const e = linha.e;
+                      const abertoIatf = iatfAbertos.has(e.id);
+                      const checks = iatfChecks[e.id] || new Set(e.animais);
+                      const ehD11 = e.dia === 11;
+                      return (
+                        <React.Fragment key={`iatf-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => abrirIatf(e.id, e.animais)}>
+                            <td><span className={BADGE_CLASS["Reprodutivo"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Reprodutivo</span></td>
+                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                            <td style={{ fontSize: "0.83rem" }}>
+                              {abertoIatf ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}
+                            </td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
+                            <td onClick={(ev) => ev.stopPropagation()}>
+                              {!ehD11 && <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />}
+                            </td>
+                          </tr>
+                          {abertoIatf && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.5rem 0" }}>
+                                  <p style={{ fontSize: "0.78rem", marginBottom: "0.4rem" }}>
+                                    <Syringe size={12} style={{ display: "inline", marginRight: "0.3rem" }} />
+                                    <strong>Hormônio/ação do dia:</strong> {e.hormonio}
+                                  </p>
+                                  <table className="fazenda-table" style={{ margin: 0 }}>
+                                    <thead><tr>{!ehD11 && <th></th>}<th>Nº</th>{ehD11 && <th></th>}</tr></thead>
+                                    <tbody>
+                                      {e.animais.map((numero: string) => (
+                                        <tr key={numero}>
+                                          {!ehD11 && (
+                                            <td>
+                                              <input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalIatf(e.id, numero)} />
+                                            </td>
+                                          )}
+                                          <td style={{ fontWeight: 700 }}>{numero}</td>
+                                          {ehD11 && (
+                                            <td>
+                                              <a href={`/lancamentos?ir=inseminacao`} className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                                <Syringe size={12} /> Ir para Inseminação
+                                              </a>
+                                            </td>
+                                          )}
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  {!ehD11 && (
+                                    <div className="flex items-center gap-2 mt-2">
+                                      <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
+                                        onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                        <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     }
                     // Grupo Gestão/Financeiro por nota/lançamento.
@@ -160,9 +263,7 @@ export default function AgendaPage() {
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
-                            <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => itens.forEach((it: any) => marcarRealizado(it.id))}>
-                              <CheckCircle2 size={12} /> Realizado
-                            </button>
+                            <BotaoRealizado chave={`grupo:${chaveGrupo}`} onConfirmar={() => itens.forEach((it: any) => marcarRealizado(it.id))} />
                           </td>
                         </tr>
                         {abertoGrupo && itens.map((it: any, j: number) => (
@@ -171,9 +272,7 @@ export default function AgendaPage() {
                             <td colSpan={2} style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.descricao}{it.observacao ? ` · ${it.observacao}` : ""}</td>
                             <td></td>
                             <td>
-                              <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(it.id)} onClick={() => marcarRealizado(it.id)}>
-                                <CheckCircle2 size={12} />
-                              </button>
+                              <BotaoRealizado chave={it.id} compacto onConfirmar={() => marcarRealizado(it.id)} />
                             </td>
                           </tr>
                         ))}
