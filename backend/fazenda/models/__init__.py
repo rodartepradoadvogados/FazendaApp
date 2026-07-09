@@ -194,6 +194,12 @@ class ControleLeiteiro(SQLModel, table=True):
     del_no_controle: Optional[int] = None
     data_ult_parto: Optional[date] = None
     ordem_parto: Optional[int] = None
+    # Ordenhas individuais do dia (1ª = manhã, 2ª = noite quando só há 2; a
+    # 3ª só é preenchida em rotina de 3 ordenhas/dia). producao_kg continua
+    # sendo a soma — estes campos existem só para permitir a média por ordenha.
+    ordenha1_kg: Optional[float] = None
+    ordenha2_kg: Optional[float] = None
+    ordenha3_kg: Optional[float] = None
 
 
 # ---------------------------------------------------------------------------

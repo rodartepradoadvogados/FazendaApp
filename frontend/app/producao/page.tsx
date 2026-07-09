@@ -13,7 +13,13 @@ const COLUNAS_FILTRADOS = [
   { header: "DEL (dias)", key: "del" }, { header: "Produção (kg)", key: "producaoFmt" },
 ];
 
-type Ctrl = { numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null };
+type Ctrl = {
+  numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null;
+  ordenha1_kg: number | null; ordenha2_kg: number | null; ordenha3_kg: number | null; grupo_primario: string | null;
+};
+
+const LOTES_LACTACAO = ["01", "02", "03"];
+const codigoLote = (g: string | null) => (g && g.length >= 2 && /\d\d/.test(g.slice(0, 2)) ? g.slice(0, 2) : null);
 
 const FAIXAS: [number, number, string][] = [
   [0, 30, "0-30"], [31, 60, "31-60"], [61, 90, "61-90"], [91, 120, "91-120"],
@@ -64,6 +70,11 @@ export default function ProducaoPage() {
   const [fDelMin, setFDelMin] = useState("");
   const [fDelMax, setFDelMax] = useState("");
 
+  const [ucModo, setUcModo] = useState<"animal" | "lote" | "rebanho">("rebanho");
+  const [ucN, setUcN] = useState<1 | 2 | 3>(1);
+  const [ucAnimal, setUcAnimal] = useState("");
+  const [ucLote, setUcLote] = useState("");
+
   useEffect(() => {
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
   }, []);
@@ -113,6 +124,48 @@ export default function ProducaoPage() {
   const ultimaData = serie.length ? serie[serie.length - 1] : null;
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
+  const animaisDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.numero), [regs]);
+  const lotesDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.grupo_primario), [regs]);
+
+  // Escopo do painel "Últimos controles": por animal, por lote (um selecionado) ou rebanho todo em lactação
+  // (lotes cujo código de 2 dígitos é 01/02/03 — mesma convenção usada em Rebanho/Lançamentos).
+  const ucNumerosEscopo = useMemo(() => {
+    if (!regs) return new Set<string>();
+    if (ucModo === "animal") return new Set(ucAnimal ? [ucAnimal] : []);
+    if (ucModo === "lote") return new Set(ucLote ? regs.filter((r) => r.grupo_primario === ucLote).map((r) => r.numero) : []);
+    return new Set(regs.filter((r) => LOTES_LACTACAO.includes(codigoLote(r.grupo_primario) || "")).map((r) => r.numero));
+  }, [regs, ucModo, ucAnimal, ucLote]);
+
+  // Últimos N controles por animal do escopo, ordenados mais recente primeiro.
+  const ucRegistros = useMemo(() => {
+    if (!regs || !ucNumerosEscopo.size) return [];
+    const porAnimal = new Map<string, Ctrl[]>();
+    regs.forEach((r) => { if (ucNumerosEscopo.has(r.numero)) (porAnimal.get(r.numero) ?? porAnimal.set(r.numero, []).get(r.numero)!).push(r); });
+    const linhas: Ctrl[] = [];
+    porAnimal.forEach((arr) => {
+      const ord = [...arr].sort((a, b) => (a.data! > b.data! ? -1 : 1));
+      linhas.push(...ord.slice(0, ucN));
+    });
+    return linhas.sort((a, b) => (a.numero === b.numero ? (a.data! < b.data! ? 1 : -1) : a.numero.localeCompare(b.numero)));
+  }, [regs, ucNumerosEscopo, ucN]);
+
+  // Média do lote/rebanho: produção do controle mais recente de cada animal do escopo (não a média dos N).
+  const ucMediaAtual = useMemo(() => {
+    const porAnimal = new Map<string, Ctrl>();
+    ucRegistros.forEach((r) => {
+      const atual = porAnimal.get(r.numero);
+      if (!atual || (r.data && atual.data && r.data > atual.data)) porAnimal.set(r.numero, r);
+    });
+    return media(Array.from(porAnimal.values()).map((r) => r.producao_kg || 0));
+  }, [ucRegistros]);
+
+  const ucMediaManha = useMemo(() => media(ucRegistros.filter((r) => r.ordenha1_kg != null).map((r) => r.ordenha1_kg!)), [ucRegistros]);
+  const ucMediaNoite = useMemo(() => {
+    // "Noite" = última ordenha do dia lançada — ordenha3 quando há 3, senão ordenha2.
+    const valores = ucRegistros.map((r) => (r.ordenha3_kg ?? r.ordenha2_kg)).filter((v): v is number => v != null);
+    return media(valores);
+  }, [ucRegistros]);
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -140,6 +193,70 @@ export default function ProducaoPage() {
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 120" style={selStyle} value={fDelMax} onChange={(e) => setFDelMax(e.target.value)} /></div>
             </div>
             {(fAno || fMes || fDelMin || fDelMax) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); }}>Limpar filtros</button>}
+          </div>
+
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Milk size={14} /> Últimos controles leiteiros</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ver</label>
+                <select style={selStyle} value={ucN} onChange={(e) => setUcN(Number(e.target.value) as 1 | 2 | 3)}>
+                  <option value={1}>Último controle</option>
+                  <option value={2}>2 últimos controles</option>
+                  <option value={3}>3 últimos controles</option>
+                </select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Por</label>
+                <select style={selStyle} value={ucModo} onChange={(e) => setUcModo(e.target.value as any)}>
+                  <option value="rebanho">Rebanho todo em lactação</option>
+                  <option value="lote">Lote/grupo</option>
+                  <option value="animal">Um animal</option>
+                </select></div>
+              {ucModo === "animal" && (
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
+                  <select style={selStyle} value={ucAnimal} onChange={(e) => setUcAnimal(e.target.value)}>
+                    <option value="">Selecione…</option>{animaisDisponiveis.map((n) => <option key={n}>{n}</option>)}
+                  </select></div>
+              )}
+              {ucModo === "lote" && (
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote/grupo</label>
+                  <select style={selStyle} value={ucLote} onChange={(e) => setUcLote(e.target.value)}>
+                    <option value="">Selecione…</option>{lotesDisponiveis.map((l) => <option key={l}>{l}</option>)}
+                  </select></div>
+              )}
+            </div>
+
+            {ucRegistros.length > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
+                {ucModo !== "animal" && (
+                  <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{ucMediaAtual} kg</p>
+                    <p className="kpi-label">Média do {ucModo === "lote" ? "lote" : "rebanho"} (controle mais recente)</p></div>
+                )}
+                <div className="kpi-card"><p className="kpi-value">{ucMediaManha || "—"} kg</p><p className="kpi-label">Média por ordenha — manhã</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucMediaNoite || "—"} kg</p><p className="kpi-label">Média por ordenha — noite</p></div>
+              </div>
+            )}
+
+            <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Vaca</th><th>Lote</th><th>Data</th><th style={{ textAlign: "right" }}>Manhã (kg)</th><th style={{ textAlign: "right" }}>Noite (kg)</th><th style={{ textAlign: "right" }}>Total (kg)</th></tr></thead>
+                <tbody>
+                  {ucRegistros.map((r, i) => (
+                    <tr key={`${r.numero}-${r.data}-${i}`}>
+                      <td style={{ fontWeight: 700 }}>{r.numero}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.grupo_primario || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{r.ordenha1_kg ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{r.ordenha3_kg ?? r.ordenha2_kg ?? "—"}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{r.producao_kg ?? "—"}</td>
+                    </tr>
+                  ))}
+                  {!ucRegistros.length && (
+                    <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
+                      {ucModo === "animal" && !ucAnimal ? "Selecione um animal." : ucModo === "lote" && !ucLote ? "Selecione um lote." : "Nenhum controle encontrado."}
+                    </td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
