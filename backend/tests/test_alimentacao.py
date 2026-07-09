@@ -133,6 +133,27 @@ class TestBaixaAutomatica:
             movimentos = s.exec(MovimentoEstoque.__table__.select()).fetchall()
             assert len(movimentos) == 1
 
+    def test_item_nao_estocavel_nao_sofre_baixa_automatica(self, client):
+        c, engine = client
+        _seed(engine)
+        with Session(engine) as s:
+            item = s.get(Estoque, 1)
+            item.estocavel = False
+            s.add(item)
+            s.commit()
+
+        c.get("/alimentacao/")
+        with Session(engine) as s:
+            estado = s.get(AlimentacaoEstado, 1)
+            estado.ultima_data_deducao = date.today() - timedelta(days=3)
+            s.add(estado)
+            s.commit()
+
+        c.get("/alimentacao/")
+        with Session(engine) as s:
+            item = s.get(Estoque, 1)
+            assert item.quantidade == 1000.0  # não estocável — sem baixa automática
+
     def test_segunda_chamada_no_mesmo_dia_nao_baixa_de_novo(self, client):
         c, engine = client
         _seed(engine)

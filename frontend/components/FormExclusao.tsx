@@ -21,7 +21,7 @@ type Pendente = { id: number; tipo: string; id_alvo: string; titulo: string | nu
  * Administradores excluem na hora; os demais usuários só registram uma
  * solicitação, que fica pendente de aprovação (ver painel abaixo, admin-only).
  */
-export function FormExclusao() {
+export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {}) {
   const [tipos, setTipos] = useState<Tipo[]>([]);
   const [tipo, setTipo] = useState("");
   const [termo, setTermo] = useState("");
@@ -63,9 +63,15 @@ export function FormExclusao() {
     finally { setDecidindo(null); }
   };
 
-  useEffect(() => { fetchTiposExclusao().then(setTipos).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchTiposExclusao().then((t) => setTipos(ocultarTipos ? t.filter((x: Tipo) => !ocultarTipos.includes(x.id)) : t)).catch(() => {});
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
-  const TIPOS_SEM_DATA = new Set(["animal", "estoque"]);
+  const TIPOS_SEM_DATA = new Set([
+    "animal", "estoque", "lote", "fornecedor", "motivo_movimentacao", "pessoa",
+    "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario",
+  ]);
   const temFiltroData = tipo && !TIPOS_SEM_DATA.has(tipo);
 
   const buscar = async (t: string, q: string, ini: string, fim: string) => {

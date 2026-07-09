@@ -395,6 +395,10 @@ class Estoque(SQLModel, table=True):
     conta_gerencial_despesa_padrao: Optional[str] = None  # código do plano de contas (ex.: "3.01.01.01")
     conta_gerencial_receita_padrao: Optional[str] = None
     exibir_necessidade_compra_agenda: Optional[bool] = None  # abaixo do mínimo -> lembrete na Agenda
+    # None/True = estocável (item real de estoque, participa de baixa automática
+    # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
+    # cadastrado só para lançamento financeiro (produto de nota), sem controle de quantidade.
+    estocavel: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------

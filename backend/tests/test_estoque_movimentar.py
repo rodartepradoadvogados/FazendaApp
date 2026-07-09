@@ -37,6 +37,7 @@ def client():
     with TestClient(main.app) as c:
         with Session(engine) as s:
             s.add(Estoque(nome="Borgal 50ml", quantidade=10, estoque_minimo=5, unidade="unidade"))
+            s.add(Estoque(nome="Frete de touro", quantidade=0, unidade="unidade", estocavel=False))
             s.commit()
         yield c
 
@@ -115,3 +116,41 @@ class TestCriarItemEstoque:
     def test_marca_abaixo_minimo_na_criacao(self, client):
         r = client.post("/estoque/", json={"nome": "Concentrado", "quantidade": 2, "estoque_minimo": 10})
         assert r.json()["abaixo_minimo"] is True
+
+    def test_estocavel_default_true(self, client):
+        r = client.post("/estoque/", json={"nome": "Concentrado2", "quantidade": 2})
+        assert r.json()["estocavel"] is True
+
+    def test_cria_item_nao_estocavel(self, client):
+        r = client.post("/estoque/", json={"nome": "Serviço de frete", "estocavel": False})
+        assert r.json()["estocavel"] is False
+
+
+class TestEstocavel:
+    def test_doacao_rejeitada_para_item_nao_estocavel(self, client):
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Frete de touro", "movimento": "Doação", "quantidade": 1,
+            "data_movimento": "2026-07-08",
+        })
+        assert r.status_code == 400
+
+    def test_entrada_cortesia_rejeitada_para_item_nao_estocavel(self, client):
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Frete de touro", "movimento": "Entrada de cortesia", "quantidade": 1,
+            "data_movimento": "2026-07-08",
+        })
+        assert r.status_code == 400
+
+    def test_ajuste_normal_permitido_para_item_nao_estocavel(self, client):
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Frete de touro", "movimento": "Entrada de ajuste", "quantidade": 1,
+            "data_movimento": "2026-07-08",
+        })
+        assert r.status_code == 200
+
+    def test_doacao_permitida_para_item_estocavel(self, client):
+        r = client.post("/estoque/movimentar", json={
+            "nome": "Borgal 50ml", "movimento": "Doação", "quantidade": 1,
+            "data_movimento": "2026-07-08",
+        })
+        assert r.status_code == 200

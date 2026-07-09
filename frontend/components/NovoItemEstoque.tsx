@@ -19,7 +19,7 @@ const vazio = {
   valor_unitario: "", local_armazenamento: "", fornecedor_id: "", ensacado: false, kg_por_saco: "",
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_receita_padrao: "",
-  exibir_necessidade_compra_agenda: false,
+  exibir_necessidade_compra_agenda: false, estocavel: true,
 };
 
 export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (item?: any) => void; onCancelar: () => void }) {
@@ -61,6 +61,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
         exibir_necessidade_compra_agenda: form.exibir_necessidade_compra_agenda,
+        estocavel: form.estocavel,
       });
       setForm(vazio);
       onCriado(criado);
@@ -121,6 +122,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
             <input type="checkbox" checked={form.ativo} onChange={(e) => set({ ativo: e.target.checked })} /> Ativo
           </label>
         </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+            <input type="checkbox" checked={form.estocavel} onChange={(e) => set({ estocavel: e.target.checked })} /> Estocável
+          </label>
+        </div>
 
         <div style={{ gridColumn: "1 / -1" }}>
           <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -128,6 +134,12 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
             Exibir necessidade de compra na Agenda quando o estoque ficar abaixo do mínimo
           </label>
         </div>
+        {!form.estocavel && (
+          <div style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--text-muted)" }}>
+            Item não estocável: só serve para lançamento financeiro (produto de nota). Não participa de baixa automática
+            por aplicação/consumo, nem pode ser doado ou recebido de cortesia.
+          </div>
+        )}
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observação</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacao} onChange={(e) => set({ observacao: e.target.value })} /></div>
       </div>

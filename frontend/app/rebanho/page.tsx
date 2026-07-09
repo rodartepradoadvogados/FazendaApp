@@ -205,8 +205,17 @@ function RebanhoVisaoGeral() {
   );
 }
 
+type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "historico"];
+
 export default function RebanhoPage() {
-  const [aba, setAba] = useState<"visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico">("visao");
+  const [aba, setAba] = useState<Aba>("visao");
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const abaParam = params.get("aba") as Aba | null;
+    if (abaParam && ABAS_VALIDAS.includes(abaParam)) setAba(abaParam);
+  }, []);
 
   return (
     <div className="px-6 pt-6">

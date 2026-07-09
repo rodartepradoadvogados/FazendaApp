@@ -83,7 +83,7 @@ def _dar_baixa_automatica(session: Session) -> dict:
     itens_baixados = []
     for item in consumo_total:
         estoque_item = session.exec(select(Estoque).where(Estoque.nome == item["ingrediente"])).first()
-        if not estoque_item or not item["consumo_dia"]:
+        if not estoque_item or not item["consumo_dia"] or estoque_item.estocavel is False:
             continue
         baixa = round(item["consumo_dia"] * dias, 2)
         estoque_item.quantidade = round((estoque_item.quantidade or 0) - baixa, 2)

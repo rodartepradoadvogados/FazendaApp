@@ -102,7 +102,9 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
             ))
             criados += 1
 
-        if estoque_item and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
+        if estoque_item and estoque_item.estocavel is False:
+            pass
+        elif estoque_item and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
             total = item.quantidade * len(dados.animais)
             estoque_item.quantidade = (estoque_item.quantidade or 0) - total
             if estoque_item.estoque_minimo is not None:

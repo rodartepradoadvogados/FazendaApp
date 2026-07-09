@@ -18,6 +18,9 @@ router = APIRouter(prefix="/estoque", tags=["estoque"])
 MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"]
 MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"]
 MOVIMENTOS_VALIDOS = set(MOVIMENTOS_ENTRADA + MOVIMENTOS_SAIDA)
+# Só itens estocáveis podem ser doados ou recebidos de cortesia — itens não
+# estocáveis existem só para lançamento financeiro, sem controle de quantidade.
+MOVIMENTOS_SOMENTE_ESTOCAVEL = {"Doação", "Entrada de cortesia"}
 
 
 @router.get("/")
@@ -46,6 +49,7 @@ class EstoqueIn(BaseModel):
     conta_gerencial_despesa_padrao: str | None = None
     conta_gerencial_receita_padrao: str | None = None
     exibir_necessidade_compra_agenda: bool = False
+    estocavel: bool = True
 
 
 @router.post("/", status_code=201)
@@ -77,6 +81,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
         conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
         exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
+        estocavel=dados.estocavel,
     )
     session.add(item)
     session.commit()
@@ -110,6 +115,8 @@ def movimentar_estoque(dados: MovimentoIn, session: Session = Depends(get_sessio
     item = session.exec(select(Estoque).where(Estoque.nome == dados.nome)).first()
     if not item:
         raise HTTPException(status_code=404, detail=f'Item de estoque "{dados.nome}" não encontrado')
+    if dados.movimento in MOVIMENTOS_SOMENTE_ESTOCAVEL and item.estocavel is False:
+        raise HTTPException(status_code=400, detail="Somente itens estocáveis podem ser doados ou recebidos de cortesia")
 
     baixa = dados.movimento in MOVIMENTOS_SAIDA
     item.quantidade = (item.quantidade or 0) + (-dados.quantidade if baixa else dados.quantidade)

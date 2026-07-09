@@ -7,7 +7,7 @@ import NovoItemEstoque from "./NovoItemEstoque";
 type Item = {
   id: number; nome: string; categoria: string | null; quantidade: number | null; unidade: string | null;
   ensacado: boolean | null; kg_por_saco: number | null; fornecedor_id: number | null;
-  ativo: boolean | null;
+  ativo: boolean | null; estocavel: boolean | null;
 };
 type Fornecedor = { id: number; nome: string };
 
@@ -21,6 +21,7 @@ export default function CadastroEstoqueMeta() {
   const [ensacado, setEnsacado] = useState(false);
   const [kgPorSaco, setKgPorSaco] = useState("");
   const [fornecedorId, setFornecedorId] = useState("");
+  const [estocavel, setEstocavel] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
 
@@ -29,6 +30,7 @@ export default function CadastroEstoqueMeta() {
 
   const abrirEdicao = (it: Item) => {
     setEditando(it.id); setEnsacado(!!it.ensacado); setKgPorSaco(it.kg_por_saco?.toString() ?? ""); setFornecedorId(it.fornecedor_id?.toString() ?? "");
+    setEstocavel(it.estocavel !== false);
   };
 
   const salvar = async (id: number) => {
@@ -37,6 +39,7 @@ export default function CadastroEstoqueMeta() {
       await atualizarMetaEstoque(id, {
         ensacado, kg_por_saco: kgPorSaco.trim() === "" ? null : Number(kgPorSaco),
         fornecedor_id: fornecedorId.trim() === "" ? null : Number(fornecedorId),
+        estocavel,
       });
       setEditando(null);
       await carregar();
@@ -69,7 +72,7 @@ export default function CadastroEstoqueMeta() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Item</th><th>Categoria</th><th>Ensacado</th><th>Kg/saco</th><th>Fornecedor</th><th></th></tr></thead>
+            <thead><tr><th>Item</th><th>Categoria</th><th>Ensacado</th><th>Kg/saco</th><th>Fornecedor</th><th>Estocável</th><th></th></tr></thead>
             <tbody>
               {itens.map((it) => (
                 <tr key={it.id}>
@@ -85,6 +88,7 @@ export default function CadastroEstoqueMeta() {
                           {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
                         </select>
                       </td>
+                      <td><input type="checkbox" checked={estocavel} onChange={(e) => setEstocavel(e.target.checked)} /></td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <button className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem", marginRight: "0.3rem" }} onClick={() => salvar(it.id)} disabled={salvando}><Check size={13} /></button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
@@ -95,6 +99,7 @@ export default function CadastroEstoqueMeta() {
                       <td>{it.ensacado ? "Sim" : "Não"}</td>
                       <td>{it.kg_por_saco ?? "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
+                      <td>{it.estocavel === false ? "Não" : "Sim"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(it)}>
                           <Pencil size={13} /> Editar
@@ -104,7 +109,7 @@ export default function CadastroEstoqueMeta() {
                   )}
                 </tr>
               ))}
-              {!itens.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
+              {!itens.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
             </tbody>
           </table>
         </div>
