@@ -514,6 +514,43 @@ export const fetchEventosSanitarios = _eventosSanitarios.listar;
 export const criarEventoSanitario = _eventosSanitarios.criar;
 export const atualizarEventoSanitario = _eventosSanitarios.atualizar;
 
+// ── Protocolo sanitário (cadastro + lançamento) ──
+export type ProtocoloEtapa = { dia: number; produto: string; dosagem: number; unidade: string; via?: string | null };
+export async function fetchProtocolosSanitarios() {
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);
+  return res.json();
+}
+export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo sanitário"); }
+  return res.json();
+}
+export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo sanitário"); }
+  return res.json();
+}
+export async function fetchLancamentosProtocolo() {
+  const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lançamentos de protocolo error: ${res.status}`);
+  return res.json();
+}
+export async function lancarProtocoloSanitario(dados: {
+  protocolo_id: number; numero_matriz: string; data_inicio: string; responsavel?: string; observacao?: string;
+  classificacao_mastite?: string; resultado_cmt?: string; tetos_afetados?: string[];
+}) {
+  const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo sanitário"); }
+  return res.json();
+}
+
 // ── Calendário sanitário (Sanidade) ──
 export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; dataFim?: string; eventoSanitarioId?: number }) {
   const params = new URLSearchParams();

@@ -3,15 +3,20 @@ Router da Agenda — calcula e retorna eventos do dia ou de um período.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, Parto, Servico
+from fazenda.models import (
+    AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
+    ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
+    Servico,
+)
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
+from fazenda.rules.unidades import pode_dar_baixa_direta
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -77,6 +82,32 @@ def calcular_agenda(
         if f"dieta_analise_{d.id}" not in realizados
     ]
 
+    # Protocolo sanitário (mastite e outros) — uma etapa/dia pendente vira um
+    # evento na Agenda; a baixa de estoque só acontece quando o usuário marca
+    # "realizado" (ver POST /agenda/realizados).
+    aplicacoes_pendentes = session.exec(
+        select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.realizada == False)  # noqa: E712
+    ).all()
+    etapas_por_id = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
+    lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloSanitarioLancamento)).all()}
+    protocolos_por_id = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
+    eventos_protocolo = []
+    for ap in aplicacoes_pendentes:
+        chave = f"protocolo_sanitario_{ap.id}"
+        if chave in realizados:
+            continue
+        etapa = etapas_por_id.get(ap.etapa_id)
+        lancamento = lancamentos_por_id.get(ap.lancamento_id)
+        protocolo = protocolos_por_id.get(lancamento.protocolo_id) if lancamento else None
+        if not etapa or not lancamento or not protocolo:
+            continue
+        eventos_protocolo.append({
+            "id": chave, "data": ap.data_prevista.isoformat(), "categoria": "sanidade",
+            "descricao": f"{protocolo.nome} — D{etapa.dia} — matriz {lancamento.numero_matriz} — {etapa.produto}",
+            "numero_animal": lancamento.numero_matriz, "observacao": lancamento.observacao,
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+        })
+
     return {
         "data_referencia": result.data_referencia.isoformat(),
         "candidatas_iatf": [
@@ -103,18 +134,59 @@ def calcular_agenda(
                 "ref": e.ref,
             }
             for e in eventos
-        ] + eventos_dieta,
+        ] + eventos_dieta + eventos_protocolo,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf),
             "bst_elegiveis": len(result.bst_elegiveis),
             "contas_a_pagar": len(result.contas_a_pagar),
-            "eventos": len(eventos) + len(eventos_dieta),
+            "eventos": len(eventos) + len(eventos_dieta) + len(eventos_protocolo),
         },
     }
 
 
 class RealizadoIn(BaseModel):
     evento_id: str
+
+
+def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
+    """
+    Ao marcar "realizado" um evento de protocolo sanitário: registra a
+    aplicação em Sanidade e dá baixa automática do produto no Estoque (quando
+    a unidade da etapa bate com a unidade de estoque do produto).
+    """
+    aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
+    aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
+    if not aplicacao or aplicacao.realizada:
+        return
+    etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
+    lancamento = session.get(ProtocoloSanitarioLancamento, aplicacao.lancamento_id)
+    if not etapa or not lancamento:
+        return
+
+    hoje = date.today()
+    aplicacao.realizada = True
+    aplicacao.data_realizacao = hoje
+    session.add(aplicacao)
+
+    session.add(Sanidade(
+        numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=etapa.produto,
+        dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
+        obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
+    ))
+
+    estoque_item = session.exec(select(Estoque).where(Estoque.nome == etapa.produto)).first()
+    if estoque_item and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
+        estoque_item.quantidade = (estoque_item.quantidade or 0) - etapa.dosagem
+        if estoque_item.estoque_minimo is not None:
+            estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+        estoque_item.atualizado_em = datetime.utcnow()
+        session.add(estoque_item)
+        session.add(MovimentoEstoque(
+            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=etapa.dosagem,
+            unidade=estoque_item.unidade, data_movimento=hoje,
+            observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
+        ))
+    session.commit()
 
 
 @router.post("/realizados")
@@ -124,6 +196,8 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
     if not existe:
         session.add(EventoRealizado(evento_id=dados.evento_id))
         session.commit()
+        if dados.evento_id.startswith("protocolo_sanitario_"):
+            _baixar_protocolo_sanitario(session, dados.evento_id)
     return {"marcado": True}
 
 
