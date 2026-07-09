@@ -8,6 +8,7 @@ import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
+import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -77,6 +78,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
   // marcado em `adicionarPara` para saber onde aplicar o resultado ao salvar.
   const [adicionarPara, setAdicionarPara] = useState<number | null>(null);
   const [modoAdicionar, setModoAdicionar] = useState<"produto" | "servico" | "conta">("produto");
+  const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   const [centroCusto, setCentroCusto] = useState("");
@@ -324,8 +326,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                 </Campo>
               ) : (
                 <Campo label="Produto">
-                  <input list={`fin-produtos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Ração concentrada 25kg" />
-                  <datalist id={`fin-produtos-${idx}`}>{produtosEstoque.slice().sort().map((p) => <option key={p} value={p} />)}</datalist>
+                  <select style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })}>
+                    <option value="">Selecione…</option>
+                    {produtosEstoque.slice().sort().map((p) => <option key={p} value={p}>{p}</option>)}
+                  </select>
                 </Campo>
               )}
               <Campo label="Descrição (opcional)">
@@ -353,9 +357,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
 
       {/* Dados da nota (uma vez por lançamento) */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
-        <Campo label="Fornecedor / cliente">
-          <input list="fin-fornecedores" style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} />
-          <datalist id="fin-fornecedores">{opcoes.fornecedores.map((f) => <option key={f} value={f} />)}</datalist>
+        <Campo label={tipo === "receita" ? "Cliente" : "Fornecedor"}>
+          <div className="flex items-center gap-2">
+            <select style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
+              <option value="">Selecione…</option>
+              {opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
         </Campo>
         <Campo label="Centro de custo">
           <input list="fin-centros" style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)} />
@@ -526,6 +537,20 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               onCancelar={() => setAdicionarPara(null)}
             />
           )}
+        </Modal>
+      )}
+
+      {abrirNovoFornecedor && (
+        <Modal title={`Novo ${tipo === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px">
+          <NovoFornecedorRapido
+            tipoSugerido={tipo}
+            onCriado={(f) => {
+              if (f?.nome) setFornecedor(f.nome);
+              carregarOpcoes();
+              setAbrirNovoFornecedor(false);
+            }}
+            onCancelar={() => setAbrirNovoFornecedor(false)}
+          />
         </Modal>
       )}
 

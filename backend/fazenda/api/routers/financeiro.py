@@ -83,7 +83,7 @@ class LancamentoIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
 
 
-FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito"]
+FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
 
 
 class PagamentoIn(BaseModel):
