@@ -88,6 +88,16 @@ class TestFichaAnimal:
         r = c.post("/cadastro/animais", json={"numero": "501"})
         assert r.status_code == 400
 
+    def test_listagem_em_ordem_numerica_crescente_nao_alfabetica(self, client):
+        c, engine = client
+        # Cadastrados fora de ordem — "9" deve vir antes de "10" e "80"
+        # (ordenação lexicográfica erraria isso: "10" < "80" < "9").
+        for numero in ["80", "10", "9", "1"]:
+            c.post("/cadastro/animais", json={"numero": numero, "sexo": "F"})
+
+        numeros = [a["numero"] for a in c.get("/animais/").json()]
+        assert numeros == ["1", "9", "10", "80"]
+
     def test_atualizar_ficha_e_baixa_desativa(self, client):
         c, engine = client
         c.post("/cadastro/animais", json={"numero": "502"})

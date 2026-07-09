@@ -340,6 +340,19 @@ class TestParametrosFinanceiros:
         r = c.post("/financeiro/centros-custo", json={"nome": "Ordenha"})
         assert r.status_code == 409
 
+    def test_centros_custo_listados_em_ordem_alfabetica(self, client):
+        c, engine = client
+        for nome in ["Secagem", "Bezerreiro", "Ordenha"]:
+            c.post("/financeiro/centros-custo", json={"nome": nome})
+        assert [x["nome"] for x in c.get("/financeiro/centros-custo").json()] == ["Bezerreiro", "Ordenha", "Secagem"]
+
+    def test_contas_correntes_listadas_em_ordem_alfabetica_por_banco(self, client):
+        c, engine = client
+        c.post("/financeiro/contas-correntes", json={"banco": "Sicredi", "agencia": "0001", "numero_conta": "1"})
+        c.post("/financeiro/contas-correntes", json={"banco": "Banco do Brasil", "agencia": "0002", "numero_conta": "2"})
+        bancos = [x["banco"] for x in c.get("/financeiro/contas-correntes").json()]
+        assert bancos == ["Banco do Brasil", "Sicredi"]
+
     def test_centros_custo_ja_usados_em_lancamentos_continuam_nas_opcoes(self, client):
         # Compatibilidade: valores digitados como texto livre antes do cadastro
         # existir não podem desaparecer do filtro.

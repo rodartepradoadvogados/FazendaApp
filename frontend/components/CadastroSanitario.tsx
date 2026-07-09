@@ -11,7 +11,7 @@ import {
 } from "@/lib/api";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 
-const VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"];
+const VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Oral", "Subdérmica"];
 
 const ABAS = [
   ["principios", "Princípio ativo", Syringe],

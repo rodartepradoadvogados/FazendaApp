@@ -16,6 +16,7 @@ from fazenda.models import (
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
 )
+from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.unidades import pode_dar_baixa_direta
 
@@ -134,7 +135,7 @@ def calcular_agenda(
         lancamento = lancamentos_iatf_por_id.get(lancamento_id)
         if not lancamento:
             continue
-        animais_grupo = sorted(a.numero_matriz for a in aps)
+        animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
         proximos_dias = [d for d in DIAS_PROTOCOLO_IATF if d > dia]
         proxima_etapa = None
         if proximos_dias:
@@ -322,7 +323,7 @@ def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) ->
         resultado.append({
             "id": f"protocolo_iatf_{lancamento_id}_{dia}",
             "nome_protocolo": lancamento.nome_protocolo, "dia": dia,
-            "animais": sorted(a.numero_matriz for a in aps),
+            "animais": sorted((a.numero_matriz for a in aps), key=chave_numero),
             "data_realizacao": max(datas_realizacao).isoformat() if datas_realizacao else None,
         })
     resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)

@@ -279,7 +279,9 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
     centros_custo = sorted(centros_cadastrados | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
-    contas_correntes = session.exec(select(ContaCorrente).where(ContaCorrente.ativo == True)).all()
+    contas_correntes = session.exec(
+        select(ContaCorrente).where(ContaCorrente.ativo == True).order_by(ContaCorrente.banco)
+    ).all()
     return {
         "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
@@ -326,7 +328,7 @@ class ContaCorrenteIn(BaseModel):
 
 @router.get("/contas-correntes")
 def listar_contas_correntes(session: Session = Depends(get_session)) -> list[dict]:
-    contas = session.exec(select(ContaCorrente).order_by(ContaCorrente.id)).all()
+    contas = session.exec(select(ContaCorrente).order_by(ContaCorrente.banco, ContaCorrente.agencia)).all()
     return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c)} for c in contas]
 
 
@@ -359,7 +361,7 @@ class CentroCustoIn(BaseModel):
 
 @router.get("/centros-custo")
 def listar_centros_custo(session: Session = Depends(get_session)) -> list[dict]:
-    return [c.model_dump() for c in session.exec(select(CentroCusto).order_by(CentroCusto.id)).all()]
+    return [c.model_dump() for c in session.exec(select(CentroCusto).order_by(CentroCusto.nome)).all()]
 
 
 @router.post("/centros-custo")

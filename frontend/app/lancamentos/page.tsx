@@ -36,8 +36,8 @@ const LACT = ["01", "02", "03"];
 const IDADE_MIN_SERVICO = 13; // meses — abaixo disso a fêmea não é apta a serviço
 // Sêmen (touros) atualmente em estoque — usados na seleção do touro em Serviço/IA.
 const TOUROS_ESTOQUE = [
-  "COORS", "GUINESS", "ABS LABEL", "CAMPEAO FI", "DESCONHECIDO", "HAGEN", "JAG", "LUZIO", "METEORO",
-  "MOSAIC", "HILLUX", "NABIL", "PRAFESS", "ROBO", "MESSI", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
+  "ABS LABEL", "CAMPEAO FI", "COORS", "DESCONHECIDO", "GUINESS", "HAGEN", "HILLUX", "JAG", "LUZIO",
+  "MESSI", "METEORO", "MOSAIC", "NABIL", "PRAFESS", "ROBO", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
 ];
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];

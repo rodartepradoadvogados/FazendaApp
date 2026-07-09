@@ -13,6 +13,7 @@ from sqlmodel import Session, select
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import Animal, ControleLeiteiro, Estoque, Lote, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.ordenacao import chave_numero
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
@@ -178,7 +179,7 @@ def relatorio_pesagens(
             "num_pesagens": len(lista),
         })
 
-    linhas.sort(key=lambda l: l["numero_matriz"])
+    linhas.sort(key=lambda l: chave_numero(l["numero_matriz"]))
     return {"linhas": linhas, "total": len(linhas)}
 
 

@@ -26,7 +26,7 @@ MOVIMENTOS_SOMENTE_ESTOCAVEL = {"Doação", "Entrada de cortesia"}
 @router.get("/")
 def listar_estoque(session: Session = Depends(get_session)) -> dict:
     """Todos os itens de estoque para o dashboard interativo (filtra no cliente)."""
-    itens = [e.model_dump() for e in session.exec(select(Estoque)).all()]
+    itens = [e.model_dump() for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()]
     return {"itens": itens, "total": len(itens)}
 
 
