@@ -579,6 +579,17 @@ class EventoSanitario(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class MotivoBaixa(SQLModel, table=True):
+    """Causa específica de uma baixa de animal (Rebanho > Baixar animal), cadastrável em Configurações."""
+
+    __tablename__ = "motivo_baixa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class CalendarioSanitario(SQLModel, table=True):
     """
     Uma regra do calendário sanitário da fazenda — sazonal/de rebanho (ex.:

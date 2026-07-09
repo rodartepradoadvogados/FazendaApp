@@ -12,24 +12,12 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, BaixaAnimal
+from fazenda.models import Animal, BaixaAnimal, MotivoBaixa
 
 router = APIRouter(prefix="/baixas", tags=["baixas"])
 
 TIPOS_BAIXA = ["morte", "descarte_voluntario", "descarte_involuntario"]
 MOTIVOS = ["venda", "abate", "acidente", "doenca"]
-
-# Lista de doenças/causas — usada só como referência no front (select); o
-# backend aceita qualquer texto não vazio em motivo_doenca.
-MOTIVOS_DOENCA = [
-    "Botulismo", "Brucelose", "Tuberculose", "Babesia", "Casco", "Choque anafilático",
-    "Afogada", "Complicações pós-parto", "Clostridiose", "Descarga elétrica", "Descarte",
-    "Deslocamento de abomaso", "Desconhecido", "Diarréia", "Doação", "Doenças a vírus",
-    "Doenças bacterianas", "Doenças", "Fratura", "Hemorragia interna", "Hipocalcemia",
-    "Idade avançada", "Infarto", "Ingestão de corpo estranho", "Intoxicação", "Leptospirose",
-    "Má formação", "Mastite", "Metrite", "Morte natural", "Nascimento prematuro", "Natimorto",
-    "Pneumonia", "Retenção de placenta", "Roubo", "Tripanossoma", "Trombose",
-]
 
 
 class BaixaIn(BaseModel):
@@ -45,8 +33,13 @@ class BaixaIn(BaseModel):
 
 
 @router.get("/motivos")
-def listar_opcoes() -> dict:
-    return {"tipos_baixa": TIPOS_BAIXA, "motivos": MOTIVOS, "motivos_doenca": MOTIVOS_DOENCA}
+def listar_opcoes(session: Session = Depends(get_session)) -> dict:
+    motivos_doenca = [
+        m.nome for m in session.exec(
+            select(MotivoBaixa).where(MotivoBaixa.ativo == True).order_by(MotivoBaixa.nome)  # noqa: E712
+        ).all()
+    ]
+    return {"tipos_baixa": TIPOS_BAIXA, "motivos": MOTIVOS, "motivos_doenca": motivos_doenca}
 
 
 @router.get("/")

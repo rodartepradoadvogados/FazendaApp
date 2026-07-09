@@ -31,10 +31,13 @@ def client():
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
 
+    from fazenda.api.routers.cadastro import seed_motivos_baixa
+
     with TestClient(main.app) as c:
         with Session(engine) as s:
             s.add(Animal(numero="900", grupo_primario="01 - Alta", ativo=True))
             s.add(Animal(numero="901", grupo_primario="01 - Alta", ativo=True))
+            seed_motivos_baixa(s)
             s.commit()
         yield c
 

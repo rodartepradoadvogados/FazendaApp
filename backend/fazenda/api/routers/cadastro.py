@@ -16,8 +16,8 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, Pessoa, PrincipioAtivo,
-    ValeFuncionario, ValeParcela,
+    Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
+    PrincipioAtivo, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
@@ -512,6 +512,32 @@ def seed_cadastro_sanitario(session: Session) -> None:
     session.commit()
 
 
+# ---------------------------------------------------------------------------
+# Motivo de baixa (Rebanho > Baixar animal) — causa específica da baixa (usada
+# quando o motivo geral é "doença", mas também cobre outras causas comuns:
+# acidente, roubo, idade avançada etc.). Cadastrável em Configurações, para
+# não ficar limitado à lista fixa que havia antes só no código.
+# ---------------------------------------------------------------------------
+SEED_MOTIVOS_BAIXA = [
+    "Botulismo", "Brucelose", "Tuberculose", "Babesia", "Casco", "Choque anafilático",
+    "Afogada", "Complicações pós-parto", "Clostridiose", "Descarga elétrica", "Descarte",
+    "Deslocamento de abomaso", "Desconhecido", "Diarréia", "Doação", "Doenças a vírus",
+    "Doenças bacterianas", "Doenças", "Fratura", "Hemorragia interna", "Hipocalcemia",
+    "Idade avançada", "Infarto", "Ingestão de corpo estranho", "Intoxicação", "Leptospirose",
+    "Má formação", "Mastite", "Metrite", "Morte natural", "Nascimento prematuro", "Natimorto",
+    "Pneumonia", "Retenção de placenta", "Roubo", "Tripanossoma", "Trombose",
+]
+
+
+def seed_motivos_baixa(session: Session) -> None:
+    """Cria os motivos de baixa padrão se a tabela ainda estiver vazia (idempotente)."""
+    if session.exec(select(MotivoBaixa)).first():
+        return
+    for nome in SEED_MOTIVOS_BAIXA:
+        session.add(MotivoBaixa(nome=nome))
+    session.commit()
+
+
 class NomeAtivoIn(BaseModel):
     nome: str
     ativo: bool = True
@@ -566,3 +592,8 @@ _listar_eventos, _criar_evento, _atualizar_evento = _crud_nome_ativo(EventoSanit
 router.get("/eventos-sanitarios")(_listar_eventos)
 router.post("/eventos-sanitarios")(_criar_evento)
 router.put("/eventos-sanitarios/{item_id}")(_atualizar_evento)
+
+_listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa)
+router.get("/motivos-baixa")(_listar_motivos_baixa)
+router.post("/motivos-baixa")(_criar_motivo_baixa)
+router.put("/motivos-baixa/{item_id}")(_atualizar_motivo_baixa)
