@@ -53,6 +53,7 @@ class ItemIn(BaseModel):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
     produto: str
+    tipo_item: Optional[str] = None  # "produto" | "servico"
     descricao: Optional[str] = None
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
@@ -495,6 +496,9 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um produto ou serviço")
+    for item in dados.itens:
+        if item.tipo_item is not None and item.tipo_item not in ("produto", "servico"):
+            raise HTTPException(status_code=400, detail="tipo_item deve ser 'produto' ou 'servico'")
 
     valor_bruto = round(sum(i.valor_total for i in dados.itens), 2)
     valor_liquido = round(valor_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
@@ -513,6 +517,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
             codigo_conta_gerencial=item.codigo_conta_gerencial,
             nome_conta_gerencial=item.nome_conta_gerencial,
             produto=item.produto,
+            tipo_item=item.tipo_item,
             descricao=item.descricao,
             quantidade=item.quantidade,
             valor_unitario=item.valor_unitario,

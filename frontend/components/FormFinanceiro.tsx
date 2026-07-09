@@ -1,10 +1,13 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
-import { fetchOpcoesFinanceiro, fetchEstoque, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL } from "@/lib/api";
+import {
+  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL,
+} from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
+import NovoServicoRapido from "@/components/NovoServicoRapido";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -17,13 +20,14 @@ function Campo({ label, children, full }: { label: string; children: React.React
 }
 
 type Parcela = { data_vencimento: string; valor: string };
+type TipoItem = "produto" | "servico";
 type Item = {
   codigo_conta_gerencial: string; nome_conta_gerencial: string;
-  produto: string; descricao: string;
+  tipo_item: TipoItem; produto: string; descricao: string;
   quantidade: string; valor_unitario: string; valor_total: string; valorTotalManual: boolean;
 };
 const itemVazio = (): Item => ({
-  codigo_conta_gerencial: "", nome_conta_gerencial: "", produto: "", descricao: "",
+  codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
   quantidade: "", valor_unitario: "", valor_total: "", valorTotalManual: false,
 });
 
@@ -63,16 +67,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
   const [produtosEstoque, setProdutosEstoque] = useState<string[]>([]);
   const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => i.nome))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
-  const sugestoesProduto = useMemo(
-    () => Array.from(new Set([...produtosEstoque, ...opcoes.produtos])).sort(),
-    [produtosEstoque, opcoes.produtos]
-  );
+  const [servicos, setServicos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
+  const carregarServicos = () => fetchServicosCadastro().then(setServicos).catch(() => {});
+  useEffect(() => { carregarServicos(); }, []);
+  const sugestoesServico = useMemo(() => servicos.filter((s) => s.ativo).map((s) => s.nome).sort(), [servicos]);
 
-  // Modal "+ Adicionar" (novo produto de estoque ou nova conta gerencial),
-  // aberto a partir de um item específico da nota — o item fica marcado em
-  // `adicionarPara` para saber onde aplicar o resultado ao salvar.
+  // Modal "+ Adicionar" (novo produto de estoque, novo serviço ou nova conta
+  // gerencial), aberto a partir de um item específico da nota — o item fica
+  // marcado em `adicionarPara` para saber onde aplicar o resultado ao salvar.
   const [adicionarPara, setAdicionarPara] = useState<number | null>(null);
-  const [modoAdicionar, setModoAdicionar] = useState<"produto" | "conta">("produto");
+  const [modoAdicionar, setModoAdicionar] = useState<"produto" | "servico" | "conta">("produto");
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
   const [centroCusto, setCentroCusto] = useState("");
@@ -162,7 +166,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
     setTipoDocumento("Nota fiscal");
     if (Array.isArray(dados.itens) && dados.itens.length) {
       setItens(dados.itens.map((it: any) => ({
-        codigo_conta_gerencial: "", nome_conta_gerencial: "",
+        codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto",
         produto: it.produto || "", descricao: "",
         quantidade: it.quantidade != null ? String(it.quantidade) : "",
         valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
@@ -212,6 +216,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
           codigo_conta_gerencial: i.codigo_conta_gerencial || null,
           nome_conta_gerencial: i.nome_conta_gerencial || null,
           produto: i.produto.trim(),
+          tipo_item: i.tipo_item,
           descricao: i.descricao || null,
           quantidade: i.quantidade ? Number(i.quantidade) : null,
           valor_unitario: i.valor_unitario ? Number(i.valor_unitario) : null,
@@ -294,6 +299,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               </button>
             )}
             <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
+            <div className="flex items-center gap-2 mb-3">
+              {(["produto", "servico"] as const).map((t) => (
+                <button key={t} type="button" onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
+                  style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (it.tipo_item === t ? "var(--dourado)" : "var(--border)"),
+                    background: it.tipo_item === t ? "var(--dourado)" : "transparent",
+                    color: it.tipo_item === t ? "#1a1a1a" : "var(--text-muted)", fontWeight: it.tipo_item === t ? 700 : 400 }}>
+                  {t === "produto" ? "Produto" : "Serviço"}
+                </button>
+              ))}
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Campo label="Conta gerencial">
                 <input list={`fin-contas-${idx}`} style={inputStyle}
@@ -301,10 +317,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                   onChange={(e) => escolherContaGerencial(idx, e.target.value)} placeholder="ex.: 3.01.01.01 — Concentrado protéico" />
                 <datalist id={`fin-contas-${idx}`}>{contasFiltradas.map((c) => <option key={c.codigo} value={`${c.codigo} — ${c.nome}`} />)}</datalist>
               </Campo>
-              <Campo label="Produto">
-                <input list={`fin-produtos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Ração concentrada 25kg" />
-                <datalist id={`fin-produtos-${idx}`}>{sugestoesProduto.map((p) => <option key={p} value={p} />)}</datalist>
-              </Campo>
+              {it.tipo_item === "servico" ? (
+                <Campo label="Serviço">
+                  <input list={`fin-servicos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Frete" />
+                  <datalist id={`fin-servicos-${idx}`}>{sugestoesServico.map((s) => <option key={s} value={s} />)}</datalist>
+                </Campo>
+              ) : (
+                <Campo label="Produto">
+                  <input list={`fin-produtos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Ração concentrada 25kg" />
+                  <datalist id={`fin-produtos-${idx}`}>{produtosEstoque.slice().sort().map((p) => <option key={p} value={p} />)}</datalist>
+                </Campo>
+              )}
               <Campo label="Descrição (opcional)">
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
               </Campo>
@@ -318,8 +341,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               </Campo>
             </div>
             <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
-              onClick={() => { setAdicionarPara(idx); setModoAdicionar("produto"); }}>
-              <Plus size={13} /> Adicionar produto ou conta gerencial novo(a)
+              onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
+              <Plus size={13} /> Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)
             </button>
           </div>
         ))}
@@ -450,7 +473,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       </div>
 
       {adicionarPara !== null && (
-        <Modal title="Adicionar produto ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
+        <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
           <div className="flex items-center gap-2 mb-3">
             <button type="button" onClick={() => setModoAdicionar("produto")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
@@ -458,6 +481,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                 background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
                 color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
               Novo produto (estoque)
+            </button>
+            <button type="button" onClick={() => setModoAdicionar("servico")}
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                border: "1px solid " + (modoAdicionar === "servico" ? "var(--dourado)" : "var(--border)"),
+                background: modoAdicionar === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
+                color: modoAdicionar === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "servico" ? 700 : 500 }}>
+              Novo serviço
             </button>
             <button type="button" onClick={() => setModoAdicionar("conta")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
@@ -472,6 +502,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               onCriado={(item) => {
                 if (item?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: item.nome });
                 carregarEstoque();
+                setAdicionarPara(null);
+              }}
+              onCancelar={() => setAdicionarPara(null)}
+            />
+          ) : modoAdicionar === "servico" ? (
+            <NovoServicoRapido
+              onCriado={(servico) => {
+                if (servico?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: servico.nome });
+                carregarServicos();
                 setAdicionarPara(null);
               }}
               onCancelar={() => setAdicionarPara(null)}

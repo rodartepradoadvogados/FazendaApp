@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
-    PrincipioAtivo, ValeFuncionario, ValeParcela,
+    PrincipioAtivo, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
@@ -538,6 +538,26 @@ def seed_motivos_baixa(session: Session) -> None:
     session.commit()
 
 
+# ---------------------------------------------------------------------------
+# Cadastro de Serviços (lançamento financeiro > produto OU serviço) — ex.:
+# manutenção de trator, frete, quilometragem. Lista aberta/extensível.
+# ---------------------------------------------------------------------------
+SEED_SERVICOS = [
+    "Manutenção em tratores", "Manutenção em câmeras", "Frete", "Quilometragem (km)",
+    "Manutenção periódica programada de ordenha", "Manutenção extraordinária de ordenha",
+    "Revisão em máquinas", "Revisão em equipamentos", "Revisão em implementos",
+]
+
+
+def seed_servicos(session: Session) -> None:
+    """Cria os serviços padrão se a tabela ainda estiver vazia (idempotente)."""
+    if session.exec(select(ServicoCadastro)).first():
+        return
+    for nome in SEED_SERVICOS:
+        session.add(ServicoCadastro(nome=nome))
+    session.commit()
+
+
 class NomeAtivoIn(BaseModel):
     nome: str
     ativo: bool = True
@@ -597,3 +617,8 @@ _listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome
 router.get("/motivos-baixa")(_listar_motivos_baixa)
 router.post("/motivos-baixa")(_criar_motivo_baixa)
 router.put("/motivos-baixa/{item_id}")(_atualizar_motivo_baixa)
+
+_listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoCadastro)
+router.get("/servicos")(_listar_servicos)
+router.post("/servicos")(_criar_servico)
+router.put("/servicos/{item_id}")(_atualizar_servico)

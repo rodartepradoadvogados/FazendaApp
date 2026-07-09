@@ -75,6 +75,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("rmca_receita_leite", "BOOLEAN"),
         ("rmca_custo_alimentacao", "BOOLEAN"),
     ],
+    "lancamento_item": [("tipo_item", "VARCHAR")],
     "folha_pagamento": [
         ("recorrente", "BOOLEAN"),
         ("dia_vencimento", "INTEGER"),

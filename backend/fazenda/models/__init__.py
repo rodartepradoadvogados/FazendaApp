@@ -273,6 +273,7 @@ class LancamentoItem(SQLModel, table=True):
     codigo_conta_gerencial: Optional[str] = None
     nome_conta_gerencial: Optional[str] = None
     produto: str
+    tipo_item: Optional[str] = None  # "produto" | "servico" — escolha exclusiva no lançamento
     descricao: Optional[str] = None
     quantidade: Optional[float] = None
     valor_unitario: Optional[float] = None
@@ -583,6 +584,20 @@ class MotivoBaixa(SQLModel, table=True):
     """Causa específica de uma baixa de animal (Rebanho > Baixar animal), cadastrável em Configurações."""
 
     __tablename__ = "motivo_baixa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ServicoCadastro(SQLModel, table=True):
+    """
+    Serviço cadastrável para lançamento financeiro (ex.: manutenção de trator,
+    frete, quilometragem) — distinto do modelo `Servico` (serviço/IA reprodutivo).
+    """
+
+    __tablename__ = "servico_cadastro"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
