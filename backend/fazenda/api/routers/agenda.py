@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
@@ -22,6 +23,26 @@ from fazenda.rules.unidades import pode_dar_baixa_direta
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
+# Categoria do evento -> módulo cujo acesso o usuário precisa ter para ver o
+# evento na Agenda (e no sininho de notificações, ver notificacoes.py).
+# "Atividades" é o balde genérico de eventos manuais — exige só o acesso à
+# própria Agenda, não um módulo mais específico.
+MODULO_POR_CATEGORIA = {
+    "Reprodutivo": "reproducao",
+    "Produção": "producao",
+    "Gestão/Financeiro": "financeiro",
+    "alimentacao": "alimentacao",
+    "sanidade": "sanidade",
+    "Sanidade": "sanidade",
+    "Atividades": "agenda",
+}
+
+
+def _modulos_liberados(usuario: Usuario) -> set[str]:
+    if usuario.papel == "admin":
+        return set(MODULO_POR_CATEGORIA.values()) | {"reproducao"}
+    return {m.strip() for m in (usuario.permissoes or "").split(",") if m.strip()}
+
 
 def _model_to_dict(obj) -> dict:
     return obj.model_dump()
@@ -32,6 +53,7 @@ def calcular_agenda(
     data: date = date.today(),
     dias: int = 10,
     session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
 ) -> dict:
     """
     Calcula a agenda preditiva para a data informada (padrão: hoje).
@@ -151,38 +173,51 @@ def calcular_agenda(
             "protocolo": lancamento.nome_protocolo,
         })
 
+    # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
+    # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
+    # os eventos daquela categoria, nem as contas a pagar, nem os painéis
+    # reprodutivos (candidatas IATF, BST).
+    modulos = _modulos_liberados(usuario)
+    eventos_visiveis = [
+        {
+            "id": e.chave,
+            "data": e.data.isoformat(),
+            "categoria": e.categoria,
+            "descricao": e.descricao,
+            "numero_animal": e.numero_animal,
+            "observacao": e.observacao,
+            "fonte": e.fonte,
+            "cor": e.cor,
+            "ref": e.ref,
+        }
+        for e in eventos
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf
+    eventos_visiveis = [
+        e for e in eventos_visiveis
+        if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos
+    ]
+    tem_financeiro = "financeiro" in modulos
+    tem_reproducao = "reproducao" in modulos
+
     return {
         "data_referencia": result.data_referencia.isoformat(),
         "candidatas_iatf": [
             {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo}
             for c in result.candidatas_iatf
-        ],
-        "necessidade_iatf": result.necessidade_iatf.__dict__ if result.necessidade_iatf else None,
-        "proxima_visita_iatf": result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None,
-        "proxima_visita_bst": result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None,
-        "hormonios_check": [h.__dict__ for h in result.hormonios_check],
-        "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis],
-        "bst_excluidos": [b.__dict__ for b in result.bst_excluidos],
-        "contas_a_pagar": result.contas_a_pagar,
-        "eventos": [
-            {
-                "id": e.chave,
-                "data": e.data.isoformat(),
-                "categoria": e.categoria,
-                "descricao": e.descricao,
-                "numero_animal": e.numero_animal,
-                "observacao": e.observacao,
-                "fonte": e.fonte,
-                "cor": e.cor,
-                "ref": e.ref,
-            }
-            for e in eventos
-        ] + eventos_dieta + eventos_protocolo + eventos_iatf,
+        ] if tem_reproducao else [],
+        "necessidade_iatf": (result.necessidade_iatf.__dict__ if result.necessidade_iatf else None) if tem_reproducao else None,
+        "proxima_visita_iatf": (result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None) if tem_reproducao else None,
+        "proxima_visita_bst": (result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None) if tem_reproducao else None,
+        "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
+        "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis] if tem_reproducao else [],
+        "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
+        "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
+        "eventos": eventos_visiveis,
         "totais": {
-            "candidatas_iatf": len(result.candidatas_iatf),
-            "bst_elegiveis": len(result.bst_elegiveis),
-            "contas_a_pagar": len(result.contas_a_pagar),
-            "eventos": len(eventos) + len(eventos_dieta) + len(eventos_protocolo) + len(eventos_iatf),
+            "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
+            "bst_elegiveis": len(result.bst_elegiveis) if tem_reproducao else 0,
+            "contas_a_pagar": len(result.contas_a_pagar) if tem_financeiro else 0,
+            "eventos": len(eventos_visiveis),
         },
     }
 
