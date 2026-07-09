@@ -247,7 +247,8 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
 
 @router.post("/folha-pagamento")
 def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
-    if not session.get(Pessoa, dados.pessoa_id):
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
@@ -257,13 +258,35 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     valor_liquido = round(dados.valor_bruto - descontos, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+
+    # Gera também a conta a pagar correspondente — sem isso, a folha nunca
+    # aparecia em Contas a Pagar nem na Agenda (só as competências seguintes,
+    # geradas por _gerar_folha_recorrente, tinham essa conta criada).
+    ano, mes = (int(x) for x in dados.competencia.split("-"))
+    dia = min(max(dados.dia_vencimento or 5, 1), 28)
+    numero_lancamento = _proximo_numero_lancamento(session, ano)
+
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
         descontos=descontos, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
+        numero_lancamento_gerado=numero_lancamento,
     )
     session.add(registro)
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Folha de pagamento — {pessoa.nome} ({dados.competencia})",
+        data_vencimento=date(ano, mes, dia),
+        data_competencia=date(ano, mes, 1),
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Folha de pagamento",
+        valor_total=valor_liquido,
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+        valor_pago=valor_liquido if dados.status == "pago" else None,
+    ))
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
