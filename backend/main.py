@@ -17,6 +17,7 @@ from fazenda.api.routers import (
     auth,
     baixas,
     cadastro,
+    compra_animal,
     estoque,
     exclusoes,
     financeiro,
@@ -105,6 +106,7 @@ app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).

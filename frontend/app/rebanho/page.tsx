@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -8,6 +8,7 @@ import MovimentarAnimais from "@/components/MovimentarAnimais";
 import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
+import ComprarAnimal from "@/components/ComprarAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 const COLUNAS_REBANHO = [
@@ -205,7 +206,7 @@ function RebanhoVisaoGeral() {
 }
 
 export default function RebanhoPage() {
-  const [aba, setAba] = useState<"visao" | "sugestoes" | "mover" | "baixar" | "historico">("visao");
+  const [aba, setAba] = useState<"visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico">("visao");
 
   return (
     <div className="px-6 pt-6">
@@ -215,6 +216,7 @@ export default function RebanhoPage() {
           ["sugestoes", "Sugestões de movimentação", Sparkles],
           ["mover", "Movimentar animais", ArrowRightLeft],
           ["baixar", "Baixar animal", Skull],
+          ["comprar", "Comprar animal", ShoppingCart],
           ["historico", "Histórico", History],
         ] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setAba(k)}
@@ -231,6 +233,7 @@ export default function RebanhoPage() {
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "mover" && <MovimentarAnimais />}
         {aba === "baixar" && <BaixarAnimal />}
+        {aba === "comprar" && <ComprarAnimal />}
         {aba === "historico" && <HistoricoMovimentacoes />}
       </div>
     </div>
