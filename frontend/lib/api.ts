@@ -990,17 +990,29 @@ export async function addEventoManual(data: {
   descricao: string;
   categoria?: string;
   numero_animal?: string;
+  lotes?: string;
+  tipo_evento?: string;
   observacao?: string;
+  recorrente?: boolean;
+  intervalo_dias?: number;
+  intervalo_meses?: number;
 }) {
-  const qs = new URLSearchParams({
-    data_evento: data.data_evento,
-    descricao: data.descricao,
-    categoria: data.categoria || "Gestão/Financeiro",
+  const res = await authFetch(`${API}/agenda/manual`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data_evento: data.data_evento,
+      descricao: data.descricao,
+      categoria: data.categoria || "Gestão/Financeiro",
+      numero_animal: data.numero_animal || null,
+      lotes: data.lotes || null,
+      tipo_evento: data.tipo_evento || null,
+      observacao: data.observacao || null,
+      recorrente: data.recorrente || false,
+      intervalo_dias: data.intervalo_dias || null,
+      intervalo_meses: data.intervalo_meses || null,
+    }),
   });
-  if (data.numero_animal) qs.set("numero_animal", data.numero_animal);
-  if (data.observacao) qs.set("observacao", data.observacao);
-  const res = await authFetch(`${API}/agenda/manual?${qs}`, { method: "POST" });
-  if (!res.ok) throw new Error("Erro ao adicionar evento");
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar evento"); }
   return res.json();
 }
 

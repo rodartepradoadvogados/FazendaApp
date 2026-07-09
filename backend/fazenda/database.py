@@ -104,6 +104,14 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("tipo_valor", "VARCHAR"),
         ("numero_lancamento_gerado", "VARCHAR"),
     ],
+    "agenda_manual": [
+        ("lotes", "VARCHAR"),
+        ("tipo_evento", "VARCHAR"),
+        ("recorrente", "BOOLEAN"),
+        ("intervalo_dias", "INTEGER"),
+        ("intervalo_meses", "INTEGER"),
+        ("origem_recorrencia_id", "INTEGER"),
+    ],
 }
 
 

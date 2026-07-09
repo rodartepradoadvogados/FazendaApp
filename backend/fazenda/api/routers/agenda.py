@@ -3,6 +3,7 @@ Router da Agenda — calcula e retorna eventos do dia ou de um período.
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,6 +38,8 @@ MODULO_POR_CATEGORIA = {
     "Atividades": "agenda",
 }
 
+TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
+
 
 def _modulos_liberados(usuario: Usuario) -> set[str]:
     if usuario.papel == "admin":
@@ -46,6 +49,48 @@ def _modulos_liberados(usuario: Usuario) -> set[str]:
 
 def _model_to_dict(obj) -> dict:
     return obj.model_dump()
+
+
+def _proxima_ocorrencia(base: date, intervalo_dias: int | None, intervalo_meses: int | None) -> date:
+    if intervalo_dias:
+        return base + timedelta(days=intervalo_dias)
+    mes_total = base.month - 1 + (intervalo_meses or 1)
+    ano = base.year + mes_total // 12
+    mes = mes_total % 12 + 1
+    dia = min(base.day, calendar.monthrange(ano, mes)[1])
+    return date(ano, mes, dia)
+
+
+def _gerar_agenda_recorrente(session: Session) -> None:
+    """
+    Para cada evento manual de agenda marcado como recorrente (o "modelo"),
+    gera automaticamente as próximas ocorrências até hoje — mesmo padrão
+    "lazy pull" da folha de pagamento recorrente (_gerar_folha_recorrente).
+    """
+    hoje = date.today()
+    modelos = session.exec(
+        select(AgendaManual).where(
+            AgendaManual.recorrente == True,  # noqa: E712
+            AgendaManual.origem_recorrencia_id == None,  # noqa: E711
+        )
+    ).all()
+    for modelo in modelos:
+        if not modelo.intervalo_dias and not modelo.intervalo_meses:
+            continue
+        ultima = session.exec(
+            select(AgendaManual)
+            .where(AgendaManual.origem_recorrencia_id == modelo.id)
+            .order_by(AgendaManual.data_evento.desc())
+        ).first()
+        proxima = _proxima_ocorrencia(ultima.data_evento if ultima else modelo.data_evento, modelo.intervalo_dias, modelo.intervalo_meses)
+        while proxima <= hoje:
+            session.add(AgendaManual(
+                data_evento=proxima, descricao=modelo.descricao, categoria=modelo.categoria,
+                numero_animal=modelo.numero_animal, lotes=modelo.lotes, tipo_evento=modelo.tipo_evento,
+                observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
+            ))
+            session.commit()
+            proxima = _proxima_ocorrencia(proxima, modelo.intervalo_dias, modelo.intervalo_meses)
 
 
 @router.get("/")
@@ -61,6 +106,7 @@ def calcular_agenda(
     quando o usuário amplia o filtro "Até").
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
+    _gerar_agenda_recorrente(session)
     animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
     servicos_ult = [
         _model_to_dict(s) for s in session.exec(
@@ -189,6 +235,8 @@ def calcular_agenda(
             "fonte": e.fonte,
             "cor": e.cor,
             "ref": e.ref,
+            "lote": e.lote,
+            "tipo_evento": e.tipo_evento,
         }
         for e in eventos
     ] + eventos_dieta + eventos_protocolo + eventos_iatf
@@ -379,22 +427,39 @@ def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session))
     return {"desmarcado": True}
 
 
+class AgendaManualIn(BaseModel):
+    data_evento: date
+    descricao: str
+    categoria: str = "Gestão/Financeiro"
+    numero_animal: str | None = None  # CSV de números, quando vinculado a um ou mais animais
+    lotes: str | None = None  # CSV de códigos de lote, quando vinculado a um ou mais lotes
+    tipo_evento: str | None = None  # Compra, Venda, Serviço, Outro
+    observacao: str | None = None
+    recorrente: bool = False
+    intervalo_dias: int | None = None
+    intervalo_meses: int | None = None
+
+
 @router.post("/manual")
-def adicionar_evento_manual(
-    data_evento: date,
-    descricao: str,
-    categoria: str = "Gestão/Financeiro",
-    numero_animal: str | None = None,
-    observacao: str | None = None,
-    session: Session = Depends(get_session),
-) -> dict:
+def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(get_session)) -> dict:
     """Adiciona um evento manual à agenda (equivalente à aba AGENDA_MANUAL do Excel)."""
+    if dados.tipo_evento and dados.tipo_evento not in TIPOS_EVENTO:
+        raise HTTPException(status_code=400, detail=f"tipo_evento inválido. Use um de: {', '.join(TIPOS_EVENTO)}")
+    if dados.recorrente and not dados.intervalo_dias and not dados.intervalo_meses:
+        raise HTTPException(status_code=400, detail="Informe o intervalo (dias ou meses) da recorrência.")
+    if dados.intervalo_dias and dados.intervalo_meses:
+        raise HTTPException(status_code=400, detail="Escolha só uma frequência: dias OU meses.")
     evento = AgendaManual(
-        data_evento=data_evento,
-        descricao=descricao,
-        categoria=categoria,
-        numero_animal=numero_animal,
-        observacao=observacao,
+        data_evento=dados.data_evento,
+        descricao=dados.descricao,
+        categoria=dados.categoria,
+        numero_animal=dados.numero_animal,
+        lotes=dados.lotes,
+        tipo_evento=dados.tipo_evento,
+        observacao=dados.observacao,
+        recorrente=dados.recorrente,
+        intervalo_dias=dados.intervalo_dias if dados.recorrente else None,
+        intervalo_meses=dados.intervalo_meses if dados.recorrente else None,
     )
     session.add(evento)
     session.commit()

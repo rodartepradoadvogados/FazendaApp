@@ -856,8 +856,14 @@ class AgendaManual(SQLModel, table=True):
     data_evento: date
     descricao: str
     categoria: str = "Gestão/Financeiro"
-    numero_animal: Optional[str] = None
+    numero_animal: Optional[str] = None  # CSV de números, quando vinculado a um ou mais animais
+    lotes: Optional[str] = None  # CSV de códigos de lote, quando vinculado a um ou mais lotes
+    tipo_evento: Optional[str] = None  # Compra, Venda, Serviço, Outro
     observacao: Optional[str] = None
+    recorrente: bool = False  # linha-modelo que gera as próximas ocorrências automaticamente
+    intervalo_dias: Optional[int] = None
+    intervalo_meses: Optional[int] = None
+    origem_recorrencia_id: Optional[int] = None  # id da linha-modelo que gerou esta ocorrência
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
