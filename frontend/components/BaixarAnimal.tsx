@@ -1,10 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
-import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal } from "@/lib/api";
+import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
+import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
+type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
 
 const LABEL_TIPO_BAIXA: Record<string, string> = {
   morte: "Morte", descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário",
@@ -30,6 +32,7 @@ export default function BaixarAnimal() {
   const [motivo, setMotivo] = useState("");
   const [motivoDoenca, setMotivoDoenca] = useState("");
   const [valor, setValor] = useState("");
+  const [tipoValor, setTipoValor] = useState("por_animal");
   const [cliente, setCliente] = useState("");
   const [dataBaixa, setDataBaixa] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
@@ -37,9 +40,17 @@ export default function BaixarAnimal() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
+  const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
+  const [pagarComissao, setPagarComissao] = useState(false);
+  const [corretorNome, setCorretorNome] = useState("");
+  const [valorComissao, setValorComissao] = useState("");
+  const [formaComissao, setFormaComissao] = useState("redirecionado");
+  const corretores = useMemo(() => fornecedores.filter((f) => f.tipo === "corretor" && f.ativo).map((f) => f.nome), [fornecedores]);
+
   const carregar = () => {
     fetchAnimais().then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
     fetchOpcoesBaixa().then(setOpcoes).catch((e) => setError(e.message));
+    fetchFornecedores().then(setFornecedores).catch(() => {});
   };
   useEffect(carregar, []);
 
@@ -57,7 +68,8 @@ export default function BaixarAnimal() {
 
   const limpar = () => {
     setSelecionados(new Set()); setBusca(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca("");
-    setValor(""); setCliente(""); setObservacao("");
+    setValor(""); setTipoValor("por_animal"); setCliente(""); setObservacao("");
+    setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
 
   const salvar = async () => {
@@ -67,6 +79,9 @@ export default function BaixarAnimal() {
     if (!motivo) { setMsg({ tipo: "erro", texto: "Selecione o motivo." }); return; }
     if (motivo === "doenca" && !motivoDoenca) { setMsg({ tipo: "erro", texto: "Selecione a doença/causa." }); return; }
     if (motivo === "venda" && (!valor || !cliente.trim())) { setMsg({ tipo: "erro", texto: "Venda exige valor e cliente." }); return; }
+    if (motivo === "venda" && pagarComissao && (!corretorNome.trim() || !valorComissao)) {
+      setMsg({ tipo: "erro", texto: "Informe o corretor e o valor da comissão." }); return;
+    }
 
     setSalvando(true);
     try {
@@ -74,8 +89,13 @@ export default function BaixarAnimal() {
         animais: Array.from(selecionados), tipo_baixa: tipoBaixa, motivo,
         motivo_doenca: motivo === "doenca" ? motivoDoenca : undefined,
         valor: motivo === "venda" ? Number(valor) : undefined,
+        tipo_valor: motivo === "venda" ? tipoValor : undefined,
         cliente: motivo === "venda" ? cliente.trim() : undefined,
         data_baixa: dataBaixa, observacao: observacao || undefined, responsavel: responsavel || undefined,
+        pagar_comissao: motivo === "venda" ? pagarComissao : undefined,
+        corretor_nome: motivo === "venda" && pagarComissao ? corretorNome.trim() : undefined,
+        valor_comissao: motivo === "venda" && pagarComissao ? Number(valorComissao) : undefined,
+        forma_comissao: motivo === "venda" && pagarComissao ? formaComissao : undefined,
       });
       setMsg({ tipo: "sucesso", texto: `${r.baixados} animal(is) baixado(s) com sucesso.` });
       limpar();
@@ -160,12 +180,40 @@ export default function BaixarAnimal() {
           )}
 
           {motivo === "venda" && (
-            <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: "480px" }}>
-              <div><label style={labelStyle}>Valor (R$)</label>
-                <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
-              <div><label style={labelStyle}>Cliente</label>
-                <input style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="ex.: Frigorífico X" /></div>
-            </div>
+            <>
+              <div className="mb-3" style={{ maxWidth: "480px" }}>
+                <label style={labelStyle}>O valor informado é...</label>
+                <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                    <input type="radio" name="tipo_valor" checked={tipoValor === "por_animal"} onChange={() => setTipoValor("por_animal")} />
+                    Por animal vendido
+                  </label>
+                  <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                    <input type="radio" name="tipo_valor" checked={tipoValor === "total"} onChange={() => setTipoValor("total")} />
+                    Total da venda ({selecionados.size || 0} animal(is))
+                  </label>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-3 mb-3" style={{ maxWidth: "480px" }}>
+                <div><label style={labelStyle}>{tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}</label>
+                  <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+                <div><label style={labelStyle}>Cliente</label>
+                  <input style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="ex.: Frigorífico X" /></div>
+              </div>
+              {tipoValor === "total" && !!valor && !!selecionados.size && (
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.5rem" }}>
+                  Equivale a R$ {(Number(valor) / selecionados.size).toFixed(2)} por animal.
+                </p>
+              )}
+
+              <ComissaoCorretagemForm
+                pagarComissao={pagarComissao} setPagarComissao={setPagarComissao}
+                corretorNome={corretorNome} setCorretorNome={setCorretorNome}
+                valorComissao={valorComissao} setValorComissao={setValorComissao}
+                formaComissao={formaComissao} setFormaComissao={setFormaComissao}
+                corretores={corretores}
+              />
+            </>
           )}
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">

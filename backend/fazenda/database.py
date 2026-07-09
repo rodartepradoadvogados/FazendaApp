@@ -96,6 +96,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("novilhas_inseminadas", "BOOLEAN"),
         ("novilhas_gestantes", "BOOLEAN"),
     ],
+    "baixa_animal": [
+        ("tipo_valor", "VARCHAR"),
+        ("numero_lancamento_gerado", "VARCHAR"),
+    ],
 }
 
 

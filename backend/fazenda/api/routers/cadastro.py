@@ -50,9 +50,12 @@ def seed_pessoas(session: Session) -> None:
 # ---------------------------------------------------------------------------
 # Fornecedores / fabricantes / clientes
 # ---------------------------------------------------------------------------
+TIPOS_FORNECEDOR = ("fornecedor", "fabricante", "cliente", "corretor")
+
+
 class FornecedorIn(BaseModel):
     nome: str
-    tipo: str  # "fornecedor" | "fabricante" | "cliente"
+    tipo: str  # "fornecedor" | "fabricante" | "cliente" | "corretor"
     categoria: str | None = None
     cnpj_cpf: str | None = None
     telefone: str | None = None
@@ -68,7 +71,7 @@ def listar_fornecedores(session: Session = Depends(get_session)) -> list[dict]:
 
 @router.post("/fornecedores")
 def criar_fornecedor(dados: FornecedorIn, session: Session = Depends(get_session)) -> dict:
-    if dados.tipo not in ("fornecedor", "fabricante", "cliente"):
+    if dados.tipo not in TIPOS_FORNECEDOR:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
@@ -81,7 +84,7 @@ def criar_fornecedor(dados: FornecedorIn, session: Session = Depends(get_session
 
 @router.put("/fornecedores/{fornecedor_id}")
 def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Session = Depends(get_session)) -> dict:
-    if dados.tipo not in ("fornecedor", "fabricante", "cliente"):
+    if dados.tipo not in TIPOS_FORNECEDOR:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     f = session.get(Fornecedor, fornecedor_id)
     if not f:

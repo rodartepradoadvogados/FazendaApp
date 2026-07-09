@@ -443,12 +443,31 @@ export async function fetchBaixas() {
 }
 export async function criarBaixaAnimal(dados: {
   animais: string[]; tipo_baixa: string; motivo: string; motivo_doenca?: string;
-  valor?: number; cliente?: string; data_baixa: string; observacao?: string; responsavel?: string;
+  valor?: number; cliente?: string; tipo_valor?: string; data_baixa: string; observacao?: string; responsavel?: string;
+  pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
 }) {
   const res = await authFetch(`${API}/baixas/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar baixa"); }
+  return res.json();
+}
+
+// ── Compra de animal (Rebanho > Comprar animal) ──
+export async function fetchComprasAnimais() {
+  const res = await authFetch(`${API}/compras-animais/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Compras de animais error: ${res.status}`);
+  return res.json();
+}
+export async function criarCompraAnimal(dados: {
+  animais: string[]; vendedor: string; valor: number; tipo_valor: string; data_compra: string;
+  observacao?: string; responsavel?: string;
+  pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
+}) {
+  const res = await authFetch(`${API}/compras-animais/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra"); }
   return res.json();
 }
 

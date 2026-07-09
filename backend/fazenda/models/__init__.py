@@ -902,11 +902,57 @@ class BaixaAnimal(SQLModel, table=True):
     tipo_baixa: str  # morte | descarte_voluntario | descarte_involuntario
     motivo: str      # venda | abate | acidente | doenca
     motivo_doenca: Optional[str] = None  # preenchido só quando motivo == "doenca"
-    valor: Optional[float] = None        # preenchido só quando motivo == "venda"
+    valor: Optional[float] = None        # preenchido só quando motivo == "venda" — sempre o valor POR ANIMAL já resolvido
     cliente: Optional[str] = None        # preenchido só quando motivo == "venda"
+    tipo_valor: Optional[str] = None     # "por_animal" | "total" — como o valor foi originalmente digitado (metadado)
+    numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na venda
     data_baixa: date
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Compra de animal — entrada de animal no rebanho por aquisição (distinta do
+# cadastro/ficha do Animal, que segue seu próprio fluxo de CSV/ficha). Gera
+# lançamento financeiro (despesa) e, opcionalmente, comissão de corretagem.
+# ---------------------------------------------------------------------------
+class CompraAnimal(SQLModel, table=True):
+    """Registro de compra de animal — apenas o efeito financeiro/histórico da aquisição."""
+
+    __tablename__ = "compra_animal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_animal: str = Field(index=True)
+    vendedor: str
+    valor: float  # valor por animal já resolvido (ver tipo_valor)
+    tipo_valor: str  # "por_animal" | "total" — como o valor foi originalmente digitado (metadado)
+    data_compra: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na compra
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Comissão de corretagem — gerada a partir de uma venda ou compra de animal,
+# quando há corretor envolvido. Sempre resulta em uma despesa (ContaGerencial)
+# separada e visível, seja "redirecionada" (já paga junto com a transação) ou
+# "separada" (conta a pagar em aberto, liquidada depois como qualquer outra).
+# ---------------------------------------------------------------------------
+class ComissaoCorretagem(SQLModel, table=True):
+    """Registro de comissão paga a corretor por uma venda/compra de animal."""
+
+    __tablename__ = "comissao_corretagem"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    origem_tipo: str  # "venda_animal" | "compra_animal"
+    numero_lancamento: str  # LC-... do lançamento de venda/compra ao qual esta comissão se refere
+    corretor_nome: str
+    valor_comissao: float
+    forma: str  # "redirecionado" (já paga junto da transação) | "separado" (conta a pagar em aberto)
+    numero_lancamento_comissao: Optional[str] = None  # LC-... da despesa de comissão criada
+    observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

@@ -14,6 +14,7 @@ const TIPOS = [
   { v: "fornecedor", l: "Fornecedor" },
   { v: "fabricante", l: "Fabricante" },
   { v: "cliente", l: "Cliente" },
+  { v: "corretor", l: "Corretor" },
 ];
 
 // Mesma lista de fazenda.rules.categorias.CATEGORIAS_FORNECEDOR no backend.
