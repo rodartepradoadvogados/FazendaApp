@@ -33,7 +33,9 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 # Migração leve: colunas adicionadas a tabelas que já podem existir em produção.
 # O create_all não altera tabelas existentes, então adicionamos manualmente.
 _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
-    "controle_leiteiro": [("raca", "VARCHAR")],
+    "controle_leiteiro": [
+        ("raca", "VARCHAR"), ("ordenha1_kg", "FLOAT"), ("ordenha2_kg", "FLOAT"), ("ordenha3_kg", "FLOAT"),
+    ],
     "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR")],
     "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],
     "animal": [

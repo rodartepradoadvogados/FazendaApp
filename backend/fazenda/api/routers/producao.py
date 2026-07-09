@@ -44,6 +44,7 @@ def obter_producao(session: Session = Depends(get_session)) -> dict:
 @router.get("/controles")
 def listar_controles(session: Session = Depends(get_session)) -> dict:
     """Registros de controle leiteiro achatados para o dashboard interativo."""
+    grupo_por_numero = {a.numero: a.grupo_primario for a in session.exec(select(Animal)).all()}
     registros = []
     for c in session.exec(select(ControleLeiteiro)).all():
         d = c.data_controle
@@ -54,6 +55,10 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
             "ano": d.year if d else None,
             "producao_kg": c.producao_kg,
             "del": c.del_no_controle,
+            "ordenha1_kg": c.ordenha1_kg,
+            "ordenha2_kg": c.ordenha2_kg,
+            "ordenha3_kg": c.ordenha3_kg,
+            "grupo_primario": grupo_por_numero.get(c.numero_matriz),  # lote atual do animal (não histórico)
         })
     return {"controles": registros, "total": len(registros)}
 
@@ -69,13 +74,17 @@ def criar_controles(dados: ControlesIn, session: Session = Depends(get_session))
         if not entrada.ordenhas or not any(entrada.ordenhas):
             continue
         animal = session.exec(select(Animal).where(Animal.numero == entrada.numero_matriz)).first()
+        ordenhas = entrada.ordenhas
         registro = ControleLeiteiro(
             animal_id=animal.id if animal else None,
             numero_matriz=entrada.numero_matriz,
             raca=animal.raca if animal else None,
             data_controle=dados.data_controle,
-            producao_kg=round(sum(entrada.ordenhas), 2),
+            producao_kg=round(sum(ordenhas), 2),
             del_no_controle=animal.del_dias if animal else None,
+            ordenha1_kg=ordenhas[0] if len(ordenhas) > 0 else None,
+            ordenha2_kg=ordenhas[1] if len(ordenhas) > 1 else None,
+            ordenha3_kg=ordenhas[2] if len(ordenhas) > 2 else None,
         )
         session.add(registro)
         criados.append(registro)

@@ -84,3 +84,24 @@ class TestCriarControles:
             ],
         })
         assert r.json()["criados"] == 1
+
+    def test_persiste_ordenhas_individuais_e_grupo_atual(self, client):
+        client.post("/producao/controles", json={
+            "data_controle": "2026-07-08",
+            "entradas": [{"numero_matriz": "101", "ordenhas": [12.5, 10.0]}],
+        })
+        r = client.get("/producao/controles")
+        registro = next(c for c in r.json()["controles"] if c["numero"] == "101")
+        assert registro["ordenha1_kg"] == 12.5
+        assert registro["ordenha2_kg"] == 10.0
+        assert registro["ordenha3_kg"] is None
+        assert registro["grupo_primario"] == "01 - Alta"
+
+    def test_persiste_terceira_ordenha(self, client):
+        client.post("/producao/controles", json={
+            "data_controle": "2026-07-08",
+            "entradas": [{"numero_matriz": "102", "ordenhas": [8.0, 7.0, 3.0]}],
+        })
+        r = client.get("/producao/controles")
+        registro = next(c for c in r.json()["controles"] if c["numero"] == "102")
+        assert registro["ordenha3_kg"] == 3.0
