@@ -5,7 +5,7 @@ Endpoint: GET /sanidade/aplicacoes, POST /sanidade/aplicacoes
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,10 +13,14 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    CalendarioSanitario, Doenca, Estoque, EventoSanitario, MovimentoEstoque, PrincipioAtivo, Sanidade,
+    CalendarioSanitario, Doenca, Estoque, EventoSanitario, MovimentoEstoque, PrincipioAtivo, ProtocoloSanitario,
+    ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
 )
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
+
+TETOS_VALIDOS = ["AE", "AD", "PD", "PE"]
+CLASSIFICACOES_MASTITE = ["clinica", "subclinica", "ambiental"]
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
 
@@ -217,3 +221,84 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
     session.refresh(c)
     eventos, doencas, principios = _nomes(session)
     return _serializar(c, eventos, doencas, principios)
+
+
+# ---------------------------------------------------------------------------
+# Protocolo sanitário — lançamento (aplicar um protocolo cadastrado a um
+# animal). Gera uma aplicação (evento de Agenda) por etapa/dia do protocolo;
+# a baixa de estoque só acontece quando o evento é marcado "realizado" na
+# Agenda (ver POST /agenda/realizados).
+# ---------------------------------------------------------------------------
+class ProtocoloLancamentoIn(BaseModel):
+    protocolo_id: int
+    numero_matriz: str
+    data_inicio: date
+    responsavel: str | None = None
+    observacao: str | None = None
+    classificacao_mastite: str | None = None  # "clinica" | "subclinica" | "ambiental"
+    resultado_cmt: str | None = None
+    tetos_afetados: list[str] = []  # subconjunto de AE/AD/PD/PE
+
+
+def _serializar_lancamento_protocolo(session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, str]) -> dict:
+    aplicacoes = session.exec(
+        select(ProtocoloSanitarioAplicacao)
+        .where(ProtocoloSanitarioAplicacao.lancamento_id == lanc.id)
+        .order_by(ProtocoloSanitarioAplicacao.data_prevista)
+    ).all()
+    etapas = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
+    return {
+        **lanc.model_dump(),
+        "protocolo_nome": protocolos.get(lanc.protocolo_id, "—"),
+        "aplicacoes": [
+            {**a.model_dump(), "etapa": etapas[a.etapa_id].model_dump() if a.etapa_id in etapas else None}
+            for a in aplicacoes
+        ],
+    }
+
+
+@router.get("/protocolos/lancamentos")
+def listar_lancamentos_protocolo(session: Session = Depends(get_session)) -> list[dict]:
+    protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
+    lancamentos = session.exec(select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).all()
+    return [_serializar_lancamento_protocolo(session, l, protocolos) for l in lancamentos]
+
+
+@router.post("/protocolos/lancamentos", status_code=201)
+def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(get_session)) -> dict:
+    protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
+    if not protocolo:
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    etapas = session.exec(
+        select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == dados.protocolo_id).order_by(ProtocoloSanitarioEtapa.dia)
+    ).all()
+    if not etapas:
+        raise HTTPException(status_code=400, detail="Este protocolo não tem etapas cadastradas")
+    if not dados.numero_matriz.strip():
+        raise HTTPException(status_code=400, detail="Informe o animal")
+
+    if protocolo.eh_mastite and not dados.classificacao_mastite:
+        raise HTTPException(status_code=400, detail="Informe a classificação da mastite (clínica, subclínica ou ambiental)")
+    if dados.classificacao_mastite and dados.classificacao_mastite not in CLASSIFICACOES_MASTITE:
+        raise HTTPException(status_code=400, detail=f"Classificação de mastite inválida (aceitas: {', '.join(CLASSIFICACOES_MASTITE)})")
+    for teto in dados.tetos_afetados:
+        if teto not in TETOS_VALIDOS:
+            raise HTTPException(status_code=400, detail=f"Teto inválido: {teto} (aceitos: {', '.join(TETOS_VALIDOS)})")
+
+    lancamento = ProtocoloSanitarioLancamento(
+        protocolo_id=dados.protocolo_id, numero_matriz=dados.numero_matriz.strip(), data_inicio=dados.data_inicio,
+        responsavel=dados.responsavel, observacao=dados.observacao,
+        classificacao_mastite=dados.classificacao_mastite, resultado_cmt=dados.resultado_cmt,
+        tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
+    )
+    session.add(lancamento)
+    session.commit()
+    session.refresh(lancamento)
+
+    for etapa in etapas:
+        data_prevista = dados.data_inicio + timedelta(days=etapa.dia - 1)
+        session.add(ProtocoloSanitarioAplicacao(lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista))
+    session.commit()
+
+    protocolos = {protocolo.id: protocolo.nome}
+    return _serializar_lancamento_protocolo(session, lancamento, protocolos)

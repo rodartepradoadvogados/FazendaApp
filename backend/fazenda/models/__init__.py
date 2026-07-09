@@ -630,6 +630,73 @@ class CalendarioSanitario(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+# ---------------------------------------------------------------------------
+# Protocolo sanitário — cadastro (Configurações > Cadastro > Sanitário) de um
+# tratamento com múltiplas etapas (produto/dosagem/via por dia), a exemplo do
+# tratamento de mastite. Etapas começam em D1 (protocolos sanitários não têm
+# D0 — isso é exclusivo do protocolo hormonal IATF).
+# ---------------------------------------------------------------------------
+class ProtocoloSanitario(SQLModel, table=True):
+    """Um protocolo sanitário cadastrado (ex.: Mastite clínica, Vermifugação padrão)."""
+
+    __tablename__ = "protocolo_sanitario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
+    eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProtocoloSanitarioEtapa(SQLModel, table=True):
+    """Uma linha do protocolo — produto, dosagem, via e dia de aplicação (D1, D2...)."""
+
+    __tablename__ = "protocolo_sanitario_etapa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
+    dia: int  # 1, 2, 3... nunca 0
+    produto: str
+    dosagem: float
+    unidade: str
+    via: Optional[str] = None
+
+
+class ProtocoloSanitarioLancamento(SQLModel, table=True):
+    """Aplicação de um protocolo a um animal — gera um evento na Agenda por etapa/dia."""
+
+    __tablename__ = "protocolo_sanitario_lancamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
+    numero_matriz: str = Field(index=True)
+    data_inicio: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    # Campos específicos de mastite — só usados quando o protocolo é de mastite.
+    classificacao_mastite: Optional[str] = None  # "clinica" | "subclinica" | "ambiental"
+    resultado_cmt: Optional[str] = None
+    tetos_afetados: Optional[str] = None  # ex.: "AE,PD" — quadrantes: AE/AD/PD/PE
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProtocoloSanitarioAplicacao(SQLModel, table=True):
+    """
+    Uma etapa (dia) de um lançamento de protocolo — vira evento na Agenda;
+    ao marcar "realizado", dá baixa automática do produto no Estoque.
+    """
+
+    __tablename__ = "protocolo_sanitario_aplicacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lancamento_id: int = Field(foreign_key="protocolo_sanitario_lancamento.id")
+    etapa_id: int = Field(foreign_key="protocolo_sanitario_etapa.id")
+    data_prevista: date
+    realizada: bool = False
+    data_realizacao: Optional[date] = None
+
+
 class Secagem(SQLModel, table=True):
     """Registro de secagem de uma vaca — produto(s) usado(s) entram como Sanidade (atividade='Secagem')."""
 
