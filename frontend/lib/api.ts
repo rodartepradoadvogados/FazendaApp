@@ -388,6 +388,27 @@ export async function atualizarMotivoMovimentacao(id: number, dados: { nome: str
   return res.json();
 }
 
+// ── Motivos de baixa (Configurações > Cadastro) ──
+export async function fetchMotivosBaixaCadastro() {
+  const res = await authFetch(`${API}/cadastro/motivos-baixa`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Motivos de baixa error: ${res.status}`);
+  return res.json();
+}
+export async function criarMotivoBaixa(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/motivos-baixa`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de baixa"); }
+  return res.json();
+}
+export async function atualizarMotivoBaixa(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/motivos-baixa/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de baixa"); }
+  return res.json();
+}
+
 // ── Baixa de animal (Rebanho > Baixar animal) ──
 export async function fetchOpcoesBaixa() {
   const res = await authFetch(`${API}/baixas/motivos`, { cache: "no-store" });

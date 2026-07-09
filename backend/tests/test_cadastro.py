@@ -410,3 +410,52 @@ class TestCadastroSanitario:
         r = c.post("/cadastro/principios-ativos", json={"nome": "Doramectina"})
         assert r.status_code == 200
         assert "Doramectina" in [p["nome"] for p in c.get("/cadastro/principios-ativos").json()]
+
+
+class TestMotivoBaixa:
+    """Motivo de baixa (Rebanho > Baixar animal) — mesmo padrão nome+ativo."""
+
+    def test_seed_cria_motivos_padrao(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_motivos_baixa
+        with Session(engine) as s:
+            seed_motivos_baixa(s)
+        motivos = c.get("/cadastro/motivos-baixa").json()
+        assert any(m["nome"] == "Mastite" for m in motivos)
+        assert len(motivos) >= 30
+
+    def test_seed_e_idempotente(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_motivos_baixa
+        with Session(engine) as s:
+            seed_motivos_baixa(s)
+            seed_motivos_baixa(s)
+        n1 = len(c.get("/cadastro/motivos-baixa").json())
+        with Session(engine) as s:
+            seed_motivos_baixa(s)
+        n2 = len(c.get("/cadastro/motivos-baixa").json())
+        assert n1 == n2
+
+    def test_cria_edita_e_desativa_motivo(self, client):
+        c, engine = client
+        motivo_id = c.post("/cadastro/motivos-baixa", json={"nome": "Queda de barranco"}).json()["id"]
+        r = c.put(f"/cadastro/motivos-baixa/{motivo_id}", json={"nome": "Queda de barranco", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+    def test_nao_permite_motivo_duplicado(self, client):
+        c, engine = client
+        c.post("/cadastro/motivos-baixa", json={"nome": "Cobra"})
+        r = c.post("/cadastro/motivos-baixa", json={"nome": "Cobra"})
+        assert r.status_code == 409
+
+    def test_baixas_motivos_so_traz_ativos(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import seed_motivos_baixa
+        with Session(engine) as s:
+            seed_motivos_baixa(s)
+        inativo_id = c.post("/cadastro/motivos-baixa", json={"nome": "Motivo Descontinuado"}).json()["id"]
+        c.put(f"/cadastro/motivos-baixa/{inativo_id}", json={"nome": "Motivo Descontinuado", "ativo": False})
+        opcoes = c.get("/baixas/motivos").json()
+        assert "Motivo Descontinuado" not in opcoes["motivos_doenca"]
+        assert "Mastite" in opcoes["motivos_doenca"]

@@ -33,7 +33,7 @@ from fazenda.api.routers import (
 )
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros
-from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_pessoas
+from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas
 
 
 @asynccontextmanager
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
         seed_parametros_financeiros(session)
         seed_pessoas(session)
         seed_cadastro_sanitario(session)
+        seed_motivos_baixa(session)
     yield
 
 
