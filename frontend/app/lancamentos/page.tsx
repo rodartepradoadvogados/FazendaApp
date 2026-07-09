@@ -10,6 +10,7 @@ import {
   criarProtocoloIatf, criarServico,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
+  fetchProtocolosSanitarios, lancarProtocoloSanitario,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -1088,6 +1089,132 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   );
 }
 
+type ProtocoloEtapaLocal = { dia: number; produto: string; dosagem: number; unidade: string; via?: string | null };
+type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapaLocal[] };
+const TETOS = ["AE", "AD", "PD", "PE"] as const;
+const CLASSIFICACOES_MASTITE = [["clinica", "Clínica"], ["subclinica", "Subclínica"], ["ambiental", "Ambiental"]] as const;
+
+function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
+  const [protocolos, setProtocolos] = useState<ProtocoloLocal[]>([]);
+  const [protocoloId, setProtocoloId] = useState("");
+  const [matriz, setMatriz] = useState("");
+  const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().slice(0, 10));
+  const [responsavel, setResponsavel] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [classificacaoMastite, setClassificacaoMastite] = useState("");
+  const [resultadoCmt, setResultadoCmt] = useState("");
+  const [tetosSel, setTetosSel] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  useEffect(() => { fetchProtocolosSanitarios().then((d) => setProtocolos(d.filter((p: ProtocoloLocal) => p.ativo))).catch(() => {}); }, []);
+
+  const protocolo = protocolos.find((p) => p.id === Number(protocoloId));
+  const toggleTeto = (t: string) => setTetosSel((p) => { const s = new Set(p); s.has(t) ? s.delete(t) : s.add(t); return s; });
+
+  const cronograma = useMemo(() => {
+    if (!protocolo || !dataInicio) return [];
+    return [...protocolo.etapas].sort((a, b) => a.dia - b.dia).map((e) => ({
+      ...e, data: addDias(dataInicio, e.dia - 1),
+    }));
+  }, [protocolo, dataInicio]);
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!protocolo) { setErro("Selecione o protocolo."); return; }
+    if (!matriz) { setErro("Selecione o animal."); return; }
+    if (protocolo.eh_mastite && !classificacaoMastite) { setErro("Informe a classificação da mastite (clínica, subclínica ou ambiental)."); return; }
+
+    setSalvando(true);
+    try {
+      await lancarProtocoloSanitario({
+        protocolo_id: protocolo.id, numero_matriz: matriz, data_inicio: dataInicio,
+        responsavel: responsavel || undefined, observacao: observacao || undefined,
+        classificacao_mastite: classificacaoMastite || undefined, resultado_cmt: resultadoCmt || undefined,
+        tetos_afetados: Array.from(tetosSel),
+      });
+      setSucesso(`Protocolo "${protocolo.nome}" lançado — ${protocolo.etapas.length} evento(s) na Agenda.`);
+      setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setResultadoCmt(""); setTetosSel(new Set());
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar protocolo sanitário");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Protocolo">
+          <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
+            <option value="">Selecione…</option>
+            {protocolos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.eh_mastite ? " (mastite)" : ""}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Data de início (D1)"><input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></Campo>
+        <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
+        <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
+        <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+      </div>
+
+      {protocolo?.eh_mastite && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.6rem" }}>Tratamento diferenciado de mastite</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Campo label="Classificação">
+              <select style={inputStyle} value={classificacaoMastite} onChange={(e) => setClassificacaoMastite(e.target.value)}>
+                <option value="">Selecione…</option>
+                {CLASSIFICACOES_MASTITE.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Resultado do CMT"><input style={inputStyle} value={resultadoCmt} onChange={(e) => setResultadoCmt(e.target.value)} placeholder="ex.: +++ (forte)" /></Campo>
+            <Campo label="Teto(s) afetado(s)" full>
+              <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
+                {TETOS.map((t) => (
+                  <label key={t} className="flex items-center gap-2" style={{ fontSize: "0.8rem" }}>
+                    <input type="checkbox" checked={tetosSel.has(t)} onChange={() => toggleTeto(t)} /> {t}
+                  </label>
+                ))}
+              </div>
+            </Campo>
+          </div>
+        </div>
+      )}
+
+      {cronograma.length > 0 && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.4rem" }}>Cronograma — vai para a Agenda</p>
+          <table className="fazenda-table">
+            <thead><tr><th>Dia</th><th>Data</th><th>Produto</th><th>Dosagem</th><th>Via</th></tr></thead>
+            <tbody>
+              {cronograma.map((e, i) => (
+                <tr key={i}>
+                  <td>D{e.dia}</td>
+                  <td>{e.data}</td>
+                  <td>{e.produto}</td>
+                  <td>{e.dosagem} {e.unidade}</td>
+                  <td>{e.via || "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p style={nota}>Ao salvar, cria um evento na Agenda por dia — marcar "realizado" dá baixa automática do produto no Estoque.</p>
+        </div>
+      )}
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>
+          {salvando ? "Salvando…" : "Lançar protocolo"}
+        </button>
+      </div>
+    </>
+  );
+}
+
 type ItemDieta = { alimento: string; quantidade: string; unidade: string };
 const itemDietaVazio = (): ItemDieta => ({ alimento: "", quantidade: "", unidade: "kg" });
 
@@ -1608,6 +1735,7 @@ const TIPOS_GRUPOS = [
     subs: [
       { id: "sanidade_aplicacao", label: "Aplicação", icon: Syringe, desc: "Aplicação de medicamento/vacina — por animal ou por lote." },
       { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+      { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
     ],
   },
   {
@@ -1709,6 +1837,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
           ) : sel === "calendario_sanitario" ? (
             <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Cada regra recorrente aparece na aba Sanidade &gt; Calendário sanitário, com filtro por data e por evento.</>
+          ) : sel === "protocolo_sanitario" ? (
+            <><strong style={{ color: "var(--text)" }}>Protocolo sanitário já grava de verdade.</strong> Cria um evento na Agenda por etapa (D1, D2...) — ao marcar "realizado", dá baixa automática do produto no Estoque.</>
           ) : sel === "secagem" ? (
             <><strong style={{ color: "var(--text)" }}>Secagem já grava de verdade.</strong> Ao salvar, sugere mover a vaca para o lote das secas — você confirma antes da mudança.</>
           ) : sel === "parto" ? (
@@ -1772,6 +1902,7 @@ export default function LancamentosPage() {
           {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
+          {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}
           {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}

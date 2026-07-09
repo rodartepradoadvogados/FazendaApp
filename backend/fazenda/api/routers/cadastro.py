@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
-    PrincipioAtivo, ServicoCadastro, ValeFuncionario, ValeParcela,
+    PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
@@ -622,3 +622,104 @@ _listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoC
 router.get("/servicos")(_listar_servicos)
 router.post("/servicos")(_criar_servico)
 router.put("/servicos/{item_id}")(_atualizar_servico)
+
+
+# ---------------------------------------------------------------------------
+# Protocolo sanitário — cadastro com múltiplas etapas (produto/dosagem/via por
+# dia), a exemplo do tratamento de mastite. Etapas começam em D1 — protocolos
+# sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
+# ---------------------------------------------------------------------------
+class ProtocoloEtapaIn(BaseModel):
+    dia: int
+    produto: str
+    dosagem: float
+    unidade: str
+    via: str | None = None
+
+
+class ProtocoloSanitarioIn(BaseModel):
+    nome: str
+    doenca_id: int | None = None
+    eh_mastite: bool = False
+    ativo: bool = True
+    etapas: list[ProtocoloEtapaIn]
+
+
+def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
+    if not etapas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo")
+    for e in etapas:
+        if e.dia < 1:
+            raise HTTPException(
+                status_code=400,
+                detail="Protocolos sanitários não têm D0 — os dias começam em D1 (D0 é exclusivo do protocolo hormonal)",
+            )
+        if e.dosagem <= 0:
+            raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
+
+
+def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict[int, str]) -> dict:
+    etapas = session.exec(
+        select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == p.id).order_by(ProtocoloSanitarioEtapa.dia)
+    ).all()
+    return {
+        **p.model_dump(),
+        "doenca_nome": doencas.get(p.doenca_id) if p.doenca_id else None,
+        "etapas": [e.model_dump() for e in etapas],
+    }
+
+
+@router.get("/protocolos-sanitarios")
+def listar_protocolos_sanitarios(session: Session = Depends(get_session)) -> list[dict]:
+    doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+    protocolos = session.exec(select(ProtocoloSanitario).order_by(ProtocoloSanitario.nome)).all()
+    return [_serializar_protocolo(session, p, doencas) for p in protocolos]
+
+
+@router.post("/protocolos-sanitarios")
+def criar_protocolo_sanitario(dados: ProtocoloSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um protocolo com o nome '{nome}'")
+    _validar_etapas(dados.etapas)
+
+    protocolo = ProtocoloSanitario(nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite, ativo=dados.ativo)
+    session.add(protocolo)
+    session.commit()
+    session.refresh(protocolo)
+    for etapa in dados.etapas:
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+    session.commit()
+
+    doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+    return _serializar_protocolo(session, protocolo, doencas)
+
+
+@router.put("/protocolos-sanitarios/{protocolo_id}")
+def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    protocolo = session.get(ProtocoloSanitario, protocolo_id)
+    if not protocolo:
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_etapas(dados.etapas)
+
+    protocolo.nome = nome
+    protocolo.doenca_id = dados.doenca_id
+    protocolo.eh_mastite = dados.eh_mastite
+    protocolo.ativo = dados.ativo
+    session.add(protocolo)
+
+    etapas_antigas = session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo_id)).all()
+    for e in etapas_antigas:
+        session.delete(e)
+    session.commit()
+    for etapa in dados.etapas:
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+    session.commit()
+
+    doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+    return _serializar_protocolo(session, protocolo, doencas)
