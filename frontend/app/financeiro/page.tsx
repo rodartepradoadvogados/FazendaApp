@@ -86,6 +86,21 @@ export default function FinanceiroPage() {
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
   }, []);
 
+  // Vindo da Agenda (link "Ir para Financeiro" de uma conta a pagar/receber
+  // vencendo) — abre a sub-aba certa e já sugere a baixa da nota informada.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const ir = qs.get("ir");
+    if (ir && ["a_pagar", "a_receber", "pagas", "recebidas", "extrato"].includes(ir)) setRel(ir as Rel);
+  }, []);
+  useEffect(() => {
+    if (!regs) return;
+    const ref = new URLSearchParams(window.location.search).get("ref");
+    if (!ref) return;
+    const alvo = regs.find((r) => (r.numero_lancamento || r.numero_documento) === ref && !r.data_pagamento);
+    if (alvo) setBaixaAlvo(alvo);
+  }, [regs]);
+
   // Nome real de cada código do plano de contas — usado para dar nome à
   // hierarquia no DRE e no detalhamento por conta do Fluxo de Caixa, em vez
   // de mostrar só o código ou a descrição solta de cada lançamento.

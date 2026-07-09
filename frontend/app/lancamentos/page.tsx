@@ -331,6 +331,16 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
+  // Vindo da Agenda (link "Ir para Inseminação" do D11 de um protocolo IATF) —
+  // pré-seleciona a matriz e o nome do protocolo.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const numeroMatriz = qs.get("numero_matriz");
+    const protocolo = qs.get("protocolo");
+    if (numeroMatriz) setMatriz(numeroMatriz);
+    if (protocolo) { setVeioDeProtocolo(true); setNomeProtocolo(protocolo); }
+  }, []);
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!matriz) { setErro("Selecione a matriz."); return; }
@@ -1312,6 +1322,16 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
     carregar();
     fetchAlimentosPadrao().then(setAlimentosPadrao).catch(() => {});
   }, []);
+
+  // Vindo da Agenda (link "Ir para Dieta" do evento de análise de encerramento)
+  // — abre direto a seção de encerrar a dieta ativa daquele lote.
+  useEffect(() => {
+    if (!dietas) return;
+    const lote = new URLSearchParams(window.location.search).get("lote");
+    if (!lote) return;
+    const ativa = dietas.find((d) => d.lote === Number(lote) && d.ativa);
+    if (ativa) setEncerrando(ativa.id);
+  }, [dietas]);
 
   const atualizarItem = (idx: number, patch: Partial<ItemDieta>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
   const acrescentarItem = () => setItens((p) => [...p, itemDietaVazio()]);

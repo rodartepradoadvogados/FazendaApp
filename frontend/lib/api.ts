@@ -131,6 +131,12 @@ export async function desmarcarEventoRealizado(eventoId: string) {
   return res.json();
 }
 
+export async function fetchProtocoloIatfConcluidos() {
+  const res = await authFetch(`${API}/agenda/protocolo-iatf/concluidos`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar protocolos IATF concluídos");
+  return res.json();
+}
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);

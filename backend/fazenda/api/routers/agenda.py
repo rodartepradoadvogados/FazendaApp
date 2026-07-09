@@ -78,6 +78,7 @@ def calcular_agenda(
             "id": f"dieta_analise_{d.id}", "data": d.data_prevista_encerramento.isoformat(), "categoria": "alimentacao",
             "descricao": f"Analisar dieta do lote {d.lote} (encerramento previsto)",
             "numero_animal": None, "observacao": d.observacao, "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "lote": d.lote,
         }
         for d in dietas_para_analise
         if f"dieta_analise_{d.id}" not in realizados
@@ -146,6 +147,7 @@ def calcular_agenda(
             "numero_animal": None, "observacao": proxima_etapa,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
+            "protocolo": lancamento.nome_protocolo,
         })
 
     return {
@@ -275,9 +277,65 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
     return {"marcado": True}
 
 
+def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:
+    """
+    Reverte um grupo (lançamento, dia) do protocolo IATF marcado por engano —
+    volta todas as aplicações do grupo para pendente (sem registro de qual
+    subconjunto foi confirmado, reverter o grupo inteiro é o único
+    comportamento coerente).
+    """
+    resto = evento_id.removeprefix("protocolo_iatf_")
+    lancamento_id_str, dia_str = resto.rsplit("_", 1)
+    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.dia == dia,
+            ProtocoloIatfAplicacao.realizada == True,  # noqa: E712
+        )
+    ).all()
+    for ap in aplicacoes:
+        ap.realizada = False
+        ap.data_realizacao = None
+        session.add(ap)
+    session.commit()
+
+
+@router.get("/protocolo-iatf/concluidos")
+def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) -> list[dict]:
+    """Grupos (lançamento, dia) do protocolo IATF já confirmados — para desfazer, se marcado por engano."""
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
+    ).all()
+    lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
+    grupos: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
+    for ap in aplicacoes:
+        grupos.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    resultado = []
+    for (lancamento_id, dia), aps in grupos.items():
+        lancamento = lancamentos_por_id.get(lancamento_id)
+        if not lancamento:
+            continue
+        datas_realizacao = [a.data_realizacao for a in aps if a.data_realizacao]
+        resultado.append({
+            "id": f"protocolo_iatf_{lancamento_id}_{dia}",
+            "nome_protocolo": lancamento.nome_protocolo, "dia": dia,
+            "animais": sorted(a.numero_matriz for a in aps),
+            "data_realizacao": max(datas_realizacao).isoformat() if datas_realizacao else None,
+        })
+    resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)
+    return resultado
+
+
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session)) -> dict:
     """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
+    if evento_id.startswith("protocolo_iatf_"):
+        _desmarcar_protocolo_iatf_realizado(session, evento_id)
+        return {"desmarcado": True}
+
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)).first()
     if existe:
         session.delete(existe)

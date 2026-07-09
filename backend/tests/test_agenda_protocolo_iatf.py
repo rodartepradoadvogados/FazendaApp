@@ -137,3 +137,58 @@ class TestMarcarRealizadoIatf:
         eventos2 = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
         d0_depois = next(e for e in eventos2 if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
         assert d0_depois["animais"] == ["701"]
+
+
+class TestDesfazerIatf:
+    def test_desfazer_grupo_volta_a_aparecer_na_agenda(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+
+        c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+        eventos_depois = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        assert not any(e.get("tipo") == "protocolo_iatf" and e["dia"] == 0 for e in eventos_depois)
+
+        r = c.delete(f"/agenda/realizados/{d0['id']}")
+        assert r.status_code == 200
+
+        with Session(engine) as s:
+            aps = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 0)).all()
+            assert all(not a.realizada and a.data_realizacao is None for a in aps)
+
+        eventos_final = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0_final = next(e for e in eventos_final if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        assert set(d0_final["animais"]) == {"700", "701"}
+
+    def test_listar_concluidos_e_desfazer_um_deles(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+
+        concluidos = c.get("/agenda/protocolo-iatf/concluidos").json()
+        assert len(concluidos) == 1
+        assert concluidos[0]["id"] == d0["id"]
+        assert set(concluidos[0]["animais"]) == {"700", "701"}
+        assert concluidos[0]["dia"] == 0
+
+        c.delete(f"/agenda/realizados/{d0['id']}")
+        assert c.get("/agenda/protocolo-iatf/concluidos").json() == []
+
+    def test_desfazer_parcial_mantem_apenas_animal_ainda_confirmado(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"])
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+
+        # Confirma só 700 primeiro, depois 701 — ambos ficam realizada=True.
+        c.post("/agenda/realizados", json={"evento_id": d0["id"], "animais": ["700"]})
+        c.post("/agenda/realizados", json={"evento_id": d0["id"], "animais": ["701"]})
+
+        # Desfazer reverte o grupo inteiro (não há registro de "o que foi confirmado agora").
+        c.delete(f"/agenda/realizados/{d0['id']}")
+        with Session(engine) as s:
+            aps = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 0)).all()
+            assert all(not a.realizada for a in aps)

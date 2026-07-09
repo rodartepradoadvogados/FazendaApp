@@ -1,8 +1,8 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe } from "lucide-react";
-import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw } from "lucide-react";
+import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
@@ -79,6 +79,21 @@ export default function AgendaPage() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Protocolo IATF concluídos — permite desfazer um grupo (lançamento+dia)
+  // marcado como realizado por engano.
+  const [iatfConcluidos, setIatfConcluidos] = useState<any[]>([]);
+  const carregarConcluidos = useCallback(async () => {
+    try { setIatfConcluidos(await fetchProtocoloIatfConcluidos()); } catch { setIatfConcluidos([]); }
+  }, []);
+  useEffect(() => { carregarConcluidos(); }, [carregarConcluidos]);
+  const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
+  const desfazerIatf = async (id: string) => {
+    setDesfazendo((p) => new Set(p).add(id));
+    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos()]); }
+    catch (e: any) { alert(e.message); }
+    finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
+  };
+
   const hoje = today();
   const eventosBase = (agenda?.eventos || []).filter((e: any) => {
     if (fCat && e.categoria !== fCat) return false;
@@ -96,7 +111,12 @@ export default function AgendaPage() {
   const [marcando, setMarcando] = useState<Set<string>>(new Set());
   const marcarRealizado = async (eventoId: string, animais?: string[]) => {
     setMarcando((p) => new Set(p).add(eventoId));
-    try { await marcarEventoRealizado(eventoId, animais); cancelarConfirmacao(eventoId); await carregar(); }
+    try {
+      await marcarEventoRealizado(eventoId, animais);
+      cancelarConfirmacao(eventoId);
+      await carregar();
+      if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
+    }
     catch (e: any) { alert(e.message); }
     finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
   };
@@ -175,7 +195,13 @@ export default function AgendaPage() {
                           <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                           <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                           <td>
-                            <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                            {e.categoria === "alimentacao" ? (
+                              <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                <Wheat size={12} /> Ir para Dieta
+                              </a>
+                            ) : (
+                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                            )}
                           </td>
                         </tr>
                       );
@@ -222,7 +248,10 @@ export default function AgendaPage() {
                                           <td style={{ fontWeight: 700 }}>{numero}</td>
                                           {ehD11 && (
                                             <td>
-                                              <a href={`/lancamentos?ir=inseminacao`} className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                              <a
+                                                href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(numero)}&protocolo=${encodeURIComponent(e.protocolo || "")}`}
+                                                className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+                                              >
                                                 <Syringe size={12} /> Ir para Inseminação
                                               </a>
                                             </td>
@@ -263,7 +292,9 @@ export default function AgendaPage() {
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
-                            <BotaoRealizado chave={`grupo:${chaveGrupo}`} onConfirmar={() => itens.forEach((it: any) => marcarRealizado(it.id))} />
+                            <a href={`/financeiro?ir=a_pagar&ref=${encodeURIComponent(ref)}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                              <Wallet size={12} /> Ir para Financeiro
+                            </a>
                           </td>
                         </tr>
                         {abertoGrupo && itens.map((it: any, j: number) => (
@@ -271,9 +302,7 @@ export default function AgendaPage() {
                             <td></td><td></td>
                             <td colSpan={2} style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.descricao}{it.observacao ? ` · ${it.observacao}` : ""}</td>
                             <td></td>
-                            <td>
-                              <BotaoRealizado chave={it.id} compacto onConfirmar={() => marcarRealizado(it.id)} />
-                            </td>
+                            <td></td>
                           </tr>
                         ))}
                       </React.Fragment>
@@ -454,6 +483,38 @@ export default function AgendaPage() {
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Protocolo IATF — concluídos recentemente, com opção de desfazer */}
+      {iatfConcluidos.length > 0 && (
+        <div className="card mb-4">
+          <button onClick={() => togglePainel("iatfConcluidos")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", padding: 0 }}>
+            {paineis.has("iatfConcluidos") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+            <span className="card-header" style={{ margin: 0 }}>Protocolo IATF — concluídos ({iatfConcluidos.length})</span>
+          </button>
+          {paineis.has("iatfConcluidos") && (
+            <div className="overflow-x-auto mt-3">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Protocolo</th><th>Etapa</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
+                <tbody>
+                  {iatfConcluidos.map((g: any) => (
+                    <tr key={g.id}>
+                      <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
+                      <td>D{g.dia}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{g.animais.join(", ")}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td>
+                        <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
+                          <RotateCcw size={12} /> Desfazer
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
