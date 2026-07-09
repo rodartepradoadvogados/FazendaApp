@@ -234,20 +234,49 @@ class TestProtocoloIatf:
         corpo = r.json()
         assert corpo["eventos_criados"] == 8
         assert corpo["animais"] == 2
+        assert corpo["lancamento_id"]
 
         with Session(engine) as s:
             from sqlmodel import select
-            from fazenda.models import AgendaManual
-            eventos = s.exec(select(AgendaManual).where(AgendaManual.numero_animal == "500")).all()
+            from fazenda.models import ProtocoloIatfAplicacao
+            eventos = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "500")).all()
             assert len(eventos) == 4
-            datas = sorted(e.data_evento for e in eventos)
+            datas = sorted(e.data_prevista for e in eventos)
             assert datas == [date(2026, 7, 8), date(2026, 7, 15), date(2026, 7, 17), date(2026, 7, 19)]
-            assert all(e.categoria == "Reprodutivo" for e in eventos)
+            assert all(e.realizada is False for e in eventos)
 
     def test_sem_animais_da_400(self, client):
         c, _ = client
         r = c.post("/reproducao/protocolo-iatf", json={"animais": [], "data_d0": "2026-07-08"})
         assert r.status_code == 400
+
+    def test_lista_protocolos_ativos_mostra_etapa_atual(self, client):
+        c, engine = client
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+        })
+        r = c.get("/reproducao/protocolo-iatf/ativos")
+        assert r.status_code == 200
+        ativos = r.json()
+        assert len(ativos) == 1
+        assert ativos[0]["nome_protocolo"] == "Protocolo padrão"
+        assert ativos[0]["animais"][0]["numero_matriz"] == "500"
+        assert ativos[0]["animais"][0]["etapa_atual"] == "D0"
+
+    def test_protocolo_some_da_lista_de_ativos_quando_tudo_realizado(self, client):
+        c, engine = client
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+        })
+        with Session(engine) as s:
+            from sqlmodel import select
+            from fazenda.models import ProtocoloIatfAplicacao
+            for ap in s.exec(select(ProtocoloIatfAplicacao)).all():
+                ap.realizada = True
+                s.add(ap)
+            s.commit()
+        r = c.get("/reproducao/protocolo-iatf/ativos")
+        assert r.json() == []
 
 
 class TestRegistrarServico:
@@ -277,6 +306,33 @@ class TestRegistrarServico:
             "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": "Protocolo padrão",
         })
         assert r.json()["protocolo"] == "Protocolo padrão"
+
+    def test_registrar_servico_resolve_aplicacao_d11_automaticamente(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="500", raca="Girolando", ativo=True))
+            s.commit()
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+        })
+
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "500", "data_servico": "2026-07-19", "tipo_servico": "IA", "protocolo": "Protocolo padrão",
+        })
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            from fazenda.models import ProtocoloIatfAplicacao
+            d11 = s.exec(
+                select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "500", ProtocoloIatfAplicacao.dia == 11)
+            ).first()
+            assert d11.realizada is True
+            assert d11.data_realizacao == date(2026, 7, 19)
+            # As demais etapas (D0/D7/D9) continuam intactas — só o D11 resolve.
+            outras = s.exec(
+                select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "500", ProtocoloIatfAplicacao.dia != 11)
+            ).all()
+            assert all(not a.realizada for a in outras)
 
     def test_segundo_servico_incrementa_tentativa_e_desmarca_anterior(self, client):
         c, engine = client

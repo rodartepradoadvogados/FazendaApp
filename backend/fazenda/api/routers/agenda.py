@@ -3,7 +3,7 @@ Router da Agenda — calcula e retorna eventos do dia ou de um período.
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
+    ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
 )
@@ -108,6 +109,45 @@ def calcular_agenda(
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
         })
 
+    # Protocolo IATF — agrupa por (lançamento, dia): uma linha por etapa do
+    # protocolo, não uma por animal, mostrando todos os animais daquele passo
+    # de uma vez. Só entram etapas de hoje em diante (retroativo não spam de
+    # passos já vencidos) e ainda não realizadas.
+    aplicacoes_iatf = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
+            ProtocoloIatfAplicacao.data_prevista >= data,
+        )
+    ).all()
+    lancamentos_iatf_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
+    grupos_iatf: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
+    for ap in aplicacoes_iatf:
+        grupos_iatf.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    eventos_iatf = []
+    DIAS_PROTOCOLO_IATF = [0, 7, 9, 11]
+    for (lancamento_id, dia), aps in grupos_iatf.items():
+        chave = f"protocolo_iatf_{lancamento_id}_{dia}"
+        if chave in realizados:
+            continue
+        lancamento = lancamentos_iatf_por_id.get(lancamento_id)
+        if not lancamento:
+            continue
+        animais_grupo = sorted(a.numero_matriz for a in aps)
+        proximos_dias = [d for d in DIAS_PROTOCOLO_IATF if d > dia]
+        proxima_etapa = None
+        if proximos_dias:
+            proximo_dia = proximos_dias[0]
+            proxima_data = lancamento.data_d0 + timedelta(days=proximo_dia)
+            proxima_etapa = f"Próxima etapa: D{proximo_dia} em {proxima_data.strftime('%d/%m/%Y')}"
+        eventos_iatf.append({
+            "id": chave, "data": aps[0].data_prevista.isoformat(), "categoria": "Reprodutivo",
+            "descricao": f"{lancamento.nome_protocolo} — D{dia}",
+            "numero_animal": None, "observacao": proxima_etapa,
+            "fonte": "manual", "cor": "var(--dourado)", "ref": None,
+            "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
+        })
+
     return {
         "data_referencia": result.data_referencia.isoformat(),
         "candidatas_iatf": [
@@ -134,18 +174,19 @@ def calcular_agenda(
                 "ref": e.ref,
             }
             for e in eventos
-        ] + eventos_dieta + eventos_protocolo,
+        ] + eventos_dieta + eventos_protocolo + eventos_iatf,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf),
             "bst_elegiveis": len(result.bst_elegiveis),
             "contas_a_pagar": len(result.contas_a_pagar),
-            "eventos": len(eventos) + len(eventos_dieta) + len(eventos_protocolo),
+            "eventos": len(eventos) + len(eventos_dieta) + len(eventos_protocolo) + len(eventos_iatf),
         },
     }
 
 
 class RealizadoIn(BaseModel):
     evento_id: str
+    animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf) — None = todos do grupo
 
 
 def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
@@ -189,9 +230,42 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     session.commit()
 
 
+def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: list[str] | None) -> None:
+    """
+    Marca a(s) aplicação(ões) de um grupo (lançamento, dia) do protocolo IATF
+    como realizadas. Sem `animais`, marca o grupo inteiro; com `animais`,
+    confirma só esse subconjunto — os demais continuam pendentes no grupo.
+    """
+    resto = evento_id.removeprefix("protocolo_iatf_")
+    lancamento_id_str, dia_str = resto.rsplit("_", 1)
+    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.dia == dia,
+            ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
+        )
+    ).all()
+    if animais is not None:
+        alvo = set(animais)
+        aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
+
+    hoje = date.today()
+    for ap in aplicacoes:
+        ap.realizada = True
+        ap.data_realizacao = hoje
+        session.add(ap)
+    session.commit()
+
+
 @router.post("/realizados")
 def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
+    if dados.evento_id.startswith("protocolo_iatf_"):
+        _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais)
+        return {"marcado": True}
+
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)).first()
     if not existe:
         session.add(EventoRealizado(evento_id=dados.evento_id))

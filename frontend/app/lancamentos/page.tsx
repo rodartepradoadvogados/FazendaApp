@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
@@ -7,7 +7,7 @@ import {
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
-  criarProtocoloIatf, criarServico,
+  criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario,
@@ -188,6 +188,55 @@ const HORMONIOS: Record<string, string[]> = {
   cipionato: ["SincroCP"],
 };
 
+type ProtocoloIatfAtivo = {
+  lancamento_id: number; nome_protocolo: string; data_d0: string;
+  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[];
+};
+
+function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableRefObject<() => void> }) {
+  const [ativos, setAtivos] = useState<ProtocoloIatfAtivo[] | null>(null);
+  const [abertos, setAbertos] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setAbertos((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const carregar = () => fetchProtocolosIatfAtivos().then(setAtivos).catch(() => setAtivos([]));
+  useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!ativos || !ativos.length) return null;
+  return (
+    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+      <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
+        Protocolos IATF em andamento ({ativos.length})
+      </div>
+      <div className="space-y-2">
+        {ativos.map((p) => {
+          const aberto = abertos.has(p.lancamento_id);
+          return (
+            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+              <button onClick={() => toggle(p.lancamento_id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>D0 {formatDate(p.data_d0)} — {p.animais.length} animal(is)</span>
+              </button>
+              {aberto && (
+                <table className="fazenda-table" style={{ margin: 0 }}>
+                  <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                  <tbody>
+                    {p.animais.map((a) => (
+                      <tr key={a.numero_matriz}>
+                        <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                        <td>{a.etapa_atual}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
@@ -197,6 +246,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const recarregarAtivosRef = useRef(() => {});
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
@@ -210,6 +260,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo });
       setSucesso(`Protocolo agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos criados na Agenda (D0/D7/D9/D11).`);
       setSel(new Set()); setUm("");
+      recarregarAtivosRef.current();
     } catch (e: any) {
       setErro(e.message || "Erro ao agendar protocolo IATF");
     } finally {
@@ -233,7 +284,10 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         {emLote
           ? <SelecaoAnimaisTabela
               animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
-              colunas={[{ header: "Lote", render: (a) => a.grupo_primario || "—" }]}
+              colunas={[
+                { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              ]}
             />
           : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
       </div>
@@ -256,6 +310,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         </div>
         <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
       </div>
+      <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
@@ -378,6 +433,7 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
         <SelecaoAnimaisTabela
           animais={servidas} selecionados={selecionados} toggle={toggle} toggleTodos={toggleTodos}
           colunas={[
+            { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
             { header: "Lote", render: (a) => a.grupo_primario || "—" },
             { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
             { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
@@ -1762,6 +1818,11 @@ const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.s
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
   const [sujo, setSujo] = useState(false);
+  // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
+  useEffect(() => {
+    const ir = new URLSearchParams(window.location.search).get("ir");
+    if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
+  }, []);
   const trocarTipo = (novoId: string) => {
     if (novoId === sel) return;
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
