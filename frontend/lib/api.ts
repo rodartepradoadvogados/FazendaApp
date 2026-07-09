@@ -567,7 +567,7 @@ export async function fetchLancamentosProtocolo() {
   return res.json();
 }
 export async function lancarProtocoloSanitario(dados: {
-  protocolo_id: number; numero_matriz: string; data_inicio: string; responsavel?: string; observacao?: string;
+  protocolo_id: number; numeros_matriz: string[]; data_inicio: string; responsavel?: string; observacao?: string;
   classificacao_mastite?: string; resultado_cmt?: string; tetos_afetados?: string[];
 }) {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
