@@ -80,23 +80,27 @@ def calcular_consumo(dietas: list[dict], animais: list[dict]) -> dict:
 def calcular_necessidade_mensal(consumo_total: list[dict], estoque_por_nome: dict[str, dict]) -> list[dict]:
     """
     Projeta o consumo diário para uma janela de 30 dias. Quando o ingrediente
-    tem um item de estoque vinculado (mesmo nome) marcado como ensacado, converte
+    tem um item de estoque vinculado (mesmo nome) embalado em sacas com peso
+    conhecido (unidade_embalagem="Saca", medida_embalagem="kg/saca"), converte
     kg em sacos (arredondando para cima — não dá pra comprar meio saco).
     """
     saida = []
     for item in consumo_total:
         kg_mes = round(item["consumo_dia"] * DIAS_MES, 2)
         estoque_item = estoque_por_nome.get(item["ingrediente"])
-        sacos = None
-        if estoque_item and estoque_item.get("ensacado") and estoque_item.get("kg_por_saco"):
-            sacos = math.ceil(kg_mes / estoque_item["kg_por_saco"])
+        ensacado = bool(
+            estoque_item and estoque_item.get("unidade_embalagem") == "Saca"
+            and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
+        )
+        kg_por_saco = estoque_item.get("quantidade_embalagem") if ensacado else None
+        sacos = math.ceil(kg_mes / kg_por_saco) if ensacado else None
         saida.append({
             "ingrediente": item["ingrediente"],
             "unidade": item["unidade"],
             "consumo_dia": item["consumo_dia"],
             "necessidade_mes": kg_mes,
-            "ensacado": bool(estoque_item and estoque_item.get("ensacado")),
-            "kg_por_saco": estoque_item.get("kg_por_saco") if estoque_item else None,
+            "ensacado": ensacado,
+            "kg_por_saco": kg_por_saco,
             "sacos_mes": sacos,
             "item_estoque_vinculado": estoque_item is not None,
         })

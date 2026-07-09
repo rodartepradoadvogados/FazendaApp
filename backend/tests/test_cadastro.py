@@ -113,7 +113,7 @@ class TestFichaAnimal:
 
 
 class TestMetaEstoque:
-    def test_atualizar_metadados_ensacado(self, client):
+    def test_atualizar_metadados_embalagem(self, client):
         c, engine = client
         with Session(engine) as s:
             s.add(Estoque(nome="Ração concentrada", categoria="alimento", quantidade=100))
@@ -121,10 +121,20 @@ class TestMetaEstoque:
         r = c.get("/cadastro/estoque-itens")
         item_id = r.json()[0]["id"]
 
-        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"ensacado": True, "kg_por_saco": 40.0})
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Saca", "medida_embalagem": "kg/saca", "quantidade_embalagem": 40.0})
         assert r.status_code == 200
-        assert r.json()["ensacado"] is True
-        assert r.json()["kg_por_saco"] == 40.0
+        assert r.json()["unidade_embalagem"] == "Saca"
+        assert r.json()["medida_embalagem"] == "kg/saca"
+        assert r.json()["quantidade_embalagem"] == 40.0
+
+    def test_unidade_embalagem_invalida_rejeitada(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Concentrado XYZ", categoria="alimento", quantidade=10))
+            s.commit()
+        item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Caminhão"})
+        assert r.status_code == 400
 
     def test_fornecedor_inexistente_rejeitado(self, client):
         c, engine = client

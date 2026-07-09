@@ -19,6 +19,7 @@ from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
     PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
+from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
@@ -475,20 +476,26 @@ def atualizar_ficha_animal(numero: str, dados: AnimalFichaIn, session: Session =
 
 
 # ---------------------------------------------------------------------------
-# Metadados de itens de estoque — usados pela Alimentação (ensacado/kg por
-# saco) e para vincular um fornecedor ao item. A quantidade em si continua
-# vindo do ESTOQUE.csv / movimentações; aqui só descrevemos o item.
+# Metadados de itens de estoque — embalagem (usada pela Alimentação para
+# converter kg necessários em sacos/potes/fardos) e fornecedor principal do
+# item. A quantidade em si continua vindo do ESTOQUE.csv / movimentações;
+# aqui só descrevemos o item.
 # ---------------------------------------------------------------------------
 class EstoqueMetaIn(BaseModel):
-    ensacado: bool | None = None
-    kg_por_saco: float | None = None
+    unidade_embalagem: str | None = None
+    medida_embalagem: str | None = None
+    quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     estocavel: bool | None = None
 
 
 @router.get("/estoque-itens")
 def listar_itens_estoque(session: Session = Depends(get_session)) -> list[dict]:
-    return [e.model_dump() for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()]
+    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
+    return [
+        {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
+        for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()
+    ]
 
 
 @router.put("/estoque-itens/{item_id}")
@@ -498,8 +505,10 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
         raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
-    item.ensacado = dados.ensacado
-    item.kg_por_saco = dados.kg_por_saco
+    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
+    item.unidade_embalagem = dados.unidade_embalagem
+    item.medida_embalagem = dados.medida_embalagem
+    item.quantidade_embalagem = dados.quantidade_embalagem
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
     session.add(item)

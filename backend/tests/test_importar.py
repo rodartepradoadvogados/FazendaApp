@@ -136,8 +136,8 @@ class TestProdutosEstoque:
     def test_cria_item_novo_com_metadados(self, client):
         c, engine = client
         r = _upload(c, "produtos_estoque", [
-            "nome;categoria;unidade;ensacado;kg_por_saco;fornecedor_nome",
-            "Sal mineral;alimento;kg;Sim;25;",
+            "nome;categoria;unidade;unidade_embalagem;medida_embalagem;quantidade_embalagem;fornecedor_nome",
+            "Sal mineral;alimento;kg;Saca;kg/saca;25;",
         ])
         assert r.status_code == 200
         assert r.json()["criados"] == 1
@@ -145,14 +145,15 @@ class TestProdutosEstoque:
         with Session(engine) as s:
             item = s.exec(select(Estoque).where(Estoque.nome == "Sal mineral")).first()
             assert item is not None
-            assert item.ensacado is True
-            assert item.kg_por_saco == 25.0
+            assert item.unidade_embalagem == "Saca"
+            assert item.medida_embalagem == "kg/saca"
+            assert item.quantidade_embalagem == 25.0
 
     def test_fornecedor_inexistente_vira_erro_mas_nao_bloqueia(self, client):
         c, engine = client
         r = _upload(c, "produtos_estoque", [
-            "nome;categoria;unidade;ensacado;kg_por_saco;fornecedor_nome",
-            "Hormonio X;hormonio;ml;Não;;Fornecedor Fantasma",
+            "nome;categoria;unidade;unidade_embalagem;medida_embalagem;quantidade_embalagem;fornecedor_nome",
+            "Hormonio X;hormonio;ml;;;;Fornecedor Fantasma",
         ])
         assert r.json()["criados"] == 1
         assert len(r.json()["erros"]) == 1

@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL,
+  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -65,9 +65,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
   const carregarOpcoes = () => fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {});
   useEffect(() => { carregarOpcoes(); }, []);
 
-  const [produtosEstoque, setProdutosEstoque] = useState<string[]>([]);
-  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => i.nome))).catch(() => {});
+  const [produtosEstoque, setProdutosEstoque] = useState<{ nome: string; fornecedor_nome: string | null }[]>([]);
+  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({ nome: i.nome, fornecedor_nome: i.fornecedor_nome ?? null })))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
+  const [fornecedoresCadastro, setFornecedoresCadastro] = useState<string[]>([]);
+  useEffect(() => { fetchFornecedores().then((d) => setFornecedoresCadastro((d || []).map((f: any) => f.nome))).catch(() => {}); }, []);
+  const fornecedoresDisponiveis = useMemo(
+    () => Array.from(new Set([...opcoes.fornecedores, ...fornecedoresCadastro])).sort(),
+    [opcoes.fornecedores, fornecedoresCadastro]
+  );
   const [servicos, setServicos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const carregarServicos = () => fetchServicosCadastro().then(setServicos).catch(() => {});
   useEffect(() => { carregarServicos(); }, []);
@@ -326,9 +332,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                 </Campo>
               ) : (
                 <Campo label="Produto">
-                  <select style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })}>
+                  <select style={inputStyle} value={it.produto} onChange={(e) => {
+                    const nomeProduto = e.target.value;
+                    atualizarItem(idx, { produto: nomeProduto });
+                    const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                    if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
+                  }}>
                     <option value="">Selecione…</option>
-                    {produtosEstoque.slice().sort().map((p) => <option key={p} value={p}>{p}</option>)}
+                    {produtosEstoque.slice().sort((a, b) => a.nome.localeCompare(b.nome)).map((p) => <option key={p.nome} value={p.nome}>{p.nome}</option>)}
                   </select>
                 </Campo>
               )}
@@ -361,7 +372,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
           <div className="flex items-center gap-2">
             <select style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
               <option value="">Selecione…</option>
-              {opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+              {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
             <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
               <Plus size={13} /> Novo
@@ -547,6 +558,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
             onCriado={(f) => {
               if (f?.nome) setFornecedor(f.nome);
               carregarOpcoes();
+              fetchFornecedores().then((d) => setFornecedoresCadastro((d || []).map((x: any) => x.nome))).catch(() => {});
               setAbrirNovoFornecedor(false);
             }}
             onCancelar={() => setAbrirNovoFornecedor(false)}

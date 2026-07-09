@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Estoque, MovimentoEstoque
+from fazenda.models import Estoque, Fornecedor, MovimentoEstoque
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -22,11 +22,18 @@ MOVIMENTOS_VALIDOS = set(MOVIMENTOS_ENTRADA + MOVIMENTOS_SAIDA)
 # estocáveis existem só para lançamento financeiro, sem controle de quantidade.
 MOVIMENTOS_SOMENTE_ESTOCAVEL = {"Doação", "Entrada de cortesia"}
 
+UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"]
+MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
+
 
 @router.get("/")
 def listar_estoque(session: Session = Depends(get_session)) -> dict:
     """Todos os itens de estoque para o dashboard interativo (filtra no cliente)."""
-    itens = [e.model_dump() for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()]
+    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
+    itens = [
+        {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
+        for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()
+    ]
     return {"itens": itens, "total": len(itens)}
 
 
@@ -39,8 +46,9 @@ class EstoqueIn(BaseModel):
     estoque_minimo: float | None = None
     valor_unitario: float | None = None
     local_armazenamento: str | None = None
-    ensacado: bool | None = None
-    kg_por_saco: float | None = None
+    unidade_embalagem: str | None = None
+    medida_embalagem: str | None = None
+    quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     ativo: bool = True
     observacao: str | None = None
@@ -52,12 +60,20 @@ class EstoqueIn(BaseModel):
     estocavel: bool = True
 
 
+def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
+    if unidade_embalagem and unidade_embalagem not in UNIDADES_EMBALAGEM:
+        raise HTTPException(status_code=400, detail=f"Unidade de embalagem inválida — use uma de: {', '.join(UNIDADES_EMBALAGEM)}")
+    if medida_embalagem and medida_embalagem not in MEDIDAS_EMBALAGEM:
+        raise HTTPException(status_code=400, detail=f"Unidade de medida inválida — use uma de: {', '.join(MEDIDAS_EMBALAGEM)}")
+
+
 @router.post("/", status_code=201)
 def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)) -> dict:
     """Cadastra um item de estoque novo (não existe ainda um com esse nome)."""
     existente = session.exec(select(Estoque).where(Estoque.nome == dados.nome)).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe um item de estoque chamado "{dados.nome}"')
+    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
 
     valor_total = (dados.quantidade or 0) * (dados.valor_unitario or 0) if dados.quantidade and dados.valor_unitario else None
     item = Estoque(
@@ -71,8 +87,9 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         valor_total=valor_total,
         abaixo_minimo=(dados.quantidade is not None and dados.estoque_minimo is not None and dados.quantidade < dados.estoque_minimo),
         local_armazenamento=dados.local_armazenamento,
-        ensacado=dados.ensacado,
-        kg_por_saco=dados.kg_por_saco,
+        unidade_embalagem=dados.unidade_embalagem,
+        medida_embalagem=dados.medida_embalagem,
+        quantidade_embalagem=dados.quantidade_embalagem,
         fornecedor_id=dados.fornecedor_id,
         ativo=dados.ativo,
         observacao=dados.observacao,
