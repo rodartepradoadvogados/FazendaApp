@@ -38,6 +38,7 @@ def client():
         with Session(engine) as s:
             s.add(Estoque(nome="Borgal 50ml", quantidade=1000, unidade="ml"))
             s.add(Estoque(nome="Vacina X", quantidade=20, unidade="unidade"))
+            s.add(Estoque(nome="Serviço veterinário", quantidade=0, unidade="unidade", estocavel=False))
             s.commit()
         yield c
 
@@ -113,6 +114,17 @@ class TestRegistrarAplicacao:
             "data_aplicacao": "2026-07-08", "animais": ["101"], "itens": [],
         })
         assert r.status_code == 400
+
+    def test_item_nao_estocavel_nao_da_baixa(self, client):
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Serviço veterinário", "quantidade": 1, "unidade": "unidade"}],
+        })
+        assert r.status_code == 200
+        assert r.json()["avisos"] == []
+        estoque = client.get("/estoque/").json()["itens"]
+        item = next(i for i in estoque if i["nome"] == "Serviço veterinário")
+        assert item["quantidade"] == 0
 
     def test_baixa_direta_gera_movimento_de_estoque(self, client):
         # Antes, a baixa direta mexia em Estoque.quantidade sem deixar rastro

@@ -460,6 +460,7 @@ class EstoqueMetaIn(BaseModel):
     ensacado: bool | None = None
     kg_por_saco: float | None = None
     fornecedor_id: int | None = None
+    estocavel: bool | None = None
 
 
 @router.get("/estoque-itens")
@@ -477,6 +478,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.ensacado = dados.ensacado
     item.kg_por_saco = dados.kg_por_saco
     item.fornecedor_id = dados.fornecedor_id
+    item.estocavel = dados.estocavel
     session.add(item)
     session.commit()
     session.refresh(item)

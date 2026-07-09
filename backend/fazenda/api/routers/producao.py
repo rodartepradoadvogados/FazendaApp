@@ -276,7 +276,7 @@ def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session))
             responsavel=dados.responsavel,
             atividade="Secagem",
         ))
-        if estoque_item and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
+        if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
             estoque_item.quantidade = (estoque_item.quantidade or 0) - item.quantidade
             if estoque_item.estoque_minimo is not None:
                 estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo

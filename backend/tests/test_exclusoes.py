@@ -8,10 +8,30 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, Parto, Sanidade, Servico
+from fazenda.models import (
+    Animal,
+    CalendarioSanitario,
+    ContaGerencial,
+    ControleLeiteiro,
+    Doenca,
+    Estoque,
+    EventoSanitario,
+    FolhaPagamento,
+    Fornecedor,
+    Lote,
+    MotivoMovimentacao,
+    Parto,
+    Pessoa,
+    PrincipioAtivo,
+    ProtocoloSanitario,
+    ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento,
+    Sanidade,
+    Servico,
+)
 
 
 @pytest.fixture
@@ -222,3 +242,146 @@ class TestFormatoDeDataNoTitulo:
         titulo = r.json()[0]["titulo"]
         assert titulo.startswith("15/06/2026")
         assert "2026-06-15" not in titulo
+
+
+class TestNovosTiposDeCadastro:
+    def test_exclui_lote_sem_bloqueio(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Lote(codigo="09", nome="Teste"))
+            s.commit()
+        lote_id = c.get("/exclusoes/buscar", params={"tipo": "lote", "termo": "Teste"}).json()[0]["id"]
+        r = c.post("/exclusoes/confirmar", json={"tipo": "lote", "id": str(lote_id)})
+        assert r.status_code == 200
+        assert r.json()["status"] == "excluido"
+        with _sessao(engine) as s:
+            assert s.get(Lote, lote_id) is None
+
+    def test_exclui_fornecedor_e_desvincula_estoque(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            f = Fornecedor(nome="Casa da Ração", tipo="fornecedor")
+            s.add(f)
+            s.commit()
+            s.refresh(f)
+            s.add(Estoque(nome="Ração X", fornecedor_id=f.id))
+            s.commit()
+            fid = f.id
+
+        r = c.post("/exclusoes/impacto", json={"tipo": "fornecedor", "id": str(fid)})
+        assert any("1 item" in i for i in r.json()["impacto"])
+
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "fornecedor", "id": str(fid)})
+        assert r2.status_code == 200
+        with _sessao(engine) as s:
+            assert s.get(Fornecedor, fid) is None
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração X")).first()
+            assert item.fornecedor_id is None
+
+    def test_exclui_motivo_movimentacao(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Reagrupamento teste"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Reagrupamento"}).json()[0]["id"]
+        r = c.post("/exclusoes/confirmar", json={"tipo": "motivo_movimentacao", "id": str(mid)})
+        assert r.status_code == 200
+
+    def test_bloqueia_exclusao_de_pessoa_com_folha(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            p = Pessoa(nome="Carlos Vet", tipo="Veterinário")
+            s.add(p)
+            s.commit()
+            s.refresh(p)
+            s.add(FolhaPagamento(pessoa_id=p.id, competencia="2026-07", valor_bruto=1000, valor_liquido=1000))
+            s.commit()
+            pid = p.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid)})
+        assert r.status_code == 400
+
+    def test_exclui_pessoa_sem_vinculos(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Pessoa(nome="Sem vínculo", tipo="Diarista"))
+            s.commit()
+        pid = c.get("/exclusoes/buscar", params={"tipo": "pessoa", "termo": "Sem vínculo"}).json()[0]["id"]
+        r = c.post("/exclusoes/confirmar", json={"tipo": "pessoa", "id": str(pid)})
+        assert r.status_code == 200
+
+    def test_exclui_principio_ativo_e_desvincula_calendario(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            pa = PrincipioAtivo(nome="Ivermectina")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            s.add(EventoSanitario(nome="Vermífugo teste"))
+            s.commit()
+            evento = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Vermífugo teste")).first()
+            s.add(CalendarioSanitario(
+                evento_sanitario_id=evento.id, principio_ativo_id=pa.id,
+                frequencia_valor=4, frequencia_unidade="meses", data_evento=date(2026, 1, 1),
+            ))
+            s.commit()
+            pa_id = pa.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "principio_ativo", "id": str(pa_id)})
+        assert r.status_code == 200
+        with _sessao(engine) as s:
+            regra = s.exec(select(CalendarioSanitario)).first()
+            assert regra.principio_ativo_id is None
+
+    def test_bloqueia_exclusao_de_evento_sanitario_com_calendario(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(EventoSanitario(nome="Brucelose teste"))
+            s.commit()
+            evento = s.exec(select(EventoSanitario).where(EventoSanitario.nome == "Brucelose teste")).first()
+            s.add(CalendarioSanitario(
+                evento_sanitario_id=evento.id, frequencia_valor=12, frequencia_unidade="meses", data_evento=date(2026, 1, 1),
+            ))
+            s.commit()
+            eid = evento.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "evento_sanitario", "id": str(eid)})
+        assert r.status_code == 400
+
+    def test_bloqueia_exclusao_de_protocolo_com_lancamento(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            protocolo = ProtocoloSanitario(nome="Mastite teste")
+            s.add(protocolo)
+            s.commit()
+            s.refresh(protocolo)
+            s.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, dia=1, produto="X", dosagem=1.0, unidade="ml"))
+            s.add(ProtocoloSanitarioLancamento(protocolo_id=protocolo.id, numero_matriz="700", data_inicio=date(2026, 1, 1)))
+            s.commit()
+            pid = protocolo.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario", "id": str(pid)})
+        assert r.status_code == 400
+
+    def test_exclui_protocolo_sem_lancamento_cascade_etapas(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            protocolo = ProtocoloSanitario(nome="Vermifugação teste")
+            s.add(protocolo)
+            s.commit()
+            s.refresh(protocolo)
+            s.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, dia=1, produto="X", dosagem=1.0, unidade="ml"))
+            s.commit()
+            pid = protocolo.id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario", "id": str(pid)})
+        assert r.status_code == 200
+        with _sessao(engine) as s:
+            assert s.get(ProtocoloSanitario, pid) is None
+            assert s.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == pid)).first() is None
+
+    def test_tipos_exclusao_incluem_novos(self, client):
+        c, engine = client
+        r = c.get("/exclusoes/tipos")
+        ids = {t["id"] for t in r.json()}
+        assert {"lote", "fornecedor", "motivo_movimentacao", "pessoa", "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario"} <= ids

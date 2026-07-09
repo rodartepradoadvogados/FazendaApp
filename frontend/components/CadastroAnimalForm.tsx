@@ -118,6 +118,15 @@ export default function CadastroAnimalForm() {
           <Campo label="Selecione o animal">
             <AnimalPicker animais={animais} value={numeroEdicao} onChange={escolherParaEditar} />
           </Campo>
+          {numeroEdicao && (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+              Para remover este animal do rebanho (venda, morte, descarte), use{" "}
+              <a href="/rebanho?aba=baixar" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
+                Rebanho &gt; Baixar animal
+              </a>{" "}
+              — não edite os campos de baixa abaixo diretamente.
+            </p>
+          )}
         </div>
       )}
 

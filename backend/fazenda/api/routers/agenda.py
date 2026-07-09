@@ -175,7 +175,7 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     ))
 
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == etapa.produto)).first()
-    if estoque_item and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
+    if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
         estoque_item.quantidade = (estoque_item.quantidade or 0) - etapa.dosagem
         if estoque_item.estoque_minimo is not None:
             estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo

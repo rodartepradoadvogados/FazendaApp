@@ -1,6 +1,6 @@
 "use client";
 import { useState } from "react";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2 } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
@@ -10,6 +10,7 @@ import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
 import CadastroPessoas from "./CadastroPessoas";
 import CadastroSanitario from "./CadastroSanitario";
+import { FormExclusao } from "./FormExclusao";
 
 const ABAS = [
   ["lotes", "Lotes", Layers],
@@ -21,6 +22,7 @@ const ABAS = [
   ["servicos", "Serviços", Wrench],
   ["pessoas", "Pessoas", Users],
   ["sanitario", "Sanitário", HeartPulse],
+  ["excluir", "Excluir cadastros", Trash2],
 ] as const;
 
 export default function Cadastro() {
@@ -56,6 +58,15 @@ export default function Cadastro() {
       {aba === "servicos" && <CadastroServicos />}
       {aba === "pessoas" && <CadastroPessoas />}
       {aba === "sanitario" && <CadastroSanitario />}
+      {aba === "excluir" && (
+        <>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Para remover um animal do rebanho, use Rebanho &gt; Baixar animal (registra motivo, gera histórico e,
+            em caso de venda, o lançamento financeiro) — não uma exclusão direta da ficha.
+          </p>
+          <FormExclusao ocultarTipos={["animal"]} />
+        </>
+      )}
     </div>
   );
 }

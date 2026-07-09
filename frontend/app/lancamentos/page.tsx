@@ -20,7 +20,7 @@ import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
-type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null };
+type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
 
 /**
  * Tela de Lançamentos — RASCUNHO funcional.
@@ -43,6 +43,7 @@ const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
 // Movimentos que reduzem o estoque (baixa).
 const MOV_BAIXA = new Set(["Aplicação", "Saída de ajuste", "Doação"]);
+const MOVIMENTOS_SOMENTE_ESTOCAVEL = new Set(["Doação", "Entrada de cortesia"]);
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -1679,7 +1680,9 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
         <Campo label="Movimento">
           <select style={inputStyle} value={mov} onChange={(e) => setMov(e.target.value)} disabled={!tipo}>
             <option value="" disabled>{tipo ? "Selecione…" : "Escolha o tipo primeiro"}</option>
-            {(tipo === "entrada" ? MOVIMENTOS_ENTRADA : tipo === "saida" ? MOVIMENTOS_SAIDA : []).map((m) => <option key={m}>{m}</option>)}
+            {(tipo === "entrada" ? MOVIMENTOS_ENTRADA : tipo === "saida" ? MOVIMENTOS_SAIDA : [])
+              .filter((m) => item?.estocavel !== false || !MOVIMENTOS_SOMENTE_ESTOCAVEL.has(m))
+              .map((m) => <option key={m}>{m}</option>)}
           </select>
         </Campo>
         <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
