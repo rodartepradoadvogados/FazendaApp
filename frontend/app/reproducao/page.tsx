@@ -29,7 +29,7 @@ function ReproducaoVisaoGeral() {
   const [diag, setDiag] = useState("");
   // Filtro por DATA (de/até) OU por CICLO reprodutivo (janelas de 21 dias).
   const [modo, setModo] = useState<"data" | "ciclo">("data");
-  const [cicloSel, setCicloSel] = useState<"2" | "3" | "esp">("2");
+  const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
   const [cicloIdx, setCicloIdx] = useState(0);
 
   useEffect(() => { fetchServicosAnalise().then((d) => setRegs(d.servicos)).catch((e) => setError(e.message)); }, []);
@@ -53,7 +53,10 @@ function ReproducaoVisaoGeral() {
 
   const janelas = useMemo(() => {
     if (modo !== "ciclo" || !ciclos.length) return null;
-    const sel = cicloSel === "2" ? ciclos.slice(0, 2) : cicloSel === "3" ? ciclos.slice(0, 3) : ciclos.filter((c) => c.idx === cicloIdx);
+    const sel = cicloSel === "1" ? ciclos.slice(0, 1)
+      : cicloSel === "2" ? ciclos.slice(0, 2)
+      : cicloSel === "3" ? ciclos.slice(0, 3)
+      : ciclos.filter((c) => c.idx === cicloIdx);
     return sel.map((c) => [isoOf(c.ini), isoOf(c.fim)] as [string, string]);
   }, [modo, ciclos, cicloSel, cicloIdx]);
 
@@ -117,6 +120,7 @@ function ReproducaoVisaoGeral() {
               <>
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ciclo</label>
                   <select style={selStyle} value={cicloSel} onChange={(e) => setCicloSel(e.target.value as any)}>
+                    <option value="1">Último ciclo</option>
                     <option value="2">Últimos 2 ciclos</option>
                     <option value="3">Últimos 3 ciclos</option>
                     <option value="esp">Ciclo específico</option>
