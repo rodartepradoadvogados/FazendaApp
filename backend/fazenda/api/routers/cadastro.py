@@ -634,6 +634,9 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # dia), a exemplo do tratamento de mastite. Etapas começam em D1 — protocolos
 # sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
 # ---------------------------------------------------------------------------
+VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]
+
+
 class ProtocoloEtapaIn(BaseModel):
     dia: int
     produto: str
@@ -661,6 +664,8 @@ def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
             )
         if e.dosagem <= 0:
             raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
+        if e.via and e.via not in VIAS_APLICACAO:
+            raise HTTPException(status_code=400, detail=f"Via inválida — use uma de: {', '.join(VIAS_APLICACAO)}")
 
 
 def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict[int, str]) -> dict:

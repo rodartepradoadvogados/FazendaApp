@@ -72,6 +72,22 @@ class TestCadastroProtocolo:
         r = c.post("/cadastro/protocolos-sanitarios", json={"nome": "Vazio", "etapas": []})
         assert r.status_code == 400
 
+    def test_rejeita_via_fora_da_lista_fixa(self, client):
+        c, engine = client
+        r = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Via inválida", "etapas": [_etapa(1, via="Tópica")],
+        })
+        assert r.status_code == 400
+        assert "Via inválida" in r.json()["detail"]
+
+    def test_aceita_cada_via_da_lista_fixa(self, client):
+        c, engine = client
+        for i, via in enumerate(["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]):
+            r = c.post("/cadastro/protocolos-sanitarios", json={
+                "nome": f"Via {via}", "etapas": [_etapa(1, via=via)],
+            })
+            assert r.status_code == 200, r.json()
+
     def test_rejeita_nome_duplicado(self, client):
         c, engine = client
         c.post("/cadastro/protocolos-sanitarios", json={"nome": "Duplicado", "etapas": [_etapa(1)]})
