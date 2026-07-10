@@ -63,7 +63,7 @@ export default function EstoquePage() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Package size={22} style={{ color: "var(--dourado)" }} /> Sanidade/Estoque</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Package size={22} style={{ color: "var(--dourado)" }} /> Estoque</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Inventário de insumos e medicamentos — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
       </div>
 
@@ -97,13 +97,13 @@ export default function EstoquePage() {
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
-                <select style={selStyle} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">Todas</option>{categorias.map((c) => <option key={c}>{c}</option>)}</select></div>
+                <select title="Filtrar itens por categoria" style={selStyle} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">Todas</option>{categorias.map((c) => <option key={c}>{c}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
                 <div style={{ position: "relative" }}>
                   <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                  <input title="Buscar item pelo nome" style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
                 </div></div>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", cursor: "pointer", paddingBottom: "0.35rem" }}>
+              <label title="Mostrar apenas itens com quantidade abaixo do estoque mínimo" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", cursor: "pointer", paddingBottom: "0.35rem" }}>
                 <input type="checkbox" checked={soAbaixo} onChange={(e) => setSoAbaixo(e.target.checked)} /> Só abaixo do mínimo
               </label>
             </div>
