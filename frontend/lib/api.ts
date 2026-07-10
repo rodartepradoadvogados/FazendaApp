@@ -137,12 +137,19 @@ export async function fetchProtocoloIatfConcluidos() {
   return res.json();
 }
 
-export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }) {
+export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
   if (params?.sit_rep) qs.set("sit_rep", params.sit_rep);
+  if (params?.incluirMachos) qs.set("incluir_machos", "true");
   const res = await authFetch(`${API}/animais/?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Animais error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFichaAnimal(numero: string) {
+  const res = await authFetch(`${API}/animais/${encodeURIComponent(numero)}/ficha`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Ficha do animal error: ${res.status}`); }
   return res.json();
 }
 

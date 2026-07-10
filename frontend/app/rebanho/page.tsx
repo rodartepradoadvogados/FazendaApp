@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -9,6 +9,7 @@ import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
+import FichaAnimal from "@/components/FichaAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 const COLUNAS_REBANHO = [
@@ -205,8 +206,8 @@ function RebanhoVisaoGeral() {
   );
 }
 
-type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "historico"];
+type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico" | "ficha";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "historico", "ficha"];
 
 export default function RebanhoPage() {
   const [aba, setAba] = useState<Aba>("visao");
@@ -227,6 +228,7 @@ export default function RebanhoPage() {
           ["baixar", "Baixar animal", Skull],
           ["comprar", "Comprar animal", ShoppingCart],
           ["historico", "Histórico", History],
+          ["ficha", "Ficha do animal", FileText],
         ] as const).map(([k, label, Icon]) => (
           <button key={k} onClick={() => setAba(k)}
             style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
@@ -244,6 +246,7 @@ export default function RebanhoPage() {
         {aba === "baixar" && <BaixarAnimal />}
         {aba === "comprar" && <ComprarAnimal />}
         {aba === "historico" && <HistoricoMovimentacoes />}
+        {aba === "ficha" && <FichaAnimal />}
       </div>
     </div>
   );

@@ -125,3 +125,85 @@ export async function exportarPDF(
 
   doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
 }
+
+export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[] };
+
+/**
+ * PDF com várias seções (uma tabela por tipo de lançamento) — usado na ficha
+ * única do animal. Pode gerar quantas páginas forem necessárias: cada seção
+ * só entra se tiver alguma linha, e o cabeçalho da fazenda é redesenhado em
+ * toda página nova (seja por quebra automática de uma tabela grande, seja
+ * por falta de espaço para o título da próxima seção).
+ */
+export async function exportarFichaPDF(
+  titulo: string,
+  subtitulo: string,
+  secoes: SecaoFicha[],
+  nomeArquivoBase: string,
+) {
+  const { default: jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
+  const usuario = getUsuario();
+  const doc = new jsPDF({ orientation: "portrait" });
+  const dataStr = new Date().toLocaleDateString("pt-BR");
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+
+  const desenharCabecalho = () => {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(14);
+    doc.setTextColor(...COR_VINHO_RGB);
+    doc.text(NOME_FAZENDA.toUpperCase(), pageWidth / 2, 12, { align: "center" });
+    doc.setFontSize(11);
+    doc.setTextColor(30, 30, 30);
+    doc.text(titulo, pageWidth / 2, 19, { align: "center" });
+    doc.setFontSize(9);
+    doc.setTextColor(80, 80, 80);
+    doc.text(subtitulo, pageWidth / 2, 24, { align: "center" });
+    doc.setFont("helvetica", "italic");
+    doc.setFontSize(8);
+    doc.setTextColor(120, 120, 120);
+    doc.text(`Gerado por ${usuario?.nome || "—"} em ${dataStr}`, pageWidth / 2, 29, { align: "center" });
+    doc.setDrawColor(...COR_DOURADO_RGB);
+    doc.setLineWidth(0.5);
+    doc.line(14, 31.5, pageWidth - 14, 31.5);
+  };
+
+  let cursorY = 35;
+  let alguma = false;
+  for (const secao of secoes) {
+    if (!secao.linhas.length) continue;
+    alguma = true;
+    if (cursorY > pageHeight - 40) {
+      doc.addPage();
+      desenharCabecalho();
+      cursorY = 35;
+    }
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(...COR_VINHO_RGB);
+    doc.text(secao.titulo, 14, cursorY);
+    cursorY += 4;
+
+    autoTable(doc, {
+      head: [secao.colunas.map((c) => c.header)],
+      body: secao.linhas.map((linha) => secao.colunas.map((c) => formatarValor(linha[c.key]))),
+      startY: cursorY,
+      margin: { top: 35 },
+      styles: { fontSize: 7.5, cellPadding: 1.5 },
+      headStyles: { fillColor: COR_VINHO_RGB, textColor: 255, fontSize: 7.5 },
+      alternateRowStyles: { fillColor: [245, 240, 235] },
+      didDrawPage: desenharCabecalho,
+    });
+    cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
+  }
+
+  if (!alguma) {
+    desenharCabecalho();
+    doc.setFontSize(10);
+    doc.setTextColor(120, 120, 120);
+    doc.text("Nenhum lançamento encontrado para este animal.", 14, 40);
+  }
+
+  doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
+}
