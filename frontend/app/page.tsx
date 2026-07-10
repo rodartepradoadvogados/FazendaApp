@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target } from "lucide-react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, formatBRL,
 } from "@/lib/api";
@@ -19,11 +19,16 @@ export default function Home() {
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [benchAberto, setBenchAberto] = useState(false);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
+  const [recarregando, setRecarregando] = useState(false);
+  // Quando qualquer fetch falha, alguns cards mostram "—"; sinalizamos isso num banner.
+  const [erroCarga, setErroCarga] = useState(false);
 
-  useEffect(() => {
+  const carregar = () => {
+    setRecarregando(true);
     Promise.allSettled([
       fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchLancamentos(), fetchEstoque(),
     ]).then(([ind, ag, prod, lanc, est]) => {
+      setErroCarga([ind, ag, prod, lanc, est].some((r) => r.status === "rejected"));
       setD({
         ind: ind.status === "fulfilled" ? ind.value : null,
         ag: ag.status === "fulfilled" ? ag.value : null,
@@ -31,9 +36,11 @@ export default function Home() {
         lanc: lanc.status === "fulfilled" ? lanc.value.lancamentos : null,
         est: est.status === "fulfilled" ? est.value.itens : null,
       });
-    });
+    }).finally(() => setRecarregando(false));
     fetchAnimais().then(setAnimais).catch(() => {});
-  }, []);
+  };
+
+  useEffect(() => { carregar(); }, []);
 
   const abrir = (title: string, filtro: (a: AnimalRow) => boolean) => { if (animais.length) setModal({ title, list: animais.filter(filtro) }); };
 
@@ -80,22 +87,36 @@ export default function Home() {
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
-  const KPI = ({ v, l, c, onClick }: { v: any; l: string; c?: string; onClick?: () => void }) => (
-    <div className="kpi-card" onClick={onClick} style={onClick && animais.length ? { cursor: "pointer" } : undefined}>
-      <p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p>
-      <p className="kpi-label flex items-center gap-1">{l}{onClick && animais.length ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
-    </div>
-  );
+  const KPI = ({ v, l, c, onClick, podeClicar }: { v: any; l: string; c?: string; onClick?: () => void; podeClicar?: boolean }) => {
+    const clic = !!onClick && (podeClicar ?? animais.length > 0);
+    return (
+      <div className={clic ? "kpi-card row-clickable" : "kpi-card"} onClick={clic ? onClick : undefined}
+        title={clic ? "Clique para ver os animais" : undefined}
+        style={clic ? { cursor: "pointer" } : undefined}>
+        <p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p>
+        <p className="kpi-label flex items-center gap-1">{l}{clic ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
+      </div>
+    );
+  };
   const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-5">
-        <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
-        </p>
+      <div className="mb-5 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold" style={{ color: "var(--text)" }}>Fazenda Estreito Ponte de Pedra</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
+            Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
+          </p>
+        </div>
+        <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
+          <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
+        </button>
       </div>
+
+      {erroCarga && (
+        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Alguns dados não puderam ser carregados.</span></div>
+      )}
 
       {semDados && (
         <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>
@@ -116,10 +137,9 @@ export default function Home() {
         <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
         <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" c="var(--green-light)" />
         <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
-        <div className="kpi-card" onClick={() => candidatasList.length && setModal({ title: "Candidatas IATF", list: candidatasList })} style={candidatasList.length ? { cursor: "pointer" } : undefined}>
-          <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--dourado-light)" }}>{d.ag?.totais?.candidatas_iatf ?? "—"}</p>
-          <p className="kpi-label flex items-center gap-1">Candidatas IATF{candidatasList.length ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
-        </div>
+        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" c="var(--dourado-light)"
+          podeClicar={candidatasList.length > 0}
+          onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
         <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
       </div>
 
@@ -129,7 +149,7 @@ export default function Home() {
           <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>· desde {rep?.concepcao_desde ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR") : "01/01/2026"} · Prenhez = Serviço × Concepção</span>
           <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
             {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
-              <button key={k} onClick={() => setCatRep(k)}
+              <button key={k} onClick={() => setCatRep(k)} title={`Ver eficiência reprodutiva — ${lbl}`}
                 style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
                   border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
                   background: catRep === k ? "var(--dourado)" : "transparent",
@@ -198,7 +218,7 @@ export default function Home() {
           ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem controle leiteiro — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a>.</p>}
         </div>
         <div className="card">
-          <div className="card-header mb-2 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva</div>
+          <div className="card-header mb-2 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}</div>
           {donutRep.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
