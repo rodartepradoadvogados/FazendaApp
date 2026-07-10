@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL,
+  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro,
+  lerDocumentoFinanceiro, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -60,7 +61,7 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void; onSalvo?: () => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const carregarOpcoes = () => fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {});
   useEffect(() => { carregarOpcoes(); }, []);
@@ -205,14 +206,51 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
     }
   }
 
+  // Nota fiscal ou recibo em PDF/JPEG/PNG — leitura automática via IA.
+  // Recibo (já pago) preenche o pagamento imediato; nota fiscal nasce em aberto.
+  function aplicarExtracaoDocumento(dados: any) {
+    aplicarXml(dados);
+    const ehRecibo = dados.tipo_documento === "recibo";
+    setTipoDocumento(ehRecibo ? "Recibo" : "Nota fiscal");
+    if (ehRecibo) {
+      setJaPago(true);
+      if (dados.data_pagamento) setDataPagamento(dados.data_pagamento);
+      if (dados.valor_total != null) setValorPago(String(dados.valor_total));
+      if (dados.conta_bancaria) setContaBancaria(dados.conta_bancaria);
+      if (!dados.itens?.length && dados.valor_total != null) {
+        setItens([{ ...itemVazio(), produto: dados.observacao || "Recibo anexado", valor_total: String(dados.valor_total), valorTotalManual: true }]);
+      }
+    }
+  }
+
+  async function lerDocumentoAnexado(file: File) {
+    setImportando(true); setErroXml(null);
+    try {
+      const dados = await lerDocumentoFinanceiro(file);
+      aplicarExtracaoDocumento(dados);
+      setXmlAberto(false);
+    } catch (e: any) {
+      setErroXml(e.message || "Erro ao ler o documento");
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  function tratarArquivo(file: File) {
+    if (file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png") {
+      lerDocumentoAnexado(file);
+    } else {
+      file.text().then(importarXml);
+    }
+  }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
-    if (file) file.text().then(importarXml);
+    if (file) tratarArquivo(file);
   }
   function onFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) file.text().then(importarXml);
+    if (file) tratarArquivo(file);
   }
 
   function montarPayload() {
@@ -261,6 +299,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.`);
       limpar();
       onSujo?.(false);
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar lançamento");
     } finally {
@@ -278,14 +317,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       >
         <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
           <FileText size={16} style={{ color: "var(--dourado-light)" }} />
-          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste o XML da nota aqui, ou</span>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste o XML, PDF, JPEG ou PNG da nota/recibo aqui, ou</span>
           <button type="button" className="btn-ghost" onClick={() => fileInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
             <Upload size={13} /> selecionar arquivo
           </button>
           <button type="button" className="btn-ghost" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
           {importando && <Loader2 size={14} className="animate-spin" style={{ color: "var(--dourado-light)" }} />}
         </div>
-        <input ref={fileInputRef} type="file" accept=".xml,text/xml" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/png" onChange={onFileSelect} style={{ display: "none" }} />
         {xmlAberto && (
           <div style={{ marginTop: "0.6rem", textAlign: "left" }}>
             <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o conteúdo do XML da nota fiscal…"
@@ -294,7 +333,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
           </div>
         )}
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
-        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Reconhece vários produtos/serviços da mesma nota — os campos ficam abaixo, todos editáveis.</p>
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          XML reconhece vários produtos/serviços da mesma nota. PDF/JPEG/PNG usa leitura automática por IA — identifica se é
+          nota fiscal (nasce em aberto) ou recibo (nasce já pago) — os campos ficam abaixo, todos editáveis.
+        </p>
       </div>
 
       {/* Produtos / serviços da nota */}

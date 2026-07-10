@@ -967,6 +967,14 @@ export async function importarXmlFinanceiro(xml: string) {
   return res.json();
 }
 
+export async function lerDocumentoFinanceiro(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o documento"); }
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;

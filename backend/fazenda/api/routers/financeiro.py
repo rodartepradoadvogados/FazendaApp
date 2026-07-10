@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -16,6 +16,7 @@ from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
     PlanoContaGerencial,
 )
+from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 
@@ -659,6 +660,21 @@ def importar_xml(dados: XmlIn) -> dict:
         return parse_nfe_xml(dados.xml)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o XML: {e}")
+
+
+@router.post("/ler-documento")
+async def ler_documento_anexado(file: UploadFile) -> dict:
+    """Lê um PDF/JPEG/PNG anexado (nota fiscal ou recibo) via IA e devolve os
+    campos extraídos para pré-preencher o lançamento — tudo editável no front."""
+    if file.content_type not in MIME_ACEITOS:
+        raise HTTPException(status_code=400, detail=f"Tipo de arquivo não suportado: {file.content_type} (aceitos: PDF, JPEG, PNG)")
+    conteudo = await file.read()
+    try:
+        return ler_documento(conteudo, file.content_type)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler o documento: {e}")
 
 
 @router.get("/contas-a-pagar")

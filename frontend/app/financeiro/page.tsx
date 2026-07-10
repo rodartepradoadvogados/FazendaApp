@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  RefreshCw,
+  RefreshCw, Paperclip,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
@@ -13,6 +13,9 @@ import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { Modal } from "@/components/Modal";
+import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { RESPONSAVEIS } from "@/lib/constants";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
@@ -109,7 +112,11 @@ export default function FinanceiroPage() {
   useEffect(() => {
     if (regs && !inicio) {
       const ds = regs.flatMap((r) => [r.data_pagamento, r.data_competencia, r.data_vencimento]).filter(Boolean).sort() as string[];
-      if (ds.length) { setInicio(ds[0]); setFim(ds[ds.length - 1]); }
+      // Início = data mais antiga real dos lançamentos, mas o fim sempre parte de
+      // hoje — nunca da maior data encontrada (um lançamento com data futura/errada
+      // não deve puxar o filtro inteiro para o futuro).
+      if (ds.length) setInicio(ds[0]);
+      setFim(new Date().toISOString().slice(0, 10));
     }
   }, [regs, inicio]);
 
@@ -686,6 +693,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   const [numeroComprovante, setNumeroComprovante] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const [anexarAberto, setAnexarAberto] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -716,6 +724,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
     p.size === filtrados.length && filtrados.length ? new Set() : new Set(filtrados.map((r) => r.id))
   );
   const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
+  const totalFiltrado = useMemo(() => filtrados.reduce((a, r) => a + r.valor, 0), [filtrados]);
 
   async function darBaixaEmLote() {
     setMsg(null);
@@ -746,7 +755,12 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   return (
     <div>
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
+          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Tipo</label>
             <select style={selStyleLote} value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
@@ -781,9 +795,18 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
         </div>
       </div>
 
+      {anexarAberto && (
+        <Modal title="Novo lançamento — leitura automática" onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+        </Modal>
+      )}
+
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
-          <span style={{ fontSize: "0.85rem" }}>{filtrados.length} nota(s) em aberto no filtro — {selecionados.size} selecionada(s) ({formatBRL(totalSelecionado)})</span>
+          <span style={{ fontSize: "0.85rem" }}>
+            {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
+            {selecionados.size > 0 && <> · {selecionados.size} selecionada(s) — {formatBRL(totalSelecionado)}</>}
+          </span>
           <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
@@ -1020,6 +1043,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const [anexarAberto, setAnexarAberto] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -1036,6 +1060,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto)
   ), [abertas, numeroDocumento, fornecedor, produto, centroCusto]);
+  const totalFiltrado = useMemo(() => filtradas.reduce((a, r) => a + r.valor, 0), [filtradas]);
 
   function selecionar(nota: Lanc) {
     setNotaId(nota.id);
@@ -1085,7 +1110,12 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   return (
     <div>
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
+          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
             <div style={{ position: "relative" }}>
@@ -1107,9 +1137,15 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
         </div>
       </div>
 
+      {anexarAberto && (
+        <Modal title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`} onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+        </Modal>
+      )}
+
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
-          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro</span>
+          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
@@ -1218,6 +1254,7 @@ function FolhaPagamentoView() {
 
   const [pagandoId, setPagandoId] = useState<number | null>(null);
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
+  const [anexarAberto, setAnexarAberto] = useState(false);
 
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
@@ -1281,8 +1318,19 @@ function FolhaPagamentoView() {
         <KPI v={formatBRL(totalPago)} l="Pago" c="var(--green-light)" />
       </div>
 
+      {anexarAberto && (
+        <Modal title="Anexar comprovante — leitura automática (despesa)" onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => setAnexarAberto(false)} />
+        </Modal>
+      )}
+
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</span>
+          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar recibo/comprovante
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Pessoa</label>
             <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
