@@ -2,12 +2,12 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  RefreshCw, Paperclip,
+  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
-  fetchVales, criarVale,
+  criarVale,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -1231,11 +1231,38 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
 type PessoaFolha = { id: number; nome: string; tipo: string };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
-  valor_bruto: number; descontos: number; valor_liquido: number;
+  valor_bruto: number; descontos: number;
+  percentual_inss: number; percentual_ir: number; valor_inss: number; valor_ir: number;
+  valor_liquido: number;
   data_pagamento: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
+  detalhe: { label: string; valor: number }[];
 };
+
+function arredonda2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+/** Par percentual/valor de retenção (INSS ou IR) — o valor é recalculado
+ * automaticamente a partir do percentual, mas fica editável: digitar
+ * diretamente no valor "trava" o campo contra o recálculo automático até
+ * o percentual ser alterado de novo. */
+function CampoRetencao({
+  label, percentual, valor, onChangePercentual, onChangeValor,
+}: {
+  label: string; percentual: string; valor: string;
+  onChangePercentual: (v: string) => void; onChangeValor: (v: string) => void;
+}) {
+  return (
+    <>
+      <div><label style={labelStyleLote}>{label} (%)</label>
+        <input type="number" inputMode="decimal" style={selStyleLote} value={percentual} onChange={(e) => onChangePercentual(e.target.value)} /></div>
+      <div><label style={labelStyleLote}>{label} (R$)</label>
+        <input type="number" inputMode="decimal" style={selStyleLote} value={valor} onChange={(e) => onChangeValor(e.target.value)} /></div>
+    </>
+  );
+}
 
 function FolhaPagamentoView() {
   const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
@@ -1246,6 +1273,12 @@ function FolhaPagamentoView() {
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
   const [valorBruto, setValorBruto] = useState("");
   const [descontos, setDescontos] = useState("");
+  const [percentualInss, setPercentualInss] = useState("");
+  const [valorInss, setValorInss] = useState("");
+  const [inssManual, setInssManual] = useState(false);
+  const [percentualIr, setPercentualIr] = useState("");
+  const [valorIr, setValorIr] = useState("");
+  const [irManual, setIrManual] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [recorrente, setRecorrente] = useState(false);
   const [diaVencimento, setDiaVencimento] = useState("5");
@@ -1256,10 +1289,56 @@ function FolhaPagamentoView() {
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
 
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPessoaId, setEditPessoaId] = useState("");
+  const [editCompetencia, setEditCompetencia] = useState("");
+  const [editValorBruto, setEditValorBruto] = useState("");
+  const [editDescontos, setEditDescontos] = useState("");
+  const [editPercentualInss, setEditPercentualInss] = useState("");
+  const [editValorInss, setEditValorInss] = useState("");
+  const [editInssManual, setEditInssManual] = useState(true);
+  const [editPercentualIr, setEditPercentualIr] = useState("");
+  const [editValorIr, setEditValorIr] = useState("");
+  const [editIrManual, setEditIrManual] = useState(true);
+  const [editObservacao, setEditObservacao] = useState("");
+  const [editRecorrente, setEditRecorrente] = useState(false);
+  const [editDiaVencimento, setEditDiaVencimento] = useState("5");
+  const [editSalvando, setEditSalvando] = useState(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
+
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
 
-  const valorLiquido = useMemo(() => (parseFloat(valorBruto) || 0) - (parseFloat(descontos) || 0), [valorBruto, descontos]);
+  useEffect(() => {
+    if (inssManual) return;
+    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualInss) || 0) / 100);
+    setValorInss(novo ? String(novo) : "");
+  }, [valorBruto, percentualInss, inssManual]);
+  useEffect(() => {
+    if (irManual) return;
+    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualIr) || 0) / 100);
+    setValorIr(novo ? String(novo) : "");
+  }, [valorBruto, percentualIr, irManual]);
+  useEffect(() => {
+    if (editInssManual) return;
+    const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualInss) || 0) / 100);
+    setEditValorInss(novo ? String(novo) : "");
+  }, [editValorBruto, editPercentualInss, editInssManual]);
+  useEffect(() => {
+    if (editIrManual) return;
+    const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualIr) || 0) / 100);
+    setEditValorIr(novo ? String(novo) : "");
+  }, [editValorBruto, editPercentualIr, editIrManual]);
+
+  const valorLiquido = useMemo(
+    () => (parseFloat(valorBruto) || 0) - (parseFloat(descontos) || 0) - (parseFloat(valorInss) || 0) - (parseFloat(valorIr) || 0),
+    [valorBruto, descontos, valorInss, valorIr]
+  );
+  const editValorLiquido = useMemo(
+    () => (parseFloat(editValorBruto) || 0) - (parseFloat(editDescontos) || 0) - (parseFloat(editValorInss) || 0) - (parseFloat(editValorIr) || 0),
+    [editValorBruto, editDescontos, editValorInss, editValorIr]
+  );
 
   async function salvar() {
     setMsg(null);
@@ -1273,7 +1352,10 @@ function FolhaPagamentoView() {
     try {
       await criarFolhaPagamento({
         pessoa_id: Number(pessoaId), competencia, valor_bruto: parseFloat(valorBruto),
-        descontos: parseFloat(descontos) || 0, observacao: observacao || undefined,
+        descontos: parseFloat(descontos) || 0,
+        percentual_inss: parseFloat(percentualInss) || 0, percentual_ir: parseFloat(percentualIr) || 0,
+        valor_inss: parseFloat(valorInss) || 0, valor_ir: parseFloat(valorIr) || 0,
+        observacao: observacao || undefined,
         recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
       });
       setMsg({
@@ -1283,6 +1365,8 @@ function FolhaPagamentoView() {
           : "Lançamento de folha criado.",
       });
       setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
+      setPercentualInss(""); setValorInss(""); setInssManual(false);
+      setPercentualIr(""); setValorIr(""); setIrManual(false);
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
@@ -1295,13 +1379,60 @@ function FolhaPagamentoView() {
     try {
       await atualizarFolhaPagamento(r.id, {
         pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
-        descontos: r.descontos, data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
+        descontos: r.descontos, percentual_inss: r.percentual_inss, percentual_ir: r.percentual_ir,
+        valor_inss: r.valor_inss, valor_ir: r.valor_ir,
+        data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
         recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
       });
       setPagandoId(null);
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao marcar como pago" });
+    }
+  }
+
+  function iniciarEdicao(r: RegistroFolha) {
+    setEditingId(r.id);
+    setExpandedId(r.id);
+    setEditPessoaId(String(r.pessoa_id));
+    setEditCompetencia(r.competencia);
+    setEditValorBruto(String(r.valor_bruto));
+    setEditDescontos(String(r.descontos));
+    setEditPercentualInss(r.percentual_inss ? String(r.percentual_inss) : "");
+    setEditValorInss(r.valor_inss ? String(r.valor_inss) : "");
+    setEditInssManual(true);
+    setEditPercentualIr(r.percentual_ir ? String(r.percentual_ir) : "");
+    setEditValorIr(r.valor_ir ? String(r.valor_ir) : "");
+    setEditIrManual(true);
+    setEditObservacao(r.observacao || "");
+    setEditRecorrente(r.recorrente);
+    setEditDiaVencimento(r.dia_vencimento ? String(r.dia_vencimento) : "5");
+    setEditMsg(null);
+  }
+
+  async function salvarEdicao(r: RegistroFolha) {
+    setEditMsg(null);
+    if (!editPessoaId || !editCompetencia || !editValorBruto || parseFloat(editValorBruto) <= 0) {
+      setEditMsg("Preencha pessoa, competência e valor bruto.");
+      return;
+    }
+    setEditSalvando(true);
+    try {
+      await atualizarFolhaPagamento(r.id, {
+        pessoa_id: Number(editPessoaId), competencia: editCompetencia, valor_bruto: parseFloat(editValorBruto) || 0,
+        descontos: parseFloat(editDescontos) || 0,
+        percentual_inss: parseFloat(editPercentualInss) || 0, percentual_ir: parseFloat(editPercentualIr) || 0,
+        valor_inss: parseFloat(editValorInss) || 0, valor_ir: parseFloat(editValorIr) || 0,
+        observacao: editObservacao || undefined,
+        recorrente: editRecorrente, dia_vencimento: editRecorrente ? Number(editDiaVencimento) : null,
+        status: r.status, data_pagamento: r.data_pagamento || undefined,
+      });
+      setEditingId(null);
+      carregar();
+    } catch (e: any) {
+      setEditMsg(e.message || "Erro ao atualizar lançamento de folha");
+    } finally {
+      setEditSalvando(false);
     }
   }
 
@@ -1324,6 +1455,7 @@ function FolhaPagamentoView() {
         </Modal>
       )}
 
+      {/* 1) Novo lançamento de folha */}
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</span>
@@ -1340,8 +1472,20 @@ function FolhaPagamentoView() {
             <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Valor bruto (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={valorBruto} onChange={(e) => setValorBruto(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Descontos (R$)</label>
+          <div><label style={labelStyleLote}>Outros descontos (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <CampoRetencao
+            label="INSS" percentual={percentualInss} valor={valorInss}
+            onChangePercentual={(v) => { setPercentualInss(v); setInssManual(false); }}
+            onChangeValor={(v) => { setValorInss(v); setInssManual(true); }}
+          />
+          <CampoRetencao
+            label="IR" percentual={percentualIr} valor={valorIr}
+            onChangePercentual={(v) => { setPercentualIr(v); setIrManual(false); }}
+            onChangeValor={(v) => { setValorIr(v); setIrManual(true); }}
+          />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div><label style={labelStyleLote}>Observação</label>
@@ -1369,54 +1513,139 @@ function FolhaPagamentoView() {
         </button>
       </div>
 
-      <div className="card">
+      {/* 2) Vale de funcionário */}
+      <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
+
+      {/* 3) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga */}
+      <div className="card mt-4">
         <div className="card-header mb-3">Lançamentos de folha</div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Pessoa</th><th>Competência</th><th style={{ textAlign: "right" }}>Bruto</th><th style={{ textAlign: "right" }}>Descontos</th><th style={{ textAlign: "right" }}>Líquido</th><th>Status</th><th>Pagamento</th><th></th></tr></thead>
             <tbody>
-              {(regs || []).map((r) => (
-                <Fragment key={r.id}>
-                  <tr>
-                    <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
-                      {r.pessoa_nome}
-                      {(r.recorrente || r.origem_recorrencia_id) && (
-                        <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
-                          <RefreshCw size={12} />
+              {(regs || []).map((r) => {
+                const expandido = expandedId === r.id;
+                const editando = editingId === r.id;
+                return (
+                  <Fragment key={r.id}>
+                    <tr style={{ cursor: "pointer" }} onClick={() => setExpandedId(expandido ? null : r.id)}>
+                      <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                        <span className="flex items-center gap-1">
+                          {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {r.pessoa_nome}
                         </span>
-                      )}
-                    </td>
-                    <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.descontos)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
-                    <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
-                    <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
-                    <td style={{ textAlign: "right" }}>
-                      {r.status === "pendente" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(pagandoId === r.id ? null : r.id)}>Marcar como pago</button>
-                      )}
-                    </td>
-                  </tr>
-                  {pagandoId === r.id && (
-                    <tr><td colSpan={8}>
-                      <div className="flex items-end gap-2" style={{ padding: "0.5rem 0" }}>
-                        <div><label style={labelStyleLote}>Data do pagamento</label>
-                          <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-                        <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
-                        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPagandoId(null)}>Cancelar</button>
-                      </div>
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
+                        {(r.recorrente || r.origem_recorrencia_id) && (
+                          <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
+                            <RefreshCw size={12} />
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(arredonda2(r.descontos + r.valor_inss + r.valor_ir))}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
+                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
+                      <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                        {r.status === "pendente" && (
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(pagandoId === r.id ? null : r.id)}>Marcar como pago</button>
+                        )}
+                      </td>
+                    </tr>
+                    {pagandoId === r.id && (
+                      <tr><td colSpan={8}>
+                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <div><label style={labelStyleLote}>Data do pagamento</label>
+                            <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+                          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
+                          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPagandoId(null)}>Cancelar</button>
+                        </div>
+                      </td></tr>
+                    )}
+                    {expandido && !editando && (
+                      <tr><td colSpan={8}>
+                        <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
+                            <tbody>
+                              {r.detalhe.map((d, i) => (
+                                <tr key={i}>
+                                  <td style={{ padding: "0.15rem 0.5rem 0.15rem 0", fontWeight: d.label === "Valor líquido" ? 700 : 400 }}>{d.label}</td>
+                                  <td style={{ textAlign: "right", fontWeight: d.label === "Valor líquido" ? 700 : 400, color: d.valor < 0 ? "var(--red)" : undefined }}>{formatBRL(d.valor)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
+                          {r.status !== "pago" ? (
+                            <button className="btn-ghost mt-2" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
+                              <Pencil size={12} /> Editar lançamento
+                            </button>
+                          ) : (
+                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Lançamento já pago — não pode mais ser editado.</p>
+                          )}
+                        </div>
+                      </td></tr>
+                    )}
+                    {editando && (
+                      <tr><td colSpan={8}>
+                        <div style={{ padding: "0.75rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Pessoa</label>
+                              <select style={selStyleLote} value={editPessoaId} onChange={(e) => setEditPessoaId(e.target.value)}>
+                                {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+                              </select></div>
+                            <div><label style={labelStyleLote}>Competência (mês)</label>
+                              <input type="month" style={selStyleLote} value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Valor bruto (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValorBruto} onChange={(e) => setEditValorBruto(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Outros descontos (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editDescontos} onChange={(e) => setEditDescontos(e.target.value)} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <CampoRetencao
+                              label="INSS" percentual={editPercentualInss} valor={editValorInss}
+                              onChangePercentual={(v) => { setEditPercentualInss(v); setEditInssManual(false); }}
+                              onChangeValor={(v) => { setEditValorInss(v); setEditInssManual(true); }}
+                            />
+                            <CampoRetencao
+                              label="IR" percentual={editPercentualIr} valor={editValorIr}
+                              onChangePercentual={(v) => { setEditPercentualIr(v); setEditIrManual(false); }}
+                              onChangeValor={(v) => { setEditValorIr(v); setEditIrManual(true); }}
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Observação</label>
+                              <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
+                            <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
+                            <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
+                              <input id="folha-edit-recorrente" type="checkbox" checked={editRecorrente} onChange={(e) => setEditRecorrente(e.target.checked)} />
+                              <label htmlFor="folha-edit-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente</label>
+                            </div>
+                            {editRecorrente && (
+                              <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+                                <input type="number" min={1} max={28} style={selStyleLote} value={editDiaVencimento} onChange={(e) => setEditDiaVencimento(e.target.value)} /></div>
+                            )}
+                          </div>
+                          {editMsg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
+                          <div className="flex items-center gap-2">
+                            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => salvarEdicao(r)} disabled={editSalvando}>
+                              <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
+                            </button>
+                            <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditingId(null)}>Cancelar</button>
+                          </div>
+                        </div>
+                      </td></tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {regs && !regs.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento de folha ainda.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
-
-      <ValeFuncionarioSection pessoas={pessoas} />
     </div>
   );
 }
@@ -1426,15 +1655,13 @@ const FORMAS_VALE = [
   { value: "transferencia", label: "Transferência" }, { value: "desconto_integral_folha", label: "Desconto integral na próxima folha" },
 ];
 
-type ParcelaVale = { competencia: string; valor: number; aplicada?: boolean };
-type Vale = {
-  id: number; pessoa_id: number; pessoa_nome: string; valor_total: number; forma_pagamento: string;
-  data_pagamento: string; parcelas: number; competencia_inicio: string; observacao: string | null;
-  parcelas_detalhe: ParcelaVale[];
-};
-
-function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
-  const [vales, setVales] = useState<Vale[] | null>(null);
+/**
+ * Vale de funcionário — só o formulário de lançamento. A lista de parcelas
+ * geradas não aparece mais aqui: ela vira a expansão da folha listada (na
+ * competência em que a parcela é aplicada), por decisão explícita do
+ * usuário — ver `_detalhe_folha` no backend.
+ */
+function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]; onLancado: () => void }) {
   const [pessoaId, setPessoaId] = useState("");
   const [valorTotal, setValorTotal] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("dinheiro");
@@ -1444,9 +1671,6 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-
-  const carregar = () => fetchVales().then(setVales).catch(() => {});
-  useEffect(() => { carregar(); }, []);
 
   async function lancar(confirmar = false) {
     setMsg(null);
@@ -1460,9 +1684,9 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
         observacao: observacao || undefined, confirmar,
       });
-      setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto entrará automaticamente na folha das competências afetadas." });
+      setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
       setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao("");
-      carregar();
+      onLancado();
     } catch (e: any) {
       if (e.status === 409 && e.detail?.competencias_excedidas) {
         const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
@@ -1512,27 +1736,6 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
       <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
-
-      {vales && vales.length > 0 && (
-        <div className="overflow-x-auto mt-4">
-          <table className="fazenda-table">
-            <thead><tr><th>Pessoa</th><th style={{ textAlign: "right" }}>Valor total</th><th>Forma</th><th>Parcelas</th><th>Competências</th></tr></thead>
-            <tbody>
-              {vales.map((v) => (
-                <tr key={v.id}>
-                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{v.pessoa_nome}</td>
-                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_total)}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{v.parcelas}x</td>
-                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                    {v.parcelas_detalhe.map((p) => `${p.competencia}: ${formatBRL(p.valor)}${p.aplicada ? " ✓" : ""}`).join(" · ")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }

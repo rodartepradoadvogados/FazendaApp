@@ -538,6 +538,13 @@ class FolhaPagamento(SQLModel, table=True):
     competencia: str = Field(index=True)  # "AAAA-MM"
     valor_bruto: float
     descontos: float = 0.0
+    # Retenção de INSS/IR — o percentual guia o cálculo automático do valor
+    # retido durante o lançamento, mas o valor final fica editável (para
+    # particularidades de cada lançamento não seguirem a fórmula à risca).
+    percentual_inss: float = 0.0
+    percentual_ir: float = 0.0
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
     status: str = "pendente"  # pendente | pago
