@@ -8,21 +8,22 @@ import UsuariosPage from "@/app/usuarios/page";
 import Cadastro from "@/components/Cadastro";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
+import { TabBar } from "@/components/ui";
 
 type Aba = "cadastro" | "parametros" | "financeiro" | "upload" | "importar" | "usuarios";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
-  const [abasVisiveis, setAbasVisiveis] = useState<{ id: Aba; label: string; icon: any }[]>([]);
+  const [abasVisiveis, setAbasVisiveis] = useState<{ id: Aba; label: string; icon: any; title: string }[]>([]);
 
   useEffect(() => {
-    const abas: { id: Aba; label: string; icon: any }[] = [];
-    if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers });
-    if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal });
-    if (podeModulo("financeiro")) abas.push({ id: "financeiro", label: "Parâmetros financeiros", icon: Wallet });
-    if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload });
-    if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet });
-    if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users });
+    const abas: { id: Aba; label: string; icon: any; title: string }[] = [];
+    if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers, title: "Cadastros de animais, lotes, pessoas..." });
+    if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
+    if (podeModulo("financeiro")) abas.push({ id: "financeiro", label: "Parâmetros financeiros", icon: Wallet, title: "Parâmetros da fazenda e financeiros" });
+    if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
+    if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
+    if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
     setAbasVisiveis(abas);
     setAba(abas[0]?.id ?? null);
   }, []);
@@ -40,17 +41,7 @@ export default function ConfiguracoesPage() {
       <div className="mb-2">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Settings size={22} style={{ color: "var(--dourado)" }} /> Configurações</h1>
       </div>
-      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        {abasVisiveis.map(({ id, label, icon: Icon }) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
+      <TabBar<Aba> abas={abasVisiveis} ativa={aba} onChange={setAba} />
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "cadastro" && <Cadastro />}
         {aba === "parametros" && <ParametrosPage />}

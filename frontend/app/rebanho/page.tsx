@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -11,6 +11,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { TabBar } from "@/components/ui";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -123,7 +124,7 @@ function RebanhoVisaoGeral() {
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
             <div className="card">
-              <div className="card-header mb-3">Composição por Grupo</div>
+              <div className="card-header mb-3">Composição por Grupo <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span></div>
               <ResponsiveContainer width="100%" height={Math.max(200, porGrupo.length * 26)}>
                 <BarChart data={porGrupo} layout="vertical" margin={{ left: 8 }}>
                   <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
@@ -135,7 +136,7 @@ function RebanhoVisaoGeral() {
               </ResponsiveContainer>
             </div>
             <div className="card">
-              <div className="card-header mb-3">Situação Reprodutiva</div>
+              <div className="card-header mb-3">Situação Reprodutiva <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span></div>
               <ResponsiveContainer width="100%" height={240}>
                 <PieChart>
                   <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}
@@ -157,10 +158,17 @@ function RebanhoVisaoGeral() {
                 <ExportarBotoes titulo="Rebanho" nomeArquivoBase="rebanho"
                   colunas={COLUNAS_REBANHO}
                   linhas={filtrados.map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa }))} />
-                <button className="btn-ghost" style={{ fontSize: "0.72rem" }}
-                  onClick={() => setAbertos((p) => p.size === grupoLista.length ? new Set() : new Set(grupoLista.map(([g]) => g)))}>
-                  {abertos.size === grupoLista.length && grupoLista.length ? "Recolher tudo" : "Expandir tudo"}
-                </button>
+                {(() => {
+                  const todosAbertos = abertos.size === grupoLista.length && grupoLista.length > 0;
+                  return (
+                    <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                      title={todosAbertos ? "Recolher todos os grupos" : "Expandir todos os grupos"}
+                      onClick={() => setAbertos((p) => p.size === grupoLista.length ? new Set() : new Set(grupoLista.map(([g]) => g)))}>
+                      {todosAbertos ? <ChevronsUp size={14} /> : <ChevronsDown size={14} />}
+                      {todosAbertos ? "Recolher tudo" : "Expandir tudo"}
+                    </button>
+                  );
+                })()}
               </div>
             </div>
             <div className="space-y-2">
@@ -209,8 +217,20 @@ function RebanhoVisaoGeral() {
 type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico" | "ficha";
 const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "historico", "ficha"];
 
+const ABAS_REBANHO = [
+  { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
+  { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
+  { id: "mover", label: "Movimentar animais", icon: ArrowRightLeft, title: "Transferir animais entre lotes" },
+  { id: "baixar", label: "Baixar animal", icon: Skull, title: "Registrar morte/descarte/venda" },
+  { id: "comprar", label: "Comprar animal", icon: ShoppingCart, title: "Registrar compra de animal" },
+  { id: "historico", label: "Histórico", icon: History, title: "Histórico de movimentações" },
+  { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Todos os lançamentos da vida de um animal" },
+] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
+
 export default function RebanhoPage() {
   const [aba, setAba] = useState<Aba>("visao");
+  // key da visão geral: incrementa ao (re)entrar na aba "visao" para refazer o fetch e evitar dados velhos.
+  const [visaoKey, setVisaoKey] = useState(0);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -220,27 +240,9 @@ export default function RebanhoPage() {
 
   return (
     <div className="px-6 pt-6">
-      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        {([
-          ["visao", "Rebanho", Beef],
-          ["sugestoes", "Sugestões de movimentação", Sparkles],
-          ["mover", "Movimentar animais", ArrowRightLeft],
-          ["baixar", "Baixar animal", Skull],
-          ["comprar", "Comprar animal", ShoppingCart],
-          ["historico", "Histórico", History],
-          ["ficha", "Ficha do animal", FileText],
-        ] as const).map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setAba(k)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === k ? "var(--dourado)" : "var(--border)"),
-              background: aba === k ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === k ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
+      <TabBar<Aba> abas={ABAS_REBANHO} ativa={aba} onChange={(k) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); }} />
       <div style={{ margin: "0 -1.5rem" }}>
-        {aba === "visao" && <RebanhoVisaoGeral />}
+        {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "mover" && <MovimentarAnimais />}
         {aba === "baixar" && <BaixarAnimal />}

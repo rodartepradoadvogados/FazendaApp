@@ -7,6 +7,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { TabBar } from "@/components/ui";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -133,6 +134,17 @@ function AplicacoesView() {
     );
   }, [regs, fCat, ini, fim, buscaProd, buscaAnimal]);
 
+  // Quando há filtro por período (de/até), as linhas SEM data ficam de fora — conta quantas para avisar o usuário.
+  const semDataExcluidas = useMemo(() => {
+    if (!regs || (!ini && !fim)) return 0;
+    return regs.filter((a) =>
+      (!fCat || a.categoria === fCat) &&
+      (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
+      (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+      !a.data
+    ).length;
+  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal]);
+
   const porCategoria = useMemo(() => {
     const by = new Map<string, number>();
     filtrados.forEach((a) => by.set(a.categoria, (by.get(a.categoria) ?? 0) + 1));
@@ -178,6 +190,12 @@ function AplicacoesView() {
           </div>
         </div>
 
+        {semDataExcluidas > 0 && (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.75rem" }}>
+            {semDataExcluidas} aplicaç{semDataExcluidas === 1 ? "ão" : "ões"} sem data não {semDataExcluidas === 1 ? "é exibida" : "são exibidas"} no filtro por período.
+          </p>
+        )}
+
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
           <div className="kpi-card"><p className="kpi-value">{filtrados.length}</p><p className="kpi-label">Aplicações</p></div>
           <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{animaisTratados}</p><p className="kpi-label">Animais tratados</p></div>
@@ -188,6 +206,7 @@ function AplicacoesView() {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
           <div className="card">
             <div className="card-header mb-3">Aplicações por Categoria <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para filtrar)</span></div>
+            <div title="Clique numa barra para filtrar as aplicações por categoria">
             <ResponsiveContainer width="100%" height={Math.max(180, porCategoria.length * 34)}>
               <BarChart data={porCategoria} layout="vertical" margin={{ left: 8 }}>
                 <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
@@ -198,6 +217,7 @@ function AplicacoesView() {
                 </Bar>
               </BarChart>
             </ResponsiveContainer>
+            </div>
           </div>
           <div className="card">
             <div className="card-header mb-3">Aplicações por Mês</div>
@@ -418,14 +438,15 @@ function RelatorioBezerrasView() {
   );
 }
 
+type AbaSanidade = "aplicacoes" | "calendario" | "bezerras";
 const ABAS_SANIDADE = [
-  ["aplicacoes", "Aplicações", ClipboardList],
-  ["calendario", "Calendário sanitário", CalendarClock],
-  ["bezerras", "Relatório sanitário de bezerras", Baby],
-] as const;
+  { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
+  { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras e próximas ocorrências de manejo sanitário" },
+  { id: "bezerras", label: "Relatório sanitário de bezerras", icon: Baby, title: "Colostragem e teste de sangue (IgG) por animal" },
+] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
 export default function SanidadePage() {
-  const [aba, setAba] = useState<(typeof ABAS_SANIDADE)[number][0]>("aplicacoes");
+  const [aba, setAba] = useState<AbaSanidade>("aplicacoes");
 
   return (
     <div className="p-6 animate-in">
@@ -434,17 +455,7 @@ export default function SanidadePage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Medicamentos aplicados e calendário sanitário — filtre por categoria, data, produto, animal ou evento.</p>
       </div>
 
-      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {ABAS_SANIDADE.map(([id, label, Icon]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
+      <TabBar<AbaSanidade> abas={ABAS_SANIDADE} ativa={aba} onChange={setAba} />
 
       {aba === "aplicacoes" && <AplicacoesView />}
       {aba === "calendario" && <CalendarioSanitarioView />}
