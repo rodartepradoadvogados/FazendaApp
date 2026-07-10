@@ -12,7 +12,10 @@ from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
-from fazenda.models import Animal, ControleLeiteiro, Estoque, Lote, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.models import (
+    Animal, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, Lote, PesagemCorporal,
+    QualidadeLeite, Sanidade, Secagem, Servico,
+)
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
@@ -181,6 +184,63 @@ def relatorio_pesagens(
 
     linhas.sort(key=lambda l: chave_numero(l["numero_matriz"]))
     return {"linhas": linhas, "total": len(linhas)}
+
+
+class QualidadeLeiteIn(BaseModel):
+    numero_matriz: str | None = None  # vazio = leitura do tanque (todas as vacas em lactação)
+    data_coleta: date
+    ccs: float | None = None
+    cbt: float | None = None
+    gordura_pct: float | None = None
+    proteina_pct: float | None = None
+    solidos_totais_pct: float | None = None
+    esd_pct: float | None = None
+    lactose_pct: float | None = None
+    observacao: str | None = None
+
+
+@router.get("/qualidade-leite")
+def listar_qualidade_leite(session: Session = Depends(get_session)) -> dict:
+    registros = session.exec(select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)).all()
+    return {"registros": [r.model_dump() for r in registros], "total": len(registros)}
+
+
+@router.post("/qualidade-leite", status_code=201)
+def criar_qualidade_leite(dados: QualidadeLeiteIn, session: Session = Depends(get_session)) -> dict:
+    registro = QualidadeLeite(**dados.model_dump())
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+class EntregaLeiteMensalIn(BaseModel):
+    competencia: str  # "YYYY-MM"
+    quantidade_litros: float
+    observacao: str | None = None
+
+
+@router.get("/entrega-leite")
+def listar_entrega_leite(session: Session = Depends(get_session)) -> dict:
+    registros = session.exec(select(EntregaLeiteMensal).order_by(EntregaLeiteMensal.competencia)).all()
+    return {"registros": [r.model_dump() for r in registros], "total": len(registros)}
+
+
+@router.post("/entrega-leite", status_code=201)
+def criar_entrega_leite(dados: EntregaLeiteMensalIn, session: Session = Depends(get_session)) -> dict:
+    existente = session.exec(select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)).first()
+    if existente:
+        existente.quantidade_litros = dados.quantidade_litros
+        existente.observacao = dados.observacao
+        session.add(existente)
+        session.commit()
+        session.refresh(existente)
+        return existente.model_dump()
+    registro = EntregaLeiteMensal(**dados.model_dump())
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
 
 
 def _rotulo_lote(codigo: str, nome: str) -> str:

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp } from "lucide-react";
-import { fetchControles } from "@/lib/api";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical } from "lucide-react";
+import { fetchControles, fetchQualidadeLeite } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -69,6 +69,21 @@ function LineChart({ dados }: { dados: { data: string; total: number }[] }) {
   );
 }
 
+type Qualidade = {
+  id: number; numero_matriz: string | null; data_coleta: string;
+  ccs: number | null; cbt: number | null; gordura_pct: number | null; proteina_pct: number | null;
+  solidos_totais_pct: number | null; esd_pct: number | null; lactose_pct: number | null; observacao: string | null;
+};
+const INDICADORES_QUALIDADE = [
+  { key: "ccs", label: "CCS", unidade: "mil céls./mL" },
+  { key: "cbt", label: "CBT", unidade: "mil UFC/mL" },
+  { key: "gordura_pct", label: "Gordura", unidade: "%" },
+  { key: "proteina_pct", label: "Proteína", unidade: "%" },
+  { key: "solidos_totais_pct", label: "Sólidos totais (ST)", unidade: "%" },
+  { key: "esd_pct", label: "ESD", unidade: "%" },
+  { key: "lactose_pct", label: "Lactose", unidade: "%" },
+] as const;
+
 export default function ProducaoPage() {
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -81,6 +96,30 @@ export default function ProducaoPage() {
   const [ucN, setUcN] = useState<1 | 2 | 3>(1);
   const [ucAnimal, setUcAnimal] = useState("");
   const [ucLote, setUcLote] = useState("");
+
+  const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
+  const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
+  const [qlDe, setQlDe] = useState("");
+  const [qlAte, setQlAte] = useState("");
+
+  useEffect(() => {
+    fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch(() => {});
+  }, []);
+
+  const qlFiltrados = useMemo(() => {
+    if (!qualidade) return [];
+    return qualidade.filter((r) => (!qlDe || r.data_coleta >= qlDe) && (!qlAte || r.data_coleta <= qlAte));
+  }, [qualidade, qlDe, qlAte]);
+
+  const qlIndicadorInfo = INDICADORES_QUALIDADE.find((i) => i.key === qlIndicador)!;
+  const qlSerie = useMemo(() => {
+    return qlFiltrados
+      .map((r) => ({ data: r.data_coleta, total: r[qlIndicador] }))
+      .filter((d): d is { data: string; total: number } => d.total != null)
+      .sort((a, b) => a.data.localeCompare(b.data));
+  }, [qlFiltrados, qlIndicador]);
+  const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
+  const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
 
   useEffect(() => {
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
@@ -257,9 +296,9 @@ export default function ProducaoPage() {
                   <ThOrdenavel label="Vaca" campo="numero" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
                   <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
                   <ThOrdenavel label="Data" campo="data" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
-                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Manhã (kg)" campo="ordenha1_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
-                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Noite (kg)" campo="noite_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
-                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Total (kg)" campo="producao_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
+                  <ThOrdenavel label="Manhã (kg)" campo="ordenha1_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Noite (kg)" campo="noite_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Total (kg)" campo="producao_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
                 </tr></thead>
                 <tbody>
                   {ordUltimos.linhasOrdenadas.map((r, i) => (
@@ -280,6 +319,27 @@ export default function ProducaoPage() {
                 </tbody>
               </table>
             </div>
+          </div>
+
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><FlaskConical size={14} /> Qualidade do leite</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
+                <input type="date" style={selStyle} value={qlDe} onChange={(e) => setQlDe(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
+                <input type="date" style={selStyle} value={qlAte} onChange={(e) => setQlAte(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
+                <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
+                  {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
+                </select></div>
+            </div>
+            <div className="grid grid-cols-2 gap-4 mb-3">
+              <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{qlAtual ?? "—"} {qlAtual != null ? qlIndicadorInfo.unidade : ""}</p>
+                <p className="kpi-label">{qlIndicadorInfo.label} atual (última coleta)</p></div>
+              <div className="kpi-card"><p className="kpi-value">{qlMedia ?? "—"} {qlMedia != null ? qlIndicadorInfo.unidade : ""}</p>
+                <p className="kpi-label">{qlIndicadorInfo.label} média no período</p></div>
+            </div>
+            {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">

@@ -725,6 +725,38 @@ export async function criarPesagensCorporais(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
   return res.json();
 }
+// ── Qualidade do leite ──
+export async function fetchQualidadeLeite() {
+  const res = await authFetch(`${API}/producao/qualidade-leite`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Qualidade do leite error: ${res.status}`);
+  return res.json();
+}
+export async function criarQualidadeLeite(dados: {
+  numero_matriz?: string | null; data_coleta: string;
+  ccs?: number | null; cbt?: number | null; gordura_pct?: number | null; proteina_pct?: number | null;
+  solidos_totais_pct?: number | null; esd_pct?: number | null; lactose_pct?: number | null; observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/producao/qualidade-leite`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar qualidade do leite"); }
+  return res.json();
+}
+
+// ── Entrega mensal do leite ──
+export async function fetchEntregaLeiteMensal() {
+  const res = await authFetch(`${API}/producao/entrega-leite`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Entrega mensal do leite error: ${res.status}`);
+  return res.json();
+}
+export async function criarEntregaLeiteMensal(dados: { competencia: string; quantidade_litros: number; observacao?: string | null }) {
+  const res = await authFetch(`${API}/producao/entrega-leite`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar entrega mensal do leite"); }
+  return res.json();
+}
+
 // ── Secagem ──
 export async function fetchSecagemInfo(numeroMatriz: string) {
   const res = await authFetch(`${API}/producao/secagem-info?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
