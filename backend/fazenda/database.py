@@ -50,7 +50,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("ativo", "BOOLEAN"), ("observacao", "VARCHAR"), ("carencia_dias", "INTEGER"),
         ("centro_custo_padrao", "VARCHAR"), ("conta_gerencial_despesa_padrao", "VARCHAR"),
         ("conta_gerencial_receita_padrao", "VARCHAR"), ("exibir_necessidade_compra_agenda", "BOOLEAN"),
-        ("estocavel", "BOOLEAN"),
+        ("estocavel", "BOOLEAN"), ("considerar_rmca", "BOOLEAN"),
     ],
     "fornecedor": [("categoria", "VARCHAR")],
     "pessoa": [("salario_base", "FLOAT")],
@@ -85,6 +85,12 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("dia_vencimento", "INTEGER"),
         ("origem_recorrencia_id", "INTEGER"),
         ("numero_lancamento_gerado", "VARCHAR"),
+        # Retenção INSS/IR — DEFAULT 0 para os lançamentos antigos, porque o
+        # modelo e a API tratam esses campos como float obrigatório (não-nulo).
+        ("percentual_inss", "FLOAT DEFAULT 0"),
+        ("percentual_ir", "FLOAT DEFAULT 0"),
+        ("valor_inss", "FLOAT DEFAULT 0"),
+        ("valor_ir", "FLOAT DEFAULT 0"),
     ],
     "lote": [
         ("status_lactacao", "VARCHAR"),
