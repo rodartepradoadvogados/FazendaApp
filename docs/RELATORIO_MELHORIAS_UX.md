@@ -86,6 +86,47 @@ Cinco princípios, inspirados no que o DairyComp faz bem e no que o Ideagri faz 
   data da Sanidade sem sumiço silencioso, `btn-primario` em SugestõesMovimentação, tooltips.
 - **Final**: typecheck, testes de backend, smoke test, commit, push e este relatório atualizado.
 
-## 4. O que foi alterado (preenchido após a execução)
+## 4. O que foi alterado (executado por 6 agentes Opus 4.8)
 
-_(ver seção final)_
+Commits deste pacote (todos na branch `claude/farm-app-access-bikeej`):
+`a7978d3` (fundação) · `f1761da` (Rebanho/Sanidade/Config) · `7c63316` (Lançamentos/Estoque/Upload) ·
+`69f9662` (Agenda/Capa/Indicadores) · `7879f99` (Financeiro/Produção/Reprodução).
+
+**Fundação**
+- `components/ui.tsx` novo: `TabBar` (barra de abas única com tooltip em cada aba) e `SecaoRecolhivel`
+  (card com chevron). `.row-clickable` agora existe de verdade no CSS (hover dourado + borda).
+- Sidebar: tooltip em todos os links; "Sanidade/Estoque" → "Estoque".
+- Sino de notificações: cada item leva à página de resolução; não some mais em erro de carga.
+
+**Financeiro**
+- Seleção de notas (individual e lote) com destaque de linha clicável, tooltip e indicador de estado.
+- "Marcar como pago" da Folha mostra erro junto à linha; modal "Anexar recibo" recarrega a lista.
+- Detalhamento mês-a-mês do fluxo, "Novo lançamento de folha" e "Vale" viraram seções recolhíveis.
+- Um único formatador de data na página; aviso quando o gráfico decima pontos; tooltips em toda parte.
+
+**Lançamentos / Estoque / Upload**
+- Textos "rascunho, não grava" corrigidos; código morto removido; chevron nos protocolos IATF.
+- Históricos (Dietas, Regras do calendário) recolhíveis; tooltips nas lixeiras e botões de fechar.
+- Parto avisa quando colostragem/alocação falham; diagnóstico em lote lista os que falharam e os
+  mantém selecionados para repetir.
+- Estoque com título correto; Upload com texto honesto e guia cobrindo os 10 tipos de arquivo.
+
+**Produção / Reprodução**
+- Produção: Qualidade, ITALAC, Curva de Lactação, Ranking e Registros atrás de seções recolhíveis
+  com contagem; erros de carga visíveis (nada mais engolido).
+- Reprodução: tabela de serviços ordenável, coluna "Método", abas no TabBar.
+- Agenda do veterinário: botão Salvar consertado (classe inexistente), ordenação compartilhada,
+  confirmação após reconfirmação.
+
+**Agenda / Capa / Indicadores**
+- Agenda: banner de erro distinto de "sem dados"; confirmações inline no lugar de alert(); rótulo na
+  data de referência; KPI e lista de BST excluídos na mesma fonte.
+- Capa: KPIs clicáveis uniformes com tooltip; banner quando parte dos dados falha; botão recarregar.
+- Indicadores: affordance nas barras de composição; drill-down protegido; botão recarregar.
+
+**Rebanho / Sanidade / Configurações**
+- Abas no TabBar com tooltips nas três páginas; visão geral do Rebanho recarrega ao voltar de
+  baixar/comprar; aviso de aplicações sem data no filtro da Sanidade; botão de Sugestões consertado.
+
+**Verificação:** typecheck limpo no projeto inteiro; 477/477 testes de backend passando;
+as 15 páginas respondendo 200 no smoke test.
