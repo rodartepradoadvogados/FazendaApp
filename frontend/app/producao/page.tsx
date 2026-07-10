@@ -3,6 +3,13 @@ import { useEffect, useMemo, useState } from "react";
 import { Milk, AlertTriangle, Filter, TrendingUp } from "lucide-react";
 import { fetchControles } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+
+// Comparação numérica quando possível, senão alfabética — mesmo critério usado
+// em toda a auditoria de ordenação (crescente por padrão em toda listagem).
+function comparaNumero(a: string, b: string) {
+  return isNaN(+a) || isNaN(+b) ? a.localeCompare(b) : +a - +b;
+}
 
 const COLUNAS_RANKING = [
   { header: "Vaca", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Média (kg)", key: "media" },
@@ -116,12 +123,12 @@ export default function ProducaoPage() {
     }).sort((a, b) => b.media - a.media);
   }, [comProd]);
 
-  const filtradosExport = useMemo(() => filtrados.map((r) => ({
+  const filtradosOrdenadosBase = useMemo(() => [...filtrados].sort((a, b) => comparaNumero(a.numero, b.numero)), [filtrados]);
+  const filtradosExport = useMemo(() => filtradosOrdenadosBase.map((r) => ({
     ...r, dataFmt: r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—",
     producaoFmt: r.producao_kg != null ? r.producao_kg : "—",
-  })), [filtrados]);
+  })), [filtradosOrdenadosBase]);
 
-  const ultimaData = serie.length ? serie[serie.length - 1] : null;
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
   const animaisDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.numero), [regs]);
@@ -149,22 +156,30 @@ export default function ProducaoPage() {
     return linhas.sort((a, b) => (a.numero === b.numero ? (a.data! < b.data! ? 1 : -1) : a.numero.localeCompare(b.numero)));
   }, [regs, ucNumerosEscopo, ucN]);
 
-  // Média do lote/rebanho: produção do controle mais recente de cada animal do escopo (não a média dos N).
-  const ucMediaAtual = useMemo(() => {
-    const porAnimal = new Map<string, Ctrl>();
-    ucRegistros.forEach((r) => {
-      const atual = porAnimal.get(r.numero);
-      if (!atual || (r.data && atual.data && r.data > atual.data)) porAnimal.set(r.numero, r);
-    });
-    return media(Array.from(porAnimal.values()).map((r) => r.producao_kg || 0));
-  }, [ucRegistros]);
+  // Linhas exibidas na tabela, já com a "noite" resolvida como campo próprio
+  // (ordenha3 quando há 3 ordenhas, senão ordenha2) para poder ordenar por ela.
+  const ucLinhas = useMemo(
+    () => ucRegistros.map((r) => ({ ...r, noite_kg: r.ordenha3_kg ?? r.ordenha2_kg })),
+    [ucRegistros]
+  );
 
+  // Relatório único do filtro selecionado: média e menor do próprio conjunto
+  // mostrado na tabela (o mesmo escopo do animal/lote/rebanho filtrado), média
+  // por ordenha (manhã/noite), quantidade de vacas e de controles do filtro.
+  const ucValoresProducao = useMemo(() => ucRegistros.map((r) => r.producao_kg).filter((v): v is number => v != null), [ucRegistros]);
+  const ucMedia = useMemo(() => media(ucValoresProducao), [ucValoresProducao]);
+  const ucMenor = useMemo(() => (ucValoresProducao.length ? Math.min(...ucValoresProducao) : null), [ucValoresProducao]);
   const ucMediaManha = useMemo(() => media(ucRegistros.filter((r) => r.ordenha1_kg != null).map((r) => r.ordenha1_kg!)), [ucRegistros]);
   const ucMediaNoite = useMemo(() => {
     // "Noite" = última ordenha do dia lançada — ordenha3 quando há 3, senão ordenha2.
     const valores = ucRegistros.map((r) => (r.ordenha3_kg ?? r.ordenha2_kg)).filter((v): v is number => v != null);
     return media(valores);
   }, [ucRegistros]);
+  const ucLabelEscopo = ucModo === "lote" ? "lote" : ucModo === "animal" ? "animal" : "rebanho";
+
+  const ordUltimos = useOrdenacao(ucLinhas);
+  const ordRanking = useOrdenacao(ranking);
+  const ordFiltrados = useOrdenacao(filtradosOrdenadosBase);
 
   return (
     <div className="p-6 animate-in">
@@ -225,27 +240,35 @@ export default function ProducaoPage() {
             </div>
 
             {ucRegistros.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-3">
-                {ucModo !== "animal" && (
-                  <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{ucMediaAtual} kg</p>
-                    <p className="kpi-label">Média do {ucModo === "lote" ? "lote" : "rebanho"} (controle mais recente)</p></div>
-                )}
-                <div className="kpi-card"><p className="kpi-value">{ucMediaManha || "—"} kg</p><p className="kpi-label">Média por ordenha — manhã</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucMediaNoite || "—"} kg</p><p className="kpi-label">Média por ordenha — noite</p></div>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-3">
+                <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{ucMedia} kg</p>
+                  <p className="kpi-label">Média do {ucLabelEscopo}</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucMenor ?? "—"} kg</p><p className="kpi-label">Menor</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucMediaManha || "—"} kg</p><p className="kpi-label">Média ordenha — manhã</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucMediaNoite || "—"} kg</p><p className="kpi-label">Média ordenha — noite</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucNumerosEscopo.size}</p><p className="kpi-label">Vacas no filtro</p></div>
+                <div className="kpi-card"><p className="kpi-value">{ucRegistros.length}</p><p className="kpi-label">Controles no filtro</p></div>
               </div>
             )}
 
             <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Vaca</th><th>Lote</th><th>Data</th><th style={{ textAlign: "right" }}>Manhã (kg)</th><th style={{ textAlign: "right" }}>Noite (kg)</th><th style={{ textAlign: "right" }}>Total (kg)</th></tr></thead>
+                <thead><tr>
+                  <ThOrdenavel label="Vaca" campo="numero" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
+                  <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
+                  <ThOrdenavel label="Data" campo="data" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
+                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Manhã (kg)" campo="ordenha1_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
+                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Noite (kg)" campo="noite_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
+                  <th style={{ textAlign: "right" }}><ThOrdenavel label="Total (kg)" campo="producao_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} /></th>
+                </tr></thead>
                 <tbody>
-                  {ucRegistros.map((r, i) => (
+                  {ordUltimos.linhasOrdenadas.map((r, i) => (
                     <tr key={`${r.numero}-${r.data}-${i}`}>
                       <td style={{ fontWeight: 700 }}>{r.numero}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                       <td style={{ textAlign: "right" }}>{r.ordenha1_kg ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{r.ordenha3_kg ?? r.ordenha2_kg ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{r.noite_kg ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{r.producao_kg ?? "—"}</td>
                     </tr>
                   ))}
@@ -257,13 +280,6 @@ export default function ProducaoPage() {
                 </tbody>
               </table>
             </div>
-          </div>
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{ultimaData ? media(comProd.filter((r) => r.data === ultimaData.data).map((r) => r.producao_kg!)) : "—"} kg</p><p className="kpi-label">Média/vaca (último controle)</p></div>
-            <div className="kpi-card"><p className="kpi-value">{new Set(comProd.map((r) => r.numero)).size}</p><p className="kpi-label">Vacas</p></div>
-            <div className="kpi-card"><p className="kpi-value">{comProd.length}</p><p className="kpi-label">Pesagens</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.1rem" }}>{ultimaData?.data ?? "—"}</p><p className="kpi-label">Último controle</p></div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -292,9 +308,16 @@ export default function ProducaoPage() {
               <ExportarBotoes titulo="Ranking de Produção Leiteira" nomeArquivoBase="ranking_producao" colunas={COLUNAS_RANKING} linhas={ranking} />
             </div>
             <table className="fazenda-table">
-              <thead><tr><th>Vaca</th><th>Raça</th><th>Média</th><th>Pico</th><th>Última</th><th>Pesagens</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Vaca" campo="numero" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+                <ThOrdenavel label="Raça" campo="raca" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+                <ThOrdenavel label="Média" campo="media" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+                <ThOrdenavel label="Pico" campo="pico" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+                <ThOrdenavel label="Última" campo="ultima" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+                <ThOrdenavel label="Pesagens" campo="n" coluna={ordRanking.coluna} dir={ordRanking.dir} ordenar={ordRanking.ordenar} />
+              </tr></thead>
               <tbody>
-                {ranking.slice(0, 20).map((v) => (
+                {ordRanking.linhasOrdenadas.slice(0, 20).map((v) => (
                   <tr key={v.numero}>
                     <td style={{ fontWeight: 700 }}>{v.numero}</td>
                     <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{v.raca}</td>
@@ -314,9 +337,15 @@ export default function ProducaoPage() {
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Vaca</th><th>Raça</th><th>Data</th><th>DEL (dias)</th><th>Produção (kg)</th></tr></thead>
+                <thead><tr>
+                  <ThOrdenavel label="Vaca" campo="numero" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Raça" campo="raca" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Data" campo="data" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="DEL (dias)" campo="del" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                </tr></thead>
                 <tbody>
-                  {filtrados.map((r, i) => (
+                  {ordFiltrados.linhasOrdenadas.map((r, i) => (
                     <tr key={`${r.numero}-${r.data}-${i}`}>
                       <td style={{ fontWeight: 700 }}>{r.numero}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{r.raca}</td>
