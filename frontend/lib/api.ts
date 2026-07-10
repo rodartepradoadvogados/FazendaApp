@@ -137,12 +137,19 @@ export async function fetchProtocoloIatfConcluidos() {
   return res.json();
 }
 
-export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }) {
+export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
   if (params?.sit_rep) qs.set("sit_rep", params.sit_rep);
+  if (params?.incluirMachos) qs.set("incluir_machos", "true");
   const res = await authFetch(`${API}/animais/?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Animais error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchFichaAnimal(numero: string) {
+  const res = await authFetch(`${API}/animais/${encodeURIComponent(numero)}/ficha`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Ficha do animal error: ${res.status}`); }
   return res.json();
 }
 
@@ -232,14 +239,19 @@ export async function fetchFolhaPagamento() {
   if (!res.ok) throw new Error(`Folha de pagamento error: ${res.status}`);
   return res.json();
 }
-export async function criarFolhaPagamento(dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null }) {
+type FolhaPagamentoDados = {
+  pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number;
+  percentual_inss?: number; percentual_ir?: number; valor_inss?: number; valor_ir?: number;
+  data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null;
+};
+export async function criarFolhaPagamento(dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar folha de pagamento"); }
   return res.json();
 }
-export async function atualizarFolhaPagamento(id: number, dados: { pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number; data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null }) {
+export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoDados) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -297,7 +309,7 @@ export async function criarItemEstoque(dados: Record<string, unknown>) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
   return res.json();
 }
-export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {
+export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null; considerar_rmca?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -481,6 +493,28 @@ export async function criarCompraAnimal(dados: {
 export async function fetchSanidade() {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarColostragem(dados: {
+  numero_animal: string; tomou_colostro?: boolean; litros_colostro?: number; brix_colostro?: number;
+  data_colostro?: string; brix_soro?: number; data_teste_sangue?: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/sanidade/colostragem`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar colostragem"); }
+  return res.json();
+}
+
+export async function fetchRelatorioBezerras(filtros: { faixaEtaria?: string; numero?: string; lote?: string; numeros?: string[] }) {
+  const params = new URLSearchParams();
+  if (filtros.faixaEtaria) params.set("faixa_etaria", filtros.faixaEtaria);
+  if (filtros.numero) params.set("numero", filtros.numero);
+  if (filtros.lote) params.set("lote", filtros.lote);
+  if (filtros.numeros) filtros.numeros.forEach((n) => params.append("numeros", n));
+  const res = await authFetch(`${API}/sanidade/relatorio-bezerras?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de bezerras error: ${res.status}`);
   return res.json();
 }
 
@@ -964,6 +998,14 @@ export async function importarXmlFinanceiro(xml: string) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o XML"); }
+  return res.json();
+}
+
+export async function lerDocumentoFinanceiro(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o documento"); }
   return res.json();
 }
 

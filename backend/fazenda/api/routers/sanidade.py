@@ -7,14 +7,15 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    CalendarioSanitario, Doenca, Estoque, EventoSanitario, MovimentoEstoque, PrincipioAtivo, ProtocoloSanitario,
-    ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
+    Animal, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
+    PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    ProtocoloSanitarioLancamento, Sanidade,
 )
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
@@ -310,3 +311,113 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
 
     return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados}
+
+
+# ---------------------------------------------------------------------------
+# Colostragem e teste de sangue (IgG) — gravado a partir da calculadora em
+# Lançamentos > Parto/nascimento, consumido pelo relatório sanitário de
+# bezerras abaixo.
+# ---------------------------------------------------------------------------
+def _classe_colostro(brix: float | None) -> str | None:
+    if brix is None:
+        return None
+    if brix > 25:
+        return "ouro"
+    if brix >= 18:
+        return "prata"
+    return "bronze"
+
+
+def _classe_soro(brix: float | None) -> str | None:
+    if brix is None:
+        return None
+    if brix >= 8.4:
+        return "sucesso"
+    if brix >= 8.1:
+        return "alerta"
+    return "falha"
+
+
+class ColostragemIn(BaseModel):
+    numero_animal: str
+    tomou_colostro: bool | None = None
+    litros_colostro: float | None = None
+    brix_colostro: float | None = None
+    data_colostro: date | None = None
+    brix_soro: float | None = None
+    data_teste_sangue: date | None = None
+    observacao: str | None = None
+
+
+@router.post("/colostragem")
+def registrar_colostragem(dados: ColostragemIn, session: Session = Depends(get_session)) -> dict:
+    """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
+    cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
+    animal = session.exec(select(Animal).where(Animal.numero == dados.numero_animal)).first()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+
+    registro = session.exec(
+        select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
+    ).first()
+    if not registro:
+        registro = ColostragemBezerra(animal_id=animal.id, numero_animal=dados.numero_animal)
+    for campo, valor in dados.model_dump(exclude={"numero_animal"}).items():
+        setattr(registro, campo, valor)
+    registro.atualizado_em = datetime.utcnow()
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.get("/relatorio-bezerras")
+def relatorio_sanitario_bezerras(
+    faixa_etaria: str | None = Query(None, description="ate_12 | acima_12"),
+    numero: str | None = None,
+    lote: str | None = None,
+    numeros: list[str] | None = Query(None),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    Indicadores de colostragem e teste de sangue por animal, para identificar
+    na fase adulta problemas que vieram de má colostragem. Filtra por faixa
+    etária (bezerra <=12 meses / animal >12 meses, calculada por data_nasc),
+    por animal, por lote atual (grupo_primario) ou por seleção de vários animais.
+    """
+    animais = session.exec(select(Animal).where(Animal.eh_semen == False)).all()  # noqa: E712
+    registros = {r.numero_animal: r for r in session.exec(select(ColostragemBezerra)).all()}
+    hoje = date.today()
+
+    numeros_selecionados = {n.strip() for n in numeros} if numeros else None
+    saida = []
+    for a in animais:
+        if numero and a.numero != numero:
+            continue
+        if lote and (a.grupo_primario or "") != lote:
+            continue
+        if numeros_selecionados and a.numero not in numeros_selecionados:
+            continue
+
+        idade_meses = round((hoje - a.data_nasc).days / 30.44, 1) if a.data_nasc else a.idade_meses
+        if faixa_etaria == "ate_12" and (idade_meses is None or idade_meses > 12):
+            continue
+        if faixa_etaria == "acima_12" and (idade_meses is None or idade_meses <= 12):
+            continue
+
+        r = registros.get(a.numero)
+        saida.append({
+            "numero": a.numero, "nome": a.nome, "sexo": a.sexo, "categoria_abrev": a.categoria_abrev,
+            "grupo_primario": a.grupo_primario, "data_nasc": a.data_nasc, "idade_meses": idade_meses,
+            "ativo": a.ativo,
+            "tomou_colostro": r.tomou_colostro if r else None,
+            "litros_colostro": r.litros_colostro if r else None,
+            "brix_colostro": r.brix_colostro if r else None,
+            "classe_colostro": _classe_colostro(r.brix_colostro if r else None),
+            "data_colostro": r.data_colostro if r else None,
+            "brix_soro": r.brix_soro if r else None,
+            "classe_soro": _classe_soro(r.brix_soro if r else None),
+            "data_teste_sangue": r.data_teste_sangue if r else None,
+        })
+    saida.sort(key=lambda x: x["numero"])
+    return saida

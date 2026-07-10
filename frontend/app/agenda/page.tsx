@@ -38,6 +38,13 @@ export default function AgendaPage() {
   const [data, setData] = useState(today());
   const [agenda, setAgenda] = useState<any>(null);
   const [loading, setLoading] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+  // Mensagem transitória de sucesso/erro exibida sob o cabeçalho (substitui alert()).
+  const [feedback, setFeedback] = useState<{ msg: string; erro?: boolean } | null>(null);
+  const mostrarFeedback = (msg: string, erro = false) => {
+    setFeedback({ msg, erro });
+    setTimeout(() => setFeedback((f) => (f && f.msg === msg ? null : f)), 4000);
+  };
   const [filtro, setFiltro] = useState("");
   const [fCat, setFCat] = useState("");
   const [de, setDe] = useState("");
@@ -99,8 +106,8 @@ export default function AgendaPage() {
 
   const carregar = useCallback(async () => {
     setLoading(true);
-    try { setAgenda(await fetchAgenda(data, diasJanela)); }
-    catch { setAgenda(null); }
+    try { setAgenda(await fetchAgenda(data, diasJanela)); setErro(null); }
+    catch (e: any) { setAgenda(null); setErro(e?.message || "erro desconhecido"); }
     finally { setLoading(false); }
   }, [data, diasJanela]);
 
@@ -116,8 +123,8 @@ export default function AgendaPage() {
   const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
   const desfazerIatf = async (id: string) => {
     setDesfazendo((p) => new Set(p).add(id));
-    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos()]); }
-    catch (e: any) { alert(e.message); }
+    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos()]); mostrarFeedback("Desfeito."); }
+    catch (e: any) { mostrarFeedback(e.message, true); }
     finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
   };
 
@@ -143,8 +150,9 @@ export default function AgendaPage() {
       cancelarConfirmacao(eventoId);
       await carregar();
       if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
+      mostrarFeedback("Atividade marcada como realizada.");
     }
-    catch (e: any) { alert(e.message); }
+    catch (e: any) { mostrarFeedback(e.message, true); }
     finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
   };
 
@@ -161,7 +169,7 @@ export default function AgendaPage() {
       );
     }
     return (
-      <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={marcando.has(chave)} onClick={(e) => { e.stopPropagation(); pedirConfirmacao(chave); }}>
+      <button className="btn-ghost" style={{ fontSize: "0.68rem" }} title="Marcar como realizado" disabled={marcando.has(chave)} onClick={(e) => { e.stopPropagation(); pedirConfirmacao(chave); }}>
         <CheckCircle2 size={12} /> {compacto ? "" : "Realizado"}
       </button>
     );
@@ -192,7 +200,8 @@ export default function AgendaPage() {
       });
       fecharModalNovoEvento();
       carregar();
-    } catch (e: any) { alert(e.message); }
+      mostrarFeedback("Evento adicionado.");
+    } catch (e: any) { mostrarFeedback(e.message, true); }
   };
 
   // Extrai o valor de "Conta a pagar: X — R$ 1,234.56" (formatação :,.2f do Python — vírgula de milhar, ponto decimal).
@@ -393,14 +402,18 @@ export default function AgendaPage() {
             Eventos preditivos gerados automaticamente pelas regras da fazenda
           </p>
         </div>
-        <div className="flex gap-2">
-          <input
-            type="date"
-            value={data}
-            onChange={e => setData(e.target.value)}
-            className="btn-ghost"
-            style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "8px" }}
-          />
+        <div className="flex items-end gap-2">
+          <div>
+            <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Data de referência</label>
+            <input
+              type="date"
+              value={data}
+              onChange={e => setData(e.target.value)}
+              className="btn-ghost"
+              title="Data de referência: ancora toda a agenda — eventos, contas e visitas são calculados a partir dela."
+              style={{ padding: "0.4rem 0.75rem", fontSize: "0.875rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", borderRadius: "8px" }}
+            />
+          </div>
           <button onClick={carregar} className="btn-ghost" title="Recarregar">
             <RefreshCw size={16} className={loading ? "animate-spin" : ""} />
           </button>
@@ -410,15 +423,32 @@ export default function AgendaPage() {
         </div>
       </div>
 
+      {/* Erro de carregamento — distinto do estado "sem dados" */}
+      {erro && (
+        <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Não foi possível carregar a agenda: {erro}</span></div>
+      )}
+
+      {/* Feedback transitório de ações (sucesso em verde, erro em vermelho) */}
+      {feedback && (
+        <div className="mb-4" style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.82rem", padding: "0.5rem 0.9rem", borderRadius: "8px",
+          background: feedback.erro ? "rgba(192,57,43,0.15)" : "rgba(20,83,45,0.35)",
+          border: "1px solid " + (feedback.erro ? "var(--red)" : "var(--green-light)"),
+          color: feedback.erro ? "var(--red)" : "var(--green-light)" }}>
+          {feedback.erro ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />} {feedback.msg}
+        </div>
+      )}
+
       {/* KPIs bloco */}
-      {agenda && (
+      {loading && !agenda ? (
+        <div className="mb-5"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
+      ) : agenda && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
           {[
             { label: "Candidatas IATF", value: agenda.totais?.candidatas_iatf, color: "var(--blue)",
               list: candidatas.map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias })) },
             { label: "BST Aptos", value: bstAptos.length, color: "var(--green-light)",
               list: bstAptos.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
-            { label: "BST Excluídos", value: agenda.bst_excluidos?.length ?? 0, color: "var(--amber)",
+            { label: "BST Excluídos", value: bstExcl.length, color: "var(--amber)",
               list: bstExcl.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "Total Eventos", value: agenda.totais?.eventos, color: "var(--dourado-light)" },
           ].map((k: any) => {
@@ -439,7 +469,7 @@ export default function AgendaPage() {
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
             {candidatas.length > 0 && (
-              <button onClick={() => toggleLista("iatf")}
+              <button onClick={() => toggleLista("iatf")} title="Mostrar/ocultar as fêmeas candidatas à IATF"
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
                   border: "1px solid " + (listaAtiva.has("iatf") ? "var(--dourado)" : "var(--border)"),
                   background: listaAtiva.has("iatf") ? "rgba(94,26,46,0.4)" : "transparent",
@@ -449,7 +479,7 @@ export default function AgendaPage() {
               </button>
             )}
             {bstAptos.length > 0 && (
-              <button onClick={() => toggleLista("bstAptos")}
+              <button onClick={() => toggleLista("bstAptos")} title="Mostrar/ocultar as fêmeas aptas ao BST"
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
                   border: "1px solid " + (listaAtiva.has("bstAptos") ? "var(--green-light)" : "var(--border)"),
                   background: listaAtiva.has("bstAptos") ? "rgba(20,83,45,0.4)" : "transparent",
@@ -459,7 +489,7 @@ export default function AgendaPage() {
               </button>
             )}
             {bstExcl.length > 0 && (
-              <button onClick={() => toggleLista("bstExcl")}
+              <button onClick={() => toggleLista("bstExcl")} title="Mostrar/ocultar as fêmeas excluídas do BST e o motivo"
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
                   border: "1px solid " + (listaAtiva.has("bstExcl") ? "var(--amber)" : "var(--border)"),
                   background: listaAtiva.has("bstExcl") ? "rgba(120,90,10,0.35)" : "transparent",
@@ -595,7 +625,9 @@ export default function AgendaPage() {
           <span className="flex items-center gap-2"><AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})</span>
           <ExportarBotoes titulo="Agenda de Pendentes" nomeArquivoBase="agenda_pendentes" colunas={COLUNAS_AGENDA} linhas={eventosPendentes} />
         </div>
-        {eventosPendentes.length > 0 ? (
+        {loading ? (
+          <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center", fontSize: "0.85rem" }}>Carregando…</p>
+        ) : eventosPendentes.length > 0 ? (
           <div className="space-y-2">{renderEventos(eventosPendentes)}</div>
         ) : (
           <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center", fontSize: "0.85rem" }}>0 pendências — tudo em dia.</p>
@@ -653,7 +685,7 @@ export default function AgendaPage() {
                     { v: "animal", label: "Animal(is)" },
                     { v: "lote", label: "Lote(s)" },
                   ].map((o) => (
-                    <button key={o.v} type="button"
+                    <button key={o.v} type="button" title={o.label}
                       onClick={() => { setVinculo(o.v as any); if (o.v === "nenhum") { setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); } }}
                       style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
                         border: "1px solid " + (vinculo === o.v ? "var(--dourado)" : "var(--border)"),

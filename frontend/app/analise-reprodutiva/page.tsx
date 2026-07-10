@@ -4,6 +4,7 @@ import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { SecaoRecolhivel } from "@/components/ui";
 
 function comparaNumero(a: string, b: string) {
   return isNaN(+a) || isNaN(+b) ? a.localeCompare(b) : +a - +b;
@@ -193,7 +194,7 @@ export default function AnaliseReprodutivaPage() {
               ))}
             </div>
             {Object.values(filtros).some(Boolean) && (
-              <button onClick={() => setFiltros({})} className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }}>
+              <button onClick={() => setFiltros({})} className="btn-ghost" title="Remover todos os filtros de dimensão aplicados" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }}>
                 Limpar filtros
               </button>
             )}
@@ -220,7 +221,7 @@ export default function AnaliseReprodutivaPage() {
           <div className="card">
             <div className="card-header mb-3 flex items-center gap-2" style={{ flexWrap: "wrap" }}>
               <span>Concepção por</span>
-              <select style={{ ...selStyle, width: "auto" }} value={dimensao as string} onChange={(e) => setDimensao(e.target.value as keyof Reg)}>
+              <select title="Escolha a dimensão para quebrar a taxa de concepção (tipo de serviço, método, touro, ordem de parto ou tentativa)" style={{ ...selStyle, width: "auto" }} value={dimensao as string} onChange={(e) => setDimensao(e.target.value as keyof Reg)}>
                 {DIMENSOES.map((d) => <option key={d.key as string} value={d.key as string}>{d.label}</option>)}
               </select>
             </div>
@@ -241,9 +242,11 @@ export default function AnaliseReprodutivaPage() {
           </div>
 
           {/* Registros filtrados — mostra o touro/sêmen usado em cada serviço/IA */}
-          <div className="card mt-4">
-            <div className="card-header mb-3 flex items-center justify-between">
-              <span>Registros filtrados ({filtrados.length})</span>
+          <SecaoRecolhivel
+            titulo="Registros filtrados"
+            badge={<span style={{ fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" }}>{filtrados.length} registros</span>}
+            descricao="Lista serviço a serviço com método, touro/sêmen, protocolo e diagnóstico dos registros que atendem aos filtros.">
+            <div className="flex items-center justify-end mb-3">
               <ExportarBotoes titulo="Análise Reprodutiva — Registros filtrados" nomeArquivoBase="analise_reprodutiva_registros" colunas={COLUNAS_SERVICOS} linhas={filtradosOrdenadosBase} />
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
@@ -275,7 +278,7 @@ export default function AnaliseReprodutivaPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SecaoRecolhivel>
         </>
       )}
     </div>

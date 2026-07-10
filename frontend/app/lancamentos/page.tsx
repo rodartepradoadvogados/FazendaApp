@@ -3,6 +3,7 @@ import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
+  ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
@@ -11,7 +12,7 @@ import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
-  fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal,
+  fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -22,15 +23,17 @@ import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { TabBar, SecaoRecolhivel } from "@/components/ui";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
 
 /**
- * Tela de Lançamentos — RASCUNHO funcional.
- * Os formulários já reagem aos dados reais do rebanho (selects, DEL automático,
- * cálculos de colostro, cronograma de IATF), mas ainda NÃO gravam nada — o
- * salvamento entra com o banco permanente + login. Serve para desenharmos a
- * forma final de cada lançamento.
+ * Tela de Lançamentos — entrada de dados operacionais no sistema.
+ * Cada tipo (reprodutivo, produção, sanidade, financeiro, dieta, estoque,
+ * exclusão) tem um formulário próprio que reage aos dados reais do rebanho
+ * (selects, DEL automático, cálculos de colostro, cronograma de IATF) e
+ * GRAVA de verdade no banco. A faixa informativa no topo de cada tipo
+ * (ver "banner por tipo" no fim do arquivo) descreve o que cada lançamento faz.
  */
 
 const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo_formas%20de%20utiliza%C3%A7%C3%A3o%20colostro_site.pdf";
@@ -68,13 +71,6 @@ function addDias(iso: string, n: number): string {
 // Seleção de animal via tabela clara (Nº · Grupo · Categoria · Sit. Rep. · DEL).
 const SelectAnimal = AnimalPicker;
 
-const SalvarEmBreve = () => (
-  <div className="flex items-center gap-3 mt-4" style={{ flexWrap: "wrap" }}>
-    <button className="btn-primary" disabled style={{ opacity: 0.55, cursor: "not-allowed" }}>Salvar (em breve)</button>
-    <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>O salvamento entra com o banco de dados permanente e o login.</span>
-  </div>
-);
-
 /* ───────────────────────── Manual do colostro (modal em tela) ───────────────────────── */
 const MANUAL_COLOSTRO = [
   { t: "1. Nascimento e ordenha rápida", d: "Curar umbigo (iodo 10%). Ordenhar a vaca na 1ª HORA pós-parto, com higiene total dos tetos. Coletar todo o colostro em balde limpo. Meta: ordenhar dentro da 1ª hora." },
@@ -99,7 +95,7 @@ function ManualColostroModal({ onClose }: { onClose: () => void }) {
       <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div className="card-header" style={{ margin: 0 }}>Manual — Rotina do Colostro</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+          <button onClick={onClose} title="Fechar" aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
         </div>
         <div className="space-y-2">
           {MANUAL_COLOSTRO.map((s) => (
@@ -123,7 +119,7 @@ function ManualSangueModal({ onClose }: { onClose: () => void }) {
       <div className="card" style={{ width: "500px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div className="card-header" style={{ margin: 0 }}>Manual — Teste de Sangue (IgG)</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+          <button onClick={onClose} title="Fechar" aria-label="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
         </div>
         <div className="space-y-2">
           {MANUAL_SANGUE.map((s) => (
@@ -176,7 +172,8 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
           const aberto = abertos.has(p.lancamento_id);
           return (
             <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-              <button onClick={() => toggle(p.lancamento_id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+              <button onClick={() => toggle(p.lancamento_id)} title={aberto ? "Clique para recolher os animais" : "Clique para ver os animais e etapas"} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
                 <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
                 <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>D0 {formatDate(p.data_d0)} — {p.animais.length} animal(is)</span>
               </button>
@@ -385,16 +382,36 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
     setErro(null); setSucesso(null);
     if (!selecionados.size || !data || !resultado) { setErro("Selecione ao menos uma matriz, a data e o resultado do diagnóstico."); return; }
     setSalvando(true);
+    // Loop por animal: registra quais salvaram e quais falharam, para não perder
+    // o trabalho já feito nem a seleção dos que precisam de nova tentativa.
+    const salvos: string[] = [];
+    const falhados: string[] = [];
     try {
       for (const numero of selecionados) {
-        await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+        try {
+          await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+          salvos.push(numero);
+        } catch {
+          falhados.push(numero);
+        }
       }
-      setSucesso(
-        resultado === "retoque"
-          ? `Diagnóstico salvo para ${selecionados.size} animal(is). Entraram na agenda para retoque.`
-          : `Diagnóstico salvo para ${selecionados.size} animal(is).`
-      );
-      setSelecionados(new Set()); setData(""); setMetodo(""); setResultado("");
+      if (falhados.length) {
+        // Sucesso parcial: mantém selecionados só os que falharam, para reenviar.
+        setSelecionados(new Set(falhados));
+        if (salvos.length) {
+          setSucesso(`Salvos: ${salvos.length}.`);
+          setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
+        } else {
+          setErro(`Nenhum diagnóstico salvo. Falharam: ${falhados.join(", ")} — tente novamente.`);
+        }
+      } else {
+        setSucesso(
+          resultado === "retoque"
+            ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
+            : `Diagnóstico salvo para ${salvos.length} animal(is).`
+        );
+        setSelecionados(new Set()); setData(""); setMetodo(""); setResultado("");
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar diagnóstico");
     } finally {
@@ -510,14 +527,18 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const medidasPorL = enriquecer ? Math.max(0, Number(alvo) - brixN!) : 0;
   const totalMedidas = medidasPorL * (litrosN || 1);
 
-  async function alocarSeConfirmado(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string) {
+  async function alocarSeConfirmado(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
       if (lote_sugerido && window.confirm(`Alocar o animal ${numero} no lote ${lote_sugerido.rotulo}? Ele ainda não tem lote definido.`)) {
         await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
         return lote_sugerido.rotulo as string;
       }
-    } catch { /* sugestão é best-effort — não bloqueia o parto já salvo */ }
+    } catch (e: any) {
+      // Sugestão/alocação é best-effort — não bloqueia o parto já salvo, mas
+      // avisamos para o usuário não achar que o animal já foi movido de lote.
+      falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
+    }
     return null;
   }
 
@@ -534,19 +555,43 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
         numero_matriz: matriz, data_parto: dataParto, tipo_parto: tipoParto || undefined,
         crias, retencao_placenta: retencaoPlacenta, gemelar,
       });
+      // Efeitos colaterais do parto (alocação de lote e colostragem) são
+      // complementares: não bloqueiam o parto já salvo, mas as falhas são
+      // coletadas para avisar o usuário no fim, em vez de sumirem em silêncio.
+      const falhasEfeito: string[] = [];
       const alocacoes: string[] = [];
-      const rotuloMae = await alocarSeConfirmado(matriz, "Vaca", { del_dias: 0 }, "Parto");
+      const rotuloMae = await alocarSeConfirmado(matriz, "Vaca", { del_dias: 0 }, "Parto", falhasEfeito);
       if (rotuloMae) alocacoes.push(`${matriz} → ${rotuloMae}`);
       for (const c of r.crias_criadas as string[]) {
         const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-        const rotulo = await alocarSeConfirmado(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento");
+        const rotulo = await alocarSeConfirmado(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhasEfeito);
         if (rotulo) alocacoes.push(`${c} → ${rotulo}`);
       }
-      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}`);
+      // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
+      // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
+      // e algum dado foi informado.
+      const criaRegistrada = r.crias_criadas.includes(criaNumero);
+      if (criaRegistrada && (tomouColostro || litros || brix || soro)) {
+        try {
+          await registrarColostragem({
+            numero_animal: criaNumero,
+            tomou_colostro: tomouColostro ? tomouColostro === "Sim" : undefined,
+            litros_colostro: litrosN || undefined,
+            brix_colostro: brixN ?? undefined,
+            data_colostro: brix ? dataParto : undefined,
+            brix_soro: soroN ?? undefined,
+            data_teste_sangue: soro ? dataParto : undefined,
+          });
+        } catch (e: any) {
+          falhasEfeito.push(`a colostragem não pôde ser gravada${e?.message ? `: ${e.message}` : ""}`);
+        }
+      }
+      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
       setMatriz(""); setTipoParto(""); setGemelar(false);
       setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
       setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
       setRetencaoPlacenta(false);
+      setTomou(""); setLitros(""); setBrix(""); setSoro("");
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
     } finally {
@@ -657,8 +702,8 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       </div>
       <p style={nota}>
         Matriz, data, tipo de parto, crias e retenção de placenta já gravam de verdade. Ao salvar, sugere o lote da
-        mãe e de cada cria (confirmação antes de mover). Os campos de colostragem/IgG acima ainda são só a
-        calculadora — o registro desses dados no histórico do animal é um próximo passo.
+        mãe e de cada cria (confirmação antes de mover). Colostragem e IgG da 1ª cria também são gravadas — o
+        histórico completo aparece em Sanidade → Relatório sanitário de bezerras.
       </p>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -943,7 +988,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
               </div>
               {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
               {itens.length > 1 && (
-                <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+                <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
                   <Trash2 size={13} />
                 </button>
               )}
@@ -1094,8 +1139,13 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
       </div>
 
       {regras && (
-        <div className="card mt-4">
-          <div className="card-header mb-2">Regras cadastradas</div>
+        <div className="mt-4">
+          <SecaoRecolhivel
+            titulo="Regras cadastradas"
+            defaultAberta={false}
+            descricao="Regras recorrentes já cadastradas no calendário sanitário"
+            badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{regras.length}</span>}
+          >
           <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr><th>Evento</th><th>Categoria alvo</th><th>Frequência</th><th>Próxima ocorrência</th><th></th></tr></thead>
@@ -1115,6 +1165,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
               </tbody>
             </table>
           </div>
+          </SecaoRecolhivel>
         </div>
       )}
     </>
@@ -1256,21 +1307,15 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
           <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
         ) : (
           <Campo label="Animal(is), lote(s) ou categoria" full>
-            <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-              {[
-                { v: "animal", label: "Animal(is)" },
-                { v: "lote", label: "Lote(s)" },
-                { v: "categoria", label: "Categoria de animais" },
-              ].map((o) => (
-                <button key={o.v} type="button" onClick={() => setVinculo(o.v as any)}
-                  style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
-                    border: "1px solid " + (vinculo === o.v ? "var(--dourado)" : "var(--border)"),
-                    background: vinculo === o.v ? "var(--dourado)" : "transparent",
-                    color: vinculo === o.v ? "#1a1a1a" : "var(--text-muted)", fontWeight: vinculo === o.v ? 700 : 400 }}>
-                  {o.label}
-                </button>
-              ))}
-            </div>
+            <TabBar<"animal" | "lote" | "categoria">
+              abas={[
+                { id: "animal", label: "Animal(is)", title: "Selecionar animais individualmente" },
+                { id: "lote", label: "Lote(s)", title: "Aplicar a todos os animais de um ou mais lotes" },
+                { id: "categoria", label: "Categoria de animais", title: "Aplicar a uma categoria pronta (ex.: vacas em lactação, secas)" },
+              ]}
+              ativa={vinculo}
+              onChange={setVinculo}
+            />
             {vinculo === "animal" && (
               <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("animal")}>
                 {animaisSelecionados.size ? `${animaisSelecionados.size} animal(is) selecionado(s) — alterar` : "Selecionar animais…"}
@@ -1535,7 +1580,7 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
               </Campo>
             </div>
             {itens.length > 1 && (
-              <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+              <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
                 <Trash2 size={13} />
               </button>
             )}
@@ -1552,8 +1597,13 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
       </div>
 
       {dietas && (
-        <div className="card mt-4">
-          <div className="card-header mb-2">Dietas lançadas</div>
+        <div className="mt-4">
+          <SecaoRecolhivel
+            titulo="Dietas lançadas"
+            defaultAberta={false}
+            descricao="Histórico de dietas por lote — comparativo, real oferecido e encerramento"
+            badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{dietas.length}</span>}
+          >
           <div className="overflow-x-auto">
             <table className="fazenda-table">
               <thead><tr><th>Lote</th><th>Responsável</th><th>Abertura</th><th>Prev. encerramento</th><th>Situação</th><th></th></tr></thead>
@@ -1600,7 +1650,7 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
                               <Campo label="Unidade">
                                 <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItemReal(idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>
                               </Campo>
-                              {itensReal.length > 1 && <button onClick={() => removerItemReal(idx)} className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }}><Trash2 size={13} /></button>}
+                              {itensReal.length > 1 && <button onClick={() => removerItemReal(idx)} title="Remover este alimento" aria-label="Remover este alimento" className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }}><Trash2 size={13} /></button>}
                             </div>
                           ))}
                           <button onClick={acrescentarItemReal} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><Plus size={13} /> Acrescentar alimento</button>
@@ -1640,6 +1690,7 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
               </tbody>
             </table>
           </div>
+          </SecaoRecolhivel>
         </div>
       )}
     </>
@@ -1775,7 +1826,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
               </div>
               {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
               {itens.length > 1 && (
-                <button onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
+                <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
                   <Trash2 size={13} />
                 </button>
               )}
@@ -1837,20 +1888,14 @@ function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
-      <div className="flex items-center gap-2 mb-3">
-        {[
-          { v: "tanque", label: "Todas as vacas em lactação (tanque)" },
-          { v: "vaca", label: "Uma vaca" },
-        ].map((o) => (
-          <button key={o.v} type="button" onClick={() => setAlvo(o.v as any)}
-            style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (alvo === o.v ? "var(--dourado)" : "var(--border)"),
-              background: alvo === o.v ? "var(--dourado)" : "transparent",
-              color: alvo === o.v ? "#1a1a1a" : "var(--text-muted)", fontWeight: alvo === o.v ? 700 : 500 }}>
-            {o.label}
-          </button>
-        ))}
-      </div>
+      <TabBar<"tanque" | "vaca">
+        abas={[
+          { id: "tanque", label: "Todas as vacas em lactação (tanque)", title: "Coleta única representando o rebanho em lactação (amostra do tanque)" },
+          { id: "vaca", label: "Uma vaca", title: "Coleta individual de uma vaca" },
+        ]}
+        ativa={alvo}
+        onChange={setAlvo}
+      />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         {alvo === "vaca" && <Campo label="Vaca" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>}
         <Campo label="Data da coleta"><input type="date" style={inputStyle} value={dataColeta} onChange={(e) => setDataColeta(e.target.value)} /></Campo>
@@ -2150,15 +2195,12 @@ export default function LancamentosPage() {
           ) : sel === "entrega_leite" ? (
             <><strong style={{ color: "var(--text)" }}>Entrega mensal já grava de verdade.</strong> Compara o controle leiteiro projetado do mês, a receita do laticínio e o que foi de fato entregue.</>
           ) : sel === "parto" ? (
-            <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG ainda são só calculadora.</>
+            <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG da 1ª cria também gravam — veja em Sanidade &gt; Relatório sanitário de bezerras.</>
           ) : sel === "protocolo_iatf" ? (
             <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
           ) : sel === "inseminacao" ? (
             <><strong style={{ color: "var(--text)" }}>Inseminação já grava de verdade.</strong> Registra a cobertura/IA (cio natural ou vinda de um protocolo IATF já agendado) e calcula a ordem/intervalo de tentativas.</>
-          ) : (
-            <><strong style={{ color: "var(--text)" }}>Rascunho funcional.</strong> Os selects já usam o rebanho real e os cálculos funcionam,
-            mas <strong>nada é gravado ainda</strong> — o salvamento entra com o banco permanente + login. Me diga o que ajustar em cada tipo.</>
-          )}
+          ) : null}
         </p>
       </div>
 

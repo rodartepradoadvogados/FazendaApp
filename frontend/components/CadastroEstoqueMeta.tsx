@@ -11,7 +11,7 @@ type Item = {
   id: number; nome: string; categoria: string | null; quantidade: number | null; unidade: string | null;
   unidade_embalagem: string | null; medida_embalagem: string | null; quantidade_embalagem: number | null;
   fornecedor_id: number | null; fornecedor_nome: string | null;
-  ativo: boolean | null; estocavel: boolean | null;
+  ativo: boolean | null; estocavel: boolean | null; considerar_rmca: boolean | null;
 };
 type Fornecedor = { id: number; nome: string };
 
@@ -27,6 +27,7 @@ export default function CadastroEstoqueMeta() {
   const [quantidadeEmbalagem, setQuantidadeEmbalagem] = useState("");
   const [fornecedorId, setFornecedorId] = useState("");
   const [estocavel, setEstocavel] = useState(true);
+  const [considerarRmca, setConsiderarRmca] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
 
@@ -40,6 +41,7 @@ export default function CadastroEstoqueMeta() {
     setQuantidadeEmbalagem(it.quantidade_embalagem?.toString() ?? "");
     setFornecedorId(it.fornecedor_id?.toString() ?? "");
     setEstocavel(it.estocavel !== false);
+    setConsiderarRmca(it.considerar_rmca !== false);
   };
 
   const salvar = async (id: number) => {
@@ -51,6 +53,7 @@ export default function CadastroEstoqueMeta() {
         quantidade_embalagem: quantidadeEmbalagem.trim() === "" ? null : Number(quantidadeEmbalagem),
         fornecedor_id: fornecedorId.trim() === "" ? null : Number(fornecedorId),
         estocavel,
+        considerar_rmca: considerarRmca,
       });
       setEditando(null);
       await carregar();
@@ -73,7 +76,8 @@ export default function CadastroEstoqueMeta() {
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Informe a unidade de embalagem (saca, pote, garrafa…), a unidade de medida e a quantidade por embalagem de
         cada item — a Alimentação usa isso para converter a necessidade calculada em número de embalagens a comprar.
-        Itens vindos de upload de CSV também aparecem aqui.
+        Itens vindos de upload de CSV também aparecem aqui. A coluna RMCA marca se o item entra no custo físico do
+        indicador RMCA (Financeiro) quando tem baixa de "Saída de ajuste" — desmarque itens que não são ração/alimento.
       </p>
 
       {novoAberto && <NovoItemEstoque onCriado={() => { setNovoAberto(false); carregar(); }} onCancelar={() => setNovoAberto(false)} />}
@@ -84,7 +88,7 @@ export default function CadastroEstoqueMeta() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Item</th><th>Categoria</th><th>Unidade</th><th>Unidade de medida</th><th>Quantidade</th><th>Fornecedor principal</th><th>Estocável</th><th></th></tr></thead>
+            <thead><tr><th>Item</th><th>Categoria</th><th>Unidade</th><th>Unidade de medida</th><th>Quantidade</th><th>Fornecedor principal</th><th>Estocável</th><th title="Entra no custo físico do RMCA quando tem baixa de Saída de ajuste">RMCA</th><th></th></tr></thead>
             <tbody>
               {itens.map((it) => (
                 <tr key={it.id}>
@@ -112,6 +116,7 @@ export default function CadastroEstoqueMeta() {
                         </select>
                       </td>
                       <td><input type="checkbox" checked={estocavel} onChange={(e) => setEstocavel(e.target.checked)} /></td>
+                      <td><input type="checkbox" checked={considerarRmca} onChange={(e) => setConsiderarRmca(e.target.checked)} /></td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                         <button className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem", marginRight: "0.3rem" }} onClick={() => salvar(it.id)} disabled={salvando}><Check size={13} /></button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
@@ -124,6 +129,7 @@ export default function CadastroEstoqueMeta() {
                       <td>{it.quantidade_embalagem ?? "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{it.fornecedor_nome || fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
                       <td>{it.estocavel === false ? "Não" : "Sim"}</td>
+                      <td>{it.considerar_rmca === false ? "Não" : "Sim"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(it)}>
                           <Pencil size={13} /> Editar
@@ -133,7 +139,7 @@ export default function CadastroEstoqueMeta() {
                   )}
                 </tr>
               ))}
-              {!itens.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
+              {!itens.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
             </tbody>
           </table>
         </div>

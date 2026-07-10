@@ -221,6 +221,11 @@ body {
   animation: pulse-dot 2s infinite;
 }
 
+/* Linha clicável — affordance para linhas de tabela que abrem detalhe/seleção.
+   A classe já era referenciada em Indicadores mas nunca existiu no CSS. */
+.row-clickable { cursor: pointer; }
+.row-clickable:hover { background: rgba(184, 134, 11, 0.10) !important; box-shadow: inset 3px 0 0 var(--dourado); }
+
 /* ── Responsivo (celular / tablet) ── */
 /* Nunca deixar a página rolar para o lado; tabelas largas rolam dentro do card. */
 html, body { max-width: 100%; overflow-x: hidden; }

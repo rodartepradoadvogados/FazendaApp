@@ -16,10 +16,15 @@ def calcular_rmca_gerencial(itens: list[dict], codigos_receita: set[str], codigo
 
 def calcular_custo_fisico(movimentos: list[dict], estoque_por_nome: dict[str, dict]) -> dict:
     """Soma o consumo real (MovimentoEstoque da baixa automática da Alimentação),
-    por ingrediente, multiplicado pelo valor unitário do item no Estoque."""
+    por ingrediente, multiplicado pelo valor unitário do item no Estoque.
+    Itens marcados com considerar_rmca=False (Configurações > Cadastro > Itens de
+    estoque) ficam de fora mesmo tendo baixa de "Saída de ajuste" no período —
+    sem marcação nenhuma (None/True), o item entra normalmente."""
     itens: dict[str, dict] = {}
     for m in movimentos:
         estoque = estoque_por_nome.get(m["nome_item"])
+        if estoque is not None and estoque.get("considerar_rmca") is False:
+            continue
         preco = (estoque or {}).get("valor_unitario") or 0
         quantidade = m["quantidade"] or 0
         acc = itens.setdefault(m["nome_item"], {"ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0})

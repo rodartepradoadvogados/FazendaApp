@@ -145,6 +145,16 @@ class TestMetaEstoque:
         r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"fornecedor_id": 999})
         assert r.status_code == 400
 
+    def test_atualizar_considerar_rmca(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Medicamento X", categoria="sanidade", quantidade=10))
+            s.commit()
+        item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"considerar_rmca": False})
+        assert r.status_code == 200
+        assert r.json()["considerar_rmca"] is False
+
 
 class TestPessoas:
     def test_seed_cria_funcionarios_padrao(self, client):
@@ -227,6 +237,66 @@ class TestFolhaPagamento:
         assert r.status_code == 200
         assert r.json()["status"] == "pago"
         assert r.json()["data_pagamento"] == "2026-07-05"
+
+    def test_retencao_inss_ir_calcula_liquido_automaticamente(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0,
+            "percentual_inss": 8.0, "valor_inss": 160.0, "percentual_ir": 5.0, "valor_ir": 100.0,
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["valor_inss"] == 160.0
+        assert corpo["valor_ir"] == 100.0
+        assert corpo["valor_liquido"] == 1740.0
+
+    def test_nao_permite_editar_folha_ja_paga(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        registro_id = c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0}).json()["id"]
+        c.put(f"/cadastro/folha-pagamento/{registro_id}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0,
+            "status": "pago", "data_pagamento": "2026-07-05",
+        })
+        r = c.put(f"/cadastro/folha-pagamento/{registro_id}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2500.0, "status": "pago",
+        })
+        assert r.status_code == 400
+
+    def test_edicao_sincroniza_conta_a_pagar_gerada(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        registro = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0, "descontos": 200.0,
+        }).json()
+        c.put(f"/cadastro/folha-pagamento/{registro['id']}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2400.0, "descontos": 200.0,
+        })
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro["numero_lancamento_gerado"])).first()
+        assert conta.valor_total == 2200.0
+
+    def test_listagem_traz_detalhe_discriminado_com_vale(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Funcionário Teste", "tipo": "Funcionário", "salario_base": 3000.0})
+        c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 150.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-06-10", "parcelas": 1, "competencia_inicio": "2026-07",
+        })
+        c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0,
+            "percentual_inss": 8.0, "valor_inss": 160.0,
+        })
+        registros = c.get("/cadastro/folha-pagamento").json()
+        detalhe = registros[0]["detalhe"]
+        labels = [d["label"] for d in detalhe]
+        assert any("INSS" in l for l in labels)
+        assert any("Vale" in l for l in labels)
+        assert detalhe[-1]["label"] == "Valor líquido"
+        assert detalhe[-1]["valor"] == registros[0]["valor_liquido"]
 
 
 class TestFolhaPagamentoRecorrente:

@@ -1,18 +1,22 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  RefreshCw,
+  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
+  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
-  fetchVales, criarVale,
+  criarVale,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { Modal } from "@/components/Modal";
+import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { RESPONSAVEIS } from "@/lib/constants";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
@@ -58,7 +62,6 @@ const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
-const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
   return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
@@ -109,7 +112,11 @@ export default function FinanceiroPage() {
   useEffect(() => {
     if (regs && !inicio) {
       const ds = regs.flatMap((r) => [r.data_pagamento, r.data_competencia, r.data_vencimento]).filter(Boolean).sort() as string[];
-      if (ds.length) { setInicio(ds[0]); setFim(ds[ds.length - 1]); }
+      // Início = data mais antiga real dos lançamentos, mas o fim sempre parte de
+      // hoje — nunca da maior data encontrada (um lançamento com data futura/errada
+      // não deve puxar o filtro inteiro para o futuro).
+      if (ds.length) setInicio(ds[0]);
+      setFim(new Date().toISOString().slice(0, 10));
     }
   }, [regs, inicio]);
 
@@ -412,17 +419,14 @@ export default function FinanceiroPage() {
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
-          <div className="flex items-center gap-2 mb-3">
-            {(["mensal", "diario"] as const).map((v) => (
-              <button key={v} onClick={() => setVisaoFluxo(v)}
-                style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (visaoFluxo === v ? "var(--dourado)" : "var(--border)"),
-                  background: visaoFluxo === v ? "var(--dourado)" : "transparent",
-                  color: visaoFluxo === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: visaoFluxo === v ? 700 : 400 }}>
-                {v === "mensal" ? "Mensal" : "Diário"}
-              </button>
-            ))}
-          </div>
+          <TabBar
+            abas={[
+              { id: "mensal", label: "Mensal", title: "Fluxo agrupado por mês de caixa" },
+              { id: "diario", label: "Diário", title: "Fluxo dia a dia, como o extrato bancário" },
+            ] as const}
+            ativa={visaoFluxo}
+            onChange={setVisaoFluxo}
+          />
         )}
 
         {/* Gráfico do consolidado */}
@@ -442,20 +446,25 @@ export default function FinanceiroPage() {
               </ComposedChart>
             </ResponsiveContainer>
           )}
-          {rel === "fluxo" && visaoFluxo === "diario" && (
+          {rel === "fluxo" && visaoFluxo === "diario" && (<>
             <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={fluxoDiario.filter((_, i) => i % Math.ceil(fluxoDiario.length / 200 || 1) === 0)}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="dia" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => formatDate(d as string)} contentStyle={tip} />
                 <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
                 <Bar dataKey="entradas" name="Entradas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="saidas" name="Saídas" fill="var(--red)" radius={[2, 2, 0, 0]} />
                 <Line type="monotone" dataKey="acumulado" name="Acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
-          )}
+            {Math.ceil(fluxoDiario.length / 200 || 1) > 1 && (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem", textAlign: "center" }}>
+                Exibindo 1 a cada {Math.ceil(fluxoDiario.length / 200 || 1)} pontos para legibilidade.
+              </p>
+            )}
+          </>)}
           {rel === "dre" && (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={[{ n: "Receita", v: receitas, f: "var(--green-light)" }, { n: "Despesa", v: despesas, f: "var(--red)" }, { n: "Resultado", v: Math.abs(resultado), f: resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
@@ -466,17 +475,22 @@ export default function FinanceiroPage() {
               </BarChart>
             </ResponsiveContainer>
           )}
-          {rel === "livro" && (
+          {rel === "livro" && (<>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={livro.filter((_, i) => i % Math.ceil(livro.length / 150 || 1) === 0)}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="data" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => formatDate(d as string)} contentStyle={tip} />
                 <Line type="monotone" dataKey="saldo" name="Saldo acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-          )}
+            {Math.ceil(livro.length / 150 || 1) > 1 && (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem", textAlign: "center" }}>
+                Exibindo 1 a cada {Math.ceil(livro.length / 150 || 1)} pontos para legibilidade.
+              </p>
+            )}
+          </>)}
         </div>
 
         {/* Detalhamento do relatório */}
@@ -488,7 +502,7 @@ export default function FinanceiroPage() {
             </span>
             {rel === "livro" && (
               <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
-                linhas={livro.map((l) => ({ ...l, dataFmt: fmtDia(l.data) }))} />
+                linhas={livro.map((l) => ({ ...l, dataFmt: formatDate(l.data || "") }))} />
             )}
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : "460px" }}>
@@ -500,7 +514,7 @@ export default function FinanceiroPage() {
                   const itens = aberto ? filtrados.filter((r) => campoMes(r) === m.mes).sort((a, b) => ((a.data_pagamento || "") < (b.data_pagamento || "") ? -1 : 1)) : [];
                   return (
                     <Fragment key={m.mes}>
-                      <tr onClick={() => toggleExp("fluxo:" + m.mes)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("fluxo:" + m.mes)} title="Clique para ver os lançamentos deste mês" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
                         <td style={{ fontWeight: 600 }}>{m.mes}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
@@ -511,7 +525,7 @@ export default function FinanceiroPage() {
                       {aberto && itens.map((r, i) => (
                         <tr key={m.mes + ":" + i} style={{ background: "var(--surface-2)" }}>
                           <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento)} · {r.descricao}</td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{formatDate(r.data_pagamento || "")} · {r.descricao}</td>
                           <td colSpan={2} style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.fornecedor}</td>
                           <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
@@ -529,9 +543,9 @@ export default function FinanceiroPage() {
                   const itens = aberto ? filtrados.filter((r) => campoData(r) === m.dia) : [];
                   return (
                     <Fragment key={m.dia}>
-                      <tr onClick={() => toggleExp("fluxodia:" + m.dia)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("fluxodia:" + m.dia)} title="Clique para ver os lançamentos deste dia" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
-                        <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fmtDia(m.dia)}</td>
+                        <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{formatDate(m.dia)}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
                         <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
                         <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
@@ -567,7 +581,7 @@ export default function FinanceiroPage() {
                   }).sort((a, b) => b.valor - a.valor) : [];
                   return (
                     <Fragment key={c.conta}>
-                      <tr onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("dre:" + c.conta)} title="Clique para ver os lançamentos desta conta" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
                         <td style={{ fontWeight: c.nivel <= 1 ? 700 : 600, paddingLeft: `${Math.max(0, c.nivel - 1) * 1.1}rem` }}>
                           {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
@@ -579,7 +593,7 @@ export default function FinanceiroPage() {
                       {aberto && itens.map((r, i) => (
                         <tr key={c.conta + ":" + i} style={{ background: "var(--surface-2)" }}>
                           <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento || r.data_competencia)} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{formatDate(r.data_pagamento || r.data_competencia || "")} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
                           <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
                       ))}
@@ -593,7 +607,7 @@ export default function FinanceiroPage() {
                 <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
                 <tbody>{livro.slice(0, 500).map((l, i) => (
                   <tr key={i}>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{fmtDia(l.data)}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(l.data || "")}</td>
                     <td style={{ fontSize: "0.78rem" }}>{l.descricao}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{l.fornecedor}</td>
                     <td style={{ textAlign: "right", color: "var(--green-light)" }}>{l.entrada ? formatBRL(l.entrada) : ""}</td>
@@ -609,8 +623,12 @@ export default function FinanceiroPage() {
 
         {/* Detalhamento por conta gerencial, mês a mês — só no Fluxo de Caixa */}
         {rel === "fluxo" && mesesFluxo.length > 0 && (
-          <div className="card">
-            <div className="card-header mb-3">Detalhamento por conta gerencial (mês a mês)</div>
+          <SecaoRecolhivel
+            titulo="Detalhamento por conta gerencial (mês a mês)"
+            defaultAberta={false}
+            descricao="Uma coluna por mês, com a hierarquia completa do plano de contas"
+            badge={<span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{detalhePorContaMensal.length} conta(s)</span>}
+          >
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
               Mesma hierarquia do plano de contas — uma conta de grupo soma o total das contas abaixo dela.
             </p>
@@ -642,7 +660,7 @@ export default function FinanceiroPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SecaoRecolhivel>
         )}
         </>}
         </>}
@@ -686,6 +704,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   const [numeroComprovante, setNumeroComprovante] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const [anexarAberto, setAnexarAberto] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -716,6 +735,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
     p.size === filtrados.length && filtrados.length ? new Set() : new Set(filtrados.map((r) => r.id))
   );
   const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
+  const totalFiltrado = useMemo(() => filtrados.reduce((a, r) => a + r.valor, 0), [filtrados]);
 
   async function darBaixaEmLote() {
     setMsg(null);
@@ -746,10 +766,15 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   return (
     <div>
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
+          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Tipo</label>
-            <select style={selStyleLote} value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
+            <select style={selStyleLote} title="Filtrar por tipo de nota: a pagar, a receber ou ambas" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
               <option value="todos">Despesas e receitas</option><option value="despesa">Só despesas (a pagar)</option><option value="receita">Só receitas (a receber)</option>
             </select></div>
           <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
@@ -781,10 +806,19 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
         </div>
       </div>
 
+      {anexarAberto && (
+        <Modal title="Novo lançamento — leitura automática" onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+        </Modal>
+      )}
+
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
-          <span style={{ fontSize: "0.85rem" }}>{filtrados.length} nota(s) em aberto no filtro — {selecionados.size} selecionada(s) ({formatBRL(totalSelecionado)})</span>
-          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
+          <span style={{ fontSize: "0.85rem" }}>
+            {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
+            {selecionados.size > 0 && <> · {selecionados.size} selecionada(s) — {formatBRL(totalSelecionado)}</>}
+          </span>
+          <button className="btn-ghost" title="Selecionar ou limpar todas as notas do filtro" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
         </div>
@@ -795,7 +829,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
               {filtrados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 return (
-                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => toggle(r.id)}>
+                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" onClick={() => toggle(r.id)}>
                     <td><input type="checkbox" checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
@@ -849,7 +883,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
             </div>
           )}
           {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-          <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
+          <button className="btn-primary" title="Baixar todas as notas selecionadas com este pagamento único" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>
@@ -946,7 +980,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
           <span>Lançamentos</span>
           <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
-            linhas={itens.map((r) => ({ ...r, data: fmtDia(emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+            linhas={itens.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
@@ -966,7 +1000,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
                   <tr key={r.id}>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` (${r.parcela_num}/${r.parcela_total})` : ""}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
-                      {fmtDia(emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento))}{vencido ? " ⚠" : ""}
+                      {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
                     </td>
                     <td style={{ fontSize: "0.78rem" }}>{r.descricao || "—"}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
@@ -975,7 +1009,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
-                    {emAberto && <td><button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => onTratar(r)}>Tratar</button></td>}
+                    {emAberto && <td><button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem" }} onClick={() => onTratar(r)}>Tratar</button></td>}
                   </tr>
                 );
               })}
@@ -1020,6 +1054,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const [anexarAberto, setAnexarAberto] = useState(false);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -1036,6 +1071,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto)
   ), [abertas, numeroDocumento, fornecedor, produto, centroCusto]);
+  const totalFiltrado = useMemo(() => filtradas.reduce((a, r) => a + r.valor, 0), [filtradas]);
 
   function selecionar(nota: Lanc) {
     setNotaId(nota.id);
@@ -1085,7 +1121,12 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   return (
     <div>
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
+          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar nota fiscal ou recibo
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
             <div style={{ position: "relative" }}>
@@ -1107,9 +1148,15 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
         </div>
       </div>
 
+      {anexarAberto && (
+        <Modal title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`} onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+        </Modal>
+      )}
+
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
         <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem" }}>
-          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro</span>
+          <span style={{ fontSize: "0.85rem" }}>{filtradas.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}</span>
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
@@ -1119,7 +1166,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 const ativa = r.id === notaId;
                 return (
-                  <tr key={r.id} style={{ cursor: "pointer", background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
+                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" style={{ background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
                       {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
@@ -1129,7 +1176,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
-                    <td>{ativa && <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} />}</td>
+                    <td>{ativa ? <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} /> : <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />}</td>
                   </tr>
                 );
               })}
@@ -1176,10 +1223,10 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
           )}
           {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
           <div className="flex items-center gap-3 mt-4">
-            <button className="btn-primary" onClick={confirmar} disabled={salvando}>
+            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar} disabled={salvando}>
               <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}
             </button>
-            <button className="btn-ghost" onClick={() => setNotaId(null)}>Cancelar</button>
+            <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
         </div>
       )}
@@ -1195,11 +1242,38 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
 type PessoaFolha = { id: number; nome: string; tipo: string };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
-  valor_bruto: number; descontos: number; valor_liquido: number;
+  valor_bruto: number; descontos: number;
+  percentual_inss: number; percentual_ir: number; valor_inss: number; valor_ir: number;
+  valor_liquido: number;
   data_pagamento: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
+  detalhe: { label: string; valor: number }[];
 };
+
+function arredonda2(n: number) {
+  return Math.round(n * 100) / 100;
+}
+
+/** Par percentual/valor de retenção (INSS ou IR) — o valor é recalculado
+ * automaticamente a partir do percentual, mas fica editável: digitar
+ * diretamente no valor "trava" o campo contra o recálculo automático até
+ * o percentual ser alterado de novo. */
+function CampoRetencao({
+  label, percentual, valor, onChangePercentual, onChangeValor,
+}: {
+  label: string; percentual: string; valor: string;
+  onChangePercentual: (v: string) => void; onChangeValor: (v: string) => void;
+}) {
+  return (
+    <>
+      <div><label style={labelStyleLote}>{label} (%)</label>
+        <input type="number" inputMode="decimal" style={selStyleLote} value={percentual} onChange={(e) => onChangePercentual(e.target.value)} /></div>
+      <div><label style={labelStyleLote}>{label} (R$)</label>
+        <input type="number" inputMode="decimal" style={selStyleLote} value={valor} onChange={(e) => onChangeValor(e.target.value)} /></div>
+    </>
+  );
+}
 
 function FolhaPagamentoView() {
   const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
@@ -1210,6 +1284,12 @@ function FolhaPagamentoView() {
   const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
   const [valorBruto, setValorBruto] = useState("");
   const [descontos, setDescontos] = useState("");
+  const [percentualInss, setPercentualInss] = useState("");
+  const [valorInss, setValorInss] = useState("");
+  const [inssManual, setInssManual] = useState(false);
+  const [percentualIr, setPercentualIr] = useState("");
+  const [valorIr, setValorIr] = useState("");
+  const [irManual, setIrManual] = useState(false);
   const [observacao, setObservacao] = useState("");
   const [recorrente, setRecorrente] = useState(false);
   const [diaVencimento, setDiaVencimento] = useState("5");
@@ -1217,12 +1297,60 @@ function FolhaPagamentoView() {
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
   const [pagandoId, setPagandoId] = useState<number | null>(null);
+  const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
+  const [anexarAberto, setAnexarAberto] = useState(false);
+
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editPessoaId, setEditPessoaId] = useState("");
+  const [editCompetencia, setEditCompetencia] = useState("");
+  const [editValorBruto, setEditValorBruto] = useState("");
+  const [editDescontos, setEditDescontos] = useState("");
+  const [editPercentualInss, setEditPercentualInss] = useState("");
+  const [editValorInss, setEditValorInss] = useState("");
+  const [editInssManual, setEditInssManual] = useState(true);
+  const [editPercentualIr, setEditPercentualIr] = useState("");
+  const [editValorIr, setEditValorIr] = useState("");
+  const [editIrManual, setEditIrManual] = useState(true);
+  const [editObservacao, setEditObservacao] = useState("");
+  const [editRecorrente, setEditRecorrente] = useState(false);
+  const [editDiaVencimento, setEditDiaVencimento] = useState("5");
+  const [editSalvando, setEditSalvando] = useState(false);
+  const [editMsg, setEditMsg] = useState<string | null>(null);
 
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
 
-  const valorLiquido = useMemo(() => (parseFloat(valorBruto) || 0) - (parseFloat(descontos) || 0), [valorBruto, descontos]);
+  useEffect(() => {
+    if (inssManual) return;
+    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualInss) || 0) / 100);
+    setValorInss(novo ? String(novo) : "");
+  }, [valorBruto, percentualInss, inssManual]);
+  useEffect(() => {
+    if (irManual) return;
+    const novo = arredonda2((parseFloat(valorBruto) || 0) * (parseFloat(percentualIr) || 0) / 100);
+    setValorIr(novo ? String(novo) : "");
+  }, [valorBruto, percentualIr, irManual]);
+  useEffect(() => {
+    if (editInssManual) return;
+    const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualInss) || 0) / 100);
+    setEditValorInss(novo ? String(novo) : "");
+  }, [editValorBruto, editPercentualInss, editInssManual]);
+  useEffect(() => {
+    if (editIrManual) return;
+    const novo = arredonda2((parseFloat(editValorBruto) || 0) * (parseFloat(editPercentualIr) || 0) / 100);
+    setEditValorIr(novo ? String(novo) : "");
+  }, [editValorBruto, editPercentualIr, editIrManual]);
+
+  const valorLiquido = useMemo(
+    () => (parseFloat(valorBruto) || 0) - (parseFloat(descontos) || 0) - (parseFloat(valorInss) || 0) - (parseFloat(valorIr) || 0),
+    [valorBruto, descontos, valorInss, valorIr]
+  );
+  const editValorLiquido = useMemo(
+    () => (parseFloat(editValorBruto) || 0) - (parseFloat(editDescontos) || 0) - (parseFloat(editValorInss) || 0) - (parseFloat(editValorIr) || 0),
+    [editValorBruto, editDescontos, editValorInss, editValorIr]
+  );
 
   async function salvar() {
     setMsg(null);
@@ -1236,7 +1364,10 @@ function FolhaPagamentoView() {
     try {
       await criarFolhaPagamento({
         pessoa_id: Number(pessoaId), competencia, valor_bruto: parseFloat(valorBruto),
-        descontos: parseFloat(descontos) || 0, observacao: observacao || undefined,
+        descontos: parseFloat(descontos) || 0,
+        percentual_inss: parseFloat(percentualInss) || 0, percentual_ir: parseFloat(percentualIr) || 0,
+        valor_inss: parseFloat(valorInss) || 0, valor_ir: parseFloat(valorIr) || 0,
+        observacao: observacao || undefined,
         recorrente, dia_vencimento: recorrente ? Number(diaVencimento) : null,
       });
       setMsg({
@@ -1246,6 +1377,8 @@ function FolhaPagamentoView() {
           : "Lançamento de folha criado.",
       });
       setPessoaId(""); setValorBruto(""); setDescontos(""); setObservacao(""); setRecorrente(false); setDiaVencimento("5");
+      setPercentualInss(""); setValorInss(""); setInssManual(false);
+      setPercentualIr(""); setValorIr(""); setIrManual(false);
       carregar();
     } catch (e: any) {
       setMsg({ tipo: "erro", texto: e.message || "Erro ao lançar folha" });
@@ -1255,16 +1388,64 @@ function FolhaPagamentoView() {
   }
 
   async function marcarPago(r: RegistroFolha) {
+    setPagoErro(null);
     try {
       await atualizarFolhaPagamento(r.id, {
         pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
-        descontos: r.descontos, data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
+        descontos: r.descontos, percentual_inss: r.percentual_inss, percentual_ir: r.percentual_ir,
+        valor_inss: r.valor_inss, valor_ir: r.valor_ir,
+        data_pagamento: dataPagamento, status: "pago", observacao: r.observacao || undefined,
         recorrente: r.recorrente, dia_vencimento: r.dia_vencimento,
       });
       setPagandoId(null);
       carregar();
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao marcar como pago" });
+      setPagoErro(e.message || "Erro ao marcar como pago");
+    }
+  }
+
+  function iniciarEdicao(r: RegistroFolha) {
+    setEditingId(r.id);
+    setExpandedId(r.id);
+    setEditPessoaId(String(r.pessoa_id));
+    setEditCompetencia(r.competencia);
+    setEditValorBruto(String(r.valor_bruto));
+    setEditDescontos(String(r.descontos));
+    setEditPercentualInss(r.percentual_inss ? String(r.percentual_inss) : "");
+    setEditValorInss(r.valor_inss ? String(r.valor_inss) : "");
+    setEditInssManual(true);
+    setEditPercentualIr(r.percentual_ir ? String(r.percentual_ir) : "");
+    setEditValorIr(r.valor_ir ? String(r.valor_ir) : "");
+    setEditIrManual(true);
+    setEditObservacao(r.observacao || "");
+    setEditRecorrente(r.recorrente);
+    setEditDiaVencimento(r.dia_vencimento ? String(r.dia_vencimento) : "5");
+    setEditMsg(null);
+  }
+
+  async function salvarEdicao(r: RegistroFolha) {
+    setEditMsg(null);
+    if (!editPessoaId || !editCompetencia || !editValorBruto || parseFloat(editValorBruto) <= 0) {
+      setEditMsg("Preencha pessoa, competência e valor bruto.");
+      return;
+    }
+    setEditSalvando(true);
+    try {
+      await atualizarFolhaPagamento(r.id, {
+        pessoa_id: Number(editPessoaId), competencia: editCompetencia, valor_bruto: parseFloat(editValorBruto) || 0,
+        descontos: parseFloat(editDescontos) || 0,
+        percentual_inss: parseFloat(editPercentualInss) || 0, percentual_ir: parseFloat(editPercentualIr) || 0,
+        valor_inss: parseFloat(editValorInss) || 0, valor_ir: parseFloat(editValorIr) || 0,
+        observacao: editObservacao || undefined,
+        recorrente: editRecorrente, dia_vencimento: editRecorrente ? Number(editDiaVencimento) : null,
+        status: r.status, data_pagamento: r.data_pagamento || undefined,
+      });
+      setEditingId(null);
+      carregar();
+    } catch (e: any) {
+      setEditMsg(e.message || "Erro ao atualizar lançamento de folha");
+    } finally {
+      setEditSalvando(false);
     }
   }
 
@@ -1281,8 +1462,19 @@ function FolhaPagamentoView() {
         <KPI v={formatBRL(totalPago)} l="Pago" c="var(--green-light)" />
       </div>
 
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</div>
+      {anexarAberto && (
+        <Modal title="Anexar comprovante — leitura automática (despesa)" onClose={() => setAnexarAberto(false)} width="1000px">
+          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+        </Modal>
+      )}
+
+      {/* 1) Novo lançamento de folha */}
+      <SecaoRecolhivel titulo="Novo lançamento de folha" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
+        <div className="mb-3" style={{ textAlign: "right" }}>
+          <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+            <Paperclip size={13} /> Anexar recibo/comprovante
+          </button>
+        </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Pessoa</label>
             <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
@@ -1292,8 +1484,20 @@ function FolhaPagamentoView() {
             <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Valor bruto (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={valorBruto} onChange={(e) => setValorBruto(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Descontos (R$)</label>
+          <div><label style={labelStyleLote}>Outros descontos (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <CampoRetencao
+            label="INSS" percentual={percentualInss} valor={valorInss}
+            onChangePercentual={(v) => { setPercentualInss(v); setInssManual(false); }}
+            onChangeValor={(v) => { setValorInss(v); setInssManual(true); }}
+          />
+          <CampoRetencao
+            label="IR" percentual={percentualIr} valor={valorIr}
+            onChangePercentual={(v) => { setPercentualIr(v); setIrManual(false); }}
+            onChangeValor={(v) => { setValorIr(v); setIrManual(true); }}
+          />
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
           <div><label style={labelStyleLote}>Observação</label>
@@ -1316,59 +1520,147 @@ function FolhaPagamentoView() {
           </p>
         )}
         {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
+        <button className="btn-primary" title="Salvar o lançamento de folha" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
-      </div>
+      </SecaoRecolhivel>
 
-      <div className="card">
+      {/* 2) Vale de funcionário */}
+      <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
+        <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
+      </SecaoRecolhivel>
+
+      {/* 3) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga */}
+      <div className="card mt-4">
         <div className="card-header mb-3">Lançamentos de folha</div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Pessoa</th><th>Competência</th><th style={{ textAlign: "right" }}>Bruto</th><th style={{ textAlign: "right" }}>Descontos</th><th style={{ textAlign: "right" }}>Líquido</th><th>Status</th><th>Pagamento</th><th></th></tr></thead>
             <tbody>
-              {(regs || []).map((r) => (
-                <Fragment key={r.id}>
-                  <tr>
-                    <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
-                      {r.pessoa_nome}
-                      {(r.recorrente || r.origem_recorrencia_id) && (
-                        <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
-                          <RefreshCw size={12} />
+              {(regs || []).map((r) => {
+                const expandido = expandedId === r.id;
+                const editando = editingId === r.id;
+                return (
+                  <Fragment key={r.id}>
+                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}>
+                      <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                        <span className="flex items-center gap-1">
+                          {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                          {r.pessoa_nome}
                         </span>
-                      )}
-                    </td>
-                    <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
-                    <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.descontos)}</td>
-                    <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
-                    <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
-                    <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
-                    <td style={{ textAlign: "right" }}>
-                      {r.status === "pendente" && (
-                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(pagandoId === r.id ? null : r.id)}>Marcar como pago</button>
-                      )}
-                    </td>
-                  </tr>
-                  {pagandoId === r.id && (
-                    <tr><td colSpan={8}>
-                      <div className="flex items-end gap-2" style={{ padding: "0.5rem 0" }}>
-                        <div><label style={labelStyleLote}>Data do pagamento</label>
-                          <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-                        <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
-                        <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPagandoId(null)}>Cancelar</button>
-                      </div>
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
+                        {(r.recorrente || r.origem_recorrencia_id) && (
+                          <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
+                            <RefreshCw size={12} />
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(arredonda2(r.descontos + r.valor_inss + r.valor_ir))}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
+                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
+                      <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
+                        {r.status === "pendente" && (
+                          <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                        )}
+                      </td>
+                    </tr>
+                    {pagandoId === r.id && (
+                      <tr><td colSpan={8}>
+                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
+                          <div><label style={labelStyleLote}>Data do pagamento</label>
+                            <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+                          <button className="btn-primary" title="Confirmar pagamento" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
+                          <button className="btn-ghost" title="Cancelar" style={{ fontSize: "0.78rem" }} onClick={() => { setPagoErro(null); setPagandoId(null); }}>Cancelar</button>
+                          {pagoErro && <span style={{ color: "var(--red)", fontSize: "0.78rem", alignSelf: "center" }}>{pagoErro}</span>}
+                        </div>
+                      </td></tr>
+                    )}
+                    {expandido && !editando && (
+                      <tr><td colSpan={8}>
+                        <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
+                            <tbody>
+                              {r.detalhe.map((d, i) => (
+                                <tr key={i}>
+                                  <td style={{ padding: "0.15rem 0.5rem 0.15rem 0", fontWeight: d.label === "Valor líquido" ? 700 : 400 }}>{d.label}</td>
+                                  <td style={{ textAlign: "right", fontWeight: d.label === "Valor líquido" ? 700 : 400, color: d.valor < 0 ? "var(--red)" : undefined }}>{formatBRL(d.valor)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
+                          {r.status !== "pago" ? (
+                            <button className="btn-ghost mt-2" title="Editar este lançamento de folha (enquanto não estiver pago)" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
+                              <Pencil size={12} /> Editar lançamento
+                            </button>
+                          ) : (
+                            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Lançamento já pago — não pode mais ser editado.</p>
+                          )}
+                        </div>
+                      </td></tr>
+                    )}
+                    {editando && (
+                      <tr><td colSpan={8}>
+                        <div style={{ padding: "0.75rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Pessoa</label>
+                              <select style={selStyleLote} value={editPessoaId} onChange={(e) => setEditPessoaId(e.target.value)}>
+                                {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+                              </select></div>
+                            <div><label style={labelStyleLote}>Competência (mês)</label>
+                              <input type="month" style={selStyleLote} value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Valor bruto (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValorBruto} onChange={(e) => setEditValorBruto(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Outros descontos (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editDescontos} onChange={(e) => setEditDescontos(e.target.value)} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <CampoRetencao
+                              label="INSS" percentual={editPercentualInss} valor={editValorInss}
+                              onChangePercentual={(v) => { setEditPercentualInss(v); setEditInssManual(false); }}
+                              onChangeValor={(v) => { setEditValorInss(v); setEditInssManual(true); }}
+                            />
+                            <CampoRetencao
+                              label="IR" percentual={editPercentualIr} valor={editValorIr}
+                              onChangePercentual={(v) => { setEditPercentualIr(v); setEditIrManual(false); }}
+                              onChangeValor={(v) => { setEditValorIr(v); setEditIrManual(true); }}
+                            />
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Observação</label>
+                              <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
+                            <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
+                            <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
+                              <input id="folha-edit-recorrente" type="checkbox" checked={editRecorrente} onChange={(e) => setEditRecorrente(e.target.checked)} />
+                              <label htmlFor="folha-edit-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente</label>
+                            </div>
+                            {editRecorrente && (
+                              <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+                                <input type="number" min={1} max={28} style={selStyleLote} value={editDiaVencimento} onChange={(e) => setEditDiaVencimento(e.target.value)} /></div>
+                            )}
+                          </div>
+                          {editMsg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
+                          <div className="flex items-center gap-2">
+                            <button className="btn-primary" title="Salvar as alterações deste lançamento" style={{ fontSize: "0.78rem" }} onClick={() => salvarEdicao(r)} disabled={editSalvando}>
+                              <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
+                            </button>
+                            <button className="btn-ghost" title="Cancelar a edição" style={{ fontSize: "0.78rem" }} onClick={() => setEditingId(null)}>Cancelar</button>
+                          </div>
+                        </div>
+                      </td></tr>
+                    )}
+                  </Fragment>
+                );
+              })}
               {regs && !regs.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento de folha ainda.</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
-
-      <ValeFuncionarioSection pessoas={pessoas} />
     </div>
   );
 }
@@ -1378,15 +1670,13 @@ const FORMAS_VALE = [
   { value: "transferencia", label: "Transferência" }, { value: "desconto_integral_folha", label: "Desconto integral na próxima folha" },
 ];
 
-type ParcelaVale = { competencia: string; valor: number; aplicada?: boolean };
-type Vale = {
-  id: number; pessoa_id: number; pessoa_nome: string; valor_total: number; forma_pagamento: string;
-  data_pagamento: string; parcelas: number; competencia_inicio: string; observacao: string | null;
-  parcelas_detalhe: ParcelaVale[];
-};
-
-function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
-  const [vales, setVales] = useState<Vale[] | null>(null);
+/**
+ * Vale de funcionário — só o formulário de lançamento. A lista de parcelas
+ * geradas não aparece mais aqui: ela vira a expansão da folha listada (na
+ * competência em que a parcela é aplicada), por decisão explícita do
+ * usuário — ver `_detalhe_folha` no backend.
+ */
+function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]; onLancado: () => void }) {
   const [pessoaId, setPessoaId] = useState("");
   const [valorTotal, setValorTotal] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("dinheiro");
@@ -1396,9 +1686,6 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
-
-  const carregar = () => fetchVales().then(setVales).catch(() => {});
-  useEffect(() => { carregar(); }, []);
 
   async function lancar(confirmar = false) {
     setMsg(null);
@@ -1412,9 +1699,9 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
         observacao: observacao || undefined, confirmar,
       });
-      setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto entrará automaticamente na folha das competências afetadas." });
+      setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
       setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao("");
-      carregar();
+      onLancado();
     } catch (e: any) {
       if (e.status === 409 && e.detail?.competencias_excedidas) {
         const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
@@ -1432,8 +1719,7 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
   }
 
   return (
-    <div className="card mt-4">
-      <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Vale de funcionário</div>
+    <div>
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
         Adiantamento pago à parte, descontado da folha em uma ou mais competências. Se a soma dos descontos de vale
         de uma competência ultrapassar 40% do salário base da pessoa, o sistema pede confirmação antes de lançar.
@@ -1461,30 +1747,9 @@ function ValeFuncionarioSection({ pessoas }: { pessoas: PessoaFolha[] }) {
           <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       </div>
       {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-      <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
+      <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
-
-      {vales && vales.length > 0 && (
-        <div className="overflow-x-auto mt-4">
-          <table className="fazenda-table">
-            <thead><tr><th>Pessoa</th><th style={{ textAlign: "right" }}>Valor total</th><th>Forma</th><th>Parcelas</th><th>Competências</th></tr></thead>
-            <tbody>
-              {vales.map((v) => (
-                <tr key={v.id}>
-                  <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{v.pessoa_nome}</td>
-                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_total)}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{v.parcelas}x</td>
-                  <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>
-                    {v.parcelas_detalhe.map((p) => `${p.competencia}: ${formatBRL(p.valor)}${p.aplicada ? " ✓" : ""}`).join(" · ")}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
     </div>
   );
 }
@@ -1510,18 +1775,56 @@ function primeiroDiaDoMes() {
   return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
 }
 
+/* ───────────────────────── Roteiro do RMCA (modal em tela, mesmo padrão do manual de colostro/sangue) ───────────────────────── */
+const ROTEIRO_RMCA = [
+  { t: "1. O que é o RMCA", d: "Receita Menos Custo com Alimentação: quanto sobra da receita do leite depois de descontar o gasto com ração/alimentação no mesmo período. Duas versões lado a lado — gerencial e físico — para conferência cruzada." },
+  { t: "2. Versão gerencial — marque as contas", d: "Vá em Configurações → Parâmetros financeiros → Conta gerencial. Marque a(s) conta(s) de receita que representam a venda do leite (ex.: \"Leite indústria\") e a(s) conta(s) de despesa que representam alimentação (ex.: \"Ração\", \"Silagem\", \"Sal mineral\"). O RMCA gerencial soma os lançamentos financeiros dessas contas no período." },
+  { t: "3. Versão física — indique os produtos", d: "Vá em Configurações → Cadastro → Itens de estoque. Na coluna RMCA, marque quais produtos são ração/alimento e devem entrar no custo físico. Desmarque produtos que não são alimentação (medicamentos, materiais etc.), mesmo que também tenham baixa de \"Saída de ajuste\"." },
+  { t: "4. Como o custo físico é calculado", d: "Para cada produto marcado, o sistema soma a quantidade baixada como \"Saída de ajuste\" pela Alimentação no período e multiplica pelo valor unitário cadastrado no Estoque. O card \"RMCA físico\" mostra o detalhamento produto a produto." },
+  { t: "5. Por que duas versões", d: "A gerencial reflete o que foi de fato lançado no financeiro (pode incluir sobras de estoque, compras antecipadas). A física reflete o consumo real no período, ainda que o pagamento tenha sido em outro mês. Comparar as duas ajuda a identificar diferenças de timing." },
+];
+
+function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
+      <div className="card" style={{ width: "560px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>Roteiro — Como indicar os produtos do RMCA</div>
+          <button onClick={onClose} title="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div className="space-y-2">
+          {ROTEIRO_RMCA.map((s) => (
+            <div key={s.t} style={{ borderLeft: "3px solid var(--dourado-light)", paddingLeft: "0.6rem" }}>
+              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
+              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RmcaView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
   const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
   const [dados, setDados] = useState<RmcaResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [roteiroAberto, setRoteiroAberto] = useState(false);
 
   useEffect(() => { fetchRmca(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
 
   return (
     <div>
+      {roteiroAberto && <RoteiroRmcaModal onClose={() => setRoteiroAberto(false)} />}
+
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Período</span>
+          <button className="btn-ghost" title="Abrir o passo a passo de configuração do RMCA" style={{ fontSize: "0.75rem" }} onClick={() => setRoteiroAberto(true)}>
+            <BookOpen size={13} /> Roteiro — como indicar os produtos do RMCA
+          </button>
+        </div>
         <div className="flex flex-wrap gap-3 items-end">
           <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>

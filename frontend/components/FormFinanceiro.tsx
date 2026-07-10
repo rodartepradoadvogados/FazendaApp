@@ -2,7 +2,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro, formatBRL,
+  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro,
+  lerDocumentoFinanceiro, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -60,7 +61,7 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void }) {
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void; onSalvo?: () => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const carregarOpcoes = () => fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {});
   useEffect(() => { carregarOpcoes(); }, []);
@@ -205,14 +206,51 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
     }
   }
 
+  // Nota fiscal ou recibo em PDF/JPEG/PNG — leitura automática via IA.
+  // Recibo (já pago) preenche o pagamento imediato; nota fiscal nasce em aberto.
+  function aplicarExtracaoDocumento(dados: any) {
+    aplicarXml(dados);
+    const ehRecibo = dados.tipo_documento === "recibo";
+    setTipoDocumento(ehRecibo ? "Recibo" : "Nota fiscal");
+    if (ehRecibo) {
+      setJaPago(true);
+      if (dados.data_pagamento) setDataPagamento(dados.data_pagamento);
+      if (dados.valor_total != null) setValorPago(String(dados.valor_total));
+      if (dados.conta_bancaria) setContaBancaria(dados.conta_bancaria);
+      if (!dados.itens?.length && dados.valor_total != null) {
+        setItens([{ ...itemVazio(), produto: dados.observacao || "Recibo anexado", valor_total: String(dados.valor_total), valorTotalManual: true }]);
+      }
+    }
+  }
+
+  async function lerDocumentoAnexado(file: File) {
+    setImportando(true); setErroXml(null);
+    try {
+      const dados = await lerDocumentoFinanceiro(file);
+      aplicarExtracaoDocumento(dados);
+      setXmlAberto(false);
+    } catch (e: any) {
+      setErroXml(e.message || "Erro ao ler o documento");
+    } finally {
+      setImportando(false);
+    }
+  }
+
+  function tratarArquivo(file: File) {
+    if (file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png") {
+      lerDocumentoAnexado(file);
+    } else {
+      file.text().then(importarXml);
+    }
+  }
   function onDrop(e: React.DragEvent) {
     e.preventDefault();
     const file = e.dataTransfer.files?.[0];
-    if (file) file.text().then(importarXml);
+    if (file) tratarArquivo(file);
   }
   function onFileSelect(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0];
-    if (file) file.text().then(importarXml);
+    if (file) tratarArquivo(file);
   }
 
   function montarPayload() {
@@ -261,6 +299,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.`);
       limpar();
       onSujo?.(false);
+      onSalvo?.();
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar lançamento");
     } finally {
@@ -278,23 +317,26 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       >
         <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
           <FileText size={16} style={{ color: "var(--dourado-light)" }} />
-          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste o XML da nota aqui, ou</span>
-          <button type="button" className="btn-ghost" onClick={() => fileInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
+          <span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Arraste o XML, PDF, JPEG ou PNG da nota/recibo aqui, ou</span>
+          <button type="button" className="btn-ghost" title="Selecionar arquivo XML, PDF, JPEG ou PNG da nota ou recibo" onClick={() => fileInputRef.current?.click()} style={{ fontSize: "0.78rem" }}>
             <Upload size={13} /> selecionar arquivo
           </button>
-          <button type="button" className="btn-ghost" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
+          <button type="button" className="btn-ghost" title="Colar o código XML da nota fiscal" onClick={() => setXmlAberto((v) => !v)} style={{ fontSize: "0.78rem" }}>colar código XML</button>
           {importando && <Loader2 size={14} className="animate-spin" style={{ color: "var(--dourado-light)" }} />}
         </div>
-        <input ref={fileInputRef} type="file" accept=".xml,text/xml" onChange={onFileSelect} style={{ display: "none" }} />
+        <input ref={fileInputRef} type="file" accept=".xml,text/xml,application/pdf,image/jpeg,image/png" onChange={onFileSelect} style={{ display: "none" }} />
         {xmlAberto && (
           <div style={{ marginTop: "0.6rem", textAlign: "left" }}>
             <textarea value={xmlTexto} onChange={(e) => setXmlTexto(e.target.value)} placeholder="Cole aqui o conteúdo do XML da nota fiscal…"
               style={{ ...inputStyle, minHeight: "6rem", fontFamily: "monospace", fontSize: "0.72rem" }} />
-            <button type="button" className="btn-primary" style={{ marginTop: "0.4rem" }} onClick={() => importarXml(xmlTexto)} disabled={importando}>Importar XML</button>
+            <button type="button" className="btn-primary" title="Importar os dados do XML colado" style={{ marginTop: "0.4rem" }} onClick={() => importarXml(xmlTexto)} disabled={importando}>Importar XML</button>
           </div>
         )}
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
-        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Reconhece vários produtos/serviços da mesma nota — os campos ficam abaixo, todos editáveis.</p>
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          XML reconhece vários produtos/serviços da mesma nota. PDF/JPEG/PNG usa leitura automática por IA — identifica se é
+          nota fiscal (nasce em aberto) ou recibo (nasce já pago) — os campos ficam abaixo, todos editáveis.
+        </p>
       </div>
 
       {/* Produtos / serviços da nota */}
@@ -302,14 +344,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
         {itens.map((it, idx) => (
           <div key={idx} className="card" style={{ background: "var(--surface-2)", position: "relative" }}>
             {itens.length > 1 && (
-              <button type="button" onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", fontSize: "0.7rem", color: "var(--red)" }}>
+              <button type="button" title="Remover este produto/serviço" onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", fontSize: "0.7rem", color: "var(--red)" }}>
                 <Trash2 size={13} />
               </button>
             )}
             <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.5rem" }}>Produto/serviço {idx + 1}</p>
             <div className="flex items-center gap-2 mb-3">
               {(["produto", "servico"] as const).map((t) => (
-                <button key={t} type="button" onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
+                <button key={t} type="button" title={t === "produto" ? "Este item é um produto de estoque" : "Este item é um serviço"} onClick={() => atualizarItem(idx, { tipo_item: t, produto: "" })}
                   style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
                     border: "1px solid " + (it.tipo_item === t ? "var(--dourado)" : "var(--border)"),
                     background: it.tipo_item === t ? "var(--dourado)" : "transparent",
@@ -355,13 +397,13 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
                   onChange={(e) => atualizarItem(idx, { valor_total: e.target.value, valorTotalManual: true })} />
               </Campo>
             </div>
-            <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
+            <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
               onClick={() => { setAdicionarPara(idx); setModoAdicionar(it.tipo_item === "servico" ? "servico" : "produto"); }}>
               <Plus size={13} /> Adicionar {it.tipo_item === "servico" ? "serviço" : "produto"} ou conta gerencial novo(a)
             </button>
           </div>
         ))}
-        <button type="button" className="btn-ghost" onClick={acrescentarItem} style={{ fontSize: "0.8rem" }}>
+        <button type="button" className="btn-ghost" title="Adicionar mais um produto ou serviço à nota" onClick={acrescentarItem} style={{ fontSize: "0.8rem" }}>
           <Plus size={14} /> Acrescentar produto ou serviço
         </button>
       </div>
@@ -374,7 +416,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               <option value="">Selecione…</option>
               {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
             </select>
-            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+            <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipo === "receita" ? "cliente" : "fornecedor"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
               <Plus size={13} /> Novo
             </button>
           </div>
@@ -489,7 +531,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
 
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>
+        <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando}>
           {salvando ? "Salvando…" : "Salvar lançamento"}
         </button>
       </div>
@@ -497,21 +539,21 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
       {adicionarPara !== null && (
         <Modal title="Adicionar produto, serviço ou conta gerencial" onClose={() => setAdicionarPara(null)} width="900px">
           <div className="flex items-center gap-2 mb-3">
-            <button type="button" onClick={() => setModoAdicionar("produto")}
+            <button type="button" title="Cadastrar um novo produto de estoque" onClick={() => setModoAdicionar("produto")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionar === "produto" ? "var(--dourado)" : "var(--border)"),
                 background: modoAdicionar === "produto" ? "rgba(94,26,46,0.4)" : "transparent",
                 color: modoAdicionar === "produto" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "produto" ? 700 : 500 }}>
               Novo produto (estoque)
             </button>
-            <button type="button" onClick={() => setModoAdicionar("servico")}
+            <button type="button" title="Cadastrar um novo serviço" onClick={() => setModoAdicionar("servico")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionar === "servico" ? "var(--dourado)" : "var(--border)"),
                 background: modoAdicionar === "servico" ? "rgba(94,26,46,0.4)" : "transparent",
                 color: modoAdicionar === "servico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoAdicionar === "servico" ? 700 : 500 }}>
               Novo serviço
             </button>
-            <button type="button" onClick={() => setModoAdicionar("conta")}
+            <button type="button" title="Cadastrar uma nova conta gerencial" onClick={() => setModoAdicionar("conta")}
               style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
                 border: "1px solid " + (modoAdicionar === "conta" ? "var(--dourado)" : "var(--border)"),
                 background: modoAdicionar === "conta" ? "rgba(94,26,46,0.4)" : "transparent",
@@ -576,8 +618,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo }: { tipo: "despesa"
               {diferencaPagamento < 0 ? "Desconto" : "Acréscimo"}: <strong style={{ color: diferencaPagamento < 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(Math.abs(diferencaPagamento))}</strong>
             </p>
             <div className="flex items-center gap-3 mt-3">
-              <button className="btn-primary" onClick={salvar}><Check size={14} /> Confirmar e salvar</button>
-              <button className="btn-ghost" onClick={() => setConfirmando(false)}><X size={14} /> Cancelar</button>
+              <button className="btn-primary" title="Confirmar a diferença e salvar o lançamento" onClick={salvar}><Check size={14} /> Confirmar e salvar</button>
+              <button className="btn-ghost" title="Cancelar sem salvar" onClick={() => setConfirmando(false)}><X size={14} /> Cancelar</button>
             </div>
           </div>
         </div>

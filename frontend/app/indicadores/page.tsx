@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw } from "lucide-react";
 import { fetchIndicadores, fetchAnimais } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 
@@ -12,12 +12,16 @@ export default function IndicadoresPage() {
   const [ind, setInd] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
-  useEffect(() => {
-    fetchIndicadores().then(setInd).catch((e) => setError(e.message));
+  const carregar = () => {
+    setRecarregando(true);
+    fetchIndicadores().then((v) => { setInd(v); setError(null); }).catch((e) => setError(e.message)).finally(() => setRecarregando(false));
     fetchAnimais().then(setAnimais).catch(() => {});
-  }, []);
+  };
+
+  useEffect(() => { carregar(); }, []);
 
   const reb = ind?.rebanho, rep = ind?.reproducao, prod = ind?.producao;
   const grupos: [string, number][] = reb ? Object.entries(reb.distribuicao_grupos) : [];
@@ -28,7 +32,8 @@ export default function IndicadoresPage() {
     if (!animais.length) return;
     setModal({ title, list: animais.filter(filtro) });
   };
-  const abrirNums = (title: string, nums: string[]) => {
+  const abrirNums = (title: string, nums?: string[] | null) => {
+    // Sempre abre o modal, mesmo sem números (o AnimalModal exibe "Nenhum animal.").
     const set = new Set(nums || []);
     setModal({ title, list: animais.filter((a) => set.has(a.numero)) });
   };
@@ -47,13 +52,18 @@ export default function IndicadoresPage() {
     { label: "Prenhes", v: rep?.prenhes, cor: "var(--green-light)", f: (a: AnimalRow) => a.sit_rep === "Ges." },
     { label: "Vazias", v: rep?.vazias, cor: "var(--amber)", f: (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") },
     { label: "Inseminadas (aguard. diagnóstico)", v: rep?.inseminadas, cor: "var(--blue)", f: (a: AnimalRow) => a.sit_rep === "Ins." },
-  ], [rep, animais]);
+  ], [rep]);
 
   return (
     <div className="p-6 animate-in">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado-light)" }} /> Indicadores do Rebanho</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Composição, eficiência reprodutiva e produção — clique nos números para ver as fêmeas.</p>
+      <div className="mb-6 flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><BarChart3 size={22} style={{ color: "var(--dourado-light)" }} /> Indicadores do Rebanho</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Composição, eficiência reprodutiva e produção — clique nos números para ver as fêmeas.</p>
+        </div>
+        <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
+          <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
+        </button>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload dos CSV</a>.</span></div>}
@@ -109,7 +119,7 @@ export default function IndicadoresPage() {
             <div className="card-header mb-3 flex items-center gap-2">Composição do Rebanho ({num(reb?.total)} fêmeas) {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
             <div className="space-y-1.5">
               {grupos.map(([grupo, n]) => (
-                <div key={grupo} className="flex items-center gap-2" onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={clickable}>
+                <div key={grupo} className={"flex items-center gap-2" + (animais.length ? " row-clickable" : "")} onClick={() => abrir(grupo, (a) => (a.grupo_primario || "(sem grupo)") === grupo)} style={{ ...clickable, padding: "0.15rem 0.25rem", borderRadius: "4px" }}>
                   <span style={{ fontSize: "0.72rem", color: animais.length ? "var(--dourado-light)" : "var(--text-muted)", minWidth: "11rem", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{grupo}</span>
                   <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "14px", overflow: "hidden" }}>
                     <div style={{ width: `${(n / maxGrupo) * 100}%`, height: "100%", background: "var(--vinho-light, #8B3A56)", minWidth: "2px" }} />

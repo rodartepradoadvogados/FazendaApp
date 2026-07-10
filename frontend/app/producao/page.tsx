@@ -4,6 +4,7 @@ import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lu
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioLeiteItalac } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { SecaoRecolhivel } from "@/components/ui";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -105,12 +106,13 @@ export default function ProducaoPage() {
   const [ucLote, setUcLote] = useState("");
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
+  const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
   const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
   const [qlDe, setQlDe] = useState("");
   const [qlAte, setQlAte] = useState("");
 
   useEffect(() => {
-    fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch(() => {});
+    fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch((e) => setQualidadeErro(e.message));
   }, []);
 
   const qlFiltrados = useMemo(() => {
@@ -131,8 +133,9 @@ export default function ProducaoPage() {
   const [relatorioItalac, setRelatorioItalac] = useState<{
     linhas: LinhaLeiteItalac[]; efetivo_bezerros: number; consumo_bezerros_dia_litros: number; consumo_bezerros_mes_litros: number;
   } | null>(null);
+  const [italacErro, setItalacErro] = useState<string | null>(null);
   useEffect(() => {
-    fetchRelatorioLeiteItalac().then(setRelatorioItalac).catch(() => {});
+    fetchRelatorioLeiteItalac().then(setRelatorioItalac).catch((e) => setItalacErro(e.message));
   }, []);
   const ordItalac = useOrdenacao<LinhaLeiteItalac>(relatorioItalac?.linhas ?? []);
 
@@ -184,6 +187,7 @@ export default function ProducaoPage() {
   })), [filtradosOrdenadosBase]);
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const badgeStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "999px", padding: "0.1rem 0.55rem", whiteSpace: "nowrap" };
 
   const animaisDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.numero), [regs]);
   const lotesDisponiveis = useMemo(() => opcoes(regs ?? [], (r) => r.grupo_primario), [regs]);
@@ -261,7 +265,7 @@ export default function ProducaoPage() {
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL até (dias)</label>
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 120" style={selStyle} value={fDelMax} onChange={(e) => setFDelMax(e.target.value)} /></div>
             </div>
-            {(fAno || fMes || fDelMin || fDelMax) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); }}>Limpar filtros</button>}
+            {(fAno || fMes || fDelMin || fDelMax) && <button className="btn-ghost" title="Remover todos os filtros aplicados (ano, mês e faixa de DEL)" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); }}>Limpar filtros</button>}
           </div>
 
           <div className="card mb-4">
@@ -336,29 +340,49 @@ export default function ProducaoPage() {
             </div>
           </div>
 
-          <div className="card mb-4">
-            <div className="card-header mb-3 flex items-center gap-2"><FlaskConical size={14} /> Qualidade do leite</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
-                <input type="date" style={selStyle} value={qlDe} onChange={(e) => setQlDe(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
-                <input type="date" style={selStyle} value={qlAte} onChange={(e) => setQlAte(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
-                <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
-                  {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
-                </select></div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mb-3">
-              <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{qlAtual ?? "—"} {qlAtual != null ? qlIndicadorInfo.unidade : ""}</p>
-                <p className="kpi-label">{qlIndicadorInfo.label} atual (última coleta)</p></div>
-              <div className="kpi-card"><p className="kpi-value">{qlMedia ?? "—"} {qlMedia != null ? qlIndicadorInfo.unidade : ""}</p>
-                <p className="kpi-label">{qlIndicadorInfo.label} média no período</p></div>
-            </div>
-            {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
-          </div>
+          <SecaoRecolhivel
+            titulo="Qualidade do leite"
+            icon={FlaskConical}
+            badge={qualidade ? <span style={badgeStyle}>{qlFiltrados.length} coletas</span> : null}
+            descricao="Indicadores das coletas de qualidade (CCS, CBT, gordura, proteína, sólidos, ESD, lactose) com série histórica por período.">
+            {qualidadeErro ? (
+              <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar a qualidade do leite: {qualidadeErro}.</span></div>
+            ) : !qualidade ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
+                    <input type="date" style={selStyle} value={qlDe} onChange={(e) => setQlDe(e.target.value)} /></div>
+                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
+                    <input type="date" style={selStyle} value={qlAte} onChange={(e) => setQlAte(e.target.value)} /></div>
+                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
+                    <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
+                      {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
+                    </select></div>
+                </div>
+                <div className="grid grid-cols-2 gap-4 mb-3">
+                  <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{qlAtual ?? "—"} {qlAtual != null ? qlIndicadorInfo.unidade : ""}</p>
+                    <p className="kpi-label">{qlIndicadorInfo.label} atual (última coleta)</p></div>
+                  <div className="kpi-card"><p className="kpi-value">{qlMedia ?? "—"} {qlMedia != null ? qlIndicadorInfo.unidade : ""}</p>
+                    <p className="kpi-label">{qlIndicadorInfo.label} média no período</p></div>
+                </div>
+                {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
+              </>
+            )}
+          </SecaoRecolhivel>
 
-          <div className="card mb-4">
-            <div className="card-header mb-3 flex items-center gap-2"><Scale size={14} /> Controle leiteiro × Entrega mensal × ITALAC</div>
+          <SecaoRecolhivel
+            titulo="Controle leiteiro × Entrega mensal × ITALAC"
+            icon={Scale}
+            badge={relatorioItalac ? <span style={badgeStyle}>{relatorioItalac.linhas.length} meses</span> : null}
+            descricao="Compara o leite pesado no controle, o entregue ao laticínio e o faturado pela ITALAC — e estima o consumo próprio da fazenda.">
+            {italacErro ? (
+              <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar o relatório de leite/ITALAC: {italacErro}.</span></div>
+            ) : !relatorioItalac ? (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
+            ) : (
+            <>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
               Compara o que foi pesado no controle leiteiro, o que foi entregue ao laticínio (lançamento mensal) e o que a
               ITALAC faturou (contas gerenciais). A diferença entre pesado e entregue é consumo próprio da fazenda — parte
@@ -409,31 +433,41 @@ export default function ProducaoPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+            </>
+            )}
+          </SecaoRecolhivel>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div className="card">
-              <div className="card-header mb-3 flex items-center gap-2"><TrendingUp size={14} /> Curva de Lactação (média por DEL)</div>
-              <div className="space-y-2">
-                {curva.map((c) => (
-                  <div key={c.rot} className="flex items-center gap-2">
-                    <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: "4rem" }}>{c.rot}d</span>
-                    <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "16px", overflow: "hidden" }}><div style={{ width: `${(c.media / maxCurva) * 100}%`, height: "100%", background: "var(--green-light)", minWidth: "2px" }} /></div>
-                    <span style={{ fontSize: "0.75rem", fontWeight: 700, minWidth: "5.5rem", textAlign: "right" }}>{c.media} kg <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>({c.n})</span></span>
-                  </div>
-                ))}
-                {!curva.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados no filtro.</p>}
+          <SecaoRecolhivel
+            titulo="Curva de Lactação e evolução do rebanho"
+            icon={TrendingUp}
+            badge={<span style={badgeStyle}>{curva.length} faixas · {serie.length} controles</span>}
+            descricao="Produção média por faixa de DEL (curva de lactação) e a evolução da produção total do rebanho controle a controle.">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="card">
+                <div className="card-header mb-3 flex items-center gap-2"><TrendingUp size={14} /> Curva de Lactação (média por DEL)</div>
+                <div className="space-y-2">
+                  {curva.map((c) => (
+                    <div key={c.rot} className="flex items-center gap-2">
+                      <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", minWidth: "4rem" }}>{c.rot}d</span>
+                      <div style={{ flex: 1, background: "var(--surface-2)", borderRadius: "4px", height: "16px", overflow: "hidden" }}><div style={{ width: `${(c.media / maxCurva) * 100}%`, height: "100%", background: "var(--green-light)", minWidth: "2px" }} /></div>
+                      <span style={{ fontSize: "0.75rem", fontWeight: 700, minWidth: "5.5rem", textAlign: "right" }}>{c.media} kg <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>({c.n})</span></span>
+                    </div>
+                  ))}
+                  {!curva.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados no filtro.</p>}
+                </div>
+              </div>
+              <div className="card">
+                <div className="card-header mb-2">Produção do Rebanho por Controle (kg)</div>
+                {serie.length ? <LineChart dados={serie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados no filtro.</p>}
               </div>
             </div>
-            <div className="card">
-              <div className="card-header mb-2">Produção do Rebanho por Controle (kg)</div>
-              {serie.length ? <LineChart dados={serie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados no filtro.</p>}
-            </div>
-          </div>
+          </SecaoRecolhivel>
 
-          <div className="card mb-4">
-            <div className="card-header mb-3 flex items-center justify-between">
-              <span>Ranking de Produção (top 20 por média)</span>
+          <SecaoRecolhivel
+            titulo="Ranking de Produção (top 20 por média)"
+            badge={<span style={badgeStyle}>{ranking.length} vacas</span>}
+            descricao="Vacas ordenadas por produção média no filtro, com pico, última pesagem e número de pesagens.">
+            <div className="flex items-center justify-end mb-3">
               <ExportarBotoes titulo="Ranking de Produção Leiteira" nomeArquivoBase="ranking_producao" colunas={COLUNAS_RANKING} linhas={ranking} />
             </div>
             <table className="fazenda-table">
@@ -457,11 +491,13 @@ export default function ProducaoPage() {
                 ))}
               </tbody>
             </table>
-          </div>
+          </SecaoRecolhivel>
 
-          <div className="card">
-            <div className="card-header mb-3 flex items-center justify-between">
-              <span>Registros filtrados ({filtrados.length})</span>
+          <SecaoRecolhivel
+            titulo="Registros filtrados"
+            badge={<span style={badgeStyle}>{filtrados.length} registros</span>}
+            descricao="Lista completa dos controles leiteiros que atendem aos filtros de ano, mês e faixa de DEL selecionados acima.">
+            <div className="flex items-center justify-end mb-3">
               <ExportarBotoes titulo="Produção filtrada — Controle leiteiro" nomeArquivoBase="producao_filtrada" colunas={COLUNAS_FILTRADOS} linhas={filtradosExport} />
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
@@ -487,7 +523,7 @@ export default function ProducaoPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SecaoRecolhivel>
         </>
       )}
     </div>

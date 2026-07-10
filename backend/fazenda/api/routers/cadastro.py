@@ -153,6 +153,10 @@ class FolhaPagamentoIn(BaseModel):
     competencia: str  # "AAAA-MM"
     valor_bruto: float
     descontos: float = 0.0
+    percentual_inss: float = 0.0
+    percentual_ir: float = 0.0
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
     data_pagamento: date | None = None
     status: str = "pendente"
     observacao: str | None = None
@@ -238,12 +242,41 @@ def _gerar_folha_recorrente(session: Session) -> None:
             competencia = _competencia_seguinte(competencia)
 
 
+def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
+    """
+    Discriminação completa do lançamento — bruto, INSS, IR, cada parcela de
+    vale aplicada nesta competência e o líquido. É essa lista que vira a
+    expansão da linha da folha no frontend (em vez da antiga lista de vales
+    solta abaixo do lançamento de vale).
+    """
+    parcelas_vale = session.exec(
+        select(ValeParcela).where(
+            ValeParcela.pessoa_id == registro.pessoa_id, ValeParcela.competencia == registro.competencia
+        )
+    ).all()
+    detalhe = [{"label": "Salário bruto", "valor": registro.valor_bruto}]
+    if registro.percentual_inss:
+        detalhe.append({"label": f"INSS ({registro.percentual_inss:g}%)", "valor": -registro.valor_inss})
+    if registro.percentual_ir:
+        detalhe.append({"label": f"IR ({registro.percentual_ir:g}%)", "valor": -registro.valor_ir})
+    for p in sorted(parcelas_vale, key=lambda p: p.competencia):
+        detalhe.append({"label": f"Vale (parcela {p.competencia})", "valor": -p.valor})
+    outros = round(registro.descontos - sum(p.valor for p in parcelas_vale), 2)
+    if abs(outros) > 0.001:
+        detalhe.append({"label": "Outros descontos", "valor": -outros})
+    detalhe.append({"label": "Valor líquido", "valor": registro.valor_liquido})
+    return detalhe
+
+
 @router.get("/folha-pagamento")
 def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict]:
     _gerar_folha_recorrente(session)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
-    return [{**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—")} for r in registros]
+    return [
+        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "detalhe": _detalhe_folha(session, r)}
+        for r in registros
+    ]
 
 
 @router.post("/folha-pagamento")
@@ -256,7 +289,9 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
     descontos = round(dados.descontos + _aplicar_vale_parcelas(session, dados.pessoa_id, dados.competencia), 2)
-    valor_liquido = round(dados.valor_bruto - descontos, 2)
+    valor_inss = round(dados.valor_inss, 2)
+    valor_ir = round(dados.valor_ir, 2)
+    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
 
@@ -269,7 +304,8 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
 
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
-        descontos=descontos, valor_liquido=valor_liquido,
+        descontos=descontos, percentual_inss=dados.percentual_inss, percentual_ir=dados.percentual_ir,
+        valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
@@ -298,11 +334,15 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro = session.get(FolhaPagamento, registro_id)
     if not registro:
         raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser editado.")
     if not session.get(Pessoa, dados.pessoa_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
-    valor_liquido = round(dados.valor_bruto - dados.descontos, 2)
+    valor_inss = round(dados.valor_inss, 2)
+    valor_ir = round(dados.valor_ir, 2)
+    valor_liquido = round(dados.valor_bruto - dados.descontos - valor_inss - valor_ir, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
@@ -311,6 +351,10 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.competencia = dados.competencia
     registro.valor_bruto = dados.valor_bruto
     registro.descontos = dados.descontos
+    registro.percentual_inss = dados.percentual_inss
+    registro.percentual_ir = dados.percentual_ir
+    registro.valor_inss = valor_inss
+    registro.valor_ir = valor_ir
     registro.valor_liquido = valor_liquido
     registro.data_pagamento = dados.data_pagamento
     registro.status = dados.status
@@ -318,6 +362,26 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.recorrente = dados.recorrente
     registro.dia_vencimento = dados.dia_vencimento if dados.recorrente else None
     session.add(registro)
+
+    # Mantém a conta a pagar gerada automaticamente em sincronia com a edição.
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta and conta.valor_pago is None:
+            pessoa = session.get(Pessoa, dados.pessoa_id)
+            ano, mes = (int(x) for x in dados.competencia.split("-"))
+            dia = min(max(dados.dia_vencimento or 5, 1), 28)
+            conta.descricao = f"Folha de pagamento — {pessoa.nome} ({dados.competencia})"
+            conta.fornecedor_cliente = pessoa.nome
+            conta.data_vencimento = date(ano, mes, dia)
+            conta.data_competencia = date(ano, mes, 1)
+            conta.valor_total = valor_liquido
+            if dados.status == "pago":
+                conta.data_pagamento = dados.data_pagamento
+                conta.valor_pago = valor_liquido
+            session.add(conta)
+
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
@@ -487,6 +551,7 @@ class EstoqueMetaIn(BaseModel):
     quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     estocavel: bool | None = None
+    considerar_rmca: bool | None = None
 
 
 @router.get("/estoque-itens")
@@ -511,6 +576,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.quantidade_embalagem = dados.quantidade_embalagem
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
+    item.considerar_rmca = dados.considerar_rmca
     session.add(item)
     session.commit()
     session.refresh(item)

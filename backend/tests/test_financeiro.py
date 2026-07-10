@@ -538,3 +538,30 @@ class TestRmca:
         assert fisico["custo_alimentacao"] == 1000.0  # 400kg * R$2,50
         assert fisico["rmca"] == 9000.0
         assert fisico["itens"][0]["ingrediente"] == "Ração concentrada"
+
+    def test_versao_fisica_exclui_item_marcado_como_nao_considerar_rmca(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            self._marcar_contas(s)
+            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5))
+            s.add(Estoque(nome="Medicamento X", quantidade=100, unidade="un", valor_unitario=10.0, considerar_rmca=False))
+            s.commit()
+
+        with Session(engine) as s:
+            s.add(MovimentoEstoque(
+                nome_item="Ração concentrada", movimento="Saída de ajuste", quantidade=400,
+                unidade="kg", data_movimento=date(2026, 1, 20),
+            ))
+            # Item explicitamente excluído do RMCA — não deve entrar no custo físico
+            # mesmo tendo baixa de "Saída de ajuste" no período.
+            s.add(MovimentoEstoque(
+                nome_item="Medicamento X", movimento="Saída de ajuste", quantidade=5,
+                unidade="un", data_movimento=date(2026, 1, 22),
+            ))
+            s.commit()
+
+        r = c.get("/financeiro/rmca", params={"data_inicio": "2026-01-01", "data_fim": "2026-01-31"})
+        assert r.status_code == 200
+        fisico = r.json()["fisico"]
+        assert fisico["custo_alimentacao"] == 1000.0  # só a Ração — o Medicamento X ficou de fora
+        assert [i["ingrediente"] for i in fisico["itens"]] == ["Ração concentrada"]

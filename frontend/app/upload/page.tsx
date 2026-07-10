@@ -50,16 +50,16 @@ export default function UploadPage() {
           Upload de CSV
         </h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Importe os relatórios exportados do Ideagri. A ordem recomendada é: GERAL → Reprodutivo → Estoque → Financeiro.
+          Importe os relatórios exportados do Ideagri. A ordem recomendada é: GERAL → Reprodutivo → Controle Leiteiro → Dieta → Sanidade → Financeiro (Plano de Contas → Conta Gerencial) → Estoque → Curva ABC → Patrimônio.
         </p>
       </div>
 
       <div className="card mb-4 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
         <p style={{ fontSize: "0.82rem", color: "var(--text-muted)" }}>
-          Depois de subir os relatórios, clique para <strong style={{ color: "var(--text)" }}>rodar os dados para dentro do site</strong> e atualizar todos os relatórios.
+          Cada arquivo já é importado assim que você o envia. Depois de subir os relatórios, <strong style={{ color: "var(--text)" }}>recarregue a página</strong> para que as telas passem a mostrar os dados novos.
         </p>
-        <button className="btn-primary" onClick={() => window.location.reload()}>
-          <RefreshCw size={16} /> Atualizar relatórios
+        <button className="btn-primary" title="Recarregar a página para refletir os dados enviados" onClick={() => window.location.reload()}>
+          <RefreshCw size={16} /> Recarregar página
         </button>
       </div>
 
@@ -139,8 +139,14 @@ export default function UploadPage() {
           <strong style={{ color: "var(--dourado-light)" }}>Como exportar do Ideagri:</strong><br />
           1. <strong>GERAL:</strong> Meus Relatórios › Geral — situação atual (sem filtro de período)<br />
           2. <strong>Reprodutivo:</strong> Utilitários › Consulta SQL (arrastar o arquivo SQL) — exportar .csv<br />
-          3. <strong>Financeiro:</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
-          4. <strong>Estoque:</strong> Inventário — data atual<br />
+          3. <strong>Controle Leiteiro:</strong> Relatórios › Controle Leiteiro — histórico de pesagens (todas as datas), exportar .csv<br />
+          4. <strong>Dieta:</strong> Nutrição/Alimentação › Dieta por lote — exportar o plano vigente (kg/cabeça/dia) em .csv<br />
+          5. <strong>Sanidade:</strong> Relatórios › Sanidade — medicamentos aplicados no período desejado, exportar .csv<br />
+          6. <strong>Plano de Contas Gerenciais:</strong> Cadastros › Plano de Contas Gerenciais — exportar a hierarquia em .csv (suba antes da Conta Gerencial)<br />
+          7. <strong>Financeiro (Conta Gerencial):</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
+          8. <strong>Estoque:</strong> Inventário — data atual<br />
+          9. <strong>Curva ABC:</strong> Relatórios › Compras › Curva ABC — classificação A/B/C de custos, exportar .csv<br />
+          10. <strong>Patrimônio:</strong> Cadastros › Patrimônio (bens, máquinas, veículos e terras) — exportar a lista em .csv<br />
           <br />
           <strong style={{ color: "var(--dourado-light)" }}>Encoding dos arquivos:</strong> Windows-1252 (Latin-1), separador ponto-e-vírgula (;), decimal com vírgula.
         </p>
