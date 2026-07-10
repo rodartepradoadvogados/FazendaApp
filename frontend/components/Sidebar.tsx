@@ -16,6 +16,7 @@ import {
   Syringe,
   Settings,
   ClipboardList,
+  FileBarChart,
   Menu,
   X,
 } from "lucide-react";
@@ -29,6 +30,7 @@ const links = [
   { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir" },
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia" },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva" },
+  { href: "/relatorios",  label: "Relatórios",   icon: FileBarChart,  title: "Relatórios gerenciais — listas de manejo do dia e gráficos gerenciais do rebanho" },
   { href: "/rebanho",     label: "Rebanho",      icon: Beef,          title: "Rebanho — animais, movimentações entre lotes e ficha do animal" },
   { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote" },

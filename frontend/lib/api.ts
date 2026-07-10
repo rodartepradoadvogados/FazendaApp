@@ -18,7 +18,7 @@ export function logout() {
 // Mapa rota → módulo (para menu e bloqueio de páginas).
 export const ROTA_MODULO: Record<string, string> = {
   "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
-  "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/rebanho": "rebanho",
+  "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade",
   "/financeiro": "financeiro", "/estoque": "estoque", "/parametros": "parametros", "/upload": "upload",
 };
@@ -163,6 +163,47 @@ export async function fetchIndicadores(data?: string) {
 export async function fetchServicosAnalise() {
   const res = await authFetch(`${API}/reproducao/servicos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);
+  return res.json();
+}
+
+// ── Relatórios gerenciais e de manejo (Reprodução) ──
+export async function fetchRelatoriosManejo() {
+  const res = await authFetch(`${API}/relatorios/manejo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatórios de manejo error: ${res.status}`);
+  return res.json();
+}
+export async function fetchRelatorioGerencial(nome: string, params?: Record<string, string | number>) {
+  const qs = new URLSearchParams();
+  Object.entries(params || {}).forEach(([k, v]) => qs.set(k, String(v)));
+  const res = await authFetch(`${API}/relatorios/gerencial/${nome}?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório gerencial error: ${res.status}`);
+  return res.json();
+}
+
+// ── Estoque de sêmen (Configurações > Cadastro) ──
+export async function fetchEstoqueSemen() {
+  const res = await authFetch(`${API}/cadastro/estoque-semen`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Estoque de sêmen error: ${res.status}`);
+  return res.json();
+}
+type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; central?: string | null; tipo: string; doses: number; observacao?: string | null; ativo?: boolean };
+export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
+  const res = await authFetch(`${API}/cadastro/estoque-semen`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar sêmen"); }
+  return res.json();
+}
+export async function atualizarEstoqueSemen(id: number, dados: EstoqueSemenDados) {
+  const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar sêmen"); }
+  return res.json();
+}
+export async function excluirEstoqueSemen(id: number) {
+  const res = await authFetch(`${API}/cadastro/estoque-semen/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sêmen"); }
   return res.json();
 }
 

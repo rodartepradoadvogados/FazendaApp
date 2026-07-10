@@ -1,10 +1,11 @@
 "use client";
 import { useState } from "react";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2 } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
 import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
+import CadastroEstoqueSemen from "./CadastroEstoqueSemen";
 import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
@@ -17,6 +18,7 @@ const ABAS = [
   ["animal", "Animal (ficha)", Beef],
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Itens de estoque", Package],
+  ["estoque-semen", "Estoque de sêmen", Dna],
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
   ["servicos", "Serviços", Wrench],
@@ -53,6 +55,7 @@ export default function Cadastro() {
       {aba === "animal" && <CadastroAnimalForm />}
       {aba === "fornecedores" && <CadastroFornecedores />}
       {aba === "estoque" && <CadastroEstoqueMeta />}
+      {aba === "estoque-semen" && <CadastroEstoqueSemen />}
       {aba === "motivos" && <CadastroMotivosMovimentacao />}
       {aba === "motivos-baixa" && <CadastroMotivosBaixa />}
       {aba === "servicos" && <CadastroServicos />}
