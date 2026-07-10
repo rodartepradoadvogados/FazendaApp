@@ -145,6 +145,16 @@ class TestMetaEstoque:
         r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"fornecedor_id": 999})
         assert r.status_code == 400
 
+    def test_atualizar_considerar_rmca(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Medicamento X", categoria="sanidade", quantidade=10))
+            s.commit()
+        item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"considerar_rmca": False})
+        assert r.status_code == 200
+        assert r.json()["considerar_rmca"] is False
+
 
 class TestPessoas:
     def test_seed_cria_funcionarios_padrao(self, client):

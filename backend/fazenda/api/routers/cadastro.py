@@ -551,6 +551,7 @@ class EstoqueMetaIn(BaseModel):
     quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     estocavel: bool | None = None
+    considerar_rmca: bool | None = None
 
 
 @router.get("/estoque-itens")
@@ -575,6 +576,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.quantidade_embalagem = dados.quantidade_embalagem
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
+    item.considerar_rmca = dados.considerar_rmca
     session.add(item)
     session.commit()
     session.refresh(item)

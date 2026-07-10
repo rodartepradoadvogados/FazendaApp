@@ -1761,18 +1761,56 @@ function primeiroDiaDoMes() {
   return new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
 }
 
+/* ───────────────────────── Roteiro do RMCA (modal em tela, mesmo padrão do manual de colostro/sangue) ───────────────────────── */
+const ROTEIRO_RMCA = [
+  { t: "1. O que é o RMCA", d: "Receita Menos Custo com Alimentação: quanto sobra da receita do leite depois de descontar o gasto com ração/alimentação no mesmo período. Duas versões lado a lado — gerencial e físico — para conferência cruzada." },
+  { t: "2. Versão gerencial — marque as contas", d: "Vá em Configurações → Parâmetros financeiros → Conta gerencial. Marque a(s) conta(s) de receita que representam a venda do leite (ex.: \"Leite indústria\") e a(s) conta(s) de despesa que representam alimentação (ex.: \"Ração\", \"Silagem\", \"Sal mineral\"). O RMCA gerencial soma os lançamentos financeiros dessas contas no período." },
+  { t: "3. Versão física — indique os produtos", d: "Vá em Configurações → Cadastro → Itens de estoque. Na coluna RMCA, marque quais produtos são ração/alimento e devem entrar no custo físico. Desmarque produtos que não são alimentação (medicamentos, materiais etc.), mesmo que também tenham baixa de \"Saída de ajuste\"." },
+  { t: "4. Como o custo físico é calculado", d: "Para cada produto marcado, o sistema soma a quantidade baixada como \"Saída de ajuste\" pela Alimentação no período e multiplica pelo valor unitário cadastrado no Estoque. O card \"RMCA físico\" mostra o detalhamento produto a produto." },
+  { t: "5. Por que duas versões", d: "A gerencial reflete o que foi de fato lançado no financeiro (pode incluir sobras de estoque, compras antecipadas). A física reflete o consumo real no período, ainda que o pagamento tenha sido em outro mês. Comparar as duas ajuda a identificar diferenças de timing." },
+];
+
+function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }} onClick={onClose}>
+      <div className="card" style={{ width: "560px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>Roteiro — Como indicar os produtos do RMCA</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+        </div>
+        <div className="space-y-2">
+          {ROTEIRO_RMCA.map((s) => (
+            <div key={s.t} style={{ borderLeft: "3px solid var(--dourado-light)", paddingLeft: "0.6rem" }}>
+              <p style={{ fontSize: "0.8rem", fontWeight: 700 }}>{s.t}</p>
+              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{s.d}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function RmcaView() {
   const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
   const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
   const [dados, setDados] = useState<RmcaResp | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [roteiroAberto, setRoteiroAberto] = useState(false);
 
   useEffect(() => { fetchRmca(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
 
   return (
     <div>
+      {roteiroAberto && <RoteiroRmcaModal onClose={() => setRoteiroAberto(false)} />}
+
       <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Filter size={14} /> Período</span>
+          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setRoteiroAberto(true)}>
+            <BookOpen size={13} /> Roteiro — como indicar os produtos do RMCA
+          </button>
+        </div>
         <div className="flex flex-wrap gap-3 items-end">
           <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>

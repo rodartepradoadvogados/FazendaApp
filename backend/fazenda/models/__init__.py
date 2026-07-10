@@ -480,6 +480,10 @@ class Estoque(SQLModel, table=True):
     # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
     # cadastrado só para lançamento financeiro (produto de nota), sem controle de quantidade.
     estocavel: Optional[bool] = None
+    # None/True = entra no custo físico do RMCA (ver GET /financeiro/rmca) quando
+    # há baixa de "Saída de ajuste" no período. False = excluído do cálculo mesmo
+    # tendo baixa (ex.: item que não é ração/alimento, mas usa o mesmo tipo de baixa).
+    considerar_rmca: Optional[bool] = None
 
 
 # ---------------------------------------------------------------------------
