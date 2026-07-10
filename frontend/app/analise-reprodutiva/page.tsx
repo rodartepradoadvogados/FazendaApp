@@ -3,6 +3,11 @@ import { useEffect, useMemo, useState } from "react";
 import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+
+function comparaNumero(a: string, b: string) {
+  return isNaN(+a) || isNaN(+b) ? a.localeCompare(b) : +a - +b;
+}
 
 const COLUNAS_SERVICOS = [
   { header: "Nº", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Categoria", key: "categoria" },
@@ -112,6 +117,9 @@ export default function AnaliseReprodutivaPage() {
 
   const kpi = taxa(filtrados);
   const perdas = filtrados.filter((r) => r.perda).length;
+
+  const filtradosOrdenadosBase = useMemo(() => [...filtrados].sort((a, b) => comparaNumero(a.numero, b.numero)), [filtrados]);
+  const ordFiltrados = useOrdenacao(filtradosOrdenadosBase);
 
   const serieMes = useMemo(() => {
     const byMes = new Map<string, Reg[]>();
@@ -229,6 +237,43 @@ export default function AnaliseReprodutivaPage() {
                 </div>
               ))}
               {!quebra.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados diagnosticados no filtro atual.</p>}
+            </div>
+          </div>
+
+          {/* Registros filtrados — mostra o touro/sêmen usado em cada serviço/IA */}
+          <div className="card mt-4">
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Registros filtrados ({filtrados.length})</span>
+              <ExportarBotoes titulo="Análise Reprodutiva — Registros filtrados" nomeArquivoBase="analise_reprodutiva_registros" colunas={COLUNAS_SERVICOS} linhas={filtradosOrdenadosBase} />
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Raça" campo="raca" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Data" campo="data" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Método" campo="metodo_ia" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Touro / sêmen" campo="touro" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Protocolo" campo="protocolo" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                </tr></thead>
+                <tbody>
+                  {ordFiltrados.linhasOrdenadas.map((r, i) => (
+                    <tr key={`${r.numero}-${r.data}-${i}`}>
+                      <td style={{ fontWeight: 700 }}>{r.numero}</td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{r.raca}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.tipo_servico || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.metodo_ia || "—"}</td>
+                      <td style={{ fontWeight: 600 }}>{r.touro || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.protocolo || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.diagnostico || "—"}</td>
+                    </tr>
+                  ))}
+                  {!filtrados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro atual.</td></tr>}
+                </tbody>
+              </table>
             </div>
           </div>
         </>

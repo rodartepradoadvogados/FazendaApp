@@ -256,6 +256,41 @@ class PesagemCorporal(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class QualidadeLeite(SQLModel, table=True):
+    """
+    Uma coleta de qualidade do leite — do tanque (todo o rebanho em lactação,
+    numero_matriz vazio) ou de uma vaca específica (ex.: investigação de mastite).
+    """
+
+    __tablename__ = "qualidade_leite"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: Optional[str] = Field(default=None, index=True)
+    data_coleta: date
+    ccs: Optional[float] = None  # células somáticas (mil/mL)
+    cbt: Optional[float] = None  # contagem bacteriana total (mil UFC/mL)
+    gordura_pct: Optional[float] = None
+    proteina_pct: Optional[float] = None
+    solidos_totais_pct: Optional[float] = None
+    esd_pct: Optional[float] = None  # extrato seco desengordurado
+    lactose_pct: Optional[float] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EntregaLeiteMensal(SQLModel, table=True):
+    """Volume de leite entregue ao laticínio em um mês (competência), para
+    comparar com o controle leiteiro projetado e a receita informada pelo laticínio."""
+
+    __tablename__ = "entrega_leite_mensal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    competencia: str = Field(index=True)  # "YYYY-MM"
+    quantidade_litros: float
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Conta Gerencial (Financeiro)
 # ---------------------------------------------------------------------------

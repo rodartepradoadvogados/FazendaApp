@@ -11,6 +11,7 @@ import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
+  fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -1793,6 +1794,132 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   );
 }
 
+function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
+  const [alvo, setAlvo] = useState<"tanque" | "vaca">("tanque");
+  const [matriz, setMatriz] = useState("");
+  const [dataColeta, setDataColeta] = useState(() => new Date().toISOString().slice(0, 10));
+  const [ccs, setCcs] = useState("");
+  const [cbt, setCbt] = useState("");
+  const [gordura, setGordura] = useState("");
+  const [proteina, setProteina] = useState("");
+  const [solidosTotais, setSolidosTotais] = useState("");
+  const [esd, setEsd] = useState("");
+  const [lactose, setLactose] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  const num = (v: string) => (v.trim() === "" ? null : Number(v.replace(",", ".")));
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (alvo === "vaca" && !matriz) { setErro("Selecione a vaca."); return; }
+    if (!dataColeta) { setErro("Informe a data da coleta."); return; }
+
+    setSalvando(true);
+    try {
+      await criarQualidadeLeite({
+        numero_matriz: alvo === "vaca" ? matriz : null,
+        data_coleta: dataColeta,
+        ccs: num(ccs), cbt: num(cbt), gordura_pct: num(gordura), proteina_pct: num(proteina),
+        solidos_totais_pct: num(solidosTotais), esd_pct: num(esd), lactose_pct: num(lactose),
+        observacao: observacao || undefined,
+      });
+      setSucesso("Qualidade do leite lançada com sucesso.");
+      setMatriz(""); setCcs(""); setCbt(""); setGordura(""); setProteina(""); setSolidosTotais(""); setEsd(""); setLactose(""); setObservacao("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar qualidade do leite");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="flex items-center gap-2 mb-3">
+        {[
+          { v: "tanque", label: "Todas as vacas em lactação (tanque)" },
+          { v: "vaca", label: "Uma vaca" },
+        ].map((o) => (
+          <button key={o.v} type="button" onClick={() => setAlvo(o.v as any)}
+            style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+              border: "1px solid " + (alvo === o.v ? "var(--dourado)" : "var(--border)"),
+              background: alvo === o.v ? "var(--dourado)" : "transparent",
+              color: alvo === o.v ? "#1a1a1a" : "var(--text-muted)", fontWeight: alvo === o.v ? 700 : 500 }}>
+            {o.label}
+          </button>
+        ))}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {alvo === "vaca" && <Campo label="Vaca" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>}
+        <Campo label="Data da coleta"><input type="date" style={inputStyle} value={dataColeta} onChange={(e) => setDataColeta(e.target.value)} /></Campo>
+      </div>
+
+      <Secao>Índices de qualidade</Secao>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Campo label="CCS (mil céls./mL)"><input type="number" inputMode="decimal" style={inputStyle} value={ccs} onChange={(e) => setCcs(e.target.value)} /></Campo>
+        <Campo label="CBT (mil UFC/mL)"><input type="number" inputMode="decimal" style={inputStyle} value={cbt} onChange={(e) => setCbt(e.target.value)} /></Campo>
+        <Campo label="Gordura (%)"><input type="number" inputMode="decimal" style={inputStyle} value={gordura} onChange={(e) => setGordura(e.target.value)} /></Campo>
+        <Campo label="Proteína (%)"><input type="number" inputMode="decimal" style={inputStyle} value={proteina} onChange={(e) => setProteina(e.target.value)} /></Campo>
+        <Campo label="Sólidos totais — ST (%)"><input type="number" inputMode="decimal" style={inputStyle} value={solidosTotais} onChange={(e) => setSolidosTotais(e.target.value)} /></Campo>
+        <Campo label="ESD (%)"><input type="number" inputMode="decimal" style={inputStyle} value={esd} onChange={(e) => setEsd(e.target.value)} /></Campo>
+        <Campo label="Lactose (%) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={lactose} onChange={(e) => setLactose(e.target.value)} /></Campo>
+      </div>
+      <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </>
+  );
+}
+
+function FormEntregaLeite() {
+  const [competencia, setCompetencia] = useState(() => new Date().toISOString().slice(0, 7));
+  const [quantidade, setQuantidade] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!competencia) { setErro("Selecione o mês."); return; }
+    if (!quantidade || Number(quantidade) <= 0) { setErro("Informe a quantidade entregue (litros)."); return; }
+
+    setSalvando(true);
+    try {
+      await criarEntregaLeiteMensal({ competencia, quantidade_litros: Number(quantidade.replace(",", ".")), observacao: observacao || undefined });
+      setSucesso(`Entrega de ${competencia} lançada com sucesso.`);
+      setQuantidade(""); setObservacao("");
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar entrega mensal do leite");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Mês (competência)"><input type="month" style={inputStyle} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></Campo>
+        <Campo label="Quantidade entregue (litros)"><input type="number" inputMode="decimal" style={inputStyle} value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="soma das notinhas/app do laticínio no mês" /></Campo>
+        <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+      </div>
+      <p style={nota}>Some as notinhas de entrega (ou o total do app do laticínio) do mês inteiro e lance aqui uma vez por mês — o relatório de Produção compara com o controle leiteiro projetado e a receita recebida.</p>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </>
+  );
+}
+
 const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
 const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
 
@@ -1897,6 +2024,8 @@ const TIPOS_GRUPOS = [
       { id: "controle", label: "Controle leiteiro", icon: Milk, desc: "Pesagem de leite por vaca ou por lote." },
       { id: "pesagem", label: "Pesagem corporal", icon: Scale, desc: "Peso vivo por animal ou por lote — acompanha o crescimento do rebanho." },
       { id: "secagem", label: "Secagem", icon: Droplet, desc: "Registro de secagem, motivo, ECC e produto(s) — sugere a mudança para o lote de secas." },
+      { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
+      { id: "entrega_leite", label: "Entrega mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
     ],
   },
   {
@@ -2016,6 +2145,10 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Protocolo sanitário já grava de verdade.</strong> Cria um evento na Agenda por etapa (D1, D2...) — ao marcar "realizado", dá baixa automática do produto no Estoque.</>
           ) : sel === "secagem" ? (
             <><strong style={{ color: "var(--text)" }}>Secagem já grava de verdade.</strong> Ao salvar, sugere mover a vaca para o lote das secas — você confirma antes da mudança.</>
+          ) : sel === "qualidade_leite" ? (
+            <><strong style={{ color: "var(--text)" }}>Qualidade do leite já grava de verdade.</strong> Lance por uma vaca ou pelo tanque (todas as vacas em lactação) — alimenta o relatório e o gráfico de qualidade em Produção.</>
+          ) : sel === "entrega_leite" ? (
+            <><strong style={{ color: "var(--text)" }}>Entrega mensal já grava de verdade.</strong> Compara o controle leiteiro projetado do mês, a receita do laticínio e o que foi de fato entregue.</>
           ) : sel === "parto" ? (
             <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG ainda são só calculadora.</>
           ) : sel === "protocolo_iatf" ? (
@@ -2075,6 +2208,8 @@ export default function LancamentosPage() {
           {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
           {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
           {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
+          {sel === "entrega_leite" && <FormEntregaLeite />}
           {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
           {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
           {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}

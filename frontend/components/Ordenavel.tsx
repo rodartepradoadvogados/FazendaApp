@@ -26,11 +26,11 @@ export function useOrdenacao<T extends Record<string, any>>(linhas: T[]) {
   return { linhasOrdenadas, coluna, dir, ordenar };
 }
 
-export function ThOrdenavel({ label, campo, coluna, dir, ordenar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void }) {
+export function ThOrdenavel({ label, campo, coluna, dir, ordenar, alinhar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void; alinhar?: "left" | "right" | "center" }) {
   const ativo = coluna === campo;
   return (
-    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
-      <span className="flex items-center gap-1">
+    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", textAlign: alinhar }}>
+      <span className="flex items-center gap-1" style={{ justifyContent: alinhar === "right" ? "flex-end" : undefined }}>
         {label}
         {ativo ? (dir === 1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />) : null}
       </span>

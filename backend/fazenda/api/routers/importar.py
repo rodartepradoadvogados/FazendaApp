@@ -19,7 +19,9 @@ from sqlmodel import Session, select
 
 from fazenda.api.routers.estoque import MovimentoIn, movimentar_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
-from fazenda.api.routers.producao import ControlesIn, OrdenhaIn, PesagensIn, PesoIn, criar_controles, criar_pesagens
+from fazenda.api.routers.producao import (
+    ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
+)
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Sanidade
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
@@ -74,6 +76,18 @@ CATEGORIAS_NOVAS = {
         "colunas": ["numero", "nome", "sexo (F/M)", "raca", "data_nasc (DD/MM/AAAA)", "lote", "data_entrada (DD/MM/AAAA)"],
         "colunas_csv": ["numero", "nome", "sexo", "raca", "data_nasc", "lote", "data_entrada"],
         "exemplo": ["465", "Mimosa", "F", "Girolando", "10/03/2024", "01 - BEZ 1 (0 A 30)", "10/03/2024"],
+    },
+    "qualidade_leite": {
+        "label": "Histórico de qualidade do leite (tanque ou por vaca)",
+        "colunas": [
+            "numero_matriz (vazio = tanque)", "data_coleta (DD/MM/AAAA)", "ccs", "cbt", "gordura_pct", "proteina_pct",
+            "solidos_totais_pct", "esd_pct", "lactose_pct",
+        ],
+        "colunas_csv": [
+            "numero_matriz", "data_coleta", "ccs", "cbt", "gordura_pct", "proteina_pct", "solidos_totais_pct",
+            "esd_pct", "lactose_pct",
+        ],
+        "exemplo": ["", "05/07/2026", "181", "11", "3,69", "3,42", "12,69", "9,00", "4,69"],
     },
 }
 
@@ -392,6 +406,36 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
 
     session.commit()
     return {"categoria": "animais_cadastro", "criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+@router.post("/qualidade_leite")
+async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """Histórico de qualidade do leite — uma linha por coleta (tanque quando
+    numero_matriz vem vazio, ou de uma vaca específica)."""
+    content = await file.read()
+    criados = 0
+    erros: list[str] = []
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        data_coleta = parse_date(row.get("data_coleta", ""))
+        if not data_coleta:
+            erros.append(f"Linha {i}: data_coleta é obrigatória")
+            continue
+        dados = QualidadeLeiteIn(
+            numero_matriz=row.get("numero_matriz", "").strip() or None,
+            data_coleta=data_coleta,
+            ccs=parse_float(row.get("ccs", "")),
+            cbt=parse_float(row.get("cbt", "")),
+            gordura_pct=parse_float(row.get("gordura_pct", "")),
+            proteina_pct=parse_float(row.get("proteina_pct", "")),
+            solidos_totais_pct=parse_float(row.get("solidos_totais_pct", "")),
+            esd_pct=parse_float(row.get("esd_pct", "")),
+            lactose_pct=parse_float(row.get("lactose_pct", "")),
+        )
+        criar_qualidade_leite(dados, session)
+        criados += 1
+
+    return {"categoria": "qualidade_leite", "criados": criados, "erros": erros}
 
 
 @router.post("/backfill")

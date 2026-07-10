@@ -171,3 +171,30 @@ class TestFornecedores:
         # O mesmo fornecedor aparece no Cadastro real (mesma tabela Fornecedor).
         r3 = c.get("/cadastro/fornecedores")
         assert r3.json()[0]["tipo"] == "fabricante"
+
+
+class TestQualidadeLeite:
+    def test_importa_leituras_do_tanque_para_tabela_real(self, client):
+        c, engine = client
+        r = _upload(c, "qualidade_leite", [
+            "numero_matriz;data_coleta;ccs;cbt;gordura_pct;proteina_pct;solidos_totais_pct;esd_pct;lactose_pct",
+            ";05/07/2026;181;11;3,69;3,42;12,69;9,00;4,69",
+            ";01/12/2025;352;28;3,06;3,10;11,56;8,50;4,59",
+        ])
+        assert r.status_code == 200
+        assert r.json()["criados"] == 2
+        assert r.json()["erros"] == []
+
+        # As mesmas leituras aparecem no relatório real usado em Produção.
+        r2 = c.get("/producao/qualidade-leite")
+        assert r2.json()["total"] == 2
+        assert r2.json()["registros"][0]["numero_matriz"] is None
+
+    def test_linha_sem_data_vira_erro(self, client):
+        c, engine = client
+        r = _upload(c, "qualidade_leite", [
+            "numero_matriz;data_coleta;ccs;cbt;gordura_pct;proteina_pct;solidos_totais_pct;esd_pct;lactose_pct",
+            ";;181;11;3,69;3,42;12,69;9,00;4,69",
+        ])
+        assert r.json()["criados"] == 0
+        assert len(r.json()["erros"]) == 1
