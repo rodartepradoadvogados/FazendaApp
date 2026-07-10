@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
-  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
+  BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
@@ -15,6 +15,7 @@ import {
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { TabBar, SecaoRecolhivel } from "@/components/ui";
 import { RESPONSAVEIS } from "@/lib/constants";
 
 const COLUNAS_LANCAMENTOS = [
@@ -61,7 +62,6 @@ const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
-const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
   return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
@@ -419,17 +419,14 @@ export default function FinanceiroPage() {
 
         {/* Diário/Mensal — só se aplica ao Fluxo de Caixa */}
         {rel === "fluxo" && (
-          <div className="flex items-center gap-2 mb-3">
-            {(["mensal", "diario"] as const).map((v) => (
-              <button key={v} onClick={() => setVisaoFluxo(v)}
-                style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (visaoFluxo === v ? "var(--dourado)" : "var(--border)"),
-                  background: visaoFluxo === v ? "var(--dourado)" : "transparent",
-                  color: visaoFluxo === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: visaoFluxo === v ? 700 : 400 }}>
-                {v === "mensal" ? "Mensal" : "Diário"}
-              </button>
-            ))}
-          </div>
+          <TabBar
+            abas={[
+              { id: "mensal", label: "Mensal", title: "Fluxo agrupado por mês de caixa" },
+              { id: "diario", label: "Diário", title: "Fluxo dia a dia, como o extrato bancário" },
+            ] as const}
+            ativa={visaoFluxo}
+            onChange={setVisaoFluxo}
+          />
         )}
 
         {/* Gráfico do consolidado */}
@@ -449,20 +446,25 @@ export default function FinanceiroPage() {
               </ComposedChart>
             </ResponsiveContainer>
           )}
-          {rel === "fluxo" && visaoFluxo === "diario" && (
+          {rel === "fluxo" && visaoFluxo === "diario" && (<>
             <ResponsiveContainer width="100%" height={280}>
               <ComposedChart data={fluxoDiario.filter((_, i) => i % Math.ceil(fluxoDiario.length / 200 || 1) === 0)}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="dia" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => formatDate(d as string)} contentStyle={tip} />
                 <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
                 <Bar dataKey="entradas" name="Entradas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
                 <Bar dataKey="saidas" name="Saídas" fill="var(--red)" radius={[2, 2, 0, 0]} />
                 <Line type="monotone" dataKey="acumulado" name="Acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
               </ComposedChart>
             </ResponsiveContainer>
-          )}
+            {Math.ceil(fluxoDiario.length / 200 || 1) > 1 && (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem", textAlign: "center" }}>
+                Exibindo 1 a cada {Math.ceil(fluxoDiario.length / 200 || 1)} pontos para legibilidade.
+              </p>
+            )}
+          </>)}
           {rel === "dre" && (
             <ResponsiveContainer width="100%" height={260}>
               <BarChart data={[{ n: "Receita", v: receitas, f: "var(--green-light)" }, { n: "Despesa", v: despesas, f: "var(--red)" }, { n: "Resultado", v: Math.abs(resultado), f: resultado >= 0 ? "var(--dourado)" : "var(--amber)" }]}>
@@ -473,17 +475,22 @@ export default function FinanceiroPage() {
               </BarChart>
             </ResponsiveContainer>
           )}
-          {rel === "livro" && (
+          {rel === "livro" && (<>
             <ResponsiveContainer width="100%" height={260}>
               <LineChart data={livro.filter((_, i) => i % Math.ceil(livro.length / 150 || 1) === 0)}>
                 <CartesianGrid stroke="var(--border)" vertical={false} />
                 <XAxis dataKey="data" tickFormatter={(d) => (d ? d.slice(5) : "")} tick={{ fill: "var(--text-muted)", fontSize: 9 }} minTickGap={30} />
                 <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
-                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => fmtDia(d as string)} contentStyle={tip} />
+                <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(d: any) => formatDate(d as string)} contentStyle={tip} />
                 <Line type="monotone" dataKey="saldo" name="Saldo acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-          )}
+            {Math.ceil(livro.length / 150 || 1) > 1 && (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem", textAlign: "center" }}>
+                Exibindo 1 a cada {Math.ceil(livro.length / 150 || 1)} pontos para legibilidade.
+              </p>
+            )}
+          </>)}
         </div>
 
         {/* Detalhamento do relatório */}
@@ -495,7 +502,7 @@ export default function FinanceiroPage() {
             </span>
             {rel === "livro" && (
               <ExportarBotoes titulo="Livro Caixa" nomeArquivoBase="livro_caixa" colunas={COLUNAS_LIVRO}
-                linhas={livro.map((l) => ({ ...l, dataFmt: fmtDia(l.data) }))} />
+                linhas={livro.map((l) => ({ ...l, dataFmt: formatDate(l.data || "") }))} />
             )}
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: rel === "livro" ? "460px" : "460px" }}>
@@ -507,7 +514,7 @@ export default function FinanceiroPage() {
                   const itens = aberto ? filtrados.filter((r) => campoMes(r) === m.mes).sort((a, b) => ((a.data_pagamento || "") < (b.data_pagamento || "") ? -1 : 1)) : [];
                   return (
                     <Fragment key={m.mes}>
-                      <tr onClick={() => toggleExp("fluxo:" + m.mes)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("fluxo:" + m.mes)} title="Clique para ver os lançamentos deste mês" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
                         <td style={{ fontWeight: 600 }}>{m.mes}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
@@ -518,7 +525,7 @@ export default function FinanceiroPage() {
                       {aberto && itens.map((r, i) => (
                         <tr key={m.mes + ":" + i} style={{ background: "var(--surface-2)" }}>
                           <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento)} · {r.descricao}</td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{formatDate(r.data_pagamento || "")} · {r.descricao}</td>
                           <td colSpan={2} style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.fornecedor}</td>
                           <td style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
@@ -536,9 +543,9 @@ export default function FinanceiroPage() {
                   const itens = aberto ? filtrados.filter((r) => campoData(r) === m.dia) : [];
                   return (
                     <Fragment key={m.dia}>
-                      <tr onClick={() => toggleExp("fluxodia:" + m.dia)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("fluxodia:" + m.dia)} title="Clique para ver os lançamentos deste dia" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
-                        <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{fmtDia(m.dia)}</td>
+                        <td style={{ fontWeight: 600, whiteSpace: "nowrap" }}>{formatDate(m.dia)}</td>
                         <td style={{ textAlign: "right", color: "var(--green-light)" }}>{formatBRL(m.entradas)}</td>
                         <td style={{ textAlign: "right", color: "var(--red)" }}>{formatBRL(m.saidas)}</td>
                         <td style={{ textAlign: "right", fontWeight: 700, color: m.saldo >= 0 ? "var(--green-light)" : "var(--amber)" }}>{formatBRL(m.saldo)}</td>
@@ -574,7 +581,7 @@ export default function FinanceiroPage() {
                   }).sort((a, b) => b.valor - a.valor) : [];
                   return (
                     <Fragment key={c.conta}>
-                      <tr onClick={() => toggleExp("dre:" + c.conta)} style={{ cursor: "pointer" }}>
+                      <tr onClick={() => toggleExp("dre:" + c.conta)} title="Clique para ver os lançamentos desta conta" style={{ cursor: "pointer" }}>
                         <td style={{ width: 18, color: "var(--text-muted)" }}>{aberto ? "▾" : "▸"}</td>
                         <td style={{ fontWeight: c.nivel <= 1 ? 700 : 600, paddingLeft: `${Math.max(0, c.nivel - 1) * 1.1}rem` }}>
                           {c.nome}{c.codigo && c.codigo !== c.nome ? <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem", marginLeft: "0.4rem" }}>{c.codigo}</span> : null}
@@ -586,7 +593,7 @@ export default function FinanceiroPage() {
                       {aberto && itens.map((r, i) => (
                         <tr key={c.conta + ":" + i} style={{ background: "var(--surface-2)" }}>
                           <td></td>
-                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{fmtDia(r.data_pagamento || r.data_competencia)} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
+                          <td colSpan={2} style={{ fontSize: "0.75rem" }}>{formatDate(r.data_pagamento || r.data_competencia || "")} <span style={{ color: "var(--text-muted)" }}>· {r.fornecedor || "—"}</span></td>
                           <td colSpan={2} style={{ textAlign: "right", fontSize: "0.78rem", color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{r.tipo === "receita" ? "+" : "−"}{formatBRL(r.valor)}</td>
                         </tr>
                       ))}
@@ -600,7 +607,7 @@ export default function FinanceiroPage() {
                 <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
                 <tbody>{livro.slice(0, 500).map((l, i) => (
                   <tr key={i}>
-                    <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{fmtDia(l.data)}</td>
+                    <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(l.data || "")}</td>
                     <td style={{ fontSize: "0.78rem" }}>{l.descricao}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{l.fornecedor}</td>
                     <td style={{ textAlign: "right", color: "var(--green-light)" }}>{l.entrada ? formatBRL(l.entrada) : ""}</td>
@@ -616,8 +623,12 @@ export default function FinanceiroPage() {
 
         {/* Detalhamento por conta gerencial, mês a mês — só no Fluxo de Caixa */}
         {rel === "fluxo" && mesesFluxo.length > 0 && (
-          <div className="card">
-            <div className="card-header mb-3">Detalhamento por conta gerencial (mês a mês)</div>
+          <SecaoRecolhivel
+            titulo="Detalhamento por conta gerencial (mês a mês)"
+            defaultAberta={false}
+            descricao="Uma coluna por mês, com a hierarquia completa do plano de contas"
+            badge={<span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{detalhePorContaMensal.length} conta(s)</span>}
+          >
             <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
               Mesma hierarquia do plano de contas — uma conta de grupo soma o total das contas abaixo dela.
             </p>
@@ -649,7 +660,7 @@ export default function FinanceiroPage() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SecaoRecolhivel>
         )}
         </>}
         </>}
@@ -757,13 +768,13 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
             <Paperclip size={13} /> Anexar nota fiscal ou recibo
           </button>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Tipo</label>
-            <select style={selStyleLote} value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
+            <select style={selStyleLote} title="Filtrar por tipo de nota: a pagar, a receber ou ambas" value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
               <option value="todos">Despesas e receitas</option><option value="despesa">Só despesas (a pagar)</option><option value="receita">Só receitas (a receber)</option>
             </select></div>
           <div><label style={labelStyleLote}>Nota fiscal / nº do documento</label>
@@ -807,7 +818,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
             {filtrados.length} nota(s) em aberto no filtro — total {formatBRL(totalFiltrado)}
             {selecionados.size > 0 && <> · {selecionados.size} selecionada(s) — {formatBRL(totalSelecionado)}</>}
           </span>
-          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
+          <button className="btn-ghost" title="Selecionar ou limpar todas as notas do filtro" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!filtrados.length}>
             {selecionados.size === filtrados.length && filtrados.length ? "Limpar seleção" : `Selecionar todas (${filtrados.length})`}
           </button>
         </div>
@@ -818,7 +829,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
               {filtrados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 return (
-                  <tr key={r.id} style={{ cursor: "pointer" }} onClick={() => toggle(r.id)}>
+                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" onClick={() => toggle(r.id)}>
                     <td><input type="checkbox" checked={selecionados.has(r.id)} onChange={() => toggle(r.id)} onClick={(e) => e.stopPropagation()} /></td>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
@@ -872,7 +883,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
             </div>
           )}
           {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-          <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
+          <button className="btn-primary" title="Baixar todas as notas selecionadas com este pagamento único" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>
@@ -969,7 +980,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
           <span>Lançamentos</span>
           <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
-            linhas={itens.map((r) => ({ ...r, data: fmtDia(emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+            linhas={itens.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
@@ -989,7 +1000,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
                   <tr key={r.id}>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{r.numero_lancamento}{r.parcela_total && r.parcela_total > 1 ? ` (${r.parcela_num}/${r.parcela_total})` : ""}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem", color: vencido ? "var(--red)" : undefined, fontWeight: vencido ? 700 : undefined }}>
-                      {fmtDia(emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento))}{vencido ? " ⚠" : ""}
+                      {formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "")}{vencido ? " ⚠" : ""}
                     </td>
                     <td style={{ fontSize: "0.78rem" }}>{r.descricao || "—"}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
@@ -998,7 +1009,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
-                    {emAberto && <td><button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => onTratar(r)}>Tratar</button></td>}
+                    {emAberto && <td><button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem" }} onClick={() => onTratar(r)}>Tratar</button></td>}
                   </tr>
                 );
               })}
@@ -1112,7 +1123,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+          <button className="btn-ghost" title="Criar um novo lançamento anexando nota fiscal ou recibo (leitura automática)" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
             <Paperclip size={13} /> Anexar nota fiscal ou recibo
           </button>
         </div>
@@ -1155,7 +1166,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 const ativa = r.id === notaId;
                 return (
-                  <tr key={r.id} style={{ cursor: "pointer", background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
+                  <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" style={{ background: ativa ? "rgba(94,26,46,0.35)" : undefined }} onClick={() => selecionar(r)}>
                     <td style={{ fontSize: "0.78rem" }}>
                       <strong>{r.numero_documento || r.numero_lancamento || "—"}</strong>
                       {r.numero_documento && r.numero_lancamento && <span style={{ color: "var(--text-muted)" }}> · {r.numero_lancamento}</span>}
@@ -1165,7 +1176,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
-                    <td>{ativa && <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} />}</td>
+                    <td>{ativa ? <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} /> : <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />}</td>
                   </tr>
                 );
               })}
@@ -1212,10 +1223,10 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
           )}
           {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
           <div className="flex items-center gap-3 mt-4">
-            <button className="btn-primary" onClick={confirmar} disabled={salvando}>
+            <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar} disabled={salvando}>
               <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}
             </button>
-            <button className="btn-ghost" onClick={() => setNotaId(null)}>Cancelar</button>
+            <button className="btn-ghost" title="Cancelar e voltar à seleção de nota" onClick={() => setNotaId(null)}>Cancelar</button>
           </div>
         </div>
       )}
@@ -1286,6 +1297,7 @@ function FolhaPagamentoView() {
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
   const [pagandoId, setPagandoId] = useState<number | null>(null);
+  const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
 
@@ -1376,6 +1388,7 @@ function FolhaPagamentoView() {
   }
 
   async function marcarPago(r: RegistroFolha) {
+    setPagoErro(null);
     try {
       await atualizarFolhaPagamento(r.id, {
         pessoa_id: r.pessoa_id, competencia: r.competencia, valor_bruto: r.valor_bruto,
@@ -1387,7 +1400,7 @@ function FolhaPagamentoView() {
       setPagandoId(null);
       carregar();
     } catch (e: any) {
-      setMsg({ tipo: "erro", texto: e.message || "Erro ao marcar como pago" });
+      setPagoErro(e.message || "Erro ao marcar como pago");
     }
   }
 
@@ -1451,15 +1464,14 @@ function FolhaPagamentoView() {
 
       {anexarAberto && (
         <Modal title="Anexar comprovante — leitura automática (despesa)" onClose={() => setAnexarAberto(false)} width="1000px">
-          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => setAnexarAberto(false)} />
+          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
         </Modal>
       )}
 
       {/* 1) Novo lançamento de folha */}
-      <div className="card mb-4">
-        <div className="card-header mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2"><Plus size={14} /> Novo lançamento de folha</span>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
+      <SecaoRecolhivel titulo="Novo lançamento de folha" icon={Plus} defaultAberta={false} descricao="Lance a folha de uma pessoa em uma competência">
+        <div className="mb-3" style={{ textAlign: "right" }}>
+          <button className="btn-ghost" title="Anexar recibo ou comprovante e preencher por leitura automática" style={{ fontSize: "0.75rem" }} onClick={() => setAnexarAberto(true)}>
             <Paperclip size={13} /> Anexar recibo/comprovante
           </button>
         </div>
@@ -1508,13 +1520,15 @@ function FolhaPagamentoView() {
           </p>
         )}
         {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
+        <button className="btn-primary" title="Salvar o lançamento de folha" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
-      </div>
+      </SecaoRecolhivel>
 
       {/* 2) Vale de funcionário */}
-      <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
+      <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
+        <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
+      </SecaoRecolhivel>
 
       {/* 3) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga */}
       <div className="card mt-4">
@@ -1528,7 +1542,7 @@ function FolhaPagamentoView() {
                 const editando = editingId === r.id;
                 return (
                   <Fragment key={r.id}>
-                    <tr style={{ cursor: "pointer" }} onClick={() => setExpandedId(expandido ? null : r.id)}>
+                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}>
                       <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
                         <span className="flex items-center gap-1">
                           {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -1548,17 +1562,18 @@ function FolhaPagamentoView() {
                       <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         {r.status === "pendente" && (
-                          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setPagandoId(pagandoId === r.id ? null : r.id)}>Marcar como pago</button>
+                          <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
                         )}
                       </td>
                     </tr>
                     {pagandoId === r.id && (
                       <tr><td colSpan={8}>
-                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0" }} onClick={(e) => e.stopPropagation()}>
+                        <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
                           <div><label style={labelStyleLote}>Data do pagamento</label>
                             <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-                          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
-                          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setPagandoId(null)}>Cancelar</button>
+                          <button className="btn-primary" title="Confirmar pagamento" style={{ fontSize: "0.78rem" }} onClick={() => marcarPago(r)}><Check size={13} /> Confirmar</button>
+                          <button className="btn-ghost" title="Cancelar" style={{ fontSize: "0.78rem" }} onClick={() => { setPagoErro(null); setPagandoId(null); }}>Cancelar</button>
+                          {pagoErro && <span style={{ color: "var(--red)", fontSize: "0.78rem", alignSelf: "center" }}>{pagoErro}</span>}
                         </div>
                       </td></tr>
                     )}
@@ -1577,7 +1592,7 @@ function FolhaPagamentoView() {
                           </table>
                           {r.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Obs.: {r.observacao}</p>}
                           {r.status !== "pago" ? (
-                            <button className="btn-ghost mt-2" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
+                            <button className="btn-ghost mt-2" title="Editar este lançamento de folha (enquanto não estiver pago)" style={{ fontSize: "0.75rem" }} onClick={() => iniciarEdicao(r)}>
                               <Pencil size={12} /> Editar lançamento
                             </button>
                           ) : (
@@ -1630,10 +1645,10 @@ function FolhaPagamentoView() {
                           </div>
                           {editMsg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
                           <div className="flex items-center gap-2">
-                            <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={() => salvarEdicao(r)} disabled={editSalvando}>
+                            <button className="btn-primary" title="Salvar as alterações deste lançamento" style={{ fontSize: "0.78rem" }} onClick={() => salvarEdicao(r)} disabled={editSalvando}>
                               <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
                             </button>
-                            <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditingId(null)}>Cancelar</button>
+                            <button className="btn-ghost" title="Cancelar a edição" style={{ fontSize: "0.78rem" }} onClick={() => setEditingId(null)}>Cancelar</button>
                           </div>
                         </div>
                       </td></tr>
@@ -1704,8 +1719,7 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
   }
 
   return (
-    <div className="card mt-4">
-      <div className="card-header mb-3 flex items-center gap-2"><Plus size={14} /> Vale de funcionário</div>
+    <div>
       <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
         Adiantamento pago à parte, descontado da folha em uma ou mais competências. Se a soma dos descontos de vale
         de uma competência ultrapassar 40% do salário base da pessoa, o sistema pede confirmação antes de lançar.
@@ -1733,7 +1747,7 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
           <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       </div>
       {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-      <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
+      <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
     </div>
@@ -1776,7 +1790,7 @@ function RoteiroRmcaModal({ onClose }: { onClose: () => void }) {
       <div className="card" style={{ width: "560px", maxWidth: "96vw", maxHeight: "88vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between mb-3">
           <div className="card-header" style={{ margin: 0 }}>Roteiro — Como indicar os produtos do RMCA</div>
-          <button onClick={onClose} style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
+          <button onClick={onClose} title="Fechar" style={{ background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer" }}><X size={20} /></button>
         </div>
         <div className="space-y-2">
           {ROTEIRO_RMCA.map((s) => (
@@ -1807,7 +1821,7 @@ function RmcaView() {
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Período</span>
-          <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setRoteiroAberto(true)}>
+          <button className="btn-ghost" title="Abrir o passo a passo de configuração do RMCA" style={{ fontSize: "0.75rem" }} onClick={() => setRoteiroAberto(true)}>
             <BookOpen size={13} /> Roteiro — como indicar os produtos do RMCA
           </button>
         </div>

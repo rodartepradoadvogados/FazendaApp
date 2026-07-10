@@ -2,6 +2,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart, PieChart, Stethoscope, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchServicosAnalise, podeModulo } from "@/lib/api";
+import { TabBar } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
 import AgendaVeterinarioPage from "@/app/reproducao/AgendaVeterinario";
 
@@ -85,6 +87,8 @@ function ReproducaoVisaoGeral() {
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
+  const ordServ = useOrdenacao(filtrados);
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -99,15 +103,14 @@ function ReproducaoVisaoGeral() {
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
           {/* Alternância: por data (de/até) OU por ciclo reprodutivo (21 dias). */}
-          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-            {([["data", "Por data"], ["ciclo", "Por ciclo (21 dias)"]] as const).map(([k, t]) => (
-              <button key={k} onClick={() => setModo(k)}
-                style={{ fontSize: "0.72rem", padding: "0.25rem 0.7rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (modo === k ? "var(--dourado)" : "var(--border)"),
-                  background: modo === k ? "var(--dourado)" : "transparent",
-                  color: modo === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: modo === k ? 700 : 400 }}>{t}</button>
-            ))}
-          </div>
+          <TabBar
+            abas={[
+              { id: "data", label: "Por data", title: "Filtrar os serviços por intervalo de datas (de/até)" },
+              { id: "ciclo", label: "Por ciclo (21 dias)", title: "Filtrar por ciclo reprodutivo — janelas de 21 dias ancoradas na data de serviço mais recente" },
+            ] as const}
+            ativa={modo}
+            onChange={setModo}
+          />
           <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
               <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={animal} onChange={(e) => setAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
@@ -151,13 +154,24 @@ function ReproducaoVisaoGeral() {
           <div className="card-header mb-3 flex items-center justify-between"><span>Serviços</span><span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span></div>
           <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
             <table className="fazenda-table">
-              <thead><tr><th>Matriz</th><th>Data serviço</th><th>Tipo</th><th>Diagnóstico</th><th style={{ textAlign: "right" }}>Ord. parto</th><th style={{ textAlign: "right" }}>Tentativa</th><th style={{ textAlign: "right" }}>DEL</th><th>Touro</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Matriz" campo="numero" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label="Data serviço" campo="data" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label="Método" campo="metodo_ia" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label="Ord. parto" campo="ordem_parto" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
+                <ThOrdenavel label="Tentativa" campo="ordem_tentativa" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
+                <ThOrdenavel label="DEL" campo="del_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
+                <ThOrdenavel label="Touro" campo="touro" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+              </tr></thead>
               <tbody>
-                {filtrados.slice(0, 500).map((s, i) => (
-                  <tr key={i}>
+                {ordServ.linhasOrdenadas.slice(0, 500).map((s) => (
+                  <tr key={`${s.numero}-${s.data}`}>
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.tipo_servico}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{s.metodo_ia || "—"}</td>
                     <td><span style={{ color: DIAG_COR[s.diagnostico || "ABERTO"] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{s.diagnostico || "ABERTO"}</span></td>
                     <td style={{ textAlign: "right" }}>{s.ordem_parto ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
@@ -186,25 +200,15 @@ export default function ReproducaoPage() {
   if (!temAnalise && !temVet) return <ReproducaoVisaoGeral />;
 
   const abas = [
-    ["visao", "Reprodução", Heart] as const,
-    ...(temAnalise ? [["analise", "Análise reprodutiva", PieChart] as const] : []),
-    ...(temVet ? [["vet", "Agenda do veterinário", Stethoscope] as const] : []),
+    { id: "visao" as const, label: "Reprodução", icon: Heart, title: "Visão geral dos serviços reprodutivos por animal" },
+    ...(temAnalise ? [{ id: "analise" as const, label: "Análise reprodutiva", icon: PieChart, title: "Taxa de concepção e perda de prenhez, com quebras por dimensão" }] : []),
+    ...(temVet ? [{ id: "vet" as const, label: "Agenda do veterinário", icon: Stethoscope, title: "Roteiro da visita reprodutiva: toques, reconfirmações e classificações" }] : []),
   ];
-  const abaAtiva = abas.some(([k]) => k === aba) ? aba : "visao";
+  const abaAtiva = abas.some((a) => a.id === aba) ? aba : "visao";
 
   return (
     <div className="px-6 pt-6">
-      <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-        {abas.map(([k, label, Icon]) => (
-          <button key={k} onClick={() => setAba(k)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (abaAtiva === k ? "var(--dourado)" : "var(--border)"),
-              background: abaAtiva === k ? "rgba(94,26,46,0.4)" : "transparent",
-              color: abaAtiva === k ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: abaAtiva === k ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
+      <TabBar abas={abas} ativa={abaAtiva} onChange={setAba} />
       <div style={{ margin: "0 -1.5rem" }}>
         {abaAtiva === "visao" ? <ReproducaoVisaoGeral /> : abaAtiva === "analise" ? <AnaliseReprodutivaPage /> : <div className="px-6"><AgendaVeterinarioPage /></div>}
       </div>

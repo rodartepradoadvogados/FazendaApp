@@ -1,8 +1,9 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { ChevronDown, ChevronRight, ChevronUp, Stethoscope, AlertTriangle, Check, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X } from "lucide-react";
 import { fetchAgendaVeterinario, registrarReconfirmacao } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Item = {
   numero_matriz: string; categoria: string; peso: number | null;
@@ -12,37 +13,6 @@ type Item = {
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
 };
 type Listas = Record<string, Item[]>;
-
-// Ordenação por coluna (asc/desc ao clicar no cabeçalho) — mesmo padrão da Agenda.
-function useOrdenacao(linhas: Item[]) {
-  const [coluna, setColuna] = useState<string | null>(null);
-  const [dir, setDir] = useState<1 | -1>(1);
-  const ordenar = (c: string) => {
-    if (c === coluna) setDir((d) => (d === 1 ? -1 : 1));
-    else { setColuna(c); setDir(1); }
-  };
-  const linhasOrdenadas = useMemo(() => {
-    if (!coluna) return linhas;
-    return [...linhas].sort((a: any, b: any) => {
-      const av = a[coluna]; const bv = b[coluna];
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === "number" && typeof bv === "number") return (av - bv) * dir;
-      return String(av).localeCompare(String(bv)) * dir;
-    });
-  }, [linhas, coluna, dir]);
-  return { linhasOrdenadas, coluna, dir, ordenar };
-}
-
-function Th({ label, campo, coluna, dir, ordenar }: { label: string; campo: string; coluna: string | null; dir: 1 | -1; ordenar: (c: string) => void }) {
-  const ativo = coluna === campo;
-  return (
-    <th onClick={() => ordenar(campo)} style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap" }}>
-      <span className="flex items-center gap-1">{label}{ativo ? (dir === 1 ? <ChevronDown size={12} /> : <ChevronUp size={12} />) : null}</span>
-    </th>
-  );
-}
 
 const fmtDia = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
 
@@ -59,7 +29,7 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
   { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo" },
 ];
 
-function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: () => void; onCancelar: () => void }) {
+function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: (numero: string) => void; onCancelar: () => void }) {
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
   const [resultado, setResultado] = useState<"positivo" | "negativo">("positivo");
   const [salvando, setSalvando] = useState(false);
@@ -70,7 +40,7 @@ function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; on
     setSalvando(true); setErro(null);
     try {
       await registrarReconfirmacao({ numero_matriz: numero, data_reconfirmacao: data, resultado });
-      onSalvo();
+      onSalvo(numero);
     } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
   }
 
@@ -81,10 +51,10 @@ function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; on
         <option value="positivo">Positivo (gestante confirmada)</option>
         <option value="negativo">Negativo (perda de prenhez)</option>
       </select>
-      <button onClick={salvar} disabled={salvando} className="btn-primario" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+      <button onClick={salvar} disabled={salvando} className="btn-primary" title="Salvar a reconfirmação de prenhez desta matriz" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
         <Check size={13} /> {salvando ? "Salvando…" : "Salvar"}
       </button>
-      <button onClick={onCancelar} style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
         <X size={13} />
       </button>
       {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
@@ -97,6 +67,7 @@ export default function AgendaVeterinarioPage() {
   const [error, setError] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [reconfirmando, setReconfirmando] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
 
   function carregar() {
     fetchAgendaVeterinario().then(setDados).catch((e) => setError(e.message));
@@ -118,6 +89,12 @@ export default function AgendaVeterinarioPage() {
         </p>
       </div>
 
+      {sucesso && (
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.85rem" }}>
+          <Check size={16} /><span>{sucesso}</span>
+        </div>
+      )}
+
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
         {LISTAS.map((l) => {
           const n = dados.totais[l.key] ?? 0;
@@ -138,7 +115,8 @@ export default function AgendaVeterinarioPage() {
 
       {LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
         <ListaTabela key={l.key} cfg={l} itens={dados.listas[l.key] ?? []}
-          reconfirmando={reconfirmando} setReconfirmando={setReconfirmando} onSalvo={() => { setReconfirmando(null); carregar(); }} />
+          reconfirmando={reconfirmando} setReconfirmando={setReconfirmando}
+          onSalvo={(numero) => { setReconfirmando(null); setSucesso(`Reconfirmação registrada para a matriz ${numero}.`); carregar(); }} />
       ))}
 
       {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
@@ -150,7 +128,7 @@ export default function AgendaVeterinarioPage() {
 
 function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
   cfg: typeof LISTAS[number]; itens: Item[];
-  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: () => void;
+  reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
 }) {
   const ord = useOrdenacao(itens);
   const colunasExport = [
@@ -174,16 +152,16 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
       </div>
       <table className="fazenda-table">
         <thead><tr>
-          <Th label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Peso (kg)" campo="peso" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Dias insem." campo="dias_inseminada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Data serviço" campo="data_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Toque" campo="tocada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          <Th label="Reconfirmação" campo="reconfirmada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
-          {cfg.extra === "atrasada" && <Th label="Situação" campo="atrasada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
-          {cfg.extra === "dias_para_parto" && <Th label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
-          {cfg.extra === "motivo" && <Th label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          <ThOrdenavel label="Matriz" campo="numero_matriz" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Peso (kg)" campo="peso" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Dias insem." campo="dias_inseminada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Data serviço" campo="data_servico" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Toque" campo="tocada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          <ThOrdenavel label="Reconfirmação" campo="reconfirmada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+          {cfg.extra === "atrasada" && <ThOrdenavel label="Situação" campo="atrasada" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.extra === "dias_para_parto" && <ThOrdenavel label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
+          {cfg.extra === "motivo" && <ThOrdenavel label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.reconfirmavel && <th></th>}
         </tr></thead>
         <tbody>
