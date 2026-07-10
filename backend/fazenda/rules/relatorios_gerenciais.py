@@ -1,0 +1,480 @@
+"""
+Relatórios gerenciais e de manejo reprodutivo.
+
+Duas famílias:
+- MANEJO: 8 listas semaforizadas (verde/amarelo/vermelho) que dizem o que fazer
+  HOJE com cada animal (PEV, a inseminar, inseminados, toque/confirmação,
+  prenhes, secagem, previsão de partos, estoque de sêmen).
+- GERENCIAL: 7 análises/gráficos que medem a velocidade e a eficiência do
+  programa reprodutivo (distribuição de DEL, prenhezes por DEL, dias para
+  diagnóstico, intervalo entre serviços, dias para re-inseminação, taxa de
+  serviço/prenhez, fluxo mensal de vacas em lactação).
+
+Referência conceitual: ABS Monitor / DairyComp. As funções são puras: recebem
+listas de dicts (já achatadas dos modelos) e a data de hoje, e devolvem
+estruturas prontas para o front desenhar.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+from fazenda.rules.parametros import get_param
+
+GESTACAO_DIAS = 280  # gestação média usada nas previsões de parto/secagem
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+def _dias(de: date | None, ate: date | None) -> int | None:
+    if isinstance(de, date) and isinstance(ate, date):
+        return (ate - de).days
+    return None
+
+
+def _eh_vaca(numero: str, partos_por_animal: dict[str, list[dict]]) -> bool:
+    """Vaca = tem pelo menos um parto registrado; senão é novilha."""
+    return bool(partos_por_animal.get(numero))
+
+
+def _ultimo_parto(numero: str, partos_por_animal: dict[str, list[dict]]) -> date | None:
+    datas = [p["data_parto"] for p in partos_por_animal.get(numero, []) if p.get("data_parto")]
+    return max(datas) if datas else None
+
+
+def _servicos_do_animal(numero: str, servicos_por_animal: dict[str, list[dict]]) -> list[dict]:
+    servs = servicos_por_animal.get(numero, [])
+    return sorted(servs, key=lambda s: (s.get("data_servico") or date.min))
+
+
+def _ultimo_servico(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
+    servs = _servicos_do_animal(numero, servicos_por_animal)
+    return servs[-1] if servs else None
+
+
+def _ultimo_servico_positivo(numero: str, servicos_por_animal: dict[str, list[dict]]) -> dict | None:
+    pos = [s for s in _servicos_do_animal(numero, servicos_por_animal)
+           if (s.get("diagnostico") or "").strip().upper() == "POSITIVO"]
+    return pos[-1] if pos else None
+
+
+def _indexar(servicos: list[dict], partos: list[dict]) -> tuple[dict, dict]:
+    serv_idx: dict[str, list[dict]] = {}
+    for s in servicos:
+        m = s.get("numero_matriz")
+        if m:
+            serv_idx.setdefault(m, []).append(s)
+    parto_idx: dict[str, list[dict]] = {}
+    for p in partos:
+        m = p.get("numero_matriz")
+        if m:
+            parto_idx.setdefault(m, []).append(p)
+    return serv_idx, parto_idx
+
+
+def _prenhe(animal: dict, ult_pos: dict | None) -> bool:
+    sit = (animal.get("sit_rep") or "").strip()
+    if sit == "Ges.":
+        return True
+    # Sem sit_rep confiável, cai no último serviço positivo sem perda registrada.
+    if ult_pos and not ult_pos.get("data_perda_prenhez"):
+        return sit != "" and not sit.startswith("Vaz.") or sit == ""
+    return False
+
+
+# ===========================================================================
+# MANEJO — 8 listas semaforizadas
+# ===========================================================================
+def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[dict],
+                      semen: list[dict], hoje: date) -> dict:
+    pev = int(get_param("pev_dias", 45) or 45)
+    meta_1a = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    dias_toque = int(get_param("dias_toque", 30) or 30)
+    dias_reconf = int(get_param("dias_reconfirmacao", 30) or 30)
+    visita_vet = int(get_param("intervalo_visita_vet", 30) or 30)
+    seco = int(get_param("periodo_seco_dias", 60) or 60)
+
+    serv_idx, parto_idx = _indexar(servicos, partos)
+    femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"]
+
+    l_pev, l_inseminar, l_inseminados, l_tocar, l_reconfirmar = [], [], [], [], []
+    l_prenhes, l_secagem, l_partos = [], [], []
+
+    for a in femeas:
+        num = a["numero"]
+        grupo = a.get("grupo_primario")
+        sit = (a.get("sit_rep") or "").strip()
+        eh_vaca = _eh_vaca(num, parto_idx)
+        dparto = _ultimo_parto(num, parto_idx)
+        dpp = _dias(dparto, hoje) if dparto else None  # dias pós-parto
+        us = _ultimo_servico(num, serv_idx)
+        ups = _ultimo_servico_positivo(num, serv_idx)
+        prenhe = sit == "Ges." or (ups is not None and not (us or {}).get("data_perda_prenhez") and not sit.startswith("Vaz."))
+        vazia = sit.startswith("Vaz.")
+        inseminada = sit == "Ins."
+
+        # 1) Vacas no PEV (0-45 DPP)
+        if eh_vaca and dpp is not None and 0 <= dpp <= pev:
+            cor = "vermelho" if dpp <= 14 else "amarelo" if dpp <= 29 else "verde"
+            l_pev.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
+                          "data_parto": dparto, "cor": cor})
+
+        # 2) Vacas a inseminar (terminou PEV e não está prenhe nem aguardando diagnóstico)
+        precisa_inseminar = (not prenhe and not inseminada) and (
+            (eh_vaca and dpp is not None and dpp >= pev) or (not eh_vaca and vazia)
+        )
+        if precisa_inseminar:
+            if eh_vaca and dpp is not None:
+                if dpp > meta_1a or vazia and dpp > meta_1a:
+                    cor = "vermelho"
+                elif dpp >= meta_1a - 15:
+                    cor = "amarelo"
+                else:
+                    cor = "verde"
+                if vazia and dpp > meta_1a:
+                    cor = "vermelho"
+            else:
+                cor = "verde"
+            l_inseminar.append({"numero": num, "grupo": grupo, "dias_pos_parto": dpp,
+                                 "eh_vaca": eh_vaca, "situacao": sit or "—", "cor": cor})
+
+        # 3) Animais inseminados (aguardando diagnóstico)
+        aguardando = inseminada or (us is not None and us.get("data_servico") and not us.get("diagnostico") and not prenhe)
+        if aguardando and us and us.get("data_servico"):
+            di = _dias(us["data_servico"], hoje)  # dias de inseminada
+            if di is not None:
+                cor_di = "verde" if di < dias_toque else "amarelo" if di <= dias_toque + 30 else "vermelho"
+                if di in (16, 17, 25, 26):
+                    cor_cio = "amarelo"
+                elif 18 <= di <= 24:
+                    cor_cio = "vermelho"
+                else:
+                    cor_cio = None
+                l_inseminados.append({"numero": num, "grupo": grupo, "dias_inseminada": di,
+                                      "touro": us.get("reprodutor"), "cor_dias": cor_di, "cor_cio": cor_cio,
+                                      "cor": cor_di})
+
+                # 4a) Toque — já passou o período de toque e ainda sem diagnóstico
+                if di >= dias_toque:
+                    cor_t = "amarelo" if di <= dias_toque + visita_vet else "vermelho"
+                    l_tocar.append({"numero": num, "grupo": grupo, "dias_inseminada": di,
+                                    "touro": us.get("reprodutor"), "cor": cor_t})
+
+        # 4b) Reconfirmação — positivo, passou dias de reconfirmação, ainda sem reconfirmar
+        if ups and ups.get("data_servico") and not ups.get("data_reconfirmacao"):
+            dp = _dias(ups["data_servico"], hoje)
+            if dp is not None and dp >= dias_toque + dias_reconf:
+                cor_r = "amarelo" if dp <= dias_toque + dias_reconf + visita_vet else "vermelho"
+                l_reconfirmar.append({"numero": num, "grupo": grupo, "dias_inseminada": dp, "cor": cor_r})
+
+        # 5) Animais prenhes
+        if prenhe and ups:
+            concep = ups.get("data_servico")
+            dias_gest = _dias(concep, hoje)
+            prev_parto = concep + timedelta(days=GESTACAO_DIAS) if concep else None
+            if not eh_vaca:
+                cor = "branco"
+                dpp_conc = None
+            else:
+                dpp_conc = _dias(dparto, concep) if (dparto and concep) else None  # dias pós-parto na concepção
+                if dpp_conc is None:
+                    cor = "verde"
+                elif dpp_conc <= 150:
+                    cor = "verde"
+                elif dpp_conc <= 300:
+                    cor = "amarelo"
+                else:
+                    cor = "vermelho"
+            l_prenhes.append({"numero": num, "grupo": grupo, "dias_gestacao": dias_gest,
+                              "dpp_concepcao": dpp_conc, "previsao_parto": prev_parto,
+                              "reconfirmada": bool(ups.get("data_reconfirmacao")), "cor": cor})
+
+            # 6) Secagem — vaca prenhe em lactação
+            if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
+                prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+                d_secar = _dias(hoje, prev_secagem)
+                if d_secar is not None and d_secar <= 60:  # só as próximas
+                    if d_secar > 15:
+                        cor, luzes = "verde", 0
+                    elif d_secar >= 8:
+                        cor, luzes = "amarelo", 0
+                    elif d_secar >= 0:
+                        cor, luzes = "vermelho", 1
+                    else:
+                        cor, luzes = "vermelho", 2
+                    l_secagem.append({"numero": num, "grupo": grupo, "dias_para_secagem": d_secar,
+                                     "previsao_secagem": prev_secagem, "luzes": luzes, "cor": cor})
+
+            # 7) Previsão de partos — reconfirmada e >200 dias de gestação
+            if ups.get("data_reconfirmacao") and dias_gest is not None and dias_gest > 200 and prev_parto:
+                d_parir = _dias(hoje, prev_parto)
+                if d_parir is not None:
+                    if d_parir > 15:
+                        cor, luzes = "verde", 0
+                    elif d_parir >= 8:
+                        cor, luzes = "amarelo", 0
+                    elif d_parir >= 0:
+                        cor, luzes = "vermelho", 1
+                    else:
+                        cor, luzes = "vermelho", 2
+                    l_partos.append({"numero": num, "grupo": grupo, "dias_para_parto": d_parir,
+                                    "previsao_parto": prev_parto, "dias_gestacao": dias_gest,
+                                    "luzes": luzes, "cor": cor})
+
+    # 8) Estoque de sêmen
+    l_semen = []
+    for s in semen:
+        if not s.get("ativo", True):
+            continue
+        doses = s.get("doses") or 0
+        tipo = (s.get("tipo") or "convencional").lower()
+        if tipo == "sexado":
+            cor = "vermelho" if doses < 5 else "amarelo" if doses <= 15 else "verde"
+        else:
+            cor = "vermelho" if doses < 15 else "amarelo" if doses <= 25 else "verde"
+        l_semen.append({"touro_nome": s.get("touro_nome"), "codigo": s.get("codigo"),
+                        "central": s.get("central"), "tipo": tipo, "doses": doses, "cor": cor})
+
+    def _ordena(lst):
+        return sorted(lst, key=lambda x: ({"vermelho": 0, "amarelo": 1, "verde": 2, "branco": 3}.get(x["cor"], 4),
+                                          _chave_num(x.get("numero", ""))))
+
+    return {
+        "parametros": {"pev": pev, "meta_1a_ia": meta_1a, "dias_toque": dias_toque,
+                       "dias_reconfirmacao": dias_reconf, "periodo_seco": seco},
+        "pev": _ordena(l_pev),
+        "a_inseminar": _ordena(l_inseminar),
+        "inseminados": _ordena(l_inseminados),
+        "a_tocar": _ordena(l_tocar),
+        "a_reconfirmar": _ordena(l_reconfirmar),
+        "prenhes": _ordena(l_prenhes),
+        "secagem": _ordena(l_secagem),
+        "previsao_partos": _ordena(l_partos),
+        "estoque_semen": sorted(l_semen, key=lambda x: ({"vermelho": 0, "amarelo": 1, "verde": 2}.get(x["cor"], 3),
+                                                        x.get("touro_nome") or "")),
+    }
+
+
+def _chave_num(n: str):
+    try:
+        return (0, float(n))
+    except (TypeError, ValueError):
+        return (1, str(n))
+
+
+# ===========================================================================
+# GERENCIAL — gráficos
+# ===========================================================================
+def _del_servico(s: dict) -> int | None:
+    d = s.get("del_servico")
+    if isinstance(d, (int, float)) and d >= 0:
+        return int(d)
+    ds, dp = s.get("data_servico"), s.get("data_ult_parto")
+    if isinstance(ds, date) and isinstance(dp, date) and ds >= dp:
+        return (ds - dp).days
+    return None
+
+
+def distribuicao_del(servicos: list[dict], ordem: int, del_min: int, del_max: int) -> dict:
+    """Cada ponto = uma inseminação de determinada ordem (1ª, 2ª, 3ª, 4ª+),
+    com o DEL na ocasião. Semáforo por PEV e Meta de dias para 1ª IA."""
+    pev = int(get_param("pev_dias", 45) or 45)
+    meta = int(get_param("meta_del_max_1o_servico", 100) or 100)
+
+    pontos = []
+    for s in servicos:
+        o = s.get("ordem_tentativa") or 0
+        if ordem >= 4:
+            if o < 4:
+                continue
+        elif o != ordem:
+            continue
+        d = _del_servico(s)
+        if d is None or d < del_min or d > del_max or d > 350:
+            continue
+        cor = "verde" if pev <= d <= meta else "amarelo" if d < pev else "vermelho"
+        pontos.append({"numero": s.get("numero_matriz"), "del": d, "cor": cor})
+    pontos.sort(key=lambda p: p["del"])
+
+    total = len(pontos)
+    no_periodo = sum(1 for p in pontos if p["cor"] == "verde")
+    no_pev = sum(1 for p in pontos if p["cor"] == "amarelo")
+    apos_meta = sum(1 for p in pontos if p["cor"] == "vermelho")
+
+    def pct(n):
+        return round(100 * n / total, 0) if total else 0
+
+    tabela = [
+        {"label": f"Inseminadas no período desejado (PEV a {meta}d)", "vacas": no_periodo,
+         "atual": pct(no_periodo), "meta": 95, "cor": "verde" if pct(no_periodo) >= 95 else "vermelho"},
+        {"label": "Inseminadas ainda dentro do PEV (antes do ideal)", "vacas": no_pev,
+         "atual": pct(no_pev), "meta": 0, "cor": "verde" if no_pev == 0 else "vermelho"},
+        {"label": f"Inseminadas após a meta de {meta} dias", "vacas": apos_meta,
+         "atual": pct(apos_meta), "meta": 2, "cor": "verde" if pct(apos_meta) <= 2 else "vermelho"},
+    ]
+    return {"pontos": pontos, "pev": pev, "meta": meta, "tabela": tabela, "total": total}
+
+
+def prenhezes_por_del(servicos: list[dict], del_min: int, del_max: int) -> dict:
+    """Barras: nº de prenhezes por ciclo de 21 dias após o PEV. Linha: acumulado
+    %. IEP projetado por faixa (concepção + gestação)."""
+    pev = int(get_param("pev_dias", 45) or 45)
+    positivos = [s for s in servicos if (s.get("diagnostico") or "").strip().upper() == "POSITIVO"]
+    dels = [d for s in positivos if (d := _del_servico(s)) is not None and del_min <= d <= del_max]
+    total = len(dels)
+
+    faixas = [("PEV", 0, pev)]
+    ini = pev + 1
+    while ini <= 354:
+        faixas.append((f"{ini} - {ini + 21}", ini, ini + 21))
+        ini += 22
+    faixas.append(("+354", 355, 10000))
+
+    barras, acumulado = [], 0
+    for label, lo, hi in faixas:
+        n = sum(1 for d in dels if lo <= d <= hi)
+        acumulado += n
+        mid = (lo + min(hi, 354)) / 2
+        iep = round((mid + GESTACAO_DIAS) / 30.44, 2) if n else 0
+        barras.append({"faixa": label, "prenhezes": n,
+                       "acumulado_pct": round(100 * acumulado / total, 0) if total else 0,
+                       "iep_projetado": iep})
+    return {"barras": barras, "total": total, "pev": pev}
+
+
+def dias_para_diagnostico(servicos: list[dict], del_min: int, del_max: int) -> dict:
+    """Histograma: dias entre serviço e diagnóstico. Faixa ideal = dias_toque."""
+    toque = int(get_param("dias_toque", 30) or 30)
+    reconf = int(get_param("dias_reconfirmacao", 30) or 30)
+    dias = []
+    for s in servicos:
+        ds, dd = s.get("data_servico"), s.get("data_diagnostico")
+        if isinstance(ds, date) and isinstance(dd, date) and dd >= ds:
+            dias.append((dd - ds).days)
+    faixas = [("0-20", 0, 20), (f"21-{toque}", 21, toque), (f"{toque+1}-45", toque + 1, 45),
+              ("46-60", 46, 60), ("61-90", 61, 90), (">90", 91, 10000)]
+    barras = [{"faixa": lbl, "servicos": sum(1 for d in dias if lo <= d <= hi)} for lbl, lo, hi in faixas]
+    return {"barras": barras, "total": len(dias), "ideal_min": toque, "ideal_max": toque + reconf}
+
+
+def _buckets_intervalo(valores: list[int]) -> list[dict]:
+    faixas = [("1-3 dias", 1, 3), ("4-17 dias", 4, 17), ("18-24 dias", 18, 24),
+              ("25-35 dias", 25, 35), ("36-48 dias", 36, 48), (">48 dias", 49, 100000)]
+    total = len(valores)
+    return [{"faixa": lbl, "servicos": (n := sum(1 for v in valores if lo <= v <= hi)),
+             "pct": round(100 * n / total, 2) if total else 0} for lbl, lo, hi in faixas]
+
+
+def intervalo_entre_servicos(servicos: list[dict]) -> dict:
+    """Distribuição do intervalo em dias entre serviços consecutivos."""
+    intervalos = [s["intervalo_tentativas"] for s in servicos
+                  if isinstance(s.get("intervalo_tentativas"), (int, float)) and s["intervalo_tentativas"] > 0]
+    return {"barras": _buckets_intervalo([int(i) for i in intervalos]), "total": len(intervalos)}
+
+
+def dias_para_reinseminacao(servicos: list[dict], partos: list[dict]) -> dict:
+    """Dias desde que a vaca foi identificada VAZIA (diagnóstico negativo ou perda)
+    até a re-inseminação (próximo serviço)."""
+    serv_idx, _ = _indexar(servicos, partos)
+    valores = []
+    for num, servs in serv_idx.items():
+        ordenados = sorted(servs, key=lambda s: (s.get("data_servico") or date.min))
+        for i, s in enumerate(ordenados[:-1]):
+            prox = ordenados[i + 1]
+            vazia_em = None
+            if (s.get("diagnostico") or "").strip().upper() == "NEGATIVO" and s.get("data_diagnostico"):
+                vazia_em = s["data_diagnostico"]
+            elif s.get("data_perda_prenhez"):
+                vazia_em = s["data_perda_prenhez"]
+            prox_serv = prox.get("data_servico")
+            if vazia_em and isinstance(prox_serv, date) and prox_serv >= vazia_em:
+                valores.append((prox_serv - vazia_em).days)
+    return {"barras": _buckets_intervalo(valores), "total": len(valores)}
+
+
+def taxa_servico_prenhez(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date) -> dict:
+    """Taxa de serviço e taxa de prenhez por faixa de DEL + acumulado de prenhas.
+    Parâmetros inferidos: 50% até 100d, 75% até 150d, ≤10% aos 300d."""
+    serv_idx, parto_idx = _indexar(servicos, partos)
+    femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"
+              and _eh_vaca(a["numero"], parto_idx)]
+
+    faixas = [("0-50", 0, 50), ("51-100", 51, 100), ("101-150", 101, 150),
+              ("151-200", 151, 200), ("201-250", 201, 250), ("251-300", 251, 300), (">300", 301, 100000)]
+    linhas = []
+    prenhas_acum = 0
+    total_vacas = len(femeas)
+    for lbl, lo, hi in faixas:
+        na_faixa = []
+        for a in femeas:
+            dparto = _ultimo_parto(a["numero"], parto_idx)
+            dpp = _dias(dparto, hoje) if dparto else None
+            if dpp is not None and lo <= dpp <= hi:
+                na_faixa.append(a)
+        n = len(na_faixa)
+        servidas = sum(1 for a in na_faixa if _ultimo_servico(a["numero"], serv_idx))
+        prenhas = sum(1 for a in na_faixa if (a.get("sit_rep") or "").strip() == "Ges.")
+        prenhas_acum += prenhas
+        linhas.append({
+            "faixa": lbl, "vacas": n,
+            "taxa_servico": round(100 * servidas / n, 0) if n else 0,
+            "taxa_prenhez": round(100 * prenhas / n, 0) if n else 0,
+            "acumulado_prenhas_pct": round(100 * prenhas_acum / total_vacas, 0) if total_vacas else 0,
+        })
+    return {"linhas": linhas, "total_vacas": total_vacas,
+            "parametros": {"meta_100d": 50, "meta_150d": 75, "max_300d": 10}}
+
+
+def fluxo_lactacao(animais: list[dict], servicos: list[dict], partos: list[dict], hoje: date, meses: int = 8) -> dict:
+    """Projeção mensal do saldo de vacas em lactação: parte do total atual,
+    subtrai as que vão secar e soma as que vão parir, mês a mês."""
+    seco = int(get_param("periodo_seco_dias", 60) or 60)
+    serv_idx, parto_idx = _indexar(servicos, partos)
+    femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"]
+
+    em_lactacao = sum(1 for a in femeas if (a.get("del_dias") or 0) > 0)
+
+    # Previsões por mês (chave AAAA-MM)
+    secar_por_mes: dict[str, dict[str, int]] = {}
+    parir_por_mes: dict[str, dict[str, int]] = {}
+    for a in femeas:
+        num = a["numero"]
+        ups = _ultimo_servico_positivo(num, serv_idx)
+        if not ups or not ups.get("data_servico"):
+            continue
+        sit = (a.get("sit_rep") or "").strip()
+        if sit.startswith("Vaz."):
+            continue
+        concep = ups["data_servico"]
+        reconf = bool(ups.get("data_reconfirmacao"))
+        prev_parto = concep + timedelta(days=GESTACAO_DIAS)
+        prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
+        eh_vaca = _eh_vaca(num, parto_idx)
+        if eh_vaca and (a.get("del_dias") or 0) > 0 and prev_secagem >= hoje:
+            k = prev_secagem.strftime("%Y-%m")
+            secar_por_mes.setdefault(k, {"confirmada": 0, "prevista": 0})
+            secar_por_mes[k]["confirmada" if reconf else "prevista"] += 1
+        if prev_parto >= hoje:
+            k = prev_parto.strftime("%Y-%m")
+            parir_por_mes.setdefault(k, {"confirmada": 0, "prevista": 0})
+            parir_por_mes[k]["confirmada" if reconf else "prevista"] += 1
+
+    linhas = []
+    saldo = em_lactacao
+    ano, mes = hoje.year, hoje.month
+    for _ in range(meses):
+        k = f"{ano:04d}-{mes:02d}"
+        sec = secar_por_mes.get(k, {"confirmada": 0, "prevista": 0})
+        par = parir_por_mes.get(k, {"confirmada": 0, "prevista": 0})
+        secar_tot = sec["confirmada"] + sec["prevista"]
+        parir_tot = par["confirmada"] + par["prevista"]
+        saldo = saldo - secar_tot + parir_tot
+        linhas.append({
+            "mes": k,
+            "secar": secar_tot, "secar_confirmada": sec["confirmada"], "secar_prevista": sec["prevista"],
+            "parir": parir_tot, "parir_confirmada": par["confirmada"], "parir_prevista": par["prevista"],
+            "saldo_lactacao": saldo,
+        })
+        ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
+
+    return {"lactacao_inicial": em_lactacao, "linhas": linhas}

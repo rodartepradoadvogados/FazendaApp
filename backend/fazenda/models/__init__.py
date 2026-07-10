@@ -832,6 +832,25 @@ class Secagem(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class EstoqueSemen(SQLModel, table=True):
+    """Estoque de doses de sêmen por touro — usado no relatório de manejo
+    'Estoque de sêmen'. Distinto de Estoque (insumos) e de Animal(eh_semen),
+    que é só o catálogo do touro sem contagem de doses."""
+
+    __tablename__ = "estoque_semen"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    touro_nome: str = Field(index=True)
+    codigo: Optional[str] = None
+    central: Optional[str] = None  # central de genética (ex.: ABS, Alta, Semex)
+    tipo: str = "convencional"  # convencional | sexado
+    doses: int = 0
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Dieta (plano alimentar por lote)
 # ---------------------------------------------------------------------------

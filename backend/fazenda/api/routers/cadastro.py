@@ -16,8 +16,8 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
-    PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
+    Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
+    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -831,3 +831,68 @@ def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn
 
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     return _serializar_protocolo(session, protocolo, doencas)
+
+
+# ---------------------------------------------------------------------------
+# Estoque de sêmen — doses por touro (usado no relatório de manejo).
+# ---------------------------------------------------------------------------
+TIPOS_SEMEN = ["convencional", "sexado"]
+
+
+class EstoqueSemenIn(BaseModel):
+    touro_nome: str
+    codigo: str | None = None
+    central: str | None = None
+    tipo: str = "convencional"
+    doses: int = 0
+    observacao: str | None = None
+    ativo: bool = True
+
+
+@router.get("/estoque-semen")
+def listar_estoque_semen(session: Session = Depends(get_session)) -> list[dict]:
+    itens = session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all()
+    return [i.model_dump() for i in itens]
+
+
+@router.post("/estoque-semen")
+def criar_estoque_semen(dados: EstoqueSemenIn, session: Session = Depends(get_session)) -> dict:
+    if not dados.touro_nome.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome do touro")
+    if dados.tipo not in TIPOS_SEMEN:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
+    if dados.doses < 0:
+        raise HTTPException(status_code=400, detail="Doses não pode ser negativo")
+    item = EstoqueSemen(**dados.model_dump())
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+@router.put("/estoque-semen/{item_id}")
+def atualizar_estoque_semen(item_id: int, dados: EstoqueSemenIn, session: Session = Depends(get_session)) -> dict:
+    item = session.get(EstoqueSemen, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
+    if dados.tipo not in TIPOS_SEMEN:
+        raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
+    if dados.doses < 0:
+        raise HTTPException(status_code=400, detail="Doses não pode ser negativo")
+    for campo, valor in dados.model_dump().items():
+        setattr(item, campo, valor)
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+@router.delete("/estoque-semen/{item_id}")
+def excluir_estoque_semen(item_id: int, session: Session = Depends(get_session)) -> dict:
+    item = session.get(EstoqueSemen, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
+    session.delete(item)
+    session.commit()
+    return {"excluido": True}

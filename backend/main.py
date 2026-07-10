@@ -28,6 +28,7 @@ from fazenda.api.routers import (
     notificacoes,
     parametros,
     producao,
+    relatorios,
     reproducao,
     sanidade,
     upload,
@@ -99,6 +100,7 @@ app.include_router(parametros.router, dependencies=_protegido)
 app.include_router(alimentacao.router, dependencies=_protegido)
 app.include_router(producao.router, dependencies=_protegido)
 app.include_router(reproducao.router, dependencies=_protegido)
+app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao"))])
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(sanidade.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").

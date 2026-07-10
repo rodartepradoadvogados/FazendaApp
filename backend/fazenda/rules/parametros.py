@@ -50,6 +50,17 @@ PARAMETROS: dict = {
     },
 }
 
+def get_param(chave: str, padrao: float | int | None = None) -> float | int | None:
+    """Retorna o valor de um parâmetro de manejo/meta por chave (ex.: 'pev_dias',
+    'meta_del_max_1o_servico', 'periodo_seco_dias'). Usado pelos relatórios
+    gerenciais para semaforizar (verde/amarelo/vermelho) com base nas metas."""
+    for grupo in PARAMETROS.values():
+        for item in grupo.get("itens", []):
+            if item.get("chave") == chave:
+                return item.get("valor")
+    return padrao
+
+
 # Metas do benchmark (nosso valor será comparado a estes) — usadas na capa.
 # meta = alvo da fazenda; media_pais = referência de mercado.
 BENCHMARK_METAS: dict[str, dict] = {
