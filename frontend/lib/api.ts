@@ -757,6 +757,13 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
   return res.json();
 }
 
+// ── Relatório controle leiteiro × ITALAC × entrega ──
+export async function fetchRelatorioLeiteItalac() {
+  const res = await authFetch(`${API}/producao/relatorio-leite-italac`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório leite/ITALAC error: ${res.status}`);
+  return res.json();
+}
+
 // ── Secagem ──
 export async function fetchSecagemInfo(numeroMatriz: string) {
   const res = await authFetch(`${API}/producao/secagem-info?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });

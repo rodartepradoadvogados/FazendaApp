@@ -13,10 +13,11 @@ from sqlmodel import Session, select
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, Lote, PesagemCorporal,
-    QualidadeLeite, Sanidade, Secagem, Servico,
+    Animal, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, LancamentoItem, Lote,
+    PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.alimentacao import calcular_consumo
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
@@ -241,6 +242,118 @@ def criar_entrega_leite(dados: EntregaLeiteMensalIn, session: Session = Depends(
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
+
+
+def _competencia(d: date | None) -> str | None:
+    return f"{d.year:04d}-{d.month:02d}" if d else None
+
+
+@router.get("/relatorio-leite-italac")
+def relatorio_leite_italac(session: Session = Depends(get_session)) -> dict:
+    """Compara, por competência (mês), o controle leiteiro pesado, a entrega mensal
+    lançada e a receita/volume faturado pela ITALAC (contas gerenciais com
+    fornecedor/cliente contendo "italac"). Projeta também o consumo de leite pelas
+    bezerras/bezerros com base na dieta atual, para estimar o que sobra do "não
+    entregue" como consumo da fazenda/equipe."""
+    controles = session.exec(select(ControleLeiteiro)).all()
+    entregas = session.exec(select(EntregaLeiteMensal)).all()
+    contas = session.exec(select(ContaGerencial).where(ContaGerencial.tipo == "receita")).all()
+    qualidades = session.exec(select(QualidadeLeite)).all()
+
+    controle_por_mes: dict[str, dict] = {}
+    for c in controles:
+        comp = _competencia(c.data_controle)
+        if not comp or c.producao_kg is None:
+            continue
+        acc = controle_por_mes.setdefault(comp, {"kg": 0.0, "n": 0})
+        acc["kg"] += c.producao_kg
+        acc["n"] += 1
+
+    entrega_por_mes = {e.competencia: e.quantidade_litros for e in entregas}
+
+    contas_italac = [c for c in contas if "italac" in (c.fornecedor_cliente or "").lower()]
+    # CSV importado costuma preencher quantidade direto na conta; lançamento manual
+    # guarda a quantidade no(s) item(ns) da nota — cai para a soma dos itens nesse caso.
+    numeros_sem_quantidade = {c.numero_lancamento for c in contas_italac if not c.quantidade and c.numero_lancamento}
+    quantidade_por_numero: dict[str, float] = {}
+    if numeros_sem_quantidade:
+        itens = session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento.in_(numeros_sem_quantidade))).all()
+        for item in itens:
+            quantidade_por_numero[item.numero_lancamento] = quantidade_por_numero.get(item.numero_lancamento, 0.0) + (item.quantidade or 0.0)
+
+    italac_por_mes: dict[str, dict] = {}
+    for c in contas_italac:
+        comp = _competencia(c.data_competencia)
+        if not comp:
+            continue
+        litros = c.quantidade or quantidade_por_numero.get(c.numero_lancamento or "", 0.0)
+        acc = italac_por_mes.setdefault(comp, {"litros": 0.0, "receita": 0.0})
+        acc["litros"] += litros
+        acc["receita"] += c.valor_total or 0.0
+
+    qualidade_por_mes: dict[str, list[QualidadeLeite]] = {}
+    for q in qualidades:
+        comp = _competencia(q.data_coleta)
+        if comp:
+            qualidade_por_mes.setdefault(comp, []).append(q)
+
+    # Consumo de leite pelas bezerras/bezerros — projeção a partir da dieta atual
+    # (mesma lógica do painel de Alimentação), incluindo machos e fêmeas.
+    dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
+    animais = [
+        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        if not a.eh_semen
+    ]
+    consumo = calcular_consumo(dietas, animais)
+    litros_dia_bezerros = 0.0
+    efetivo_bezerros = 0
+    for lote_info in consumo["por_lote"]:
+        if "bezerr" not in (lote_info.get("categoria") or "").lower():
+            continue
+        efetivo_bezerros += lote_info["efetivo"]
+        for item in lote_info["itens"]:
+            if "leite" in (item["ingrediente"] or "").lower():
+                litros_dia_bezerros += item["consumo_dia"]
+    litros_mes_bezerros = round(litros_dia_bezerros * 30, 1)
+
+    competencias = sorted(set(controle_por_mes) | set(entrega_por_mes) | set(italac_por_mes))
+    linhas = []
+    for comp in competencias:
+        kg_controle = round(controle_por_mes[comp]["kg"], 1) if comp in controle_por_mes else None
+        litros_entrega = entrega_por_mes.get(comp)
+        italac = italac_por_mes.get(comp)
+        litros_italac = round(italac["litros"], 1) if italac else None
+        receita_italac = round(italac["receita"], 2) if italac else None
+        preco_medio = round(receita_italac / litros_italac, 4) if litros_italac else None
+
+        qs = qualidade_por_mes.get(comp, [])
+        ccs_vals = [q.ccs for q in qs if q.ccs is not None]
+        gordura_vals = [q.gordura_pct for q in qs if q.gordura_pct is not None]
+
+        nao_entregue = round(kg_controle - litros_entrega, 1) if (kg_controle is not None and litros_entrega is not None) else None
+        consumo_outros = round(nao_entregue - litros_mes_bezerros, 1) if nao_entregue is not None else None
+
+        linhas.append({
+            "competencia": comp,
+            "controle_leiteiro_kg": kg_controle,
+            "controles_no_mes": controle_por_mes.get(comp, {}).get("n", 0),
+            "entrega_litros": litros_entrega,
+            "italac_litros": litros_italac,
+            "italac_receita": receita_italac,
+            "preco_medio_litro": preco_medio,
+            "ccs_medio": round(sum(ccs_vals) / len(ccs_vals), 1) if ccs_vals else None,
+            "gordura_media_pct": round(sum(gordura_vals) / len(gordura_vals), 2) if gordura_vals else None,
+            "nao_entregue_kg": nao_entregue,
+            "consumo_bezerros_estimado_litros": litros_mes_bezerros if nao_entregue is not None else None,
+            "consumo_outros_estimado_litros": consumo_outros,
+        })
+
+    return {
+        "linhas": linhas,
+        "efetivo_bezerros": efetivo_bezerros,
+        "consumo_bezerros_dia_litros": round(litros_dia_bezerros, 1),
+        "consumo_bezerros_mes_litros": litros_mes_bezerros,
+    }
 
 
 def _rotulo_lote(codigo: str, nome: str) -> str:

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite } from "@/lib/api";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lucide-react";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioLeiteItalac } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -84,6 +84,13 @@ const INDICADORES_QUALIDADE = [
   { key: "lactose_pct", label: "Lactose", unidade: "%" },
 ] as const;
 
+type LinhaLeiteItalac = {
+  competencia: string; controle_leiteiro_kg: number | null; controles_no_mes: number;
+  entrega_litros: number | null; italac_litros: number | null; italac_receita: number | null;
+  preco_medio_litro: number | null; ccs_medio: number | null; gordura_media_pct: number | null;
+  nao_entregue_kg: number | null; consumo_bezerros_estimado_litros: number | null; consumo_outros_estimado_litros: number | null;
+};
+
 export default function ProducaoPage() {
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -120,6 +127,14 @@ export default function ProducaoPage() {
   }, [qlFiltrados, qlIndicador]);
   const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
   const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
+
+  const [relatorioItalac, setRelatorioItalac] = useState<{
+    linhas: LinhaLeiteItalac[]; efetivo_bezerros: number; consumo_bezerros_dia_litros: number; consumo_bezerros_mes_litros: number;
+  } | null>(null);
+  useEffect(() => {
+    fetchRelatorioLeiteItalac().then(setRelatorioItalac).catch(() => {});
+  }, []);
+  const ordItalac = useOrdenacao<LinhaLeiteItalac>(relatorioItalac?.linhas ?? []);
 
   useEffect(() => {
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
@@ -340,6 +355,60 @@ export default function ProducaoPage() {
                 <p className="kpi-label">{qlIndicadorInfo.label} média no período</p></div>
             </div>
             {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
+          </div>
+
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Scale size={14} /> Controle leiteiro × Entrega mensal × ITALAC</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Compara o que foi pesado no controle leiteiro, o que foi entregue ao laticínio (lançamento mensal) e o que a
+              ITALAC faturou (contas gerenciais). A diferença entre pesado e entregue é consumo próprio da fazenda — parte
+              dela é a projeção de leite na dieta das bezerras/bezerros; o restante é consumo estimado da equipe/família.
+            </p>
+            {relatorioItalac && relatorioItalac.efetivo_bezerros > 0 && (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.efetivo_bezerros}</p>
+                  <p className="kpi-label">Bezerras/bezerros no rebanho</p></div>
+                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.consumo_bezerros_dia_litros} L</p>
+                  <p className="kpi-label">Leite na dieta/dia (projetado)</p></div>
+                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.consumo_bezerros_mes_litros} L</p>
+                  <p className="kpi-label">Projeção mensal de consumo</p></div>
+              </div>
+            )}
+            <div className="overflow-x-auto">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <ThOrdenavel label="Competência" campo="competencia" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} />
+                  <ThOrdenavel label="Controle (kg)" campo="controle_leiteiro_kg" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Entregue (L)" campo="entrega_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="ITALAC (L)" campo="italac_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Receita ITALAC (R$)" campo="italac_receita" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Preço médio (R$/L)" campo="preco_medio_litro" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="CCS médio" campo="ccs_medio" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Não entregue (kg)" campo="nao_entregue_kg" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Bezerros (L, est.)" campo="consumo_bezerros_estimado_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Equipe/fazenda (L, est.)" campo="consumo_outros_estimado_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                </tr></thead>
+                <tbody>
+                  {ordItalac.linhasOrdenadas.map((l) => (
+                    <tr key={l.competencia}>
+                      <td>{l.competencia}</td>
+                      <td style={{ textAlign: "right" }}>{l.controle_leiteiro_kg ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.entrega_litros ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.italac_litros ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.italac_receita != null ? l.italac_receita.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.preco_medio_litro != null ? l.preco_medio_litro.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.ccs_medio ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.nao_entregue_kg ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.consumo_bezerros_estimado_litros ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.consumo_outros_estimado_litros ?? "—"}</td>
+                    </tr>
+                  ))}
+                  {!ordItalac.linhasOrdenadas.length && (
+                    <tr><td colSpan={10} style={{ color: "var(--text-muted)" }}>Sem dados de controle leiteiro, entrega mensal ou receita da ITALAC ainda.</td></tr>
+                  )}
+                </tbody>
+              </table>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
