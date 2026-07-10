@@ -22,7 +22,7 @@ from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, cria
 from fazenda.api.routers.producao import ControlesIn, OrdenhaIn, PesagensIn, PesoIn, criar_controles, criar_pesagens
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Sanidade
-from fazenda.parsers.utils import iter_csv_rows, parse_bool, parse_date, parse_float
+from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
 
 router = APIRouter(prefix="/importar", tags=["importar"])
 
@@ -303,10 +303,15 @@ async def importar_produtos_estoque(file: UploadFile, session: Session = Depends
             criados += 1
         else:
             atualizados += 1
-        item.ensacado = parse_bool(row.get("ensacado", ""))
-        kg = parse_float(row.get("kg_por_saco", ""))
-        if kg is not None:
-            item.kg_por_saco = kg
+        unidade_embalagem = row.get("unidade_embalagem", "").strip()
+        if unidade_embalagem:
+            item.unidade_embalagem = unidade_embalagem
+        medida_embalagem = row.get("medida_embalagem", "").strip()
+        if medida_embalagem:
+            item.medida_embalagem = medida_embalagem
+        quantidade_embalagem = parse_float(row.get("quantidade_embalagem", ""))
+        if quantidade_embalagem is not None:
+            item.quantidade_embalagem = quantidade_embalagem
         if fornecedor_id is not None:
             item.fornecedor_id = fornecedor_id
         session.add(item)

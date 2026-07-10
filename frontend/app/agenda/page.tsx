@@ -1,9 +1,11 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe } from "lucide-react";
-import { fetchAgenda, addEventoManual, marcarEventoRealizado, today } from "@/lib/api";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw } from "lucide-react";
+import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
@@ -23,6 +25,7 @@ function diasEntre(aIso: string, bIso: string): number {
 }
 
 const CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro", "Atividades"];
+const TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"];
 const BADGE_CLASS: Record<string, string> = {
   "Reprodutivo":       "badge-reprodutivo",
   "Sanidade":          "badge-sanidade",
@@ -40,7 +43,31 @@ export default function AgendaPage() {
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({ data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", numero_animal: "", observacao: "" });
+  const [form, setForm] = useState({
+    data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", observacao: "",
+    tipo_evento: "", recorrente: false, recorrenciaNumero: "", recorrenciaFrequencia: "dias" as "dias" | "meses",
+  });
+  const [vinculo, setVinculo] = useState<"nenhum" | "animal" | "lote">("nenhum");
+  const [animaisSelecionados, setAnimaisSelecionados] = useState<Set<string>>(new Set());
+  const [lotesSelecionados, setLotesSelecionados] = useState<Set<string>>(new Set());
+  const [animaisTodos, setAnimaisTodos] = useState<AnimalRow[]>([]);
+  const [lotesTodos, setLotesTodos] = useState<LoteRow[]>([]);
+  const [pickerAberto, setPickerAberto] = useState<"animal" | "lote" | null>(null);
+  const abrirPicker = async (tipo: "animal" | "lote") => {
+    if (tipo === "animal" && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {});
+    if (tipo === "lote" && !lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
+    setVinculo(tipo);
+    setPickerAberto(tipo);
+  };
+  const toggleAnimalSelecionado = (numero: string) => setAnimaisSelecionados((p) => { const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n; });
+  const toggleTodosAnimais = () => setAnimaisSelecionados((p) => (p.size === animaisTodos.length ? new Set() : new Set(animaisTodos.map((a) => a.numero))));
+  const toggleLoteSelecionado = (codigo: string) => setLotesSelecionados((p) => { const n = new Set(p); n.has(codigo) ? n.delete(codigo) : n.add(codigo); return n; });
+  const toggleTodosLotes = () => setLotesSelecionados((p) => (p.size === lotesTodos.length ? new Set() : new Set(lotesTodos.map((l) => l.codigo))));
+  const pickerColunasAnimais = [
+    { header: "Nº", render: (a: AnimalRow) => a.numero },
+    { header: "Grupo", render: (a: AnimalRow) => a.grupo_primario || "—" },
+    { header: "Categoria", render: (a: AnimalRow) => a.categoria_abrev || a.categoria_completa || "—" },
+  ];
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [datasAbertas, setDatasAbertas] = useState<Set<string>>(new Set());
   const toggleData = (d: string) => setDatasAbertas(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
@@ -79,6 +106,21 @@ export default function AgendaPage() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
+  // Protocolo IATF concluídos — permite desfazer um grupo (lançamento+dia)
+  // marcado como realizado por engano.
+  const [iatfConcluidos, setIatfConcluidos] = useState<any[]>([]);
+  const carregarConcluidos = useCallback(async () => {
+    try { setIatfConcluidos(await fetchProtocoloIatfConcluidos()); } catch { setIatfConcluidos([]); }
+  }, []);
+  useEffect(() => { carregarConcluidos(); }, [carregarConcluidos]);
+  const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
+  const desfazerIatf = async (id: string) => {
+    setDesfazendo((p) => new Set(p).add(id));
+    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos()]); }
+    catch (e: any) { alert(e.message); }
+    finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
+  };
+
   const hoje = today();
   const eventosBase = (agenda?.eventos || []).filter((e: any) => {
     if (fCat && e.categoria !== fCat) return false;
@@ -96,7 +138,12 @@ export default function AgendaPage() {
   const [marcando, setMarcando] = useState<Set<string>>(new Set());
   const marcarRealizado = async (eventoId: string, animais?: string[]) => {
     setMarcando((p) => new Set(p).add(eventoId));
-    try { await marcarEventoRealizado(eventoId, animais); cancelarConfirmacao(eventoId); await carregar(); }
+    try {
+      await marcarEventoRealizado(eventoId, animais);
+      cancelarConfirmacao(eventoId);
+      await carregar();
+      if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
+    }
     catch (e: any) { alert(e.message); }
     finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
   };
@@ -120,10 +167,30 @@ export default function AgendaPage() {
     );
   };
 
+  const fecharModalNovoEvento = () => {
+    setShowModal(false);
+    setVinculo("nenhum");
+    setAnimaisSelecionados(new Set());
+    setLotesSelecionados(new Set());
+    setForm({ data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", observacao: "", tipo_evento: "", recorrente: false, recorrenciaNumero: "", recorrenciaFrequencia: "dias" });
+  };
+
   const handleAddEvento = async () => {
     try {
-      await addEventoManual(form);
-      setShowModal(false);
+      const numeroIntervalo = Math.max(1, Math.round(Number(form.recorrenciaNumero) || 0));
+      await addEventoManual({
+        data_evento: form.data_evento,
+        descricao: form.descricao,
+        categoria: form.categoria,
+        observacao: form.observacao || undefined,
+        numero_animal: vinculo === "animal" && animaisSelecionados.size ? Array.from(animaisSelecionados).join(",") : undefined,
+        lotes: vinculo === "lote" && lotesSelecionados.size ? Array.from(lotesSelecionados).join(",") : undefined,
+        tipo_evento: form.tipo_evento || undefined,
+        recorrente: form.recorrente,
+        intervalo_dias: form.recorrente && form.recorrenciaFrequencia === "dias" ? numeroIntervalo : undefined,
+        intervalo_meses: form.recorrente && form.recorrenciaFrequencia === "meses" ? numeroIntervalo : undefined,
+      });
+      fecharModalNovoEvento();
       carregar();
     } catch (e: any) { alert(e.message); }
   };
@@ -170,12 +237,18 @@ export default function AgendaPage() {
                       return (
                         <tr key={i}>
                           <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
-                          <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || "—"}</td>
+                          <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                           <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
                           <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                           <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                           <td>
-                            <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                            {e.categoria === "alimentacao" ? (
+                              <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                <Wheat size={12} /> Ir para Dieta
+                              </a>
+                            ) : (
+                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                            )}
                           </td>
                         </tr>
                       );
@@ -222,7 +295,10 @@ export default function AgendaPage() {
                                           <td style={{ fontWeight: 700 }}>{numero}</td>
                                           {ehD11 && (
                                             <td>
-                                              <a href={`/lancamentos?ir=inseminacao`} className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                              <a
+                                                href={`/lancamentos?ir=inseminacao&numero_matriz=${encodeURIComponent(numero)}&protocolo=${encodeURIComponent(e.protocolo || "")}`}
+                                                className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+                                              >
                                                 <Syringe size={12} /> Ir para Inseminação
                                               </a>
                                             </td>
@@ -263,7 +339,9 @@ export default function AgendaPage() {
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
                           <td onClick={(ev) => ev.stopPropagation()}>
-                            <BotaoRealizado chave={`grupo:${chaveGrupo}`} onConfirmar={() => itens.forEach((it: any) => marcarRealizado(it.id))} />
+                            <a href={`/financeiro?ir=a_pagar&ref=${encodeURIComponent(ref)}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                              <Wallet size={12} /> Ir para Financeiro
+                            </a>
                           </td>
                         </tr>
                         {abertoGrupo && itens.map((it: any, j: number) => (
@@ -271,9 +349,7 @@ export default function AgendaPage() {
                             <td></td><td></td>
                             <td colSpan={2} style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.descricao}{it.observacao ? ` · ${it.observacao}` : ""}</td>
                             <td></td>
-                            <td>
-                              <BotaoRealizado chave={it.id} compacto onConfirmar={() => marcarRealizado(it.id)} />
-                            </td>
+                            <td></td>
                           </tr>
                         ))}
                       </React.Fragment>
@@ -463,6 +539,38 @@ export default function AgendaPage() {
         </div>
       )}
 
+      {/* Protocolo IATF — concluídos recentemente, com opção de desfazer */}
+      {iatfConcluidos.length > 0 && (
+        <div className="card mb-4">
+          <button onClick={() => togglePainel("iatfConcluidos")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", padding: 0 }}>
+            {paineis.has("iatfConcluidos") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+            <span className="card-header" style={{ margin: 0 }}>Protocolo IATF — concluídos ({iatfConcluidos.length})</span>
+          </button>
+          {paineis.has("iatfConcluidos") && (
+            <div className="overflow-x-auto mt-3">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Protocolo</th><th>Etapa</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
+                <tbody>
+                  {iatfConcluidos.map((g: any) => (
+                    <tr key={g.id}>
+                      <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
+                      <td>D{g.dia}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{g.animais.join(", ")}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td>
+                        <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
+                          <RotateCcw size={12} /> Desfazer
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Filtros da agenda cronológica */}
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar agenda</div>
@@ -518,15 +626,13 @@ export default function AgendaPage() {
 
       {/* Modal adicionar evento */}
       {showModal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50 }}>
-          <div className="card" style={{ width: "420px", maxWidth: "90vw" }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: "1rem" }}>
+          <div className="card" style={{ width: "520px", maxWidth: "95vw", maxHeight: "90vh", overflowY: "auto" }}>
             <div className="card-header mb-4">Adicionar Evento Manual</div>
             <div className="space-y-3">
               {[
                 { label: "Data", key: "data_evento", type: "date" },
                 { label: "Descrição", key: "descricao", type: "text" },
-                { label: "Nº Animal (opcional)", key: "numero_animal", type: "text" },
-                { label: "Observação (opcional)", key: "observacao", type: "text" },
               ].map(f => (
                 <div key={f.key}>
                   <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>{f.label}</label>
@@ -538,6 +644,41 @@ export default function AgendaPage() {
                   />
                 </div>
               ))}
+
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Vincular a (opcional)</label>
+                <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                  {[
+                    { v: "nenhum", label: "Nenhum (tarefa livre)" },
+                    { v: "animal", label: "Animal(is)" },
+                    { v: "lote", label: "Lote(s)" },
+                  ].map((o) => (
+                    <button key={o.v} type="button"
+                      onClick={() => { setVinculo(o.v as any); if (o.v === "nenhum") { setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); } }}
+                      style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                        border: "1px solid " + (vinculo === o.v ? "var(--dourado)" : "var(--border)"),
+                        background: vinculo === o.v ? "var(--dourado)" : "transparent",
+                        color: vinculo === o.v ? "#1a1a1a" : "var(--text-muted)", fontWeight: vinculo === o.v ? 700 : 400 }}>
+                      {o.label}
+                    </button>
+                  ))}
+                </div>
+                {vinculo === "animal" && (
+                  <div className="mt-2">
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("animal")}>
+                      {animaisSelecionados.size ? `${animaisSelecionados.size} animal(is) selecionado(s) — alterar` : "Selecionar animais…"}
+                    </button>
+                  </div>
+                )}
+                {vinculo === "lote" && (
+                  <div className="mt-2">
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("lote")}>
+                      {lotesSelecionados.size ? `${lotesSelecionados.size} lote(s) selecionado(s) — alterar` : "Selecionar lotes…"}
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <div>
                 <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Categoria</label>
                 <select
@@ -548,10 +689,68 @@ export default function AgendaPage() {
                   {CATEGORIAS.map(c => <option key={c}>{c}</option>)}
                 </select>
               </div>
+
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Tipo de evento (opcional)</label>
+                <select
+                  value={form.tipo_evento}
+                  onChange={e => setForm(p => ({ ...p, tipo_evento: e.target.value }))}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                >
+                  <option value="">—</option>
+                  {TIPOS_EVENTO.map(t => <option key={t}>{t}</option>)}
+                </select>
+              </div>
+
+              <div>
+                <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Observação (opcional)</label>
+                <input
+                  type="text" value={form.observacao}
+                  onChange={e => setForm(p => ({ ...p, observacao: e.target.value }))}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}
+                />
+              </div>
+
+              <div>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+                  <input type="checkbox" checked={form.recorrente} onChange={e => setForm(p => ({ ...p, recorrente: e.target.checked }))} /> Repetir este evento
+                </label>
+                {form.recorrente && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <span style={{ fontSize: "0.8rem" }}>A cada</span>
+                    <input type="number" min={1} value={form.recorrenciaNumero}
+                      onChange={e => setForm(p => ({ ...p, recorrenciaNumero: e.target.value }))}
+                      style={{ width: "5rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.5rem", color: "var(--text)", fontSize: "0.875rem" }} />
+                    <select value={form.recorrenciaFrequencia}
+                      onChange={e => setForm(p => ({ ...p, recorrenciaFrequencia: e.target.value as "dias" | "meses" }))}
+                      style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem" }}>
+                      <option value="dias">dias</option>
+                      <option value="meses">meses</option>
+                    </select>
+                  </div>
+                )}
+              </div>
             </div>
             <div className="flex justify-end gap-2 mt-4">
-              <button onClick={() => setShowModal(false)} className="btn-ghost">Cancelar</button>
-              <button onClick={handleAddEvento} className="btn-primary" disabled={!form.descricao}>Salvar</button>
+              <button onClick={fecharModalNovoEvento} className="btn-ghost">Cancelar</button>
+              <button onClick={handleAddEvento} className="btn-primary" disabled={!form.descricao || (form.recorrente && !form.recorrenciaNumero)}>Salvar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Picker de animais ou lotes para o vínculo do evento manual */}
+      {pickerAberto && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: "1rem" }}>
+          <div className="card" style={{ width: "640px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div className="card-header mb-3">{pickerAberto === "animal" ? "Selecionar animal(is)" : "Selecionar lote(s)"}</div>
+            {pickerAberto === "animal" ? (
+              <SelecaoAnimaisTabela animais={animaisTodos} selecionados={animaisSelecionados} toggle={toggleAnimalSelecionado} toggleTodos={toggleTodosAnimais} colunas={pickerColunasAnimais} />
+            ) : (
+              <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setPickerAberto(null)} className="btn-primary">OK</button>
             </div>
           </div>
         </div>

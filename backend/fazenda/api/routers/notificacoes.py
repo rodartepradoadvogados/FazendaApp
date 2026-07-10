@@ -11,20 +11,11 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from fazenda.api.routers.agenda import calcular_agenda
-from fazenda.auth import get_current_user, tem_modulo
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import SolicitacaoExclusao, Usuario
 
 router = APIRouter(prefix="/notificacoes", tags=["notificacoes"])
-
-# Categoria de evento da agenda → módulo que autoriza vê-lo no sininho.
-CATEGORIA_MODULO = {
-    "Reprodutivo": "reproducao",
-    "Sanidade": "sanidade",
-    "Produção": "producao",
-    "Gestão/Financeiro": "financeiro",
-    "Atividades": "agenda",
-}
 
 
 @router.get("/")
@@ -35,12 +26,11 @@ def notificacoes_hoje(
     hoje = date.today()
     itens: list[dict] = []
 
-    agenda = calcular_agenda(data=hoje, dias=0, session=session)
+    # calcular_agenda já filtra os eventos pela permissão do usuário (ver
+    # MODULO_POR_CATEGORIA em agenda.py) — não precisa repetir o filtro aqui.
+    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=user)
     for e in agenda["eventos"]:
         if e["data"] != hoje.isoformat():
-            continue
-        modulo = CATEGORIA_MODULO.get(e["categoria"], "agenda")
-        if not tem_modulo(user, modulo):
             continue
         itens.append({
             "tipo": "agenda",

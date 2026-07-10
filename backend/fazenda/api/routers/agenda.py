@@ -3,12 +3,14 @@ Router da Agenda — calcula e retorna eventos do dia ou de um período.
 """
 from __future__ import annotations
 
+import calendar
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
@@ -16,14 +18,79 @@ from fazenda.models import (
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
 )
+from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.unidades import pode_dar_baixa_direta
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
+# Categoria do evento -> módulo cujo acesso o usuário precisa ter para ver o
+# evento na Agenda (e no sininho de notificações, ver notificacoes.py).
+# "Atividades" é o balde genérico de eventos manuais — exige só o acesso à
+# própria Agenda, não um módulo mais específico.
+MODULO_POR_CATEGORIA = {
+    "Reprodutivo": "reproducao",
+    "Produção": "producao",
+    "Gestão/Financeiro": "financeiro",
+    "alimentacao": "alimentacao",
+    "sanidade": "sanidade",
+    "Sanidade": "sanidade",
+    "Atividades": "agenda",
+}
+
+TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
+
+
+def _modulos_liberados(usuario: Usuario) -> set[str]:
+    if usuario.papel == "admin":
+        return set(MODULO_POR_CATEGORIA.values()) | {"reproducao"}
+    return {m.strip() for m in (usuario.permissoes or "").split(",") if m.strip()}
+
 
 def _model_to_dict(obj) -> dict:
     return obj.model_dump()
+
+
+def _proxima_ocorrencia(base: date, intervalo_dias: int | None, intervalo_meses: int | None) -> date:
+    if intervalo_dias:
+        return base + timedelta(days=intervalo_dias)
+    mes_total = base.month - 1 + (intervalo_meses or 1)
+    ano = base.year + mes_total // 12
+    mes = mes_total % 12 + 1
+    dia = min(base.day, calendar.monthrange(ano, mes)[1])
+    return date(ano, mes, dia)
+
+
+def _gerar_agenda_recorrente(session: Session) -> None:
+    """
+    Para cada evento manual de agenda marcado como recorrente (o "modelo"),
+    gera automaticamente as próximas ocorrências até hoje — mesmo padrão
+    "lazy pull" da folha de pagamento recorrente (_gerar_folha_recorrente).
+    """
+    hoje = date.today()
+    modelos = session.exec(
+        select(AgendaManual).where(
+            AgendaManual.recorrente == True,  # noqa: E712
+            AgendaManual.origem_recorrencia_id == None,  # noqa: E711
+        )
+    ).all()
+    for modelo in modelos:
+        if not modelo.intervalo_dias and not modelo.intervalo_meses:
+            continue
+        ultima = session.exec(
+            select(AgendaManual)
+            .where(AgendaManual.origem_recorrencia_id == modelo.id)
+            .order_by(AgendaManual.data_evento.desc())
+        ).first()
+        proxima = _proxima_ocorrencia(ultima.data_evento if ultima else modelo.data_evento, modelo.intervalo_dias, modelo.intervalo_meses)
+        while proxima <= hoje:
+            session.add(AgendaManual(
+                data_evento=proxima, descricao=modelo.descricao, categoria=modelo.categoria,
+                numero_animal=modelo.numero_animal, lotes=modelo.lotes, tipo_evento=modelo.tipo_evento,
+                observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
+            ))
+            session.commit()
+            proxima = _proxima_ocorrencia(proxima, modelo.intervalo_dias, modelo.intervalo_meses)
 
 
 @router.get("/")
@@ -31,6 +98,7 @@ def calcular_agenda(
     data: date = date.today(),
     dias: int = 10,
     session: Session = Depends(get_session),
+    usuario: Usuario = Depends(get_current_user),
 ) -> dict:
     """
     Calcula a agenda preditiva para a data informada (padrão: hoje).
@@ -38,6 +106,7 @@ def calcular_agenda(
     quando o usuário amplia o filtro "Até").
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
+    _gerar_agenda_recorrente(session)
     animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
     servicos_ult = [
         _model_to_dict(s) for s in session.exec(
@@ -78,6 +147,7 @@ def calcular_agenda(
             "id": f"dieta_analise_{d.id}", "data": d.data_prevista_encerramento.isoformat(), "categoria": "alimentacao",
             "descricao": f"Analisar dieta do lote {d.lote} (encerramento previsto)",
             "numero_animal": None, "observacao": d.observacao, "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            "lote": d.lote,
         }
         for d in dietas_para_analise
         if f"dieta_analise_{d.id}" not in realizados
@@ -133,7 +203,7 @@ def calcular_agenda(
         lancamento = lancamentos_iatf_por_id.get(lancamento_id)
         if not lancamento:
             continue
-        animais_grupo = sorted(a.numero_matriz for a in aps)
+        animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
         proximos_dias = [d for d in DIAS_PROTOCOLO_IATF if d > dia]
         proxima_etapa = None
         if proximos_dias:
@@ -146,40 +216,56 @@ def calcular_agenda(
             "numero_animal": None, "observacao": proxima_etapa,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
+            "protocolo": lancamento.nome_protocolo,
         })
+
+    # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
+    # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
+    # os eventos daquela categoria, nem as contas a pagar, nem os painéis
+    # reprodutivos (candidatas IATF, BST).
+    modulos = _modulos_liberados(usuario)
+    eventos_visiveis = [
+        {
+            "id": e.chave,
+            "data": e.data.isoformat(),
+            "categoria": e.categoria,
+            "descricao": e.descricao,
+            "numero_animal": e.numero_animal,
+            "observacao": e.observacao,
+            "fonte": e.fonte,
+            "cor": e.cor,
+            "ref": e.ref,
+            "lote": e.lote,
+            "tipo_evento": e.tipo_evento,
+        }
+        for e in eventos
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf
+    eventos_visiveis = [
+        e for e in eventos_visiveis
+        if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos
+    ]
+    tem_financeiro = "financeiro" in modulos
+    tem_reproducao = "reproducao" in modulos
 
     return {
         "data_referencia": result.data_referencia.isoformat(),
         "candidatas_iatf": [
             {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo}
             for c in result.candidatas_iatf
-        ],
-        "necessidade_iatf": result.necessidade_iatf.__dict__ if result.necessidade_iatf else None,
-        "proxima_visita_iatf": result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None,
-        "proxima_visita_bst": result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None,
-        "hormonios_check": [h.__dict__ for h in result.hormonios_check],
-        "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis],
-        "bst_excluidos": [b.__dict__ for b in result.bst_excluidos],
-        "contas_a_pagar": result.contas_a_pagar,
-        "eventos": [
-            {
-                "id": e.chave,
-                "data": e.data.isoformat(),
-                "categoria": e.categoria,
-                "descricao": e.descricao,
-                "numero_animal": e.numero_animal,
-                "observacao": e.observacao,
-                "fonte": e.fonte,
-                "cor": e.cor,
-                "ref": e.ref,
-            }
-            for e in eventos
-        ] + eventos_dieta + eventos_protocolo + eventos_iatf,
+        ] if tem_reproducao else [],
+        "necessidade_iatf": (result.necessidade_iatf.__dict__ if result.necessidade_iatf else None) if tem_reproducao else None,
+        "proxima_visita_iatf": (result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None) if tem_reproducao else None,
+        "proxima_visita_bst": (result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None) if tem_reproducao else None,
+        "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
+        "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis] if tem_reproducao else [],
+        "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
+        "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
+        "eventos": eventos_visiveis,
         "totais": {
-            "candidatas_iatf": len(result.candidatas_iatf),
-            "bst_elegiveis": len(result.bst_elegiveis),
-            "contas_a_pagar": len(result.contas_a_pagar),
-            "eventos": len(eventos) + len(eventos_dieta) + len(eventos_protocolo) + len(eventos_iatf),
+            "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
+            "bst_elegiveis": len(result.bst_elegiveis) if tem_reproducao else 0,
+            "contas_a_pagar": len(result.contas_a_pagar) if tem_financeiro else 0,
+            "eventos": len(eventos_visiveis),
         },
     }
 
@@ -275,9 +361,65 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
     return {"marcado": True}
 
 
+def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:
+    """
+    Reverte um grupo (lançamento, dia) do protocolo IATF marcado por engano —
+    volta todas as aplicações do grupo para pendente (sem registro de qual
+    subconjunto foi confirmado, reverter o grupo inteiro é o único
+    comportamento coerente).
+    """
+    resto = evento_id.removeprefix("protocolo_iatf_")
+    lancamento_id_str, dia_str = resto.rsplit("_", 1)
+    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.dia == dia,
+            ProtocoloIatfAplicacao.realizada == True,  # noqa: E712
+        )
+    ).all()
+    for ap in aplicacoes:
+        ap.realizada = False
+        ap.data_realizacao = None
+        session.add(ap)
+    session.commit()
+
+
+@router.get("/protocolo-iatf/concluidos")
+def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) -> list[dict]:
+    """Grupos (lançamento, dia) do protocolo IATF já confirmados — para desfazer, se marcado por engano."""
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
+    ).all()
+    lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
+    grupos: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
+    for ap in aplicacoes:
+        grupos.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    resultado = []
+    for (lancamento_id, dia), aps in grupos.items():
+        lancamento = lancamentos_por_id.get(lancamento_id)
+        if not lancamento:
+            continue
+        datas_realizacao = [a.data_realizacao for a in aps if a.data_realizacao]
+        resultado.append({
+            "id": f"protocolo_iatf_{lancamento_id}_{dia}",
+            "nome_protocolo": lancamento.nome_protocolo, "dia": dia,
+            "animais": sorted((a.numero_matriz for a in aps), key=chave_numero),
+            "data_realizacao": max(datas_realizacao).isoformat() if datas_realizacao else None,
+        })
+    resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)
+    return resultado
+
+
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session)) -> dict:
     """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
+    if evento_id.startswith("protocolo_iatf_"):
+        _desmarcar_protocolo_iatf_realizado(session, evento_id)
+        return {"desmarcado": True}
+
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)).first()
     if existe:
         session.delete(existe)
@@ -285,22 +427,39 @@ def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session))
     return {"desmarcado": True}
 
 
+class AgendaManualIn(BaseModel):
+    data_evento: date
+    descricao: str
+    categoria: str = "Gestão/Financeiro"
+    numero_animal: str | None = None  # CSV de números, quando vinculado a um ou mais animais
+    lotes: str | None = None  # CSV de códigos de lote, quando vinculado a um ou mais lotes
+    tipo_evento: str | None = None  # Compra, Venda, Serviço, Outro
+    observacao: str | None = None
+    recorrente: bool = False
+    intervalo_dias: int | None = None
+    intervalo_meses: int | None = None
+
+
 @router.post("/manual")
-def adicionar_evento_manual(
-    data_evento: date,
-    descricao: str,
-    categoria: str = "Gestão/Financeiro",
-    numero_animal: str | None = None,
-    observacao: str | None = None,
-    session: Session = Depends(get_session),
-) -> dict:
+def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(get_session)) -> dict:
     """Adiciona um evento manual à agenda (equivalente à aba AGENDA_MANUAL do Excel)."""
+    if dados.tipo_evento and dados.tipo_evento not in TIPOS_EVENTO:
+        raise HTTPException(status_code=400, detail=f"tipo_evento inválido. Use um de: {', '.join(TIPOS_EVENTO)}")
+    if dados.recorrente and not dados.intervalo_dias and not dados.intervalo_meses:
+        raise HTTPException(status_code=400, detail="Informe o intervalo (dias ou meses) da recorrência.")
+    if dados.intervalo_dias and dados.intervalo_meses:
+        raise HTTPException(status_code=400, detail="Escolha só uma frequência: dias OU meses.")
     evento = AgendaManual(
-        data_evento=data_evento,
-        descricao=descricao,
-        categoria=categoria,
-        numero_animal=numero_animal,
-        observacao=observacao,
+        data_evento=dados.data_evento,
+        descricao=dados.descricao,
+        categoria=dados.categoria,
+        numero_animal=dados.numero_animal,
+        lotes=dados.lotes,
+        tipo_evento=dados.tipo_evento,
+        observacao=dados.observacao,
+        recorrente=dados.recorrente,
+        intervalo_dias=dados.intervalo_dias if dados.recorrente else None,
+        intervalo_meses=dados.intervalo_meses if dados.recorrente else None,
     )
     session.add(evento)
     session.commit()

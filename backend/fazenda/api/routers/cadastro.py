@@ -19,6 +19,7 @@ from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa, Pessoa,
     PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
+from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
@@ -247,7 +248,8 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
 
 @router.post("/folha-pagamento")
 def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
-    if not session.get(Pessoa, dados.pessoa_id):
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
@@ -257,13 +259,35 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     valor_liquido = round(dados.valor_bruto - descontos, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+
+    # Gera também a conta a pagar correspondente — sem isso, a folha nunca
+    # aparecia em Contas a Pagar nem na Agenda (só as competências seguintes,
+    # geradas por _gerar_folha_recorrente, tinham essa conta criada).
+    ano, mes = (int(x) for x in dados.competencia.split("-"))
+    dia = min(max(dados.dia_vencimento or 5, 1), 28)
+    numero_lancamento = _proximo_numero_lancamento(session, ano)
+
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
         descontos=descontos, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
+        numero_lancamento_gerado=numero_lancamento,
     )
     session.add(registro)
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Folha de pagamento — {pessoa.nome} ({dados.competencia})",
+        data_vencimento=date(ano, mes, dia),
+        data_competencia=date(ano, mes, 1),
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Folha de pagamento",
+        valor_total=valor_liquido,
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+        valor_pago=valor_liquido if dados.status == "pago" else None,
+    ))
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
@@ -452,20 +476,26 @@ def atualizar_ficha_animal(numero: str, dados: AnimalFichaIn, session: Session =
 
 
 # ---------------------------------------------------------------------------
-# Metadados de itens de estoque — usados pela Alimentação (ensacado/kg por
-# saco) e para vincular um fornecedor ao item. A quantidade em si continua
-# vindo do ESTOQUE.csv / movimentações; aqui só descrevemos o item.
+# Metadados de itens de estoque — embalagem (usada pela Alimentação para
+# converter kg necessários em sacos/potes/fardos) e fornecedor principal do
+# item. A quantidade em si continua vindo do ESTOQUE.csv / movimentações;
+# aqui só descrevemos o item.
 # ---------------------------------------------------------------------------
 class EstoqueMetaIn(BaseModel):
-    ensacado: bool | None = None
-    kg_por_saco: float | None = None
+    unidade_embalagem: str | None = None
+    medida_embalagem: str | None = None
+    quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     estocavel: bool | None = None
 
 
 @router.get("/estoque-itens")
 def listar_itens_estoque(session: Session = Depends(get_session)) -> list[dict]:
-    return [e.model_dump() for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()]
+    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
+    return [
+        {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
+        for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()
+    ]
 
 
 @router.put("/estoque-itens/{item_id}")
@@ -475,8 +505,10 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
     if dados.fornecedor_id is not None and not session.get(Fornecedor, dados.fornecedor_id):
         raise HTTPException(status_code=400, detail="Fornecedor não encontrado")
-    item.ensacado = dados.ensacado
-    item.kg_por_saco = dados.kg_por_saco
+    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
+    item.unidade_embalagem = dados.unidade_embalagem
+    item.medida_embalagem = dados.medida_embalagem
+    item.quantidade_embalagem = dados.quantidade_embalagem
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
     session.add(item)
@@ -634,6 +666,9 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # dia), a exemplo do tratamento de mastite. Etapas começam em D1 — protocolos
 # sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
 # ---------------------------------------------------------------------------
+VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]
+
+
 class ProtocoloEtapaIn(BaseModel):
     dia: int
     produto: str
@@ -661,6 +696,8 @@ def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
             )
         if e.dosagem <= 0:
             raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
+        if e.via and e.via not in VIAS_APLICACAO:
+            raise HTTPException(status_code=400, detail=f"Via inválida — use uma de: {', '.join(VIAS_APLICACAO)}")
 
 
 def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict[int, str]) -> dict:

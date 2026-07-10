@@ -8,6 +8,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import Animal, Parto, Servico
+from fazenda.ordenacao import chave_numero
 
 router = APIRouter(prefix="/animais", tags=["animais"])
 
@@ -54,6 +55,7 @@ def listar_animais(
         d["data_ult_servico_pos"] = sp.isoformat() if sp else None
         d["data_ult_parto"] = pp.isoformat() if pp else None
         saida.append(d)
+    saida.sort(key=lambda d: chave_numero(d["numero"]))
     return saida
 
 

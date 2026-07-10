@@ -10,11 +10,13 @@ import {
   criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
-  fetchProtocolosSanitarios, lancarProtocoloSanitario,
+  fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
@@ -36,8 +38,8 @@ const LACT = ["01", "02", "03"];
 const IDADE_MIN_SERVICO = 13; // meses — abaixo disso a fêmea não é apta a serviço
 // Sêmen (touros) atualmente em estoque — usados na seleção do touro em Serviço/IA.
 const TOUROS_ESTOQUE = [
-  "COORS", "GUINESS", "ABS LABEL", "CAMPEAO FI", "DESCONHECIDO", "HAGEN", "JAG", "LUZIO", "METEORO",
-  "MOSAIC", "HILLUX", "NABIL", "PRAFESS", "ROBO", "MESSI", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
+  "ABS LABEL", "CAMPEAO FI", "COORS", "DESCONHECIDO", "GUINESS", "HAGEN", "HILLUX", "JAG", "LUZIO",
+  "MESSI", "METEORO", "MOSAIC", "NABIL", "PRAFESS", "ROBO", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
 ];
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
@@ -64,44 +66,6 @@ function addDias(iso: string, n: number): string {
 
 // Seleção de animal via tabela clara (Nº · Grupo · Categoria · Sit. Rep. · DEL).
 const SelectAnimal = AnimalPicker;
-
-// Seleção de VÁRIOS animais de uma vez, com a mesma tabela estilizada (cabeçalho
-// vinho/dourado via .fazenda-table) usada em Rebanho > Baixar animal / Movimentar
-// animais — substitui listas de checkbox simples/brancas por esta, mais clara.
-function SelecaoAnimaisTabela({ animais, selecionados, toggle, toggleTodos, colunas }: {
-  animais: AnimalRow[];
-  selecionados: Set<string>;
-  toggle: (numero: string) => void;
-  toggleTodos: () => void;
-  colunas: { header: string; render: (a: AnimalRow) => React.ReactNode }[];
-}) {
-  return (
-    <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-      <div style={{ background: "var(--surface-2)", padding: "0.55rem 0.9rem", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: "0.4rem" }}>
-        <span style={{ fontSize: "0.85rem" }}>{animais.length} animal(is) — {selecionados.size} selecionado(s)</span>
-        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos} disabled={!animais.length}>
-          {selecionados.size === animais.length && animais.length ? "Limpar seleção" : "Selecionar todos"}
-        </button>
-      </div>
-      <div className="overflow-x-auto" style={{ maxHeight: "260px" }}>
-        <table className="fazenda-table" style={{ margin: 0 }}>
-          <thead><tr><th></th>{colunas.map((c) => <th key={c.header}>{c.header}</th>)}</tr></thead>
-          <tbody>
-            {animais.map((a) => (
-              <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
-                <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
-                {colunas.map((c) => <td key={c.header} style={{ fontSize: "0.8rem" }}>{c.render(a)}</td>)}
-              </tr>
-            ))}
-            {!animais.length && (
-              <tr><td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal disponível.</td></tr>
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  );
-}
 
 const SalvarEmBreve = () => (
   <div className="flex items-center gap-3 mt-4" style={{ flexWrap: "wrap" }}>
@@ -330,6 +294,16 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  // Vindo da Agenda (link "Ir para Inseminação" do D11 de um protocolo IATF) —
+  // pré-seleciona a matriz e o nome do protocolo.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const numeroMatriz = qs.get("numero_matriz");
+    const protocolo = qs.get("protocolo");
+    if (numeroMatriz) setMatriz(numeroMatriz);
+    if (protocolo) { setVeioDeProtocolo(true); setNomeProtocolo(protocolo); }
+  }, []);
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -1151,6 +1125,26 @@ type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: bo
 const TETOS = ["AE", "AD", "PD", "PE"] as const;
 const CLASSIFICACOES_MASTITE = [["clinica", "Clínica"], ["subclinica", "Subclínica"], ["ambiental", "Ambiental"]] as const;
 
+// Categorias prontas de animais para o lançamento em massa do protocolo sanitário
+// — reaproveita o mesmo motor de critérios cumulativos de Configurações > Lotes
+// (POST /lotes/preview), sem precisar criar um lote de verdade.
+const CATEGORIAS_ANIMAIS = [
+  { id: "novilhas_inseminadas", label: "Novilhas inseminadas", criterios: { novilhas_inseminadas: true } },
+  { id: "novilhas_gestantes", label: "Novilhas gestantes", criterios: { novilhas_gestantes: true } },
+  { id: "lactacao", label: "Vacas em lactação", criterios: { status_lactacao: "lactacao" } },
+  { id: "secas", label: "Vacas secas", criterios: { status_lactacao: "seca" } },
+  { id: "pre_parto_15", label: "Pré-parto (próximos 15 dias)", criterios: { dias_para_parto_min: 0, dias_para_parto_max: 15 } },
+  { id: "em_tratamento", label: "Em tratamento", criterios: { em_tratamento: true } },
+] as const;
+
+// Mesmo esquema de código de 2 dígitos usado em fazenda.rules.alimentacao._codigo_grupo,
+// para expandir lote(s) selecionado(s) no número de matrículas correspondente.
+function codigoGrupo(grupo: string | null | undefined): string | null {
+  if (!grupo) return null;
+  const g = grupo.trim();
+  return g.length >= 2 && /^\d\d/.test(g) ? g.slice(0, 2) : null;
+}
+
 function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const [protocolos, setProtocolos] = useState<ProtocoloLocal[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
@@ -1164,6 +1158,50 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  // Lançamento em massa (protocolos que não são de mastite): animal(is), lote(s) ou categoria de animais.
+  const [vinculo, setVinculo] = useState<"animal" | "lote" | "categoria">("animal");
+  const [animaisSelecionados, setAnimaisSelecionados] = useState<Set<string>>(new Set());
+  const [lotesSelecionados, setLotesSelecionados] = useState<Set<string>>(new Set());
+  const [lotesTodos, setLotesTodos] = useState<LoteRow[]>([]);
+  const [pickerAberto, setPickerAberto] = useState<"animal" | "lote" | null>(null);
+  const abrirPicker = (tipo: "animal" | "lote") => {
+    if (tipo === "lote" && !lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
+    setPickerAberto(tipo);
+  };
+  const toggleAnimalSelecionado = (numero: string) => setAnimaisSelecionados((p) => { const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n; });
+  const toggleTodosAnimais = () => setAnimaisSelecionados((p) => (p.size === animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
+  const toggleLoteSelecionado = (codigo: string) => setLotesSelecionados((p) => { const n = new Set(p); n.has(codigo) ? n.delete(codigo) : n.add(codigo); return n; });
+  const toggleTodosLotes = () => setLotesSelecionados((p) => (p.size === lotesTodos.length ? new Set() : new Set(lotesTodos.map((l) => l.codigo))));
+  const pickerColunasAnimais = [
+    { header: "Grupo", render: (a: AnimalRow) => a.grupo_primario || "—" },
+    { header: "Categoria", render: (a: AnimalRow) => a.categoria_abrev || a.categoria_completa || "—" },
+  ];
+
+  const [categoriaId, setCategoriaId] = useState("");
+  const [animaisCategoria, setAnimaisCategoria] = useState<string[] | null>(null);
+  const [carregandoCategoria, setCarregandoCategoria] = useState(false);
+  useEffect(() => {
+    if (!categoriaId) { setAnimaisCategoria(null); return; }
+    const categoria = CATEGORIAS_ANIMAIS.find((c) => c.id === categoriaId);
+    if (!categoria) return;
+    setCarregandoCategoria(true);
+    previewCriteriosLote({ codigo: "categoria", nome: categoria.label, ...categoria.criterios })
+      .then((d) => setAnimaisCategoria(d.animais || []))
+      .catch(() => setAnimaisCategoria([]))
+      .finally(() => setCarregandoCategoria(false));
+  }, [categoriaId]);
+
+  const animaisDoLote = useMemo(
+    () => animais.filter((a) => { const cod = codigoGrupo(a.grupo_primario); return cod && lotesSelecionados.has(cod); }).map((a) => a.numero),
+    [animais, lotesSelecionados]
+  );
+
+  const numerosSelecionados = useMemo(() => {
+    if (vinculo === "animal") return Array.from(animaisSelecionados);
+    if (vinculo === "lote") return animaisDoLote;
+    return animaisCategoria || [];
+  }, [vinculo, animaisSelecionados, animaisDoLote, animaisCategoria]);
 
   useEffect(() => { fetchProtocolosSanitarios().then((d) => setProtocolos(d.filter((p: ProtocoloLocal) => p.ativo))).catch(() => {}); }, []);
 
@@ -1180,19 +1218,21 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!protocolo) { setErro("Selecione o protocolo."); return; }
-    if (!matriz) { setErro("Selecione o animal."); return; }
+    const numeros = protocolo.eh_mastite ? (matriz ? [matriz] : []) : numerosSelecionados;
+    if (!numeros.length) { setErro("Selecione ao menos um animal, lote ou categoria."); return; }
     if (protocolo.eh_mastite && !classificacaoMastite) { setErro("Informe a classificação da mastite (clínica, subclínica ou ambiental)."); return; }
 
     setSalvando(true);
     try {
-      await lancarProtocoloSanitario({
-        protocolo_id: protocolo.id, numero_matriz: matriz, data_inicio: dataInicio,
+      const r = await lancarProtocoloSanitario({
+        protocolo_id: protocolo.id, numeros_matriz: numeros, data_inicio: dataInicio,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
         classificacao_mastite: classificacaoMastite || undefined, resultado_cmt: resultadoCmt || undefined,
         tetos_afetados: Array.from(tetosSel),
       });
-      setSucesso(`Protocolo "${protocolo.nome}" lançado — ${protocolo.etapas.length} evento(s) na Agenda.`);
+      setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.`);
       setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setResultadoCmt(""); setTetosSel(new Set());
+      setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); setCategoriaId("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo sanitário");
     } finally {
@@ -1210,7 +1250,52 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
           </select>
         </Campo>
         <Campo label="Data de início (D1)"><input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></Campo>
-        <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
+
+        {protocolo?.eh_mastite ? (
+          <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
+        ) : (
+          <Campo label="Animal(is), lote(s) ou categoria" full>
+            <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+              {[
+                { v: "animal", label: "Animal(is)" },
+                { v: "lote", label: "Lote(s)" },
+                { v: "categoria", label: "Categoria de animais" },
+              ].map((o) => (
+                <button key={o.v} type="button" onClick={() => setVinculo(o.v as any)}
+                  style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (vinculo === o.v ? "var(--dourado)" : "var(--border)"),
+                    background: vinculo === o.v ? "var(--dourado)" : "transparent",
+                    color: vinculo === o.v ? "#1a1a1a" : "var(--text-muted)", fontWeight: vinculo === o.v ? 700 : 400 }}>
+                  {o.label}
+                </button>
+              ))}
+            </div>
+            {vinculo === "animal" && (
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("animal")}>
+                {animaisSelecionados.size ? `${animaisSelecionados.size} animal(is) selecionado(s) — alterar` : "Selecionar animais…"}
+              </button>
+            )}
+            {vinculo === "lote" && (
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("lote")}>
+                {lotesSelecionados.size ? `${lotesSelecionados.size} lote(s) selecionado(s) (${animaisDoLote.length} animal(is)) — alterar` : "Selecionar lotes…"}
+              </button>
+            )}
+            {vinculo === "categoria" && (
+              <div>
+                <select style={inputStyle} value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {CATEGORIAS_ANIMAIS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+                </select>
+                {categoriaId && (
+                  <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                    {carregandoCategoria ? "Calculando…" : `${(animaisCategoria || []).length} animal(is) atendem a este critério.`}
+                  </p>
+                )}
+              </div>
+            )}
+          </Campo>
+        )}
+
         <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
@@ -1268,6 +1353,22 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
           {salvando ? "Salvando…" : "Lançar protocolo"}
         </button>
       </div>
+
+      {pickerAberto && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: "1rem" }}>
+          <div className="card" style={{ width: "640px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div className="card-header mb-3">{pickerAberto === "animal" ? "Selecionar animal(is)" : "Selecionar lote(s)"}</div>
+            {pickerAberto === "animal" ? (
+              <SelecaoAnimaisTabela animais={animais} selecionados={animaisSelecionados} toggle={toggleAnimalSelecionado} toggleTodos={toggleTodosAnimais} colunas={pickerColunasAnimais} />
+            ) : (
+              <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
+            )}
+            <div className="flex justify-end gap-2 mt-4">
+              <button onClick={() => setPickerAberto(null)} className="btn-primary">OK</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -1312,6 +1413,16 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
     carregar();
     fetchAlimentosPadrao().then(setAlimentosPadrao).catch(() => {});
   }, []);
+
+  // Vindo da Agenda (link "Ir para Dieta" do evento de análise de encerramento)
+  // — abre direto a seção de encerrar a dieta ativa daquele lote.
+  useEffect(() => {
+    if (!dietas) return;
+    const lote = new URLSearchParams(window.location.search).get("lote");
+    if (!lote) return;
+    const ativa = dietas.find((d) => d.lote === Number(lote) && d.ativa);
+    if (ativa) setEncerrando(ativa.id);
+  }, [dietas]);
 
   const atualizarItem = (idx: number, patch: Partial<ItemDieta>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
   const acrescentarItem = () => setItens((p) => [...p, itemDietaVazio()]);

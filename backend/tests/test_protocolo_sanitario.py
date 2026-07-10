@@ -72,6 +72,22 @@ class TestCadastroProtocolo:
         r = c.post("/cadastro/protocolos-sanitarios", json={"nome": "Vazio", "etapas": []})
         assert r.status_code == 400
 
+    def test_rejeita_via_fora_da_lista_fixa(self, client):
+        c, engine = client
+        r = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Via inválida", "etapas": [_etapa(1, via="Tópica")],
+        })
+        assert r.status_code == 400
+        assert "Via inválida" in r.json()["detail"]
+
+    def test_aceita_cada_via_da_lista_fixa(self, client):
+        c, engine = client
+        for i, via in enumerate(["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]):
+            r = c.post("/cadastro/protocolos-sanitarios", json={
+                "nome": f"Via {via}", "etapas": [_etapa(1, via=via)],
+            })
+            assert r.status_code == 200, r.json()
+
     def test_rejeita_nome_duplicado(self, client):
         c, engine = client
         c.post("/cadastro/protocolos-sanitarios", json={"nome": "Duplicado", "etapas": [_etapa(1)]})
@@ -107,7 +123,7 @@ class TestLancamentoProtocolo:
         c, engine = client
         protocolo_id = self._protocolo_simples(c)
         r = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": protocolo_id, "numero_matriz": "700", "data_inicio": "2026-03-01",
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
         })
         assert r.status_code == 201
 
@@ -115,11 +131,11 @@ class TestLancamentoProtocolo:
         c, engine = client
         protocolo_id = self._protocolo_mastite(c)
         r = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": protocolo_id, "numero_matriz": "700", "data_inicio": "2026-03-01",
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
             "classificacao_mastite": "clinica", "tetos_afetados": ["AE", "PD"],
         })
         assert r.status_code == 201
-        aplicacoes = sorted(r.json()["aplicacoes"], key=lambda a: a["data_prevista"])
+        aplicacoes = sorted(r.json()["lancamentos"][0]["aplicacoes"], key=lambda a: a["data_prevista"])
         datas = [a["data_prevista"] for a in aplicacoes]
         assert datas == ["2026-03-01", "2026-03-02", "2026-03-03"]  # D1=início, D2=+1, D3=+2
 
@@ -127,7 +143,7 @@ class TestLancamentoProtocolo:
         c, engine = client
         protocolo_id = self._protocolo_mastite(c)
         r = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": protocolo_id, "numero_matriz": "700", "data_inicio": "2026-03-01",
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
         })
         assert r.status_code == 400
 
@@ -135,7 +151,7 @@ class TestLancamentoProtocolo:
         c, engine = client
         protocolo_id = self._protocolo_mastite(c)
         r = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": protocolo_id, "numero_matriz": "700", "data_inicio": "2026-03-01",
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
             "classificacao_mastite": "clinica", "tetos_afetados": ["XX"],
         })
         assert r.status_code == 400
@@ -150,9 +166,29 @@ class TestLancamentoProtocolo:
             s.delete(etapa)
             s.commit()
         r = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": pid, "numero_matriz": "700", "data_inicio": "2026-03-01",
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
         })
         assert r.status_code == 400
+
+    def test_rejeita_mastite_com_mais_de_um_animal(self, client):
+        c, engine = client
+        protocolo_id = self._protocolo_mastite(c)
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700", "701"], "data_inicio": "2026-03-01",
+            "classificacao_mastite": "clinica",
+        })
+        assert r.status_code == 400
+
+    def test_lanca_protocolo_simples_para_varios_animais(self, client):
+        c, engine = client
+        protocolo_id = self._protocolo_simples(c)
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700", "701", "702"], "data_inicio": "2026-03-01",
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["criados"] == 3
+        assert {l["numero_matriz"] for l in corpo["lancamentos"]} == {"700", "701", "702"}
 
 
 class TestAgendaEBaixaAutomatica:
@@ -162,7 +198,7 @@ class TestAgendaEBaixaAutomatica:
             "etapas": [_etapa(1, produto=produto, unidade=unidade, dosagem=dosagem), _etapa(2, produto=produto, unidade=unidade, dosagem=dosagem)],
         }).json()["id"]
         lanc = c.post("/sanidade/protocolos/lancamentos", json={
-            "protocolo_id": protocolo_id, "numero_matriz": "700", "data_inicio": "2026-01-01",
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-01-01",
             "classificacao_mastite": "ambiental", "tetos_afetados": ["AD"],
         }).json()
         return lanc

@@ -5,6 +5,9 @@ import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro } from "@/li
 
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
+const UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"];
+const MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"];
+
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
   border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem",
@@ -16,7 +19,8 @@ type ContaGerencial = { codigo: string; nome: string };
 
 const vazio = {
   nome: "", numero_produto: "", categoria: "", unidade: "", quantidade: "", estoque_minimo: "",
-  valor_unitario: "", local_armazenamento: "", fornecedor_id: "", ensacado: false, kg_por_saco: "",
+  valor_unitario: "", local_armazenamento: "", fornecedor_id: "",
+  unidade_embalagem: "", medida_embalagem: "", quantidade_embalagem: "",
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_receita_padrao: "",
   exibir_necessidade_compra_agenda: false, estocavel: true,
@@ -52,8 +56,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         valor_unitario: num(form.valor_unitario),
         local_armazenamento: str(form.local_armazenamento),
         fornecedor_id: form.fornecedor_id ? Number(form.fornecedor_id) : undefined,
-        ensacado: form.ensacado,
-        kg_por_saco: form.ensacado ? num(form.kg_por_saco) : undefined,
+        unidade_embalagem: str(form.unidade_embalagem),
+        medida_embalagem: str(form.medida_embalagem),
+        quantidade_embalagem: num(form.quantidade_embalagem),
         ativo: form.ativo,
         observacao: str(form.observacao),
         carencia_dias: num(form.carencia_dias),
@@ -90,18 +95,25 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         <div><label style={labelStyle}>Valor unitário (R$)</label><input type="number" style={inputStyle} value={form.valor_unitario} onChange={(e) => set({ valor_unitario: e.target.value })} /></div>
         <div><label style={labelStyle}>Local de armazenamento</label><input style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })} /></div>
 
-        <div><label style={labelStyle}>Fabricante / fornecedor</label>
+        <div><label style={labelStyle}>Fornecedor principal</label>
           <select style={inputStyle} value={form.fornecedor_id} onChange={(e) => set({ fornecedor_id: e.target.value })}>
             <option value="">—</option>
             {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
           </select>
         </div>
-        <div className="flex items-end gap-3">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-            <input type="checkbox" checked={form.ensacado} onChange={(e) => set({ ensacado: e.target.checked })} /> Ensacado
-          </label>
+        <div><label style={labelStyle}>Unidade (embalagem)</label>
+          <select style={inputStyle} value={form.unidade_embalagem} onChange={(e) => set({ unidade_embalagem: e.target.value })}>
+            <option value="">—</option>
+            {UNIDADES_EMBALAGEM.map((u) => <option key={u} value={u}>{u}</option>)}
+          </select>
         </div>
-        <div><label style={labelStyle}>Kg por saco</label><input type="number" style={inputStyle} value={form.kg_por_saco} onChange={(e) => set({ kg_por_saco: e.target.value })} disabled={!form.ensacado} /></div>
+        <div><label style={labelStyle}>Unidade de medida</label>
+          <select style={inputStyle} value={form.medida_embalagem} onChange={(e) => set({ medida_embalagem: e.target.value })}>
+            <option value="">—</option>
+            {MEDIDAS_EMBALAGEM.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </div>
+        <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
         <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
 
         <div><label style={labelStyle}>Centro de custo padrão</label><input style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })} /></div>

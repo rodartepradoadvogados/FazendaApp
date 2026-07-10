@@ -4,9 +4,13 @@ import { Package, Pencil, Check, X, AlertTriangle, Plus } from "lucide-react";
 import { fetchItensEstoqueCadastro, atualizarMetaEstoque, fetchFornecedores } from "@/lib/api";
 import NovoItemEstoque from "./NovoItemEstoque";
 
+const UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"];
+const MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"];
+
 type Item = {
   id: number; nome: string; categoria: string | null; quantidade: number | null; unidade: string | null;
-  ensacado: boolean | null; kg_por_saco: number | null; fornecedor_id: number | null;
+  unidade_embalagem: string | null; medida_embalagem: string | null; quantidade_embalagem: number | null;
+  fornecedor_id: number | null; fornecedor_nome: string | null;
   ativo: boolean | null; estocavel: boolean | null;
 };
 type Fornecedor = { id: number; nome: string };
@@ -18,8 +22,9 @@ export default function CadastroEstoqueMeta() {
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | null>(null);
-  const [ensacado, setEnsacado] = useState(false);
-  const [kgPorSaco, setKgPorSaco] = useState("");
+  const [unidadeEmbalagem, setUnidadeEmbalagem] = useState("");
+  const [medidaEmbalagem, setMedidaEmbalagem] = useState("");
+  const [quantidadeEmbalagem, setQuantidadeEmbalagem] = useState("");
   const [fornecedorId, setFornecedorId] = useState("");
   const [estocavel, setEstocavel] = useState(true);
   const [salvando, setSalvando] = useState(false);
@@ -29,7 +34,11 @@ export default function CadastroEstoqueMeta() {
   useEffect(() => { carregar(); fetchFornecedores().then(setFornecedores).catch(() => {}); }, []);
 
   const abrirEdicao = (it: Item) => {
-    setEditando(it.id); setEnsacado(!!it.ensacado); setKgPorSaco(it.kg_por_saco?.toString() ?? ""); setFornecedorId(it.fornecedor_id?.toString() ?? "");
+    setEditando(it.id);
+    setUnidadeEmbalagem(it.unidade_embalagem ?? "");
+    setMedidaEmbalagem(it.medida_embalagem ?? "");
+    setQuantidadeEmbalagem(it.quantidade_embalagem?.toString() ?? "");
+    setFornecedorId(it.fornecedor_id?.toString() ?? "");
     setEstocavel(it.estocavel !== false);
   };
 
@@ -37,7 +46,9 @@ export default function CadastroEstoqueMeta() {
     setSalvando(true);
     try {
       await atualizarMetaEstoque(id, {
-        ensacado, kg_por_saco: kgPorSaco.trim() === "" ? null : Number(kgPorSaco),
+        unidade_embalagem: unidadeEmbalagem.trim() === "" ? null : unidadeEmbalagem,
+        medida_embalagem: medidaEmbalagem.trim() === "" ? null : medidaEmbalagem,
+        quantidade_embalagem: quantidadeEmbalagem.trim() === "" ? null : Number(quantidadeEmbalagem),
         fornecedor_id: fornecedorId.trim() === "" ? null : Number(fornecedorId),
         estocavel,
       });
@@ -60,8 +71,9 @@ export default function CadastroEstoqueMeta() {
         </button>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Marque quais itens são ensacados e quantos kg tem cada saco — a Alimentação usa isso para converter a
-        necessidade calculada em número de sacos. Itens vindos de upload de CSV também aparecem aqui.
+        Informe a unidade de embalagem (saca, pote, garrafa…), a unidade de medida e a quantidade por embalagem de
+        cada item — a Alimentação usa isso para converter a necessidade calculada em número de embalagens a comprar.
+        Itens vindos de upload de CSV também aparecem aqui.
       </p>
 
       {novoAberto && <NovoItemEstoque onCriado={() => { setNovoAberto(false); carregar(); }} onCancelar={() => setNovoAberto(false)} />}
@@ -72,7 +84,7 @@ export default function CadastroEstoqueMeta() {
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Item</th><th>Categoria</th><th>Ensacado</th><th>Kg/saco</th><th>Fornecedor</th><th>Estocável</th><th></th></tr></thead>
+            <thead><tr><th>Item</th><th>Categoria</th><th>Unidade</th><th>Unidade de medida</th><th>Quantidade</th><th>Fornecedor principal</th><th>Estocável</th><th></th></tr></thead>
             <tbody>
               {itens.map((it) => (
                 <tr key={it.id}>
@@ -80,8 +92,19 @@ export default function CadastroEstoqueMeta() {
                   <td style={{ fontSize: "0.78rem" }}>{it.categoria || "—"}</td>
                   {editando === it.id ? (
                     <>
-                      <td><input type="checkbox" checked={ensacado} onChange={(e) => setEnsacado(e.target.checked)} /></td>
-                      <td><input type="number" style={{ ...inputStyle, width: "5.5rem" }} value={kgPorSaco} onChange={(e) => setKgPorSaco(e.target.value)} disabled={!ensacado} /></td>
+                      <td>
+                        <select style={inputStyle} value={unidadeEmbalagem} onChange={(e) => setUnidadeEmbalagem(e.target.value)}>
+                          <option value="">—</option>
+                          {UNIDADES_EMBALAGEM.map((u) => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </td>
+                      <td>
+                        <select style={inputStyle} value={medidaEmbalagem} onChange={(e) => setMedidaEmbalagem(e.target.value)}>
+                          <option value="">—</option>
+                          {MEDIDAS_EMBALAGEM.map((m) => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </td>
+                      <td><input type="number" style={{ ...inputStyle, width: "5.5rem" }} value={quantidadeEmbalagem} onChange={(e) => setQuantidadeEmbalagem(e.target.value)} /></td>
                       <td>
                         <select style={inputStyle} value={fornecedorId} onChange={(e) => setFornecedorId(e.target.value)}>
                           <option value="">—</option>
@@ -96,9 +119,10 @@ export default function CadastroEstoqueMeta() {
                     </>
                   ) : (
                     <>
-                      <td>{it.ensacado ? "Sim" : "Não"}</td>
-                      <td>{it.kg_por_saco ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{it.unidade_embalagem ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{it.medida_embalagem ?? "—"}</td>
+                      <td>{it.quantidade_embalagem ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{it.fornecedor_nome || fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "—"}</td>
                       <td>{it.estocavel === false ? "Não" : "Sim"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(it)}>
@@ -109,7 +133,7 @@ export default function CadastroEstoqueMeta() {
                   )}
                 </tr>
               ))}
-              {!itens.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
+              {!itens.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -421,10 +421,14 @@ class Estoque(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
     # Metadados de cadastro (Configurações > Cadastro), usados pela Alimentação
-    # para converter kg necessários em sacos quando o item é ensacado.
-    ensacado: Optional[bool] = None
-    kg_por_saco: Optional[float] = None
-    fornecedor_id: Optional[int] = Field(default=None, foreign_key="fornecedor.id")
+    # para converter kg necessários em sacos/potes/fardos quando o item é
+    # embalado (ex.: "saca" de 30kg -> unidade_embalagem="saca",
+    # medida_embalagem="kg/saca", quantidade_embalagem=30). Distinto do campo
+    # `unidade` acima, que é a unidade de estoque usada em toda baixa/consumo.
+    unidade_embalagem: Optional[str] = None  # saca, pote, frasco, pacote, bag, fardo, garrafa, unidade
+    medida_embalagem: Optional[str] = None  # kg/saca, litros/garrafa, mililitros/frasco, unidades/fardo, potes/caixa, unidades
+    quantidade_embalagem: Optional[float] = None
+    fornecedor_id: Optional[int] = Field(default=None, foreign_key="fornecedor.id")  # fornecedor principal
 
     # Cadastro completo de item (Configurações > Cadastro > Itens de estoque).
     # Booleanos ficam Optional (None = valor não definido ainda, ex.: itens
@@ -852,8 +856,14 @@ class AgendaManual(SQLModel, table=True):
     data_evento: date
     descricao: str
     categoria: str = "Gestão/Financeiro"
-    numero_animal: Optional[str] = None
+    numero_animal: Optional[str] = None  # CSV de números, quando vinculado a um ou mais animais
+    lotes: Optional[str] = None  # CSV de códigos de lote, quando vinculado a um ou mais lotes
+    tipo_evento: Optional[str] = None  # Compra, Venda, Serviço, Outro
     observacao: Optional[str] = None
+    recorrente: bool = False  # linha-modelo que gera as próximas ocorrências automaticamente
+    intervalo_dias: Optional[int] = None
+    intervalo_meses: Optional[int] = None
+    origem_recorrencia_id: Optional[int] = None  # id da linha-modelo que gerou esta ocorrência
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

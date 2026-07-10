@@ -14,6 +14,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, Servico,
 )
+from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.reproducao_analise import analisar_servicos
 
@@ -274,7 +275,7 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
         for ap in aps:
             por_animal.setdefault(ap.numero_matriz, []).append(ap)
         animais_status = []
-        for numero, aps_animal in sorted(por_animal.items()):
+        for numero, aps_animal in sorted(por_animal.items(), key=lambda item: chave_numero(item[0])):
             proxima = min((a for a in aps_animal if not a.realizada), key=lambda a: a.dia, default=None)
             animais_status.append({
                 "numero_matriz": numero,

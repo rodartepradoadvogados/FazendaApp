@@ -125,6 +125,13 @@ class TestCriarItemEstoque:
         r = client.post("/estoque/", json={"nome": "Serviço de frete", "estocavel": False})
         assert r.json()["estocavel"] is False
 
+    def test_listagem_em_ordem_alfabetica(self, client):
+        for nome in ["Zinco", "Amoxicilina", "Mastite Injetável"]:
+            client.post("/estoque/", json={"nome": nome})
+        nomes = [i["nome"] for i in client.get("/estoque/").json()["itens"]]
+        meus = [n for n in nomes if n in ("Zinco", "Amoxicilina", "Mastite Injetável")]
+        assert meus == ["Amoxicilina", "Mastite Injetável", "Zinco"]
+
 
 class TestEstocavel:
     def test_doacao_rejeitada_para_item_nao_estocavel(self, client):

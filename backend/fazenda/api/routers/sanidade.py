@@ -233,7 +233,7 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
 # ---------------------------------------------------------------------------
 class ProtocoloLancamentoIn(BaseModel):
     protocolo_id: int
-    numero_matriz: str
+    numeros_matriz: list[str]  # um ou mais animais (protocolo de mastite aceita só um)
     data_inicio: date
     responsavel: str | None = None
     observacao: str | None = None
@@ -276,31 +276,37 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
     ).all()
     if not etapas:
         raise HTTPException(status_code=400, detail="Este protocolo não tem etapas cadastradas")
-    if not dados.numero_matriz.strip():
-        raise HTTPException(status_code=400, detail="Informe o animal")
+    numeros = [n.strip() for n in dados.numeros_matriz if n.strip()]
+    if not numeros:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal, lote ou categoria")
 
     if protocolo.eh_mastite and not dados.classificacao_mastite:
         raise HTTPException(status_code=400, detail="Informe a classificação da mastite (clínica, subclínica ou ambiental)")
+    if protocolo.eh_mastite and len(numeros) > 1:
+        raise HTTPException(status_code=400, detail="Protocolo de mastite: lance um animal por vez (classificação/CMT/tetos são específicos de cada caso)")
     if dados.classificacao_mastite and dados.classificacao_mastite not in CLASSIFICACOES_MASTITE:
         raise HTTPException(status_code=400, detail=f"Classificação de mastite inválida (aceitas: {', '.join(CLASSIFICACOES_MASTITE)})")
     for teto in dados.tetos_afetados:
         if teto not in TETOS_VALIDOS:
             raise HTTPException(status_code=400, detail=f"Teto inválido: {teto} (aceitos: {', '.join(TETOS_VALIDOS)})")
 
-    lancamento = ProtocoloSanitarioLancamento(
-        protocolo_id=dados.protocolo_id, numero_matriz=dados.numero_matriz.strip(), data_inicio=dados.data_inicio,
-        responsavel=dados.responsavel, observacao=dados.observacao,
-        classificacao_mastite=dados.classificacao_mastite, resultado_cmt=dados.resultado_cmt,
-        tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
-    )
-    session.add(lancamento)
-    session.commit()
-    session.refresh(lancamento)
-
-    for etapa in etapas:
-        data_prevista = dados.data_inicio + timedelta(days=etapa.dia - 1)
-        session.add(ProtocoloSanitarioAplicacao(lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista))
-    session.commit()
-
     protocolos = {protocolo.id: protocolo.nome}
-    return _serializar_lancamento_protocolo(session, lancamento, protocolos)
+    lancamentos_criados = []
+    for numero in numeros:
+        lancamento = ProtocoloSanitarioLancamento(
+            protocolo_id=dados.protocolo_id, numero_matriz=numero, data_inicio=dados.data_inicio,
+            responsavel=dados.responsavel, observacao=dados.observacao,
+            classificacao_mastite=dados.classificacao_mastite, resultado_cmt=dados.resultado_cmt,
+            tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
+        )
+        session.add(lancamento)
+        session.commit()
+        session.refresh(lancamento)
+
+        for etapa in etapas:
+            data_prevista = dados.data_inicio + timedelta(days=etapa.dia - 1)
+            session.add(ProtocoloSanitarioAplicacao(lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista))
+        session.commit()
+        lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
+
+    return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados}

@@ -6,8 +6,12 @@ import {
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario,
+  fetchEstoque,
   type ProtocoloEtapa,
 } from "@/lib/api";
+import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
+
+const VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Oral", "Subdérmica"];
 
 const ABAS = [
   ["principios", "Princípio ativo", Syringe],
@@ -76,6 +80,7 @@ const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_m
 function CadastroProtocolosSanitarios() {
   const [itens, setItens] = useState<Protocolo[] | null>(null);
   const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
+  const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<ProtocoloForm>(protocoloFormVazio());
@@ -83,7 +88,11 @@ function CadastroProtocolosSanitarios() {
   const [msg, setMsg] = useState<string | null>(null);
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); fetchDoencas().then(setDoencas).catch(() => {}); }, []);
+  useEffect(() => {
+    carregar();
+    fetchDoencas().then(setDoencas).catch(() => {});
+    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+  }, []);
 
   const abrirNovo = () => { setForm(protocoloFormVazio()); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Protocolo) => {
@@ -142,7 +151,7 @@ function CadastroProtocolosSanitarios() {
 
       {editando === "novo" && (
         <FormProtocolo
-          form={form} setForm={setForm} doencas={doencas} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+          form={form} setForm={setForm} doencas={doencas} estoque={estoque} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
           acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
         />
       )}
@@ -168,7 +177,7 @@ function CadastroProtocolosSanitarios() {
                   {editando === p.id && (
                     <tr><td colSpan={5} style={{ padding: 0 }}>
                       <FormProtocolo
-                        form={form} setForm={setForm} doencas={doencas} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
+                        form={form} setForm={setForm} doencas={doencas} estoque={estoque} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg}
                         acrescentarEtapa={acrescentarEtapa} removerEtapa={removerEtapa} atualizarEtapa={atualizarEtapa}
                       />
                     </td></tr>
@@ -184,8 +193,8 @@ function CadastroProtocolosSanitarios() {
   );
 }
 
-function FormProtocolo({ form, setForm, doencas, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
-  form: ProtocoloForm; setForm: (f: ProtocoloForm) => void; doencas: { id: number; nome: string }[];
+function FormProtocolo({ form, setForm, doencas, estoque, onSalvar, onCancelar, salvando, msg, acrescentarEtapa, removerEtapa, atualizarEtapa }: {
+  form: ProtocoloForm; setForm: (f: ProtocoloForm) => void; doencas: { id: number; nome: string }[]; estoque: EstoqueItemPicker[];
   onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
   acrescentarEtapa: () => void; removerEtapa: (idx: number) => void; atualizarEtapa: (idx: number, patch: Partial<ProtocoloEtapa>) => void;
 }) {
@@ -208,11 +217,15 @@ function FormProtocolo({ form, setForm, doencas, onSalvar, onCancelar, salvando,
         {form.etapas.map((e, idx) => (
           <div key={idx} className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "6px" }}>
             <div><label style={labelStyle}>Dia (D)</label><input type="number" min={1} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
-            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Produto</label><input style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })} /></div>
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Produto</label>
+              <EstoquePicker itens={estoque} value={e.produto} onChange={(v) => atualizarEtapa(idx, { produto: v })} /></div>
             <div><label style={labelStyle}>Dosagem</label><input type="number" inputMode="decimal" style={inputStyle} value={e.dosagem} onChange={(ev) => atualizarEtapa(idx, { dosagem: Number(ev.target.value) })} /></div>
             <div><label style={labelStyle}>Unidade</label><input style={inputStyle} value={e.unidade} onChange={(ev) => atualizarEtapa(idx, { unidade: ev.target.value })} placeholder="ml" /></div>
             <div className="flex items-end gap-1">
-              <div style={{ flex: 1 }}><label style={labelStyle}>Via</label><input style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })} placeholder="Intramamária" /></div>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Via</label>
+                <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
+                  <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
+                </select></div>
               {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
             </div>
           </div>

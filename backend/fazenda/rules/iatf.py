@@ -15,6 +15,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from fazenda.ordenacao import chave_numero
+
 
 # Protocolo IATF — doses por animal por fase
 PROTOCOLO_IATF = {
@@ -112,7 +114,7 @@ def selecionar_candidatas_iatf(
                 )
             )
 
-    return sorted(candidatas, key=lambda c: c.numero_matriz)
+    return sorted(candidatas, key=lambda c: chave_numero(c.numero_matriz))
 
 
 def calcular_necessidade_hormonios(n_candidatas: int) -> NecessidadeHormonios:

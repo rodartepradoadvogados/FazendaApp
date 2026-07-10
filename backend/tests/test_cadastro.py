@@ -88,6 +88,16 @@ class TestFichaAnimal:
         r = c.post("/cadastro/animais", json={"numero": "501"})
         assert r.status_code == 400
 
+    def test_listagem_em_ordem_numerica_crescente_nao_alfabetica(self, client):
+        c, engine = client
+        # Cadastrados fora de ordem — "9" deve vir antes de "10" e "80"
+        # (ordenação lexicográfica erraria isso: "10" < "80" < "9").
+        for numero in ["80", "10", "9", "1"]:
+            c.post("/cadastro/animais", json={"numero": numero, "sexo": "F"})
+
+        numeros = [a["numero"] for a in c.get("/animais/").json()]
+        assert numeros == ["1", "9", "10", "80"]
+
     def test_atualizar_ficha_e_baixa_desativa(self, client):
         c, engine = client
         c.post("/cadastro/animais", json={"numero": "502"})
@@ -103,7 +113,7 @@ class TestFichaAnimal:
 
 
 class TestMetaEstoque:
-    def test_atualizar_metadados_ensacado(self, client):
+    def test_atualizar_metadados_embalagem(self, client):
         c, engine = client
         with Session(engine) as s:
             s.add(Estoque(nome="Ração concentrada", categoria="alimento", quantidade=100))
@@ -111,10 +121,20 @@ class TestMetaEstoque:
         r = c.get("/cadastro/estoque-itens")
         item_id = r.json()[0]["id"]
 
-        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"ensacado": True, "kg_por_saco": 40.0})
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Saca", "medida_embalagem": "kg/saca", "quantidade_embalagem": 40.0})
         assert r.status_code == 200
-        assert r.json()["ensacado"] is True
-        assert r.json()["kg_por_saco"] == 40.0
+        assert r.json()["unidade_embalagem"] == "Saca"
+        assert r.json()["medida_embalagem"] == "kg/saca"
+        assert r.json()["quantidade_embalagem"] == 40.0
+
+    def test_unidade_embalagem_invalida_rejeitada(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Concentrado XYZ", categoria="alimento", quantidade=10))
+            s.commit()
+        item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"unidade_embalagem": "Caminhão"})
+        assert r.status_code == 400
 
     def test_fornecedor_inexistente_rejeitado(self, client):
         c, engine = client
@@ -227,6 +247,32 @@ class TestFolhaPagamentoRecorrente:
         })
         assert r.status_code == 400
 
+    def test_lancamento_de_folha_gera_conta_a_pagar_imediatamente(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 3000.0, "descontos": 300.0,
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["numero_lancamento_gerado"]
+
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == corpo["numero_lancamento_gerado"])).first()
+        assert conta is not None
+        assert conta.valor_total == 2700.0
+        assert conta.tipo == "despesa"
+        assert conta.data_vencimento == date(2026, 7, 5)
+
+        # Aparece em Contas a Pagar...
+        lancamentos = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        assert any(l["numero_lancamento"] == corpo["numero_lancamento_gerado"] for l in lancamentos)
+
+        # ...e na Agenda, dentro da janela de vencimento.
+        eventos = c.get("/agenda/", params={"data": "2026-07-01", "dias": 10}).json()["eventos"]
+        assert any("Folha de pagamento" in e["descricao"] for e in eventos)
+
     def test_gera_competencias_seguintes_ate_o_mes_atual(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c)
@@ -249,11 +295,16 @@ class TestFolhaPagamentoRecorrente:
         assert all(r["numero_lancamento_gerado"] for r in gerados)
         assert all(r["valor_liquido"] == 1800.0 for r in gerados)
 
-        numeros_gerados = {r["numero_lancamento_gerado"] for r in gerados}
+        # O lançamento inicial (o "modelo" recorrente) também gera sua própria
+        # conta a pagar — antes só as competências seguintes geradas
+        # automaticamente ganhavam esse vínculo.
+        assert all(r["numero_lancamento_gerado"] for r in registros)
+        numeros_gerados = {r["numero_lancamento_gerado"] for r in registros}
         with Session(engine) as s:
             from fazenda.models import ContaGerencial
             contas_criadas = s.exec(select(ContaGerencial).where(ContaGerencial.origem == "auto")).all()
         assert {c.numero_lancamento for c in contas_criadas} == numeros_gerados
+        assert len(contas_criadas) == 4
         assert all(c.tipo_documento == "Folha de pagamento" for c in contas_criadas)
         assert all(c.valor_total == 1800.0 for c in contas_criadas)
 

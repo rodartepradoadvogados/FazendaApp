@@ -69,7 +69,7 @@ class TestNecessidadeMensal:
     def test_converte_para_sacos_quando_ensacado(self, client):
         c, engine = client
         _seed(engine)
-        r_meta = c.put("/cadastro/estoque-itens/1", json={"ensacado": True, "kg_por_saco": 25.0})
+        r_meta = c.put("/cadastro/estoque-itens/1", json={"unidade_embalagem": "Saca", "medida_embalagem": "kg/saca", "quantidade_embalagem": 25.0})
         assert r_meta.status_code == 200
 
         r = c.get("/alimentacao/necessidade-mensal")

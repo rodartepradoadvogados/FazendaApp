@@ -131,6 +131,12 @@ export async function desmarcarEventoRealizado(eventoId: string) {
   return res.json();
 }
 
+export async function fetchProtocoloIatfConcluidos() {
+  const res = await authFetch(`${API}/agenda/protocolo-iatf/concluidos`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar protocolos IATF concluídos");
+  return res.json();
+}
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
@@ -291,7 +297,7 @@ export async function criarItemEstoque(dados: Record<string, unknown>) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
   return res.json();
 }
-export async function atualizarMetaEstoque(id: number, dados: { ensacado?: boolean | null; kg_por_saco?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {
+export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -561,7 +567,7 @@ export async function fetchLancamentosProtocolo() {
   return res.json();
 }
 export async function lancarProtocoloSanitario(dados: {
-  protocolo_id: number; numero_matriz: string; data_inicio: string; responsavel?: string; observacao?: string;
+  protocolo_id: number; numeros_matriz: string[]; data_inicio: string; responsavel?: string; observacao?: string;
   classificacao_mastite?: string; resultado_cmt?: string; tetos_afetados?: string[];
 }) {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
@@ -984,17 +990,29 @@ export async function addEventoManual(data: {
   descricao: string;
   categoria?: string;
   numero_animal?: string;
+  lotes?: string;
+  tipo_evento?: string;
   observacao?: string;
+  recorrente?: boolean;
+  intervalo_dias?: number;
+  intervalo_meses?: number;
 }) {
-  const qs = new URLSearchParams({
-    data_evento: data.data_evento,
-    descricao: data.descricao,
-    categoria: data.categoria || "Gestão/Financeiro",
+  const res = await authFetch(`${API}/agenda/manual`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      data_evento: data.data_evento,
+      descricao: data.descricao,
+      categoria: data.categoria || "Gestão/Financeiro",
+      numero_animal: data.numero_animal || null,
+      lotes: data.lotes || null,
+      tipo_evento: data.tipo_evento || null,
+      observacao: data.observacao || null,
+      recorrente: data.recorrente || false,
+      intervalo_dias: data.intervalo_dias || null,
+      intervalo_meses: data.intervalo_meses || null,
+    }),
   });
-  if (data.numero_animal) qs.set("numero_animal", data.numero_animal);
-  if (data.observacao) qs.set("observacao", data.observacao);
-  const res = await authFetch(`${API}/agenda/manual?${qs}`, { method: "POST" });
-  if (!res.ok) throw new Error("Erro ao adicionar evento");
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar evento"); }
   return res.json();
 }
 
