@@ -214,6 +214,31 @@ class Parto(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Colostragem e teste de sangue (IgG) da cria — histórico sanitário usado no
+# relatório de bezerras (Sanidade). Uma linha por animal, atualizável conforme
+# os dados vão sendo colhidos (colostro no nascimento, teste de sangue 24-48h
+# depois).
+# ---------------------------------------------------------------------------
+class ColostragemBezerra(SQLModel, table=True):
+    """Registro de colostragem e teste de sangue (IgG) de uma cria."""
+
+    __tablename__ = "colostragem_bezerra"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
+    numero_animal: str = Field(index=True, unique=True)
+    tomou_colostro: Optional[bool] = None
+    litros_colostro: Optional[float] = None
+    brix_colostro: Optional[float] = None  # Ouro >25% · Prata 18-25% · Bronze <18%
+    data_colostro: Optional[date] = None
+    brix_soro: Optional[float] = None  # teste de sangue (IgG): Sucesso >=8,4 · Alerta 8,1-8,3 · Falha <=8,0
+    data_teste_sangue: Optional[date] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Controle Leiteiro
 # ---------------------------------------------------------------------------
 class ControleLeiteiro(SQLModel, table=True):

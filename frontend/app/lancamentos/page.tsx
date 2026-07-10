@@ -11,7 +11,7 @@ import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
-  fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal,
+  fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -542,11 +542,29 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
         const rotulo = await alocarSeConfirmado(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento");
         if (rotulo) alocacoes.push(`${c} → ${rotulo}`);
       }
+      // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
+      // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
+      // e algum dado foi informado.
+      const criaRegistrada = r.crias_criadas.includes(criaNumero);
+      if (criaRegistrada && (tomouColostro || litros || brix || soro)) {
+        try {
+          await registrarColostragem({
+            numero_animal: criaNumero,
+            tomou_colostro: tomouColostro ? tomouColostro === "Sim" : undefined,
+            litros_colostro: litrosN || undefined,
+            brix_colostro: brixN ?? undefined,
+            data_colostro: brix ? dataParto : undefined,
+            brix_soro: soroN ?? undefined,
+            data_teste_sangue: soro ? dataParto : undefined,
+          });
+        } catch { /* colostragem é complementar — não bloqueia o parto já salvo */ }
+      }
       setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}`);
       setMatriz(""); setTipoParto(""); setGemelar(false);
       setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
       setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
       setRetencaoPlacenta(false);
+      setTomou(""); setLitros(""); setBrix(""); setSoro("");
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
     } finally {
@@ -657,8 +675,8 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       </div>
       <p style={nota}>
         Matriz, data, tipo de parto, crias e retenção de placenta já gravam de verdade. Ao salvar, sugere o lote da
-        mãe e de cada cria (confirmação antes de mover). Os campos de colostragem/IgG acima ainda são só a
-        calculadora — o registro desses dados no histórico do animal é um próximo passo.
+        mãe e de cada cria (confirmação antes de mover). Colostragem e IgG da 1ª cria também são gravadas — o
+        histórico completo aparece em Sanidade → Relatório sanitário de bezerras.
       </p>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -2150,7 +2168,7 @@ export default function LancamentosPage() {
           ) : sel === "entrega_leite" ? (
             <><strong style={{ color: "var(--text)" }}>Entrega mensal já grava de verdade.</strong> Compara o controle leiteiro projetado do mês, a receita do laticínio e o que foi de fato entregue.</>
           ) : sel === "parto" ? (
-            <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG ainda são só calculadora.</>
+            <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG da 1ª cria também gravam — veja em Sanidade &gt; Relatório sanitário de bezerras.</>
           ) : sel === "protocolo_iatf" ? (
             <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
           ) : sel === "inseminacao" ? (

@@ -489,6 +489,28 @@ export async function fetchSanidade() {
   return res.json();
 }
 
+export async function registrarColostragem(dados: {
+  numero_animal: string; tomou_colostro?: boolean; litros_colostro?: number; brix_colostro?: number;
+  data_colostro?: string; brix_soro?: number; data_teste_sangue?: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/sanidade/colostragem`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar colostragem"); }
+  return res.json();
+}
+
+export async function fetchRelatorioBezerras(filtros: { faixaEtaria?: string; numero?: string; lote?: string; numeros?: string[] }) {
+  const params = new URLSearchParams();
+  if (filtros.faixaEtaria) params.set("faixa_etaria", filtros.faixaEtaria);
+  if (filtros.numero) params.set("numero", filtros.numero);
+  if (filtros.lote) params.set("lote", filtros.lote);
+  if (filtros.numeros) filtros.numeros.forEach((n) => params.append("numeros", n));
+  const res = await authFetch(`${API}/sanidade/relatorio-bezerras?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de bezerras error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchUnidadesCompativeis(produto: string) {
   const res = await authFetch(`${API}/sanidade/unidades-compativeis?produto=${encodeURIComponent(produto)}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Unidades compatíveis error: ${res.status}`);
