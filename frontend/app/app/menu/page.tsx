@@ -6,9 +6,9 @@
 import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
-  LogOut, CloudUpload, Trash2, ChevronRight,
+  LogOut, CloudUpload, Trash2, ChevronRight, CheckCheck,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo } from "@/components/mobile/ui";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -17,9 +17,10 @@ import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
+import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "plano" | "manejo" | "indicadores";
-type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode };
+type SubKey = "agendaVet" | "iatf" | "calendario" | "plano" | "manejo" | "indicadores" | "aprovacoes";
+type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
 type Grupo = { secao: string; itens: Item[] };
 
 const GRUPOS: Grupo[] = [
@@ -36,6 +37,7 @@ const GRUPOS: Grupo[] = [
   { secao: "Gestão", itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={18} /> },
     { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={18} /> },
+    { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={18} />, soAdmin: true },
   ] },
 ];
 
@@ -46,6 +48,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   plano: PlanoAlimentacao,
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
+  aprovacoes: Aprovacoes,
 };
 
 export default function Pagina() {
@@ -73,7 +76,7 @@ export default function Pagina() {
   // No servidor / antes de montar não sabemos as permissões — só renderiza os
   // grupos após montar para não vazar itens sem permissão.
   const grupos = montado
-    ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => podeModulo(ROTA_MODULO[i.rota] || i.rota)) })).filter((g) => g.itens.length)
+    ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
 
   return (

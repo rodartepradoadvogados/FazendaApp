@@ -1211,6 +1211,37 @@ export async function fetchNotificacoes() {
   return res.json();
 }
 
+// ── Aprovações de lançamentos vindos do Telegram (só admin) ──
+export type LancamentoPendente = {
+  id: number; tipo: string; rotulo: string; resumo: string; dados: Record<string, any>;
+  status: string; erro: string | null; solicitante_nome: string | null; solicitante_chat_id: number | null;
+  criado_em: string | null; decidido_em: string | null; decidido_por: string | null;
+};
+
+export async function fetchAprovacoes(): Promise<LancamentoPendente[]> {
+  const res = await authFetch(`${API}/aprovacoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Aprovações error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchAprovacoesContagem(): Promise<{ pendentes: number }> {
+  const res = await authFetch(`${API}/aprovacoes/contagem`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contagem error: ${res.status}`);
+  return res.json();
+}
+
+export async function aprovarLancamento(id: number) {
+  const res = await authFetch(`${API}/aprovacoes/${id}/aprovar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar"); }
+  return res.json();
+}
+
+export async function rejeitarLancamento(id: number) {
+  const res = await authFetch(`${API}/aprovacoes/${id}/rejeitar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao rejeitar"); }
+  return res.json();
+}
+
 export function formatBRL(value: number): string {
   return new Intl.NumberFormat("pt-BR", {
     style: "currency",

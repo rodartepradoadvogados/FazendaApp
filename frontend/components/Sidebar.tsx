@@ -17,6 +17,7 @@ import {
   Settings,
   ClipboardList,
   FileBarChart,
+  CheckCheck,
   Menu,
   X,
 } from "lucide-react";
@@ -130,7 +131,10 @@ export function Sidebar() {
 
       {/* Nav links */}
       <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
-        {[...visiveis, ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : [])].map(({ href, label, icon: Icon, title }) => {
+        {[...visiveis,
+          ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
+          ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
+        ].map(({ href, label, icon: Icon, title }) => {
           const active = path === href || (href !== "/" && path.startsWith(href));
           return (
             <Link
