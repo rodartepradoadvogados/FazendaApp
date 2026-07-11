@@ -12,13 +12,34 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, Servico,
+    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, SeedFlag, Servico,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.reproducao_analise import analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
+
+
+def deduplicar_partos(session: Session) -> None:
+    """Remove partos duplicados que sobraram de reimportações antigas do CSV
+    reprodutivo (o import só inseria e nunca limpava — uma vaca com N uploads
+    ficava com N partos iguais). Roda UMA vez (guardada por SeedFlag): para
+    cada (matriz, data), mantém só o registro mais antigo. Uma vaca não pode
+    parir duas vezes no mesmo dia, então colapsar por (matriz, data) é seguro.
+    """
+    chave = "partos_dedup_v1"
+    if session.get(SeedFlag, chave):
+        return
+    vistos: set[tuple[str, object]] = set()
+    for p in session.exec(select(Parto).order_by(Parto.id)).all():
+        k = (p.numero_matriz, p.data_parto)
+        if k in vistos:
+            session.delete(p)
+        else:
+            vistos.add(k)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 # Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
 # (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.

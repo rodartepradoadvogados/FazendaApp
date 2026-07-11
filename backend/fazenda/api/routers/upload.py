@@ -165,6 +165,18 @@ async def _upsert_reprodutivo(content: bytes, session: Session) -> dict:
             servico.animal_id = animal.id
         session.add(servico)
 
+    # Partos: reimporta sem DUPLICAR. Antes só inseria — cada reenvio do CSV
+    # empilhava os mesmos partos (uma vaca com 10 uploads ficava com 10 partos
+    # iguais). Agora, para cada (matriz, data) que vem no CSV, apagamos os
+    # partos já existentes daquela data antes de reinserir. Partos lançados à
+    # mão em OUTRAS datas (pelo app/site) são preservados.
+    datas_csv = {(p.numero_matriz, p.data_parto) for p in partos}
+    if datas_csv:
+        for antigo in session.exec(select(Parto)).all():
+            if (antigo.numero_matriz, antigo.data_parto) in datas_csv:
+                session.delete(antigo)
+        session.commit()
+
     for parto in partos:
         animal = session.exec(
             select(Animal).where(Animal.numero == parto.numero_matriz)

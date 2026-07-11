@@ -3,9 +3,9 @@
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useState } from "react";
-import { Activity, Milk, Syringe, Wheat, Package, BarChart3, Search, X, ChevronRight, ExternalLink } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, Package, Search, X, ChevronRight } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
-import { fetchAnimais, podeModulo } from "@/lib/api";
+import { fetchAnimais } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
 import { FormReprodutivo } from "./FormReprodutivo";
 import { FormProducao } from "./FormProducao";
@@ -13,7 +13,7 @@ import { FormSanidade } from "./FormSanidade";
 import { FormAlimentacao } from "./FormAlimentacao";
 import { FormEstoque } from "./FormEstoque";
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "estoque" | "financeiro";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "estoque";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
@@ -21,14 +21,12 @@ const TITULOS: Record<Tela, string> = {
   sanidade: "Sanidade",
   alimentacao: "Alimentação",
   estoque: "Estoque",
-  financeiro: "Financeiro",
 };
 
 export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
   const [tela, setTela] = useState<Tela | null>(null);
   const [fixado, setFixado] = useState<Animal | null>(null);
-  const podeFinanceiro = podeModulo("financeiro");
 
   // ── Sub-tela aberta ────────────────────────────────────────────────────────
   if (tela) {
@@ -40,7 +38,6 @@ export function LancarTela() {
         {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "estoque" && <FormEstoque />}
-        {tela === "financeiro" && <TelaFinanceiro />}
       </div>
     );
   }
@@ -59,8 +56,9 @@ export function LancarTela() {
         <MobBloco icone={<Milk size={24} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
         <MobBloco icone={<Syringe size={24} />} label="Sanidade" onClick={() => setTela("sanidade")} />
         <MobBloco icone={<Wheat size={24} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
-        <MobBloco icone={<Package size={24} />} label="Estoque" onClick={() => setTela("estoque")} />
-        {podeFinanceiro && <MobBloco icone={<BarChart3 size={24} />} label="Financeiro" onClick={() => setTela("financeiro")} />}
+        <div style={{ gridColumn: "1 / -1", display: "grid" }}>
+          <MobBloco icone={<Package size={24} />} label="Estoque" onClick={() => setTela("estoque")} />
+        </div>
       </div>
     </div>
   );
@@ -111,20 +109,6 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
         style={{ width: 36, height: 36, borderRadius: 10, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <X size={18} />
       </button>
-    </div>
-  );
-}
-
-// ── Financeiro: só o atalho para o lançamento completo (complexo p/ o campo) ─
-function TelaFinanceiro() {
-  return (
-    <div>
-      <p style={{ color: "var(--mob-muted)", fontSize: "0.98rem", lineHeight: 1.5, marginBottom: "1.1rem" }}>
-        O lançamento financeiro tem muitos campos (conta, centro de custo, parcelas) — melhor fazer no sistema completo.
-      </p>
-      <a href="/lancamentos" className="mob-btn" style={{ textDecoration: "none" }}>
-        <ExternalLink size={18} /> Abrir lançamento financeiro completo
-      </a>
     </div>
   );
 }

@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { CalendarCheck, PlusCircle, Beef, Menu as MenuIcon, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
+import { InstalarApp } from "@/components/mobile/InstalarApp";
 
 const ABAS = [
   { href: "/app", label: "Agenda", icon: CalendarCheck },
@@ -78,7 +79,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       </header>
 
       {/* Conteúdo da aba */}
-      <main className="mob-conteudo">{children}</main>
+      <main className="mob-conteudo">
+        <InstalarApp />
+        {children}
+      </main>
 
       {/* Navegação inferior (zona do polegar) */}
       <nav className="mob-nav">

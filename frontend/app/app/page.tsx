@@ -6,12 +6,17 @@
 // site desktop (POST/DELETE /agenda/realizados). Funciona offline: a lista vem
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
-import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
-import { CalendarCheck } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, today } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
+
+/** Soma `n` dias a uma data ISO ("YYYY-MM-DD") e devolve outra ISO. */
+function maisDias(iso: string, n: number): string {
+  const d = new Date(iso + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return d.toISOString().split("T")[0];
+}
 
 type Evento = {
   id: string;
@@ -124,6 +129,61 @@ export default function AgendaMovel() {
 
   const cacheISO = cacheEm(chaveCache);
 
+  // Próximos 2 dias (amanhã e depois de amanhã) para consulta antecipada.
+  const d1 = maisDias(hoje, 1);
+  const d2 = maisDias(hoje, 2);
+  const eventosDe = (dia: string) => (agenda?.eventos || []).filter((e) => e.data === dia);
+
+  function renderCartao(e: Evento) {
+    const { chave, rotulo } = catInfo(e.categoria);
+    const { principal, detalhe } = linhas(e);
+    const feito = feitos.has(e.id);
+    const atrasada = e.data < hoje;
+    return (
+      <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
+              {rotulo}
+            </div>
+            <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+              {principal}
+            </div>
+            {detalhe && (
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem", overflow: "hidden", textOverflow: "ellipsis" }}>
+                {detalhe}
+              </div>
+            )}
+            {atrasada && (
+              <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--mob-vermelho)", marginTop: "0.25rem" }}>
+                Atrasada · {fmtData(e.data, { day: "2-digit", month: "2-digit" })}
+              </div>
+            )}
+          </div>
+          <MobCheck feito={feito} onClick={() => alternar(e)} />
+        </div>
+      </MobCard>
+    );
+  }
+
+  // Seção recolhível de um dia seguinte (amanhã / depois de amanhã).
+  function DiaSeguinte({ dia, prefixo }: { dia: string; prefixo: string }) {
+    const evs = eventosDe(dia);
+    return (
+      <details style={{ marginTop: "0.7rem" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+          <span>{prefixo}, {fmtData(dia, { day: "numeric", month: "long" })}</span>
+          <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{evs.length}</span>
+        </summary>
+        <div style={{ marginTop: "0.6rem" }}>
+          {evs.length === 0
+            ? <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem", padding: "0.3rem 0.2rem" }}>Nada agendado.</p>
+            : evs.map(renderCartao)}
+        </div>
+      </details>
+    );
+  }
+
   return (
     <div>
       <MobTitulo badge={`${pendentes} ${pendentes === 1 ? "Tarefa" : "Tarefas"}`}>
@@ -163,45 +223,18 @@ export default function AgendaMovel() {
               </p>
             </div>
           ) : (
-            eventos.map((e) => {
-              const { chave, rotulo } = catInfo(e.categoria);
-              const { principal, detalhe } = linhas(e);
-              const feito = feitos.has(e.id);
-              const atrasada = e.data < hoje;
-              return (
-                <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
-                        {rotulo}
-                      </div>
-                      <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
-                        {principal}
-                      </div>
-                      {detalhe && (
-                        <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {detalhe}
-                        </div>
-                      )}
-                      {atrasada && (
-                        <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--mob-vermelho)", marginTop: "0.25rem" }}>
-                          Atrasada · {fmtData(e.data, { day: "2-digit", month: "2-digit" })}
-                        </div>
-                      )}
-                    </div>
-                    <MobCheck feito={feito} onClick={() => alternar(e)} />
-                  </div>
-                </MobCard>
-              );
-            })
+            eventos.map(renderCartao)
+          )}
+
+          {/* Consulta antecipada: os dois dias seguintes, recolhidos. */}
+          {agenda && (
+            <>
+              <DiaSeguinte dia={d1} prefixo="Amanhã" />
+              <DiaSeguinte dia={d2} prefixo="Depois de amanhã" />
+            </>
           )}
         </>
       )}
-
-      {/* Atalho para a agenda completa do site */}
-      <Link href="/agenda" className="mob-btn-2" style={{ marginTop: "1.2rem", textDecoration: "none" }}>
-        <CalendarCheck size={18} /> Ver agenda completa
-      </Link>
     </div>
   );
 }

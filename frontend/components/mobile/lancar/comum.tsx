@@ -76,14 +76,17 @@ export function useEnvio() {
   const [aviso, setAviso] = useState<Aviso>(null);
   const [enviando, setEnviando] = useState(false);
 
-  async function enviar(caminho: string, corpo: unknown, descricao: string, aoLimpar?: () => void) {
+  async function enviar(
+    caminho: string, corpo: unknown, descricao: string,
+    aoLimpar?: () => void, msgs?: { ok?: string; offline?: string },
+  ) {
     setEnviando(true);
     setAviso(null);
     try {
       const { enviado } = await enviarOuEnfileirar(caminho, corpo, descricao);
       setAviso(enviado
-        ? { tipo: "ok", msg: "Lançamento salvo." }
-        : { tipo: "offline", msg: "Sem internet — guardado, será enviado automaticamente ao conectar." });
+        ? { tipo: "ok", msg: msgs?.ok ?? "Lançamento salvo." }
+        : { tipo: "offline", msg: msgs?.offline ?? "Sem internet — guardado, será enviado automaticamente ao conectar." });
       aoLimpar?.();
     } catch (e) {
       setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar." });

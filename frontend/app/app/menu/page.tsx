@@ -1,40 +1,56 @@
 "use client";
-// Tela MENU do app de campo: lista curada (não é o menu inteiro do site) com
-// atalhos para o site completo, a fila de sincronização offline e o rodapé com
-// o usuário logado. Itens são filtrados por permissão (podeModulo).
+// Tela MENU do app de campo. NADA remete ao site: cada item abre a informação
+// GERENCIAL (só leitura, enxuta) dentro do próprio app, numa SUB-TELA com botão
+// voltar (estado interno, sem navegar de rota). Itens filtrados por permissão.
+// Mantém a fila de sincronização offline e o rodapé com o usuário logado.
 import { useEffect, useState } from "react";
 import {
-  Stethoscope, Syringe, CalendarDays, Baby, Wheat, FileBarChart, Gauge, ListChecks,
-  Globe, LogOut, CloudUpload, Trash2,
+  Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
+  LogOut, CloudUpload, Trash2, ChevronRight,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
-import { MobTitulo, MobLinha } from "@/components/mobile/ui";
+import { MobTitulo } from "@/components/mobile/ui";
+import AgendaVet from "@/components/mobile/menu/AgendaVet";
+import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
+import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
+import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
+import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
+import Indicadores from "@/components/mobile/menu/Indicadores";
 
-type Item = { titulo: string; rota: string; icone: React.ReactNode };
+type SubKey = "agendaVet" | "iatf" | "calendario" | "plano" | "manejo" | "indicadores";
+type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode };
 type Grupo = { secao: string; itens: Item[] };
 
 const GRUPOS: Grupo[] = [
   { secao: "Reprodução", itens: [
-    { titulo: "Agenda do Veterinário", rota: "/reproducao", icone: <Stethoscope size={18} /> },
-    { titulo: "Protocolos IATF", rota: "/reproducao", icone: <Syringe size={18} /> },
+    { chave: "agendaVet", titulo: "Agenda do Veterinário", subtitulo: "Listas do rebanho para a visita", rota: "/reproducao", icone: <Stethoscope size={18} /> },
+    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={18} /> },
   ] },
   { secao: "Sanidade", itens: [
-    { titulo: "Calendário Sanitário", rota: "/sanidade", icone: <CalendarDays size={18} /> },
-    { titulo: "Relatório de Bezerras", rota: "/sanidade", icone: <Baby size={18} /> },
+    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={18} /> },
   ] },
   { secao: "Alimentação", itens: [
-    { titulo: "Plano por Lote", rota: "/alimentacao", icone: <Wheat size={18} /> },
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={18} /> },
   ] },
   { secao: "Gestão", itens: [
-    { titulo: "Relatórios Gerenciais", rota: "/relatorios", icone: <FileBarChart size={18} /> },
-    { titulo: "Indicadores", rota: "/indicadores", icone: <Gauge size={18} /> },
-    { titulo: "Lançamentos completos", rota: "/lancamentos", icone: <ListChecks size={18} /> },
+    { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={18} /> },
+    { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={18} /> },
   ] },
 ];
 
+const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
+  agendaVet: AgendaVet,
+  iatf: ProtocolosIatf,
+  calendario: CalendarioSanitario,
+  plano: PlanoAlimentacao,
+  manejo: RelatoriosManejo,
+  indicadores: Indicadores,
+};
+
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
+  const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
@@ -47,6 +63,13 @@ export default function Pagina() {
   }
 
   const usuario = montado ? getUsuario() : null;
+
+  // Sub-tela aberta: mostra só ela (com o próprio botão voltar).
+  if (sub) {
+    const Sub = SUBTELAS[sub];
+    return <Sub onVoltar={() => setSub(null)} />;
+  }
+
   // No servidor / antes de montar não sabemos as permissões — só renderiza os
   // grupos após montar para não vazar itens sem permissão.
   const grupos = montado
@@ -60,8 +83,15 @@ export default function Pagina() {
       {grupos.map((g) => (
         <div key={g.secao}>
           <div className="mob-secao">{g.secao}</div>
-          {g.itens.map((i, idx) => (
-            <MobLinha key={`${i.rota}-${idx}`} icone={i.icone} titulo={i.titulo} subtitulo="Abre o site completo" href={i.rota} />
+          {g.itens.map((i) => (
+            <button key={i.chave} type="button" className="mob-linha" style={{ marginBottom: "0.6rem" }} onClick={() => setSub(i.chave)}>
+              <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(184,134,11,0.12)", color: "var(--mob-dourado-2)", flexShrink: 0 }}>{i.icone}</span>
+              <span style={{ flex: 1, minWidth: 0 }}>
+                <span style={{ display: "block", fontWeight: 700, fontSize: "0.95rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.titulo}</span>
+                <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.subtitulo}</span>
+              </span>
+              <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
+            </button>
           ))}
         </div>
       ))}
@@ -96,7 +126,6 @@ export default function Pagina() {
 
       {/* Sistema */}
       <div className="mob-secao">Sistema</div>
-      <MobLinha icone={<Globe size={18} />} titulo="Abrir site completo" subtitulo="Versão completa no navegador" href="/" />
       <button type="button" className="mob-btn-2" onClick={logout} style={{ marginTop: "0.4rem" }}>
         <LogOut size={17} /> Sair / trocar de usuário
       </button>
