@@ -661,6 +661,40 @@ class TelegramPendente(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TelegramSessao(SQLModel, table=True):
+    """Estado da conversa de um chat no robô: qual lançamento está sendo
+    preenchido, em que etapa e os dados já coletados (JSON)."""
+
+    __tablename__ = "telegram_sessao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chat_id: int = Field(index=True, unique=True)
+    fluxo: Optional[str] = None          # tipo de lançamento em andamento
+    etapa: int = 0                       # índice da pergunta atual
+    dados: str = "{}"                    # JSON acumulado dos campos respondidos
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class LancamentoPendente(SQLModel, table=True):
+    """Lançamento operacional (pesagem, parto, secagem, troca de lote…) enviado
+    pelo Telegram e aguardando aprovação da conta principal antes de virar um
+    registro real no sistema."""
+
+    __tablename__ = "lancamento_pendente"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str = Field(index=True)        # controle_leiteiro | parto | secagem | ...
+    payload: str = "{}"                  # JSON dos campos coletados
+    resumo: str = ""                     # texto legível para a tela de aprovação
+    solicitante_chat_id: Optional[int] = None
+    solicitante_nome: Optional[str] = None
+    status: str = Field(default="pendente", index=True)  # pendente | aprovado | rejeitado
+    erro: Optional[str] = None           # mensagem se a materialização falhar
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    decidido_em: Optional[datetime] = None
+    decidido_por: Optional[str] = None   # username de quem aprovou/rejeitou
+
+
 # ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, X } from "lucide-react";
-import { fetchNotificacoes } from "@/lib/api";
+import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin } from "@/lib/api";
 
 type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string };
 
@@ -10,6 +10,7 @@ type Item = { tipo: string; categoria: string; descricao: string; numero_animal:
 // a partir da categoria/tipo da notificação.
 function destino(i: Item): string {
   const chave = `${i.categoria || ""} ${i.tipo || ""}`.toLowerCase();
+  if (chave.includes("aprova")) return "/aprovacoes";
   if (chave.includes("financ")) return "/financeiro";
   if (chave.includes("estoque")) return "/estoque";
   // reprodutivo, sanidade e o restante são resolvidos na Agenda.
@@ -22,7 +23,12 @@ export function NotificationBell() {
   const [aberto, setAberto] = useState(false);
   const [erro, setErro] = useState(false);
 
-  const carregar = () => fetchNotificacoes().then((d) => { setItens(d.itens || []); setErro(false); }).catch(() => setErro(true));
+  const [aprov, setAprov] = useState(0);
+
+  const carregar = () => {
+    fetchNotificacoes().then((d) => { setItens(d.itens || []); setErro(false); }).catch(() => setErro(true));
+    if (ehAdmin()) fetchAprovacoesContagem().then((d) => setAprov(d.pendentes || 0)).catch(() => {});
+  };
 
   useEffect(() => {
     carregar();
@@ -30,7 +36,11 @@ export function NotificationBell() {
     return () => clearInterval(h);
   }, []);
 
-  const total = itens.length;
+  // Pendências de aprovação (Telegram) entram como um item no topo, para o admin.
+  const itensExibidos: Item[] = aprov > 0
+    ? [{ tipo: "aprovacao", categoria: "Aprovações", descricao: `${aprov} lançamento(s) do Telegram aguardando aprovação`, numero_animal: null, cor: "var(--amber)" }, ...itens]
+    : itens;
+  const total = itensExibidos.length;
 
   const irPara = (i: Item) => {
     setAberto(false);
@@ -86,7 +96,7 @@ export function NotificationBell() {
               <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nada pendente para hoje.</p>
             ) : (
               <div className="space-y-2">
-                {itens.map((i, idx) => (
+                {itensExibidos.map((i, idx) => (
                   <div key={idx} onClick={() => irPara(i)} title="Ir para a página relacionada"
                     style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", padding: "0.45rem 0.5rem", borderRadius: "6px", background: "var(--surface-2)", cursor: "pointer", boxShadow: "inset 0 0 0 1px transparent", transition: "box-shadow 0.15s" }}
                     onMouseEnter={(e) => { e.currentTarget.style.background = "var(--surface-2)"; e.currentTarget.style.boxShadow = "inset 3px 0 0 var(--dourado)"; }}

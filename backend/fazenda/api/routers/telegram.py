@@ -18,13 +18,16 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
+import json
+
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import TelegramPendente
+from fazenda.models import LancamentoPendente, TelegramPendente, TelegramSessao
+from fazenda.rules import telegram_fluxos as fx
 
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
@@ -190,20 +193,31 @@ async def telegram_webhook(
     return {"ok": True}
 
 
+def _boas_vindas(chat_id: int) -> str:
+    return (
+        "👋 Sou o robô da fazenda.\n\n"
+        f"Id deste chat: <code>{chat_id}</code>.\n\n"
+        "• <b>Nota/recibo/comprovante</b> (financeiro): me envie o XML ou a foto/PDF.\n"
+        "• <b>Evento de campo</b> (pesagem, parto, secagem, troca de lote…): toque em /lancar.\n"
+        "• Cancelar um lançamento em andamento: /cancelar."
+    )
+
+
 def _tratar_mensagem(session: Session, msg: dict) -> None:
     chat_id = msg["chat"]["id"]
-    texto = (msg.get("text") or "").strip().lower()
+    nome = (msg.get("from") or {}).get("first_name")
+    texto = (msg.get("text") or "").strip()
+    texto_l = texto.lower()
 
-    if texto in ("/start", "/id", "/meuid", "meu id", "id"):
-        _enviar(chat_id, (
-            "👋 Sou o robô financeiro da fazenda.\n\n"
-            f"O <b>id deste chat</b> é <code>{chat_id}</code>.\n"
-            "Peça ao administrador para liberar este id e depois é só me mandar "
-            "o XML, a foto/PDF da nota fiscal ou o recibo/comprovante."
-        ))
+    if texto_l in ("/start", "/id", "/meuid", "meu id", "id", "/ajuda", "ajuda"):
+        _enviar(chat_id, _boas_vindas(chat_id))
+        return
+    if texto_l in ("/cancelar", "cancelar"):
+        _cancelar_sessao(session, chat_id)
+        _enviar(chat_id, "✖️ Ok, cancelei o lançamento em andamento.")
         return
 
-    # Extrai o arquivo: documento (.xml/.pdf/imagem) ou foto.
+    # Documento/foto → fluxo financeiro (leitura de nota/recibo).
     file_id = file_name = mime = kind = None
     if "document" in msg:
         doc = msg["document"]
@@ -221,52 +235,229 @@ def _tratar_mensagem(session: Session, msg: dict) -> None:
         mime = "image/jpeg"
         kind = "documento"
 
-    if not file_id or not kind:
+    if file_id and kind:
         if not _autorizado(chat_id):
-            _enviar(chat_id, f"Seu id de chat é <code>{chat_id}</code>. Peça a liberação ao administrador.")
+            _enviar(chat_id, f"🚫 Chat não liberado. Seu id é <code>{chat_id}</code> — peça ao administrador.")
             return
-        _enviar(chat_id, (
-            "Me envie um <b>XML</b> de nota fiscal, ou uma <b>foto/PDF</b> da nota, "
-            "recibo ou comprovante de pagamento — eu preencho o lançamento para você."
-        ))
+        pend = TelegramPendente(chat_id=chat_id, file_id=file_id, file_name=file_name, mime=mime, kind=kind)
+        session.add(pend)
+        session.commit()
+        session.refresh(pend)
+        _enviar(chat_id,
+            "📄 Recebi o documento. Este lançamento é <b>receita</b> ou <b>despesa</b>?",
+            botoes=[[
+                {"text": "🧾 Despesa", "callback_data": f"lanc:{pend.id}:despesa"},
+                {"text": "💰 Receita", "callback_data": f"lanc:{pend.id}:receita"},
+            ], [
+                {"text": "✖️ Cancelar", "callback_data": f"cancel:{pend.id}"},
+            ]],
+        )
         return
 
+    # Sem arquivo: comandos/perguntas do fluxo operacional.
     if not _autorizado(chat_id):
-        _enviar(chat_id, (
-            "🚫 Este chat ainda não está liberado para lançar.\n"
-            f"Seu id é <code>{chat_id}</code> — peça ao administrador para liberá-lo."
-        ))
+        _enviar(chat_id, f"Seu id de chat é <code>{chat_id}</code>. Peça a liberação ao administrador.")
         return
 
-    pend = TelegramPendente(chat_id=chat_id, file_id=file_id, file_name=file_name, mime=mime, kind=kind)
-    session.add(pend)
-    session.commit()
-    session.refresh(pend)
+    if texto_l in ("/lancar", "/lançar", "lancar", "lançar", "/novo", "/menu", "menu"):
+        _menu_lancamentos(chat_id)
+        return
 
-    _enviar(chat_id,
-        "📄 Recebi o documento. Este lançamento é <b>receita</b> ou <b>despesa</b>?",
-        botoes=[[
-            {"text": "🧾 Despesa", "callback_data": f"lanc:{pend.id}:despesa"},
-            {"text": "💰 Receita", "callback_data": f"lanc:{pend.id}:receita"},
-        ], [
-            {"text": "✖️ Cancelar", "callback_data": f"cancel:{pend.id}"},
-        ]],
+    sess = _sessao(session, chat_id)
+    if sess and sess.fluxo:
+        _responder_campo(session, sess, texto=texto, nome=nome)
+        return
+
+    _enviar(chat_id, "Para lançar um evento de campo, toque em /lancar. Para uma nota/recibo, me envie o arquivo.")
+
+
+# ── Motor de conversa (lançamentos operacionais) ───────────────────────────
+def _menu_lancamentos(chat_id: int) -> None:
+    botoes = [[{"text": f["rotulo"], "callback_data": f"flow:{tipo}"}] for tipo, f in fx.FLUXOS.items()]
+    _enviar(chat_id, "O que você quer lançar? (vai para aprovação)", botoes=botoes)
+
+
+def _sessao(session: Session, chat_id: int) -> TelegramSessao | None:
+    return session.exec(select(TelegramSessao).where(TelegramSessao.chat_id == chat_id)).first()
+
+
+def _cancelar_sessao(session: Session, chat_id: int) -> None:
+    sess = _sessao(session, chat_id)
+    if sess:
+        session.delete(sess)
+        session.commit()
+
+
+def _iniciar_fluxo(session: Session, chat_id: int, tipo: str, nome: str | None) -> None:
+    if tipo not in fx.FLUXOS:
+        _enviar(chat_id, "Lançamento desconhecido. Toque em /lancar.")
+        return
+    sess = _sessao(session, chat_id) or TelegramSessao(chat_id=chat_id)
+    sess.fluxo = tipo
+    sess.etapa = 0
+    sess.dados = json.dumps({"_nome": nome} if nome else {})
+    sess.atualizado_em = datetime.utcnow()
+    session.add(sess)
+    session.commit()
+    session.refresh(sess)
+    _perguntar_campo(session, sess)
+
+
+def _perguntar_campo(session: Session, sess: TelegramSessao) -> None:
+    campos = fx.FLUXOS[sess.fluxo]["campos"]
+    if sess.etapa >= len(campos):
+        _finalizar(session, sess)
+        return
+    campo = campos[sess.etapa]
+    if campo["tipo"] == "opcoes":
+        opcoes = campo["opcoes"](session) if callable(campo["opcoes"]) else campo["opcoes"]
+        dados = json.loads(sess.dados)
+        dados["_ops"] = opcoes
+        sess.dados = json.dumps(dados)
+        session.add(sess)
+        session.commit()
+        botoes = [[{"text": rot, "callback_data": f"ans:{i}"}] for i, (_val, rot) in enumerate(opcoes)]
+        if not campo["obrigatorio"]:
+            botoes.append([{"text": "⏭️ Pular", "callback_data": "ans:-1"}])
+        botoes.append([{"text": "✖️ Cancelar", "callback_data": "flowcancel"}])
+        _enviar(sess.chat_id, campo["pergunta"], botoes=botoes)
+    else:
+        _enviar(sess.chat_id, campo["pergunta"])
+
+
+def _responder_campo(session: Session, sess: TelegramSessao, texto: str | None = None, idx: int | None = None, nome: str | None = None) -> None:
+    chat_id = sess.chat_id
+    campos = fx.FLUXOS[sess.fluxo]["campos"]
+    if sess.etapa >= len(campos):
+        _finalizar(session, sess)
+        return
+    campo = campos[sess.etapa]
+    dados = json.loads(sess.dados)
+    tp = campo["tipo"]
+
+    if tp == "opcoes":
+        if idx is None:
+            _enviar(chat_id, "Toque em um dos botões, por favor.")
+            return
+        if idx == -1:
+            dados.pop(campo["chave"], None)
+        else:
+            ops = dados.get("_ops") or []
+            if idx < 0 or idx >= len(ops):
+                _enviar(chat_id, "Opção inválida. Tente de novo.")
+                return
+            dados[campo["chave"]] = ops[idx][0]
+        dados.pop("_ops", None)
+    else:
+        val = (texto or "").strip()
+        low = val.lower()
+        if not campo["obrigatorio"] and low in ("pular", "-", ""):
+            dados.pop(campo["chave"], None)
+        elif tp == "animal":
+            if not fx.animal_existe(session, val):
+                _enviar(chat_id, f"⚠️ Não achei o animal <b>{val}</b> no rebanho — registro assim mesmo; confira na aprovação.")
+            dados[campo["chave"]] = val
+        elif tp == "numeros":
+            lista = fx._lista(val)
+            if not lista:
+                _enviar(chat_id, "Informe ao menos um número.")
+                return
+            faltantes = [n for n in lista if not fx.animal_existe(session, n)]
+            if faltantes:
+                _enviar(chat_id, f"⚠️ Não achei: {', '.join(faltantes)} — registro assim mesmo.")
+            dados[campo["chave"]] = lista
+        elif tp == "numero":
+            try:
+                dados[campo["chave"]] = float(val.replace(",", "."))
+            except ValueError:
+                _enviar(chat_id, "Valor inválido. Digite um número (ex.: 12,5).")
+                return
+        elif tp == "data":
+            d = fx.parse_data_br(val, date.today())
+            if not d:
+                _enviar(chat_id, "Data inválida. Use <code>hoje</code>, <code>ontem</code> ou <code>DD/MM/AAAA</code>.")
+                return
+            dados[campo["chave"]] = d.isoformat()
+        elif tp == "ordenhas":
+            nums = []
+            for p in val.replace(",", ".").split():
+                try:
+                    nums.append(float(p))
+                except ValueError:
+                    pass
+            if not nums:
+                _enviar(chat_id, "Informe as pesagens em kg (ex.: <code>20 18 15</code>).")
+                return
+            dados[campo["chave"]] = nums
+        else:
+            dados[campo["chave"]] = val
+
+    sess.dados = json.dumps(dados)
+    sess.etapa += 1
+    sess.atualizado_em = datetime.utcnow()
+    session.add(sess)
+    session.commit()
+    session.refresh(sess)
+    _perguntar_campo(session, sess)
+
+
+def _finalizar(session: Session, sess: TelegramSessao) -> None:
+    chat_id = sess.chat_id
+    tipo = sess.fluxo
+    dados = json.loads(sess.dados)
+    nome = dados.pop("_nome", None)
+    dados.pop("_ops", None)
+    faltando = [c["chave"] for c in fx.FLUXOS[tipo]["campos"] if c["obrigatorio"] and c["chave"] not in dados]
+    if faltando:
+        session.delete(sess)
+        session.commit()
+        _enviar(chat_id, "Faltou responder algo — recomece com /lancar.")
+        return
+    resumo = fx.montar_resumo(tipo, dados)
+    pend = LancamentoPendente(
+        tipo=tipo, payload=json.dumps(dados), resumo=resumo,
+        solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
     )
+    session.add(pend)
+    session.delete(sess)
+    session.commit()
+    _enviar(chat_id, (
+        "✅ Enviei para <b>aprovação</b>:\n"
+        f"{resumo}\n\n"
+        "A conta principal vai aprovar no site ou no app. Obrigado! 🐄"
+    ))
 
 
 def _tratar_callback(session: Session, cq: dict) -> None:
     callback_id = cq["id"]
     chat_id = cq["message"]["chat"]["id"]
+    nome = (cq.get("from") or {}).get("first_name")
     data = cq.get("data") or ""
     partes = data.split(":")
     acao = partes[0] if partes else ""
-    pid = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else None
 
     _responder_callback(callback_id)
     if not _autorizado(chat_id):
         _enviar(chat_id, "🚫 Chat não liberado.")
         return
 
+    # Fluxo operacional (menu, respostas de botão, cancelar).
+    if acao == "flow":
+        _iniciar_fluxo(session, chat_id, partes[1] if len(partes) > 1 else "", nome)
+        return
+    if acao == "flowcancel":
+        _cancelar_sessao(session, chat_id)
+        _enviar(chat_id, "✖️ Ok, cancelei o lançamento.")
+        return
+    if acao == "ans":
+        idx = int(partes[1]) if len(partes) > 1 and partes[1].lstrip("-").isdigit() else None
+        sess = _sessao(session, chat_id)
+        if sess and sess.fluxo:
+            _responder_campo(session, sess, idx=idx)
+        return
+
+    # Fluxo financeiro (documento).
+    pid = int(partes[1]) if len(partes) > 1 and partes[1].isdigit() else None
     pend = session.get(TelegramPendente, pid) if pid else None
     if not pend or pend.chat_id != chat_id:
         _enviar(chat_id, "Não encontrei este documento (pode já ter sido tratado). Envie de novo, por favor.")
