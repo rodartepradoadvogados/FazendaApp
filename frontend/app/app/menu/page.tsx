@@ -27,7 +27,7 @@ const GRUPOS: Grupo[] = [
     { titulo: "Plano por Lote", rota: "/alimentacao", icone: <Wheat size={18} /> },
   ] },
   { secao: "Gestão", itens: [
-    { titulo: "Relatórios de Manejo e Gerenciais", rota: "/relatorios", icone: <FileBarChart size={18} /> },
+    { titulo: "Relatórios Gerenciais", rota: "/relatorios", icone: <FileBarChart size={18} /> },
     { titulo: "Indicadores", rota: "/indicadores", icone: <Gauge size={18} /> },
     { titulo: "Lançamentos completos", rota: "/lancamentos", icone: <ListChecks size={18} /> },
   ] },

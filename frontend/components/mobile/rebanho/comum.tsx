@@ -9,6 +9,7 @@ import { fetchComCache } from "@/lib/offline";
 
 export type AnimalMob = {
   numero: string;
+  nome?: string | null;
   grupo_primario?: string | null;
   categoria_abrev?: string | null;
   del_dias?: number | null;
@@ -60,7 +61,8 @@ export function BuscaAnimal({
   const filtrados = useMemo(() => {
     const q = normalizar(busca);
     if (!q) return [];
-    return animais.filter((a) => normalizar(a.numero).includes(q)).slice(0, 25);
+    // Busca por brinco OU nome (como o placeholder promete).
+    return animais.filter((a) => normalizar(a.numero).includes(q) || normalizar(a.nome).includes(q)).slice(0, 25);
   }, [animais, busca]);
 
   const selecionado = animais.find((a) => a.numero === valor);
@@ -69,7 +71,7 @@ export function BuscaAnimal({
     return (
       <div className="mob-linha" style={{ cursor: "default", marginBottom: 0 }}>
         <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: "block", fontWeight: 700 }}>Brinco {valor}</span>
+          <span style={{ display: "block", fontWeight: 700 }}>Brinco {valor}{selecionado?.nome ? ` · ${selecionado.nome}` : ""}</span>
           {selecionado && <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)" }}>{subtituloAnimal(selecionado)}</span>}
         </span>
         <button type="button" onClick={() => { onEscolher(""); setBusca(""); }} aria-label="Trocar animal"
@@ -85,7 +87,7 @@ export function BuscaAnimal({
       <div style={{ position: "relative" }}>
         <Search size={18} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--mob-muted)" }} />
         <input className="mob-input" style={{ paddingLeft: "2.4rem" }} value={busca} onChange={(e) => setBusca(e.target.value)}
-          placeholder={placeholder} inputMode="numeric" autoComplete="off" />
+          placeholder={placeholder} type="search" autoComplete="off" />
       </div>
       {busca && (
         <div style={{ marginTop: "0.5rem", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
@@ -93,7 +95,7 @@ export function BuscaAnimal({
             <button key={a.numero} type="button" className="mob-linha" style={{ marginBottom: 0 }}
               onClick={() => { onEscolher(a.numero, a); setBusca(""); }}>
               <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontWeight: 700 }}>Brinco {a.numero}</span>
+                <span style={{ display: "block", fontWeight: 700 }}>Brinco {a.numero}{a.nome ? ` · ${a.nome}` : ""}</span>
                 <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)" }}>{subtituloAnimal(a)}</span>
               </span>
             </button>

@@ -9,7 +9,7 @@ import Baixar from "@/components/mobile/rebanho/Baixar";
 
 type Aba = "ficha" | "movimentar" | "baixar";
 const ABAS: { chave: Aba; rotulo: string }[] = [
-  { chave: "ficha", rotulo: "Ficha do Animal" },
+  { chave: "ficha", rotulo: "Ficha" },
   { chave: "movimentar", rotulo: "Movimentar" },
   { chave: "baixar", rotulo: "Baixar" },
 ];
@@ -21,10 +21,11 @@ export default function Pagina() {
     <div>
       <MobTitulo>Rebanho</MobTitulo>
 
-      <div style={{ display: "flex", gap: "0.5rem", overflowX: "auto", marginBottom: "1rem", paddingBottom: "0.2rem" }}>
+      {/* As três pílulas dividem a largura da tela — nada fica cortado. */}
+      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
         {ABAS.map((a) => (
           <button key={a.chave} type="button" className={`mob-pill${aba === a.chave ? " ativa" : ""}`}
-            style={{ whiteSpace: "nowrap", flexShrink: 0 }} onClick={() => setAba(a.chave)}>
+            style={{ whiteSpace: "nowrap", flex: 1, textAlign: "center", padding: "0.6rem 0.4rem" }} onClick={() => setAba(a.chave)}>
             {a.rotulo}
           </button>
         ))}
