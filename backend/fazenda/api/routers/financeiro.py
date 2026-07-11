@@ -16,6 +16,7 @@ from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
     PlanoContaGerencial, SeedFlag,
 )
+from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
@@ -71,6 +72,39 @@ def normalizar_plano_contas(session: Session) -> None:
     session.commit()
 
 
+def normalizar_centros_custo(session: Session) -> None:
+    """Padroniza os centros de custo (uma vez, guardado por SeedFlag):
+    PL → Pecuária Leiteira, C|26 → Financiamento 2026, ARR → Arrendamento.
+    Renomeia nos lançamentos e no padrão do estoque, garante os três nomes
+    canônicos no cadastro e remove os cadastros com as siglas antigas — para
+    existir só o nome legível, selecionável em todos os lugares.
+    """
+    chave = "centros_custo_canonicos_v1"
+    if session.get(SeedFlag, chave):
+        return
+    for c in session.exec(select(ContaGerencial)).all():
+        novo = mapear_centro_custo(c.centro_custo)
+        if novo != c.centro_custo:
+            c.centro_custo = novo
+            session.add(c)
+    for e in session.exec(select(Estoque)).all():
+        novo = mapear_centro_custo(e.centro_custo_padrao)
+        if novo != e.centro_custo_padrao:
+            e.centro_custo_padrao = novo
+            session.add(e)
+    existentes = {cc.nome.strip().upper(): cc for cc in session.exec(select(CentroCusto)).all()}
+    for sigla, canonico in MAPA_CENTRO_CUSTO.items():
+        antigo = existentes.get(sigla)
+        if antigo:
+            session.delete(antigo)
+        if canonico.strip().upper() not in existentes:
+            novo = CentroCusto(nome=canonico, ativo=True)
+            session.add(novo)
+            existentes[canonico.strip().upper()] = novo
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
 class ParcelaIn(BaseModel):
     data_vencimento: date
     valor: float
@@ -96,6 +130,7 @@ class LancamentoIn(BaseModel):
     tipo_documento: Optional[str] = None
     numero_documento: Optional[str] = None
     data_emissao: Optional[date] = None
+    data_vencimento: Optional[date] = None  # vencimento do lançamento não-parcelado (vai p/ contas a pagar e agenda)
     data_competencia: Optional[date] = None
     data_prevista_entrada: Optional[date] = None
     data_pedido: Optional[date] = None
@@ -309,7 +344,9 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
     # União com os valores já lançados como texto livre (antes do cadastro
     # formal existir) — nada que já foi usado deixa de aparecer no filtro.
     centros_cadastrados = {c.nome for c in session.exec(select(CentroCusto).where(CentroCusto.ativo == True)).all()}
-    centros_custo = sorted(centros_cadastrados | {c.centro_custo for c in contas if c.centro_custo})
+    # Os centros canônicos (Pecuária Leiteira / Financiamento 2026 / Arrendamento)
+    # ficam sempre disponíveis para seleção, mesmo antes de aparecerem num lançamento.
+    centros_custo = sorted(centros_cadastrados | set(CENTROS_CANONICOS) | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
     contas_correntes = session.exec(
@@ -574,7 +611,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         numero_lancamento=numero_lancamento,
         codigo_conta=codigo_resumo,
         descricao=descricao_resumo,
-        centro_custo=dados.centro_custo,
+        centro_custo=mapear_centro_custo(dados.centro_custo),
         fornecedor_cliente=dados.fornecedor_cliente,
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,
@@ -604,7 +641,9 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
     else:
         registro = ContaGerencial(
             **campos_comuns,
-            data_vencimento=dados.data_prevista_entrada,
+            # Vencimento explícito do lançamento; se não vier, cai na data
+            # prevista de entrada (comportamento antigo) e, por fim, na emissão.
+            data_vencimento=dados.data_vencimento or dados.data_prevista_entrada or dados.data_emissao,
             valor_total=valor_liquido,
             parcela_num=1,
             parcela_total=1,

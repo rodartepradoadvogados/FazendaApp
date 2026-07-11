@@ -25,6 +25,11 @@ def calcular_custo_fisico(movimentos: list[dict], estoque_por_nome: dict[str, di
         estoque = estoque_por_nome.get(m["nome_item"])
         if estoque is not None and estoque.get("considerar_rmca") is False:
             continue
+        # Não conta movimentos anteriores ao início do controle de estoque do item
+        # (o item passou a ser controlado só a partir dessa data).
+        inicio = (estoque or {}).get("data_inicio_controle")
+        if inicio and m.get("data_movimento") and m["data_movimento"] < inicio:
+            continue
         preco = (estoque or {}).get("valor_unitario") or 0
         quantidade = m["quantidade"] or 0
         acc = itens.setdefault(m["nome_item"], {"ingrediente": m["nome_item"], "quantidade": 0.0, "valor_unitario": preco, "custo": 0.0})
