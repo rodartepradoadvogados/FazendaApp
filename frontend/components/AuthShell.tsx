@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -34,6 +35,9 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   return (
     <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
       <Sidebar />
+      <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
+        <ThemeSwitcher />
+      </div>
       <NotificationBell />
       <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
     </div>

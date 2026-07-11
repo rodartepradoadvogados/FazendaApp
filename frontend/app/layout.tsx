@@ -16,7 +16,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="pt-BR">
+    <html lang="pt-BR" suppressHydrationWarning>
+      <head>
+        {/* Aplica o tema salvo ANTES de pintar a tela (evita "piscar" o tema
+            errado no carregamento). Padrão: escuro. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='escuro';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','escuro');}})();`,
+          }}
+        />
+      </head>
       <body className={inter.className}>
         <AuthShell>{children}</AuthShell>
       </body>

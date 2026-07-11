@@ -1,7 +1,14 @@
 @import "tailwindcss";
 
-/* ── Design system tokens ── */
-:root {
+/* ── Design system tokens ──
+   O tema é escolhido em document.documentElement[data-theme] = "claro" | "misto"
+   | "escuro". O :root abaixo é o tema ESCURO (padrão, aplicado quando não há
+   data-theme — assim o app nunca "pisca" nem quebra sem JS). Como quase tudo no
+   site usa var(--...), redefinir a paleta por tema faz a interface inteira se
+   adaptar. Variáveis específicas isolam a barra lateral e os "cromados"
+   (cabeçalhos de card/tabela) para que possam clarear nos temas claros. */
+:root, :root[data-theme="escuro"] {
+  color-scheme: dark;
   --vinho:       #5E1A2E;
   --vinho-light: #7A2340;
   --vinho-dark:  #3D1120;
@@ -18,6 +25,84 @@
   --red:         #C0392B;
   --amber:       #D97706;
   --blue:        #1E6FA8;
+  /* Verde luminoso/neon — para tendências positivas, "online" e metas batidas. */
+  --verde-neon:  #00FF9D;
+  --verde-glow:  drop-shadow(0 0 5px rgba(0, 255, 157, 0.55));
+  /* Cromados (cabeçalhos) — vinho no escuro. */
+  --card-header-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  --card-header-fg: var(--dourado-light);
+  --thead-bg:    linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  --thead-fg:    var(--dourado-light);
+  --row-stripe:  rgba(255, 255, 255, 0.02);
+  --alert-fg:    #E07070;
+  --overlay:     rgba(0, 0, 0, 0.7);
+  /* Barra lateral. */
+  --sidebar-bg:  #1C1218;
+  --sidebar-fg:  var(--text);
+  --sidebar-muted: var(--text-muted);
+  --sidebar-border: var(--border);
+  --sidebar-active-bg: rgba(94, 26, 46, 0.4);
+  --sidebar-active-fg: var(--dourado-light);
+  --sidebar-active-border: var(--dourado);
+  --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  --sidebar-logo-fg: var(--dourado-light);
+  --sidebar-logo-sub: var(--text-muted);
+}
+
+/* ── Tema CLARO — minimalista, fundo cinza claro, painéis brancos ── */
+:root[data-theme="claro"] {
+  color-scheme: light;
+  --bg:          #F3F4F6;
+  --surface:     #FFFFFF;
+  --surface-2:   #F9FAFB;
+  --border:      #E5E7EB;
+  --text:        #1F2937;
+  --text-muted:  #6B7280;
+  --card-header-bg: var(--surface);
+  --card-header-fg: var(--vinho);
+  --thead-bg:    #F3F4F6;
+  --thead-fg:    var(--vinho);
+  --row-stripe:  rgba(0, 0, 0, 0.025);
+  --alert-fg:    var(--red);
+  --overlay:     rgba(30, 20, 25, 0.45);
+  --sidebar-bg:  #FFFFFF;
+  --sidebar-fg:  var(--vinho);
+  --sidebar-muted: #6B7280;
+  --sidebar-border: #E5E7EB;
+  --sidebar-active-bg: rgba(94, 26, 46, 0.08);
+  --sidebar-active-fg: var(--vinho);
+  --sidebar-active-border: var(--dourado);
+  --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  --sidebar-logo-fg: var(--dourado-light);
+  --sidebar-logo-sub: rgba(240, 232, 236, 0.85);
+}
+
+/* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
+:root[data-theme="misto"] {
+  color-scheme: light;
+  --bg:          #F3F4F6;
+  --surface:     #FFFFFF;
+  --surface-2:   #F9FAFB;
+  --border:      #E5E7EB;
+  --text:        #1F2937;
+  --text-muted:  #6B7280;
+  --card-header-bg: var(--surface);
+  --card-header-fg: var(--vinho);
+  --thead-bg:    #F3F4F6;
+  --thead-fg:    var(--vinho);
+  --row-stripe:  rgba(0, 0, 0, 0.025);
+  --alert-fg:    var(--red);
+  --overlay:     rgba(30, 20, 25, 0.45);
+  --sidebar-bg:  var(--vinho);
+  --sidebar-fg:  #F5EEF1;
+  --sidebar-muted: rgba(245, 238, 241, 0.7);
+  --sidebar-border: rgba(255, 255, 255, 0.12);
+  --sidebar-active-bg: rgba(255, 255, 255, 0.14);
+  --sidebar-active-fg: var(--dourado-light);
+  --sidebar-active-border: var(--dourado);
+  --sidebar-logo-bg: rgba(255, 255, 255, 0.10);
+  --sidebar-logo-fg: var(--dourado-light);
+  --sidebar-logo-sub: rgba(245, 238, 241, 0.7);
 }
 
 /* ── Tailwind custom colors via CSS vars ── */
@@ -63,14 +148,14 @@ body {
 }
 
 .card-header {
-  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  background: var(--card-header-bg);
   border-radius: 8px 8px 0 0;
   padding: 0.75rem 1rem;
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   font-size: 0.75rem;
-  color: var(--dourado-light);
+  color: var(--card-header-fg);
 }
 
 /* ── Badges de categoria ── */
@@ -87,12 +172,12 @@ body {
   font-size: 0.875rem;
 }
 .fazenda-table thead tr {
-  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
+  background: var(--thead-bg);
 }
 .fazenda-table thead th {
   padding: 0.6rem 0.875rem;
   text-align: left;
-  color: var(--dourado-light);
+  color: var(--thead-fg);
   font-size: 0.7rem;
   font-weight: 700;
   text-transform: uppercase;
@@ -108,7 +193,7 @@ body {
   padding: 0.55rem 0.875rem;
   color: var(--text);
 }
-.fazenda-table tbody tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.fazenda-table tbody tr:nth-child(even) { background: var(--row-stripe); }
 
 /* ── Botões ── */
 .btn-primary {
@@ -184,7 +269,7 @@ body {
   display: flex;
   align-items: center;
   gap: 0.5rem;
-  color: #E07070;
+  color: var(--alert-fg);
   font-size: 0.875rem;
 }
 
@@ -217,9 +302,13 @@ body {
 .pulse-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
-  background: var(--green-light);
+  background: var(--verde-neon);
+  filter: var(--verde-glow);
   animation: pulse-dot 2s infinite;
 }
+
+/* Verde luminoso com brilho — para tendências positivas e metas batidas. */
+.glow-verde { color: var(--verde-neon) !important; filter: var(--verde-glow); }
 
 /* Linha clicável — affordance para linhas de tabela que abrem detalhe/seleção.
    A classe já era referenciada em Indicadores mas nunca existiu no CSS. */
