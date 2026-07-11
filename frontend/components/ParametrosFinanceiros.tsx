@@ -1,11 +1,12 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Wallet, Landmark, Tags, BookOpen, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
+import { Wallet, Landmark, Tags, BookOpen, Plus, Pencil, AlertTriangle, Check, X, ChevronRight, ChevronDown } from "lucide-react";
 import {
   fetchContasCorrentes, criarContaCorrente, atualizarContaCorrente,
   fetchCentrosCusto, criarCentroCusto, atualizarCentroCusto,
   fetchPlanoContas, criarContaGerencial, atualizarContaGerencial,
 } from "@/lib/api";
+import { nivelDaConta, estiloNivel, filhosDiretos } from "@/lib/contaGerencial";
 
 const ABAS = [
   ["contas", "Conta corrente", Landmark],
@@ -272,8 +273,12 @@ function ContasGerenciais() {
   const [form, setForm] = useState<FormGerencial>(formGerencialVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
+  const toggle = (cod: string) => setExpandidos((prev) => {
+    const n = new Set(prev); n.has(cod) ? n.delete(cod) : n.add(cod); return n;
+  });
 
-  const carregar = () => fetchPlanoContas().then((c: ContaGerencial[]) => setItens([...c].sort((a, b) => a.codigo.localeCompare(b.codigo)))).catch((e) => setError(e.message));
+  const carregar = () => fetchPlanoContas().then((c: ContaGerencial[]) => setItens([...c].sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true })))).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
 
   const abrirNovo = () => { setForm(formGerencialVazio); setEditando("novo"); setMsg(null); };
@@ -326,6 +331,52 @@ function ContasGerenciais() {
     </>
   );
 
+  const badgeRmca: React.CSSProperties = {
+    fontSize: "0.62rem", padding: "0.05rem 0.4rem", borderRadius: "999px", flexShrink: 0,
+    border: "1px solid var(--dourado)", color: "var(--dourado-light)", background: "rgba(184,134,11,0.12)",
+  };
+  const formEdicao = (
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.25rem 0 0.5rem" }}>
+      {campos}
+      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
+      <div className="flex items-center gap-2">
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}><Check size={14} /> {salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}><X size={14} /> Cancelar</button>
+      </div>
+    </div>
+  );
+
+  function renderNo(c: ContaGerencial): React.ReactNode {
+    const filhos = (itens ? (filhosDiretos(c.codigo, itens as any) as unknown as ContaGerencial[]) : []);
+    const temFilhos = filhos.length > 0;
+    const aberto = expandidos.has(c.codigo);
+    const nivel = nivelDaConta(c.codigo);
+    return (
+      <Fragment key={c.id ?? c.codigo}>
+        <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.35rem 0.4rem",
+          paddingLeft: `${0.4 + (nivel - 1) * 1.1}rem`, borderBottom: "1px solid var(--border)" }}>
+          <button type="button" onClick={() => (temFilhos ? toggle(c.codigo) : abrirEdicao(c))}
+            className="row-clickable" title={temFilhos ? (aberto ? "Clique para recolher" : "Clique para expandir") : "Clique para editar"}
+            style={{ display: "flex", alignItems: "center", gap: "0.45rem", flex: 1, minWidth: 0, background: "none", border: "none", cursor: "pointer", textAlign: "left", padding: "0.1rem 0" }}>
+            <span style={{ width: 14, display: "inline-flex", flexShrink: 0, color: "var(--accent-icon)" }}>
+              {temFilhos && (aberto ? <ChevronDown size={14} /> : <ChevronRight size={14} />)}
+            </span>
+            <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0 }}>{c.codigo}</span>
+            <span style={{ ...estiloNivel(nivel), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nome}</span>
+            {!c.ativa && <span style={{ color: "var(--text-muted)", fontSize: "0.7rem", flexShrink: 0 }}>(inativa)</span>}
+            {c.rmca_receita_leite && <span style={badgeRmca}>RMCA · receita leite</span>}
+            {c.rmca_custo_alimentacao && <span style={badgeRmca}>RMCA · alimentação</span>}
+          </button>
+          <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }} onClick={() => abrirEdicao(c)}><Pencil size={12} /> Editar</button>
+        </div>
+        {editando === c.id && formEdicao}
+        {temFilhos && aberto && filhos.map((f) => renderNo(f))}
+      </Fragment>
+    );
+  }
+
+  const raizes = itens ? (filhosDiretos("", itens as any) as unknown as ContaGerencial[]) : [];
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
@@ -333,7 +384,9 @@ function ContasGerenciais() {
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}><Plus size={14} /> Novo</button>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        A maioria já vem do plano de contas importado (CSV) — aqui dá pra cadastrar uma conta nova sem precisar reimportar a planilha inteira.
+        Comece por <strong>Receita (2)</strong> ou <strong>Despesa (3)</strong> e vá clicando para abrir os galhos
+        (2.01, depois 2.01.01…). Todas já vêm ativas; clique em “Editar” em qualquer conta para ajustar nome,
+        tipo, ativação ou marcação de RMCA. Para cadastrar uma conta nova sem reimportar o CSV, use “Novo”.
       </p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
@@ -351,40 +404,10 @@ function ContasGerenciais() {
       )}
 
       {itens && (
-        <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
-          <table className="fazenda-table">
-            <thead><tr><th>Código</th><th>Nome</th><th>Tipo</th><th>RMCA</th><th></th></tr></thead>
-            <tbody>
-              {itens.map((c) => (
-                <Fragment key={c.id}>
-                  <tr>
-                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.codigo}</td>
-                    <td style={{ fontWeight: 700 }}>{c.nome}{!c.ativa && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativa)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{c.tipo_fixo_variavel || "—"}</td>
-                    <td style={{ fontSize: "0.72rem", color: "var(--dourado-light)" }}>
-                      {c.rmca_receita_leite ? "Receita leite" : c.rmca_custo_alimentacao ? "Custo alimentação" : "—"}
-                    </td>
-                    <td style={{ textAlign: "right" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /> Editar</button>
-                    </td>
-                  </tr>
-                  {editando === c.id && (
-                    <tr><td colSpan={5} style={{ padding: 0 }}>
-                      <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", margin: "0.5rem 0" }}>
-                        {campos}
-                        {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
-                        <div className="flex items-center gap-2">
-                          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}><Check size={14} /> {salvando ? "Salvando…" : "Salvar"}</button>
-                          <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}><X size={14} /> Cancelar</button>
-                        </div>
-                      </div>
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma conta gerencial cadastrada ainda.</td></tr>}
-            </tbody>
-          </table>
+        <div style={{ maxHeight: "560px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: "8px" }}>
+          {raizes.length ? raizes.map((c) => renderNo(c)) : (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.8rem" }}>Nenhuma conta gerencial cadastrada ainda.</p>
+          )}
         </div>
       )}
     </div>

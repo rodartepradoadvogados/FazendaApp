@@ -35,9 +35,9 @@ export function TabBar<T extends string>({
               padding: "0.4rem 0.9rem",
               borderRadius: "999px",
               cursor: "pointer",
-              border: "1px solid " + (ativo ? "var(--dourado)" : "var(--border)"),
-              background: ativo ? "rgba(94,26,46,0.4)" : "transparent",
-              color: ativo ? "var(--dourado-light)" : "var(--text-muted)",
+              border: "1px solid " + (ativo ? "var(--pill-active-border)" : "var(--border)"),
+              background: ativo ? "var(--pill-active-bg)" : "transparent",
+              color: ativo ? "var(--pill-active-fg)" : "var(--text-muted)",
               fontWeight: ativo ? 700 : 500,
             }}
           >
@@ -86,9 +86,9 @@ export function SecaoRecolhivel({
       >
         <div className="flex items-center gap-2">
           {aberta ? (
-            <ChevronDown size={15} style={{ color: "var(--dourado-light)" }} />
+            <ChevronDown size={15} style={{ color: "var(--accent-icon)" }} />
           ) : (
-            <ChevronRight size={15} style={{ color: "var(--dourado-light)" }} />
+            <ChevronRight size={15} style={{ color: "var(--accent-icon)" }} />
           )}
           {Icon && <Icon size={14} />}
           <span className="card-header" style={{ margin: 0 }}>

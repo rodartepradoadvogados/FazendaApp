@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Package, Pencil, Check, X, AlertTriangle, Plus } from "lucide-react";
+import { Package, Pencil, Check, X, AlertTriangle, Plus, Search } from "lucide-react";
 import { fetchItensEstoqueCadastro, atualizarMetaEstoque, fetchFornecedores } from "@/lib/api";
 import NovoItemEstoque from "./NovoItemEstoque";
 
@@ -16,6 +16,10 @@ type Item = {
 type Fornecedor = { id: number; nome: string };
 
 const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+
+// Normaliza texto para busca insensível a maiúsculas e acentos.
+const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 export default function CadastroEstoqueMeta() {
   const [itens, setItens] = useState<Item[] | null>(null);
@@ -30,6 +34,7 @@ export default function CadastroEstoqueMeta() {
   const [considerarRmca, setConsiderarRmca] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
+  const [busca, setBusca] = useState("");
 
   const carregar = () => fetchItensEstoqueCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchFornecedores().then(setFornecedores).catch(() => {}); }, []);
@@ -64,6 +69,12 @@ export default function CadastroEstoqueMeta() {
     }
   };
 
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((it) => {
+    const fornecedorNome = it.fornecedor_nome || fornecedores.find((f) => f.id === it.fornecedor_id)?.nome || "";
+    return !termoBusca || normalizar(`${it.nome} ${it.categoria ?? ""} ${fornecedorNome}`).includes(termoBusca);
+  });
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
@@ -86,11 +97,16 @@ export default function CadastroEstoqueMeta() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {itens && (
-        <div className="overflow-x-auto">
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar item de estoque…" title="Buscar por item, categoria ou fornecedor" />
+          </div>
+          <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Item</th><th>Categoria</th><th>Unidade</th><th>Unidade de medida</th><th>Quantidade</th><th>Fornecedor principal</th><th>Estocável</th><th title="Entra no custo físico do RMCA quando tem baixa de Saída de ajuste">RMCA</th><th></th></tr></thead>
             <tbody>
-              {itens.map((it) => (
+              {filtrados.map((it) => (
                 <tr key={it.id}>
                   <td style={{ fontWeight: 700 }}>{it.nome}{it.ativo === false && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                   <td style={{ fontSize: "0.78rem" }}>{it.categoria || "—"}</td>
@@ -140,9 +156,11 @@ export default function CadastroEstoqueMeta() {
                 </tr>
               ))}
               {!itens.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum item de estoque cadastrado ainda — suba o ESTOQUE.csv primeiro.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2 } from "lucide-react";
+import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
 import {
   fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo,
   fetchDoencas, criarDoenca, atualizarDoenca,
@@ -22,6 +22,10 @@ const ABAS = [
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+
+// Normaliza texto para busca insensível a maiúsculas e acentos.
+const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 export default function CadastroSanitario() {
   const [aba, setAba] = useState<(typeof ABAS)[number][0]>("principios");
@@ -86,6 +90,7 @@ function CadastroProtocolosSanitarios() {
   const [form, setForm] = useState<ProtocoloForm>(protocoloFormVazio());
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -131,6 +136,11 @@ function CadastroProtocolosSanitarios() {
     }
   };
 
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((p) =>
+    !termoBusca || normalizar(`${p.nome} ${p.doenca_nome ?? ""}`).includes(termoBusca)
+  );
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
@@ -157,11 +167,16 @@ function CadastroProtocolosSanitarios() {
       )}
 
       {itens && (
-        <div className="overflow-x-auto">
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar protocolo…" title="Buscar por nome ou doença" />
+          </div>
+          <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Nome</th><th>Doença</th><th>Mastite</th><th>Etapas</th><th></th></tr></thead>
             <tbody>
-              {itens.map((p) => (
+              {filtrados.map((p) => (
                 <Fragment key={p.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -185,9 +200,11 @@ function CadastroProtocolosSanitarios() {
                 </Fragment>
               ))}
               {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
@@ -264,6 +281,7 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
 
   const carregar = () => fetchFn().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -288,6 +306,9 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
     }
   };
 
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((i) => !termoBusca || normalizar(i.nome).includes(termoBusca));
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
@@ -304,11 +325,16 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
       {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />}
 
       {itens && (
-        <div className="overflow-x-auto">
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder={`Buscar em ${titulo.toLowerCase()}…`} title="Buscar por nome" />
+          </div>
+          <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Nome</th><th></th></tr></thead>
             <tbody>
-              {itens.map((i) => (
+              {filtrados.map((i) => (
                 <Fragment key={i.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{i.nome}{!i.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -326,9 +352,11 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
                 </Fragment>
               ))}
               {!itens.length && !editando && <tr><td colSpan={2} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{semRegistros}</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={2} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

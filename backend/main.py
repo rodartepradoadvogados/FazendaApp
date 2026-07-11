@@ -34,7 +34,7 @@ from fazenda.api.routers import (
     upload,
 )
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
-from fazenda.api.routers.financeiro import seed_parametros_financeiros
+from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas
 from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos
 
 
@@ -46,6 +46,7 @@ async def lifespan(app: FastAPI):
         seed_admin(session)
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
+        normalizar_plano_contas(session)
         seed_pessoas(session)
         seed_cadastro_sanitario(session)
         seed_motivos_baixa(session)

@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Truck, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
+import { Truck, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
 
 type Fornecedor = {
@@ -32,6 +32,10 @@ const CATEGORIAS_FORNECEDOR = [
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+
+// Normaliza texto para busca insensível a maiúsculas e acentos.
+const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
@@ -45,6 +49,7 @@ export default function CadastroFornecedores() {
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
 
   const carregar = () => fetchFornecedores().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -72,6 +77,11 @@ export default function CadastroFornecedores() {
     }
   };
 
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((f) =>
+    !termoBusca || normalizar(`${f.nome} ${f.tipo} ${f.categoria ?? ""} ${f.cnpj_cpf ?? ""} ${f.email ?? ""} ${f.telefone ?? ""}`).includes(termoBusca)
+  );
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
@@ -87,11 +97,16 @@ export default function CadastroFornecedores() {
       {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />}
 
       {itens && (
-        <div className="overflow-x-auto">
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar fornecedor…" title="Buscar por nome, tipo, categoria, CNPJ/CPF, email ou telefone" />
+          </div>
+          <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Nome</th><th>Tipo</th><th>Categoria</th><th>CNPJ/CPF</th><th>Telefone</th><th>Email</th><th></th></tr></thead>
             <tbody>
-              {itens.map((f) => (
+              {filtrados.map((f) => (
                 <Fragment key={f.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{f.nome}{!f.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -114,9 +129,11 @@ export default function CadastroFornecedores() {
                 </Fragment>
               ))}
               {!itens.length && !editando && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum fornecedor cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );

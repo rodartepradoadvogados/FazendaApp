@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
-    PlanoContaGerencial,
+    PlanoContaGerencial, SeedFlag,
 )
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
@@ -43,6 +43,32 @@ def seed_parametros_financeiros(session: Session) -> None:
         for dados in SEED_CONTAS_CORRENTES:
             session.add(ContaCorrente(**dados))
         session.commit()
+
+
+def normalizar_plano_contas(session: Session) -> None:
+    """Normaliza o plano de contas gerenciais conforme o padrão pedido pelo
+    usuário — roda UMA única vez (guardada por SeedFlag), para nunca
+    sobrescrever ajustes manuais feitos depois em Configurações:
+
+    - Toda conta gerencial fica ATIVA (o plano importado marcava os grupos/
+      cabeçalhos como inativos; agora a seleção é feita só nas contas-folha).
+    - Todo item de "3.01.01 - Alimentação do rebanho" já entra marcado como
+      custo de alimentação para o indicador RMCA.
+    """
+    chave = "plano_contas_normalizado_v1"
+    if session.get(SeedFlag, chave):
+        return
+    contas = session.exec(select(PlanoContaGerencial)).all()
+    if contas:  # nada a fazer num banco ainda sem plano importado
+        for c in contas:
+            if not c.ativa:
+                c.ativa = True
+                session.add(c)
+            if c.codigo.startswith("3.01.01") and c.rmca_custo_alimentacao is None:
+                c.rmca_custo_alimentacao = True
+                session.add(c)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 class ParcelaIn(BaseModel):
@@ -269,8 +295,14 @@ def itens_por_conta(
 def opcoes(session: Session = Depends(get_session)) -> dict:
     """Listas para os seletores do lançamento — plano de contas real + dados já importados."""
     plano = session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.ativa == True)).all()
+    # Só as contas-FOLHA são lançáveis (nível mais baixo da hierarquia): uma
+    # conta é folha quando nenhuma outra tem o código dela como prefixo "X.".
+    todos_codigos = [c.codigo for c in plano]
+    def _eh_folha(codigo: str) -> bool:
+        prefixo = codigo + "."
+        return not any(outro.startswith(prefixo) for outro in todos_codigos)
     contas_gerenciais = sorted(
-        [{"codigo": c.codigo, "nome": c.nome} for c in plano],
+        [{"codigo": c.codigo, "nome": c.nome} for c in plano if _eh_folha(c.codigo)],
         key=lambda x: x["codigo"],
     )
     contas = session.exec(select(ContaGerencial)).all()
@@ -414,7 +446,12 @@ def criar_conta_gerencial(dados: PlanoContaGerencialIn, session: Session = Depen
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
     if session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.codigo == codigo)).first():
         raise HTTPException(status_code=409, detail="Já existe uma conta gerencial com esse código")
-    conta = PlanoContaGerencial(**{**dados.model_dump(), "codigo": codigo})
+    campos = {**dados.model_dump(), "codigo": codigo}
+    # Item de "3.01.01 - Alimentação do rebanho" já nasce marcado para o RMCA
+    # (custo de alimentação), a menos que o usuário tenha desmarcado no formulário.
+    if codigo.startswith("3.01.01") and dados.rmca_custo_alimentacao is None:
+        campos["rmca_custo_alimentacao"] = True
+    conta = PlanoContaGerencial(**campos)
     session.add(conta)
     session.commit()
     session.refresh(conta)

@@ -24,13 +24,19 @@ def parse_plano_conta_gerencial(content: bytes) -> list[PlanoContaGerencial]:
         nome = _get(row, "Nome ct", "Nome").strip()
         if not codigo or not nome:
             continue
-        ativa = parse_bool(_get(row, "Ativa"))
         contas.append(PlanoContaGerencial(
             codigo=codigo,
             nome=nome,
-            ativa=True if ativa is None else ativa,
+            # Por decisão do usuário, toda conta gerencial nasce ATIVA — a
+            # seleção do lançamento é feita apenas nas contas-folha (nível mais
+            # baixo), então "ativa" passou a ser só um liga/desliga de exibição
+            # ajustável em Configurações, não mais o que define o que aparece.
+            ativa=True,
             participa_atividade=parse_bool(_get(row, "Part. ativ", "Part ativ")),
             fluxo=parse_bool(_get(row, "Fluxo")),
             tipo_fixo_variavel=(_get(row, "Tipo F/V", "Tipo F V").strip() or None),
+            # Todo item de "3.01.01 - Alimentação do rebanho" já entra marcado
+            # como custo de alimentação para o indicador RMCA.
+            rmca_custo_alimentacao=True if codigo.startswith("3.01.01") else None,
         ))
     return contas

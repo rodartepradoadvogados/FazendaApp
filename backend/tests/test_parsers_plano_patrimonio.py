@@ -34,11 +34,24 @@ class TestParsePlanoContaGerencial:
         assert c.participa_atividade is True
         assert c.fluxo is True
 
-    def test_conta_inativa(self):
+    def test_toda_conta_nasce_ativa(self):
+        # Por decisão do usuário, toda conta gerencial nasce ATIVA — mesmo os
+        # grupos/cabeçalhos que o CSV marca como "Não" (a seleção do lançamento
+        # é feita só nas contas-folha, então "ativa" virou liga/desliga de
+        # exibição, não mais o que define o que pode ser lançado).
         contas = parse_plano_conta_gerencial(PLANO_CSV)
         raiz = contas[0]
         assert raiz.codigo == "2"
-        assert raiz.ativa is False
+        assert raiz.ativa is True
+        assert all(c.ativa is True for c in contas)
+
+    def test_rmca_custo_alimentacao_padrao_3_01_01(self):
+        # Todo item de 3.01.01 (Alimentação do rebanho) já entra marcado p/ RMCA.
+        contas = parse_plano_conta_gerencial(PLANO_CSV)
+        alim = next(c for c in contas if c.codigo == "3.01.01.01")
+        assert alim.rmca_custo_alimentacao is True
+        leite = next(c for c in contas if c.codigo == "2.01.01.01")
+        assert leite.rmca_custo_alimentacao is None
 
     def test_tipo_fixo_variavel(self):
         contas = parse_plano_conta_gerencial(PLANO_CSV)

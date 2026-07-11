@@ -67,6 +67,48 @@ function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
   return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
 }
 
+// ── Ordenação client-side genérica das listas de notas ──
+// Cada coluna clicável tem uma função que extrai o valor de comparação; o
+// primeiro clique ordena crescente e o seguinte alterna para decrescente.
+// Ordena sempre a lista JÁ FILTRADA que recebe — nunca a lista bruta.
+type OrdemDir = "asc" | "desc";
+function useOrdenacao<T>(itens: T[], getters: Record<string, (r: T) => string | number>) {
+  const [sortKey, setSortKey] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<OrdemDir>("asc");
+  const ordenar = (chave: string) => {
+    if (sortKey === chave) setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    else { setSortKey(chave); setSortDir("asc"); }
+  };
+  const ordenados = useMemo(() => {
+    const g = sortKey ? getters[sortKey] : null;
+    if (!g) return itens;
+    return [...itens].sort((a, b) => {
+      const va = g(a), vb = g(b);
+      const cmp = typeof va === "number" && typeof vb === "number"
+        ? va - vb
+        : String(va).localeCompare(String(vb), "pt-BR", { numeric: true, sensitivity: "base" });
+      return sortDir === "asc" ? cmp : -cmp;
+    });
+    // getters é estável em lógica; recomputa quando muda a lista ou a ordem.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [itens, sortKey, sortDir]);
+  return { ordenados, sortKey, sortDir, ordenar };
+}
+
+// Cabeçalho de coluna clicável, com indicador ▲/▼ na coluna ativa.
+function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
+  rotulo: string; chave: string; sortKey: string | null; sortDir: OrdemDir;
+  onSort: (chave: string) => void; style?: React.CSSProperties;
+}) {
+  const ativo = sortKey === chave;
+  return (
+    <th onClick={() => onSort(chave)} title="Clique para ordenar por esta coluna"
+      style={{ cursor: "pointer", userSelect: "none", whiteSpace: "nowrap", color: ativo ? "var(--dourado-light)" : undefined, ...style }}>
+      {rotulo}{ativo ? (sortDir === "asc" ? " ▲" : " ▼") : ""}
+    </th>
+  );
+}
+
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -713,6 +755,14 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   }, []);
 
   const centrosCusto = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo).filter(Boolean))).sort(), [regs]);
+  // Opções de "Produto / serviço": une os produtos vindos das opções com os
+  // nomes efetivamente lançados nas notas (produtos E serviços ficam no mesmo
+  // campo `produto` do item), para que um serviço também possa ser encontrado.
+  const opcoesProdutoServico = useMemo(() => {
+    const s = new Set<string>(opcoes.produtos);
+    (regs ?? []).forEach((r) => (r.itens || []).forEach((it) => { if (it.produto) s.add(it.produto); }));
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [opcoes.produtos, regs]);
 
   // Só notas em aberto entram na visualização — esta tela é para dar baixa,
   // não para consultar histórico (isso já existe em Contas pagas/recebidas).
@@ -736,6 +786,15 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   );
   const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
   const totalFiltrado = useMemo(() => filtrados.reduce((a, r) => a + r.valor, 0), [filtrados]);
+
+  // Ordenação clicável sobre o resultado JÁ filtrado.
+  const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtrados, {
+    numero: (r) => (r.numero_documento || r.numero_lancamento || "").toLowerCase(),
+    emissao: (r) => r.data_emissao || "",
+    vencimento: (r) => r.data_vencimento || "",
+    produto: (r) => (r.itens || []).map((it) => it.produto).join(", ").toLowerCase(),
+    valor: (r) => r.valor,
+  });
 
   async function darBaixaEmLote() {
     setMsg(null);
@@ -786,9 +845,9 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
             <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
               <option value="">Todos</option>{opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
             </select></div>
-          <div><label style={labelStyleLote}>Produto</label>
+          <div><label style={labelStyleLote}>Produto / serviço</label>
             <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="">Todos</option>{opcoes.produtos.map((p) => <option key={p} value={p}>{p}</option>)}
+              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
             </select></div>
         </div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -824,9 +883,17 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr><th></th><th>Nota / lançamento</th><th>Emissão</th><th>Vencimento</th><th>Situação</th><th>Produtos</th><th style={{ textAlign: "right" }}>Valor</th></tr></thead>
+            <thead><tr>
+              <th></th>
+              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Emissão" chave="emissao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <th>Situação</th>
+              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
+            </tr></thead>
             <tbody>
-              {filtrados.map((r) => {
+              {ordenados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 return (
                   <tr key={r.id} className="row-clickable" title="Clique para selecionar esta nota" onClick={() => toggle(r.id)}>
@@ -962,15 +1029,73 @@ function PatrimonioView() {
 
 function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTratar: (l: Lanc) => void }) {
   const emAberto = rel === "a_pagar" || rel === "a_receber";
-  const total = itens.reduce((a, r) => a + r.valor, 0);
-  const totalPago = itens.reduce((a, r) => a + (r.valor_pago ?? 0), 0);
-  const totalDesconto = itens.reduce((a, r) => a + (r.desconto_acrescimo ?? 0), 0);
   const hoje = new Date().toISOString().slice(0, 10);
+  const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
+
+  // Filtros próprios da lista (além do período/centro globais): produto/serviço,
+  // fornecedor/cliente e faixas de vencimento e de pagamento. Todos client-side.
+  const [fProduto, setFProduto] = useState("");
+  const [fContraparte, setFContraparte] = useState("");
+  const [fVencDe, setFVencDe] = useState("");
+  const [fVencAte, setFVencAte] = useState("");
+  const [fPagDe, setFPagDe] = useState("");
+  const [fPagAte, setFPagAte] = useState("");
+
+  const opcoesProdutoServico = useMemo(() => {
+    const s = new Set<string>();
+    itens.forEach((r) => (r.itens || []).forEach((it) => { if (it.produto) s.add(it.produto); }));
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [itens]);
+  const opcoesContraparte = useMemo(() => {
+    const s = new Set<string>();
+    itens.forEach((r) => { if (r.fornecedor) s.add(r.fornecedor); });
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [itens]);
+
+  const filtradosLocal = useMemo(() => itens.filter((r) =>
+    (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
+    (!fContraparte || r.fornecedor === fContraparte) &&
+    (!fVencDe || (r.data_vencimento || "") >= fVencDe) && (!fVencAte || (r.data_vencimento || "") <= fVencAte) &&
+    (!fPagDe || (r.data_pagamento || "") >= fPagDe) && (!fPagAte || (r.data_pagamento || "") <= fPagAte)
+  ), [itens, fProduto, fContraparte, fVencDe, fVencAte, fPagDe, fPagAte]);
+
+  const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
+    numero: (r) => (r.numero_lancamento || "").toLowerCase(),
+    data: (r) => (emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || "",
+    descricao: (r) => (r.descricao || "").toLowerCase(),
+    fornecedor: (r) => (r.fornecedor || "").toLowerCase(),
+    valor: (r) => r.valor,
+    pago: (r) => r.valor_pago ?? 0,
+  });
+
+  // Somatórios refletem a lista já filtrada (o que está visível na tabela).
+  const total = filtradosLocal.reduce((a, r) => a + r.valor, 0);
+  const totalPago = filtradosLocal.reduce((a, r) => a + (r.valor_pago ?? 0), 0);
+  const totalDesconto = filtradosLocal.reduce((a, r) => a + (r.desconto_acrescimo ?? 0), 0);
 
   return (
     <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a lista</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={labelStyleLote}>Produto / serviço</label>
+            <select style={selStyleLote} value={fProduto} onChange={(e) => setFProduto(e.target.value)}>
+              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>{rotuloContraparte}</label>
+            <select style={selStyleLote} value={fContraparte} onChange={(e) => setFContraparte(e.target.value)}>
+              <option value="">Todos</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={fVencDe} onChange={(e) => setFVencDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={fVencAte} onChange={(e) => setFVencAte(e.target.value)} /></div>
+          {!emAberto && <>
+            <div><label style={labelStyleLote}>Pagamento — de</label><input type="date" style={selStyleLote} value={fPagDe} onChange={(e) => setFPagDe(e.target.value)} /></div>
+            <div><label style={labelStyleLote}>Pagamento — até</label><input type="date" style={selStyleLote} value={fPagAte} onChange={(e) => setFPagAte(e.target.value)} /></div>
+          </>}
+        </div>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String(itens.length)} l="Lançamentos" />
+        <KPI v={String(filtradosLocal.length)} l="Lançamentos" />
         <KPI v={formatBRL(total)} l={emAberto ? "Valor em aberto" : "Valor total"} c={rel === "a_pagar" || rel === "pagas" ? "var(--red)" : rel === "extrato" ? undefined : "var(--green-light)"} />
         {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalPago)} l="Valor pago/recebido" c="var(--dourado-light)" />}
         {!emAberto && rel !== "extrato" && <KPI v={formatBRL(totalDesconto)} l="Desconto/acréscimo" c={totalDesconto <= 0 ? "var(--green-light)" : "var(--amber)"} />}
@@ -980,21 +1105,25 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
           <span>Lançamentos</span>
           <ExportarBotoes titulo={CONTAS.find((c) => c.id === rel)?.label || "Lançamentos"} nomeArquivoBase={`financeiro_${rel}`}
             colunas={COLUNAS_LANCAMENTOS}
-            linhas={itens.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
+            linhas={ordenados.map((r) => ({ ...r, data: formatDate((emAberto ? r.data_vencimento : (r.data_pagamento || r.data_vencimento)) || ""), documento: `${r.tipo_documento ? `${r.tipo_documento} ` : ""}${r.numero_documento || ""}` }))} />
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
             <thead>
               <tr>
-                <th>Nº lanç.</th><th>{emAberto ? "Vencimento" : "Data"}</th><th>Descrição</th><th>Fornecedor/Cliente</th>
-                <th>Centro custo</th><th>Documento</th><th style={{ textAlign: "right" }}>Valor</th>
-                {!emAberto && <th style={{ textAlign: "right" }}>Pago</th>}
+                <ThOrd rotulo="Nº lanç." chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+                <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+                <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+                <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+                <th>Centro custo</th><th>Documento</th>
+                <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
+                {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />}
                 {!emAberto && <th>Conta bancária</th>}
                 {emAberto && <th></th>}
               </tr>
             </thead>
             <tbody>
-              {itens.map((r) => {
+              {ordenados.map((r) => {
                 const vencido = emAberto && r.data_vencimento && r.data_vencimento < hoje;
                 return (
                   <tr key={r.id}>
@@ -1013,7 +1142,7 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
                   </tr>
                 );
               })}
-              {!itens.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
+              {!ordenados.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1043,6 +1172,8 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   const [fornecedor, setFornecedor] = useState("");
   const [produto, setProduto] = useState("");
   const [centroCusto, setCentroCusto] = useState("");
+  const [vencimentoDe, setVencimentoDe] = useState("");
+  const [vencimentoAte, setVencimentoAte] = useState("");
 
   const [notaId, setNotaId] = useState<number | null>(null);
   const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
@@ -1064,14 +1195,31 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
 
   const abertas = useMemo(() => (regs ?? []).filter((r) => r.tipo === tipo && !r.data_pagamento), [regs, tipo]);
   const centrosCusto = useMemo(() => Array.from(new Set(abertas.map((r) => r.centro_custo).filter(Boolean))).sort(), [abertas]);
+  // "Produto / serviço": produtos das opções + nomes lançados nas notas (produto
+  // e serviço compartilham o campo `produto` do item), para achar serviços também.
+  const opcoesProdutoServico = useMemo(() => {
+    const s = new Set<string>(opcoes.produtos);
+    (regs ?? []).forEach((r) => (r.itens || []).forEach((it) => { if (it.produto) s.add(it.produto); }));
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [opcoes.produtos, regs]);
 
   const filtradas = useMemo(() => abertas.filter((r) =>
     (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
-    (!centroCusto || r.centro_custo === centroCusto)
-  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto]);
+    (!centroCusto || r.centro_custo === centroCusto) &&
+    (!vencimentoDe || (r.data_vencimento || "") >= vencimentoDe) && (!vencimentoAte || (r.data_vencimento || "") <= vencimentoAte)
+  ), [abertas, numeroDocumento, fornecedor, produto, centroCusto, vencimentoDe, vencimentoAte]);
   const totalFiltrado = useMemo(() => filtradas.reduce((a, r) => a + r.valor, 0), [filtradas]);
+
+  // Ordenação clicável sobre o resultado JÁ filtrado.
+  const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradas, {
+    numero: (r) => (r.numero_documento || r.numero_lancamento || "").toLowerCase(),
+    vencimento: (r) => r.data_vencimento || "",
+    fornecedor: (r) => (r.fornecedor || "").toLowerCase(),
+    produto: (r) => (r.itens || []).map((it) => it.produto).join(", ").toLowerCase(),
+    valor: (r) => r.valor,
+  });
 
   function selecionar(nota: Lanc) {
     setNotaId(nota.id);
@@ -1137,14 +1285,16 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
             <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
               <option value="">Todos</option>{opcoes.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
             </select></div>
-          <div><label style={labelStyleLote}>Produto</label>
+          <div><label style={labelStyleLote}>Produto / serviço</label>
             <select style={selStyleLote} value={produto} onChange={(e) => setProduto(e.target.value)}>
-              <option value="">Todos</option>{opcoes.produtos.map((p) => <option key={p} value={p}>{p}</option>)}
+              <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
             </select></div>
           <div><label style={labelStyleLote}>Centro de custo</label>
             <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
               <option value="">Todos</option>{centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></div>
+          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={vencimentoDe} onChange={(e) => setVencimentoDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={vencimentoAte} onChange={(e) => setVencimentoAte(e.target.value)} /></div>
         </div>
       </div>
 
@@ -1160,9 +1310,16 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr><th>Nota / lançamento</th><th>Vencimento</th><th>{tipo === "receita" ? "Cliente" : "Fornecedor"}</th><th>Produtos</th><th style={{ textAlign: "right" }}>Valor</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
+              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
+              <th></th>
+            </tr></thead>
             <tbody>
-              {filtradas.map((r) => {
+              {ordenados.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 const ativa = r.id === notaId;
                 return (
