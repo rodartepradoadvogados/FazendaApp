@@ -17,7 +17,9 @@ export default function LoginPage() {
     setErro(null); setCarregando(true);
     try {
       await login(username.trim(), senha);
-      router.replace("/");
+      // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
+      const next = new URLSearchParams(window.location.search).get("next");
+      router.replace(next && next.startsWith("/") ? next : "/");
     } catch (err: any) {
       setErro(err.message || "Falha no login");
     } finally {

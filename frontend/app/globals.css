@@ -350,3 +350,168 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .fazenda-table { font-size: 0.8rem; }
   .fazenda-table thead th, .fazenda-table tbody td { padding: 0.45rem 0.6rem; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   APP MÓVEL (/app) — design próprio, pensado para o campo:
+   claro = alto contraste p/ sol forte; escuro = OLED (#121212) p/ bateria.
+   Tokens isolados em --mob-* para não interferir no site desktop.
+   ═══════════════════════════════════════════════════════════════════════════ */
+.mob {
+  /* claro (padrão; "misto" do site também cai aqui) */
+  --mob-bg:        #EFF1F5;
+  --mob-surface:   #FFFFFF;
+  --mob-surface-2: #F6F7F9;
+  --mob-text:      #101828;
+  --mob-muted:     #5B6470;
+  --mob-border:    #E4E7EC;
+  --mob-header:    linear-gradient(160deg, #4A1525, #38101D);
+  --mob-header-fg: #F5EEF1;
+  --mob-vinho:     #5E1A2E;
+  --mob-dourado:   #B8860B;
+  --mob-dourado-2: #D4A017;
+  --mob-acao:      #5E1A2E;         /* cor de destaque de botão/aba ativa */
+  --mob-acao-fg:   #F8E9B0;
+  --mob-sombra:    0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
+  --mob-verde:     #00C97F;         /* verde OK legível no claro */
+  --mob-verde-neon:#00FF9D;
+  --mob-vermelho:  #DC2626;
+  --mob-azul:      #2563EB;
+  --mob-ambar:     #B45309;
+
+  min-height: 100dvh;
+  background: var(--mob-bg);
+  color: var(--mob-text);
+  -webkit-tap-highlight-color: transparent;
+}
+:root[data-theme="escuro"] .mob {
+  /* escuro OLED */
+  --mob-bg:        #121212;
+  --mob-surface:   #1E1E1E;
+  --mob-surface-2: #262626;
+  --mob-text:      #F3F4F6;
+  --mob-muted:     #9AA1AA;
+  --mob-border:    #2C2C2C;
+  --mob-header:    linear-gradient(160deg, #340F1C, #200A12);
+  --mob-header-fg: #F5EEF1;
+  --mob-acao:      #D4A017;         /* no escuro o destaque vira ouro (PDF) */
+  --mob-acao-fg:   #1A1A1A;
+  --mob-sombra:    none;
+  --mob-verde:     #00E08C;
+  --mob-azul:      #5BA8E0;
+  --mob-ambar:     #E8A33D;
+}
+
+/* Área de conteúdo rola por baixo da barra fixa inferior. */
+.mob-conteudo { padding: 1rem 1rem 6.5rem; max-width: 560px; margin: 0 auto; }
+
+/* Cartão do app — cantos bem arredondados, sombra leve no claro. */
+.mob-card {
+  background: var(--mob-surface);
+  border: 1px solid var(--mob-border);
+  border-radius: 16px;
+  box-shadow: var(--mob-sombra);
+}
+
+/* Inputs grandes (dedo no campo, fonte ≥16px para o iPhone não dar zoom). */
+.mob-input {
+  width: 100%;
+  background: var(--mob-surface);
+  color: var(--mob-text);
+  border: 1px solid var(--mob-border);
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+  font-size: 1rem;
+}
+.mob-input:focus { outline: 2px solid var(--mob-acao); outline-offset: -1px; }
+:root[data-theme="escuro"] .mob-input { background: var(--mob-surface-2); }
+
+/* Check circular grande da Agenda — vira verde luminoso ao concluir. */
+.mob-check {
+  width: 46px; height: 46px; border-radius: 50%;
+  border: 2px solid var(--mob-border);
+  background: transparent;
+  color: var(--mob-muted);
+  display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; flex-shrink: 0;
+  transition: all 0.15s;
+}
+.mob-check.feito {
+  border-color: var(--mob-verde-neon);
+  color: var(--mob-verde-neon);
+  background: rgba(0, 255, 157, 0.10);
+  filter: drop-shadow(0 0 6px rgba(0, 255, 157, 0.45));
+}
+
+/* Barra inferior fixa (zona do polegar). */
+.mob-nav {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 50;
+  display: flex; justify-content: space-around; align-items: stretch;
+  background: var(--mob-surface);
+  border-top: 1px solid var(--mob-border);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.mob-nav a {
+  flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 0.55rem 0 0.5rem; font-size: 0.68rem; font-weight: 600;
+  color: var(--mob-muted); text-decoration: none;
+}
+.mob-nav a.ativo { color: var(--mob-acao); }
+:root[data-theme="escuro"] .mob-nav a.ativo { color: var(--mob-dourado-2); }
+
+/* Botões-bloco do Lançamento Rápido (fat finger). */
+.mob-bloco {
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 0.6rem;
+  min-height: 7.5rem; border-radius: 16px; cursor: pointer;
+  background: var(--mob-surface); border: 1px solid var(--mob-border);
+  box-shadow: var(--mob-sombra);
+  color: var(--mob-text); font-weight: 700; font-size: 0.9rem;
+  text-align: center; padding: 0.8rem 0.5rem;
+}
+.mob-bloco .icone {
+  width: 46px; height: 46px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(184, 134, 11, 0.12); color: var(--mob-dourado-2);
+}
+.mob-bloco.destaque { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #FFFFFF; }
+.mob-bloco.destaque .icone { background: rgba(255, 255, 255, 0.14); color: #F8E9B0; }
+
+/* Botão de ação principal, largura total. */
+.mob-btn {
+  width: 100%; border: none; border-radius: 14px; cursor: pointer;
+  padding: 0.95rem 1rem; font-size: 1rem; font-weight: 700;
+  background: var(--mob-acao); color: var(--mob-acao-fg);
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+}
+.mob-btn:disabled { opacity: 0.55; }
+.mob-btn-2 {
+  width: 100%; border: 1px solid var(--mob-border); border-radius: 14px; cursor: pointer;
+  padding: 0.9rem 1rem; font-size: 0.95rem; font-weight: 600;
+  background: var(--mob-surface); color: var(--mob-text);
+  display: flex; align-items: center; justify-content: center; gap: 0.5rem;
+}
+
+/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). */
+.mob-pill {
+  padding: 0.6rem 1.1rem; border-radius: 12px; cursor: pointer;
+  font-size: 0.9rem; font-weight: 700;
+  border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
+}
+.mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }
+:root[data-theme="escuro"] .mob-pill.ativa { background: var(--mob-vinho); color: var(--mob-dourado-2); }
+
+/* Título de seção discreto ("ANIMAIS RECENTES"). */
+.mob-secao {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--mob-muted); margin: 1.1rem 0 0.5rem;
+}
+
+/* Linha de lista com seta. */
+.mob-linha {
+  display: flex; align-items: center; gap: 0.75rem; width: 100%;
+  padding: 0.95rem 1rem; background: var(--mob-surface);
+  border: 1px solid var(--mob-border); border-radius: 14px;
+  color: var(--mob-text); text-align: left; cursor: pointer;
+  box-shadow: var(--mob-sombra); text-decoration: none;
+}
+
+.mob select.mob-input, .mob input.mob-input, .mob textarea.mob-input { -webkit-appearance: none; appearance: none; }

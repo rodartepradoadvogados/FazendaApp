@@ -1,0 +1,176 @@
+"use client";
+// Peças compartilhadas da tela LANÇAR (app móvel de campo):
+// tipos, helpers, cache offline de listas para selects, envio padrão
+// (enviarOuEnfileirar) e um seletor de animal por busca (número/nome).
+import { useEffect, useState, type ReactNode } from "react";
+import { Search } from "lucide-react";
+import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
+
+// ── Tipos das listas usadas nos formulários ──────────────────────────────────
+export type Animal = {
+  numero: string;
+  nome?: string | null;
+  grupo_primario?: string | null;
+  categoria_abrev?: string | null;
+  categoria_completa?: string | null;
+  sit_rep?: string | null;
+  del_dias?: number | null;
+  sexo?: string | null;
+};
+export type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
+export type Semen = { touro_nome: string; codigo?: string | null; tipo?: string | null; doses?: number | null };
+export type DietaItem = { alimento: string; quantidade: number; unidade: string };
+export type Dieta = { id: number; lote: number; ativa: boolean; itens_programados: DietaItem[] };
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+export function hoje(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
+/** Sem acento, sem caixa — para a busca ser tolerante ("joão" acha "JOAO"). */
+export function normalizar(s: string): string {
+  return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+}
+
+export function rotuloAnimal(a: Animal): string {
+  const cat = a.categoria_abrev || a.categoria_completa || a.grupo_primario || "";
+  return [a.nome, cat, a.sit_rep].filter(Boolean).join(" · ");
+}
+
+/** Busca por número (brinco), nome, lote, categoria ou situação reprodutiva. */
+export function filtrarAnimais(animais: Animal[], busca: string): Animal[] {
+  const q = normalizar(busca);
+  if (!q) return animais;
+  return animais.filter((a) =>
+    normalizar(`${a.numero} ${a.nome || ""} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`).includes(q),
+  );
+}
+
+// Unidades — mesma regra do backend (fazenda.rules.unidades) e do desktop:
+// a unidade de aplicação precisa ser compatível com a unidade de estoque.
+export const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
+const GRUPOS_UNIDADE: string[][] = [["ml", "unidade", "dose"], ["L", "kg"]];
+export function unidadesCompativeis(unidadeEstoque: string | null | undefined): string[] {
+  if (!unidadeEstoque) return UNIDADES;
+  return GRUPOS_UNIDADE.find((g) => g.includes(unidadeEstoque)) || [unidadeEstoque];
+}
+
+// ── Cache offline de listas (selects funcionam com a última cópia) ───────────
+export function useCache<T>(chave: string, buscar: () => Promise<T>, inicial: T): { dados: T; doCache: boolean; pronto: boolean } {
+  const [estado, setEstado] = useState<{ dados: T; doCache: boolean; pronto: boolean }>({ dados: inicial, doCache: false, pronto: false });
+  useEffect(() => {
+    let vivo = true;
+    fetchComCache(chave, buscar)
+      .then((r) => { if (vivo) setEstado({ dados: (r.dados ?? inicial) as T, doCache: r.doCache, pronto: true }); })
+      .catch(() => { if (vivo) setEstado((e) => ({ ...e, pronto: true })); });
+    return () => { vivo = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chave]);
+  return estado;
+}
+
+// ── Envio padrão de todos os formulários ─────────────────────────────────────
+export type Aviso = { tipo: "ok" | "offline" | "erro"; msg: string } | null;
+
+export function useEnvio() {
+  const [aviso, setAviso] = useState<Aviso>(null);
+  const [enviando, setEnviando] = useState(false);
+
+  async function enviar(caminho: string, corpo: unknown, descricao: string, aoLimpar?: () => void) {
+    setEnviando(true);
+    setAviso(null);
+    try {
+      const { enviado } = await enviarOuEnfileirar(caminho, corpo, descricao);
+      setAviso(enviado
+        ? { tipo: "ok", msg: "Lançamento salvo." }
+        : { tipo: "offline", msg: "Sem internet — guardado, será enviado automaticamente ao conectar." });
+      aoLimpar?.();
+    } catch (e) {
+      setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar." });
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  /** Mostra um erro de validação sem chamar a rede. */
+  function erroValidacao(msg: string) {
+    setAviso({ tipo: "erro", msg });
+  }
+
+  return { aviso, setAviso, enviar, enviando, erroValidacao };
+}
+
+// ── Primitivos locais ────────────────────────────────────────────────────────
+export function MobPill({ ativa, onClick, children }: { ativa: boolean; onClick: () => void; children: ReactNode }) {
+  return <button type="button" className={`mob-pill${ativa ? " ativa" : ""}`} onClick={onClick}>{children}</button>;
+}
+
+export function LinhaPills({ children }: { children: ReactNode }) {
+  return <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.9rem" }}>{children}</div>;
+}
+
+/** Dois botões grandes exclusivos (ex.: Positivo/Negativo, M/F, Entrada/Saída). */
+export function BotoesEscolha<T extends string>({ opcoes, valor, onChange }:
+  { opcoes: { valor: T; label: string; cor?: string }[]; valor: T | ""; onChange: (v: T) => void }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: `repeat(${opcoes.length}, 1fr)`, gap: "0.6rem" }}>
+      {opcoes.map((o) => {
+        const ativo = valor === o.valor;
+        const cor = o.cor || "var(--mob-vinho)";
+        return (
+          <button key={o.valor} type="button" onClick={() => onChange(o.valor)}
+            style={{
+              padding: "1rem 0.5rem", borderRadius: 14, fontSize: "1rem", fontWeight: 700, cursor: "pointer",
+              border: `2px solid ${ativo ? cor : "var(--mob-border)"}`,
+              background: ativo ? cor : "var(--mob-surface)",
+              color: ativo ? "#FFFFFF" : "var(--mob-text)",
+            }}>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/**
+ * Seletor de animal por busca (número/nome). Serve tanto para o animal já
+ * "fixado" no topo (vem preenchido e recolhido) quanto para escolher um novo.
+ */
+export function SeletorAnimal({ animais, valor, onChange, placeholder }:
+  { animais: Animal[]; valor: string; onChange: (numero: string) => void; placeholder?: string }) {
+  const [q, setQ] = useState("");
+  const [editando, setEditando] = useState(false);
+  const sel = animais.find((a) => a.numero === valor);
+
+  if (sel && !editando) {
+    return (
+      <button type="button" className="mob-input" style={{ textAlign: "left", cursor: "pointer" }}
+        onClick={() => { setEditando(true); setQ(""); }}>
+        <strong>{sel.numero}</strong>{rotuloAnimal(sel) ? ` · ${rotuloAnimal(sel)}` : ""}
+      </button>
+    );
+  }
+
+  const filtrados = filtrarAnimais(animais, q).slice(0, 8);
+  return (
+    <div>
+      <div style={{ position: "relative" }}>
+        <Search size={17} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--mob-muted)", pointerEvents: "none" }} />
+        <input className="mob-input" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
+          placeholder={placeholder || "Buscar brinco ou nome…"} style={{ paddingLeft: "2.5rem" }} />
+      </div>
+      {q.trim() !== "" && (
+        <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.4rem" }}>
+          {filtrados.map((a) => (
+            <button key={a.numero} type="button" className="mob-btn-2" style={{ justifyContent: "flex-start", textAlign: "left", padding: "0.7rem 0.9rem" }}
+              onClick={() => { onChange(a.numero); setEditando(false); setQ(""); }}>
+              <span><strong>{a.numero}</strong>{rotuloAnimal(a) ? ` · ${rotuloAnimal(a)}` : ""}</span>
+            </button>
+          ))}
+          {filtrados.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", padding: "0.2rem" }}>Nenhum animal encontrado.</p>}
+        </div>
+      )}
+    </div>
+  );
+}

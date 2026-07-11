@@ -8,6 +8,16 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata: Metadata = {
   title: "Fazenda Estreito Ponte de Pedra",
   description: "Painel gerencial de pecuária leiteira — Jairo Nasser",
+  // PWA / iPhone: ícone da tela inicial e modo tela-cheia ao instalar o /app.
+  appleWebApp: { capable: true, statusBarStyle: "black-translucent", title: "Fazenda" },
+  icons: { apple: "/icons/icone-180.png" },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover" as const,
+  themeColor: "#4A1525",
 };
 
 export default function RootLayout({
