@@ -7,7 +7,7 @@ import {
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
-  criarVale,
+  criarVale, atualizarLancamentoFinanceiro,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -64,6 +64,13 @@ const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 const fmtMes = (m: string) => m?.slice(2) ?? "";
+const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+// "2026-07" → "jul/2026" (rótulo legível do mês de competência)
+const mesCompLabel = (comp: string) => {
+  const [a, m] = (comp || "").split("-");
+  const idx = parseInt(m, 10) - 1;
+  return idx >= 0 && idx < 12 ? `${MESES_ABREV[idx]}/${a}` : (comp || "");
+};
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
   return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
@@ -168,6 +175,7 @@ export default function FinanceiroPage() {
   // Nota a tratar (pré-selecionada) quando se chega às sub-abas de
   // Pagamento/Recebimento vindo da lista de Contas a pagar/receber ou da Agenda.
   const [notaAlvoRef, setNotaAlvoRef] = useState<string | null>(null);
+  const [editando, setEditando] = useState<Lanc | null>(null);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
   // Opções de fornecedor/cliente e produto/serviço para os filtros dos relatórios.
@@ -528,7 +536,9 @@ export default function FinanceiroPage() {
         </div>
 
         {CONTAS_IDS.has(rel) ? (
-          <TabelaContas rel={rel} itens={filtrados} planoContas={planoContas} onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }} />
+          <TabelaContas rel={rel} itens={filtrados} planoContas={planoContas}
+            onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
+            onEditar={(l) => setEditando(l)} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -800,6 +810,13 @@ export default function FinanceiroPage() {
         </>}
         </>}
       </>}
+      {editando && (
+        <Modal title={`Editar lançamento${editando.numero_lancamento ? ` ${editando.numero_lancamento}` : ""}`} onClose={() => setEditando(null)} width="720px">
+          <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas}
+            onCancelar={() => setEditando(null)}
+            onSalvo={() => { setEditando(null); recarregar(); }} />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -1120,7 +1137,92 @@ function PatrimonioView() {
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void }) {
+/**
+ * Edição de um lançamento financeiro já salvo (uma nota / uma parcela). Serve
+ * para contas a pagar, a receber, pagas e recebidas — edita valor, descrição,
+ * fornecedor/cliente, centro de custo, conta gerencial, datas e documento sem
+ * precisar dar baixa. Não mexe no pagamento (isso é o fluxo "Tratar").
+ */
+function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar }: {
+  lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; onSalvo: () => void; onCancelar: () => void;
+}) {
+  const [descricao, setDescricao] = useState(lanc.descricao || "");
+  const [fornecedor, setFornecedor] = useState(lanc.fornecedor || "");
+  const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
+  const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
+  const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
+  const [valor, setValor] = useState(String(lanc.valor ?? ""));
+  const [dataEmissao, setDataEmissao] = useState((lanc.data_emissao || "").slice(0, 10));
+  const [dataVencimento, setDataVencimento] = useState((lanc.data_vencimento || "").slice(0, 10));
+  const [dataCompetencia, setDataCompetencia] = useState((lanc.data_competencia || "").slice(0, 10));
+  const [numeroNota, setNumeroNota] = useState(lanc.numero_documento || "");
+  const [tipoDocumento, setTipoDocumento] = useState(lanc.tipo_documento || "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
+  const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
+
+  const salvar = async () => {
+    setSalvando(true); setErro("");
+    try {
+      await atualizarLancamentoFinanceiro(lanc.id, {
+        descricao, fornecedor_cliente: fornecedor, centro_custo: centroCusto || null,
+        codigo_conta: codigoConta || null, valor_total: parseFloat(valor.replace(",", ".")) || 0,
+        data_emissao: dataEmissao || null, data_vencimento: dataVencimento || null,
+        data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
+        tipo_documento: tipoDocumento || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErro(e.message); setSalvando(false); }
+  };
+
+  return (
+    <div className="space-y-3">
+      {lanc.parcela_total && lanc.parcela_total > 1 && (
+        <p style={{ fontSize: "0.75rem", color: "var(--amber)", background: "rgba(180,120,0,0.12)", padding: "0.5rem 0.7rem", borderRadius: "8px" }}>
+          Esta é a parcela {lanc.parcela_num}/{lanc.parcela_total}. A edição altera <strong>só esta parcela</strong> — as outras seguem como estão.
+        </p>
+      )}
+      {lanc.valor_pago != null && (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+          Esta conta já tem baixa (valor pago/recebido {formatBRL(lanc.valor_pago)}). Editar aqui muda os dados do lançamento, não o pagamento.
+        </p>
+      )}
+      <div className="grid grid-cols-2 gap-3">
+        <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Descrição</label>
+          <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>{tipoConta === "receita" ? "Cliente" : "Fornecedor"}</label>
+          <input style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Valor (R$)</label>
+          <input style={selStyleLote} type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Centro de custo</label>
+          <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+            <option value="">—</option>{centrosOpcoes.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select></div>
+        <div><label style={labelStyleLote}>Conta gerencial</label>
+          <SeletorContaGerencial contas={planoContas} tipo={tipoConta} codigo={codigoConta} nome={nomeConta}
+            onSelect={(c, n) => { setCodigoConta(c); setNomeConta(n); }} placeholder="Escolha a conta…" /></div>
+        <div><label style={labelStyleLote}>Data de emissão</label>
+          <input type="date" style={selStyleLote} value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Data de vencimento</label>
+          <input type="date" style={selStyleLote} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Competência</label>
+          <input type="date" style={selStyleLote} value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Tipo de documento</label>
+          <input style={selStyleLote} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} placeholder="ex.: Nota fiscal, Recibo" /></div>
+        <div><label style={labelStyleLote}>Nº do documento</label>
+          <input style={selStyleLote} value={numeroNota} onChange={(e) => setNumeroNota(e.target.value)} /></div>
+      </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-ghost" onClick={onCancelar} disabled={salvando}>Cancelar</button>
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar alterações"}</button>
+      </div>
+    </div>
+  );
+}
+
+function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void }) {
   const emAberto = rel === "a_pagar" || rel === "a_receber";
   const hoje = new Date().toISOString().slice(0, 10);
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
@@ -1238,7 +1340,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar }: { rel: Rel; itens: 
                 <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
                 {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />}
                 {!emAberto && <th>Conta bancária</th>}
-                {emAberto && <th></th>}
+                <th style={{ textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -1257,7 +1359,10 @@ function TabelaContas({ rel, itens, planoContas, onTratar }: { rel: Rel; itens: 
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
-                    {emAberto && <td><button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem" }} onClick={() => onTratar(r)}>Tratar</button></td>}
+                    <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
+                      <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
+                      {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
+                    </td>
                   </tr>
                 );
               })}
@@ -1520,6 +1625,7 @@ type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number;
   percentual_inss: number; percentual_ir: number; valor_inss: number; valor_ir: number;
+  valor_vale?: number;
   valor_liquido: number;
   data_pagamento: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
@@ -1578,6 +1684,14 @@ function FolhaPagamentoView() {
   const [anexarAberto, setAnexarAberto] = useState(false);
 
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  // Expansão focada de um desconto (folha ou vale) numa linha específica.
+  const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
+  // Filtros da lista de folha.
+  const [fStatus, setFStatus] = useState<"" | "pendente" | "pago">("");
+  const [fPessoa, setFPessoa] = useState("");
+  const [fTipoVinculo, setFTipoVinculo] = useState("");
+  const [fCompDe, setFCompDe] = useState("");
+  const [fCompAte, setFCompAte] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -1725,15 +1839,26 @@ function FolhaPagamentoView() {
     }
   }
 
+  // Tipo (vínculo) por pessoa, para o filtro de salário/diárias/prestador etc.
+  const tipoPorPessoa = useMemo(() => { const m: Record<number, string> = {}; pessoas.forEach((p) => { m[p.id] = p.tipo; }); return m; }, [pessoas]);
+  const tiposVinculo = useMemo(() => Array.from(new Set(pessoas.map((p) => p.tipo).filter(Boolean))).sort(), [pessoas]);
+  const regsFiltrados = useMemo(() => (regs || []).filter((r) =>
+    (!fStatus || r.status === fStatus) &&
+    (!fPessoa || String(r.pessoa_id) === fPessoa) &&
+    (!fTipoVinculo || tipoPorPessoa[r.pessoa_id] === fTipoVinculo) &&
+    (!fCompDe || r.competencia >= fCompDe) &&
+    (!fCompAte || r.competencia <= fCompAte)
+  ), [regs, fStatus, fPessoa, fTipoVinculo, fCompDe, fCompAte, tipoPorPessoa]);
+
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
-  const totalPendente = (regs || []).filter((r) => r.status === "pendente").reduce((a, r) => a + r.valor_liquido, 0);
-  const totalPago = (regs || []).filter((r) => r.status === "pago").reduce((a, r) => a + r.valor_liquido, 0);
+  const totalPendente = regsFiltrados.filter((r) => r.status === "pendente").reduce((a, r) => a + r.valor_liquido, 0);
+  const totalPago = regsFiltrados.filter((r) => r.status === "pago").reduce((a, r) => a + r.valor_liquido, 0);
 
   return (
     <div>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-        <KPI v={String((regs || []).length)} l="Lançamentos" />
+        <KPI v={String(regsFiltrados.length)} l="Lançamentos" />
         <KPI v={formatBRL(totalPendente)} l="Pendente" c="var(--amber)" />
         <KPI v={formatBRL(totalPago)} l="Pago" c="var(--green-light)" />
       </div>
@@ -1806,44 +1931,122 @@ function FolhaPagamentoView() {
         <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
       </SecaoRecolhivel>
 
-      {/* 3) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga */}
+      {/* 3) Filtros da lista de folha */}
+      <div className="card mt-4 mb-3">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div><label style={labelStyleLote}>Competência — de</label>
+            <input type="month" style={selStyleLote} value={fCompDe} onChange={(e) => setFCompDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Competência — até</label>
+            <input type="month" style={selStyleLote} value={fCompAte} onChange={(e) => setFCompAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Status</label>
+            <select style={selStyleLote} value={fStatus} onChange={(e) => setFStatus(e.target.value as any)}>
+              <option value="">Todos</option><option value="pendente">Pendente</option><option value="pago">Pago</option>
+            </select></div>
+          <div><label style={labelStyleLote}>Funcionário</label>
+            <select style={selStyleLote} value={fPessoa} onChange={(e) => setFPessoa(e.target.value)}>
+              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Vínculo (salário/diárias/contrato)</label>
+            <select style={selStyleLote} value={fTipoVinculo} onChange={(e) => setFTipoVinculo(e.target.value)}>
+              <option value="">Todos</option>{tiposVinculo.map((t) => <option key={t} value={t}>{t}</option>)}
+            </select></div>
+        </div>
+      </div>
+
+      {/* 4) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga. Os descontos (folha e vale) são clicáveis e abrem o detalhe abaixo. */}
       <div className="card mt-4">
         <div className="card-header mb-3">Lançamentos de folha</div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Pessoa</th><th>Competência</th><th style={{ textAlign: "right" }}>Bruto</th><th style={{ textAlign: "right" }}>Descontos</th><th style={{ textAlign: "right" }}>Líquido</th><th>Status</th><th>Pagamento</th><th></th></tr></thead>
+            <thead><tr>
+              <th>Mês</th><th>Funcionário</th><th>Competência</th>
+              <th style={{ textAlign: "right" }}>Valor bruto</th>
+              <th style={{ textAlign: "right" }}>Descontos de folha</th>
+              <th style={{ textAlign: "right" }}>Descontos de vale</th>
+              <th>Status</th><th style={{ textAlign: "right" }}>Valor pago</th><th></th>
+            </tr></thead>
             <tbody>
-              {(regs || []).map((r) => {
+              {regsFiltrados.map((r) => {
                 const expandido = expandedId === r.id;
                 const editando = editingId === r.id;
+                const descFolha = arredonda2(r.descontos + r.valor_inss + r.valor_ir);
+                const descVale = arredonda2(r.valor_vale || 0);
+                const descAberto = expandDesc && expandDesc.id === r.id;
+                const valeLinhas = r.detalhe.filter((d) => /vale/i.test(d.label));
                 return (
                   <Fragment key={r.id}>
                     <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}>
-                      <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                         <span className="flex items-center gap-1">
                           {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                          {r.pessoa_nome}
+                          {mesCompLabel(r.competencia)}
                         </span>
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>
+                        {r.pessoa_nome}
                         {(r.recorrente || r.origem_recorrencia_id) && (
                           <span title={r.recorrente ? "Modelo recorrente — gera Contas a Pagar todo mês" : "Gerado automaticamente pela recorrência"} style={{ marginLeft: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--dourado-light)" }}>
                             <RefreshCw size={12} />
                           </span>
                         )}
                       </td>
-                      <td style={{ fontSize: "0.78rem" }}>{r.competencia}</td>
+                      <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{r.competencia}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(arredonda2(r.descontos + r.valor_inss + r.valor_ir))}</td>
-                      <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{formatBRL(r.valor_liquido)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descFolha ? "var(--red)" : "var(--text-muted)", cursor: "pointer", textDecoration: descFolha ? "underline dotted" : undefined }}
+                        title="Clique para ver o detalhe dos descontos de folha (INSS, IR, outros)"
+                        onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "folha" ? null : { id: r.id, tipo: "folha" }); }}>
+                        {formatBRL(descFolha)}
+                      </td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", color: descVale ? "var(--amber)" : "var(--text-muted)", cursor: "pointer", textDecoration: descVale ? "underline dotted" : undefined }}
+                        title="Clique para ver as parcelas de vale descontadas nesta folha"
+                        onClick={(e) => { e.stopPropagation(); setExpandDesc(descAberto && expandDesc!.tipo === "vale" ? null : { id: r.id, tipo: "vale" }); }}>
+                        {formatBRL(descVale)}
+                      </td>
                       <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
-                      <td style={{ fontSize: "0.75rem" }}>{r.data_pagamento ? formatDate(r.data_pagamento) : "—"}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{r.status === "pago" ? formatBRL(r.valor_liquido) : "—"}</td>
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         {r.status === "pendente" && (
                           <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
                         )}
                       </td>
                     </tr>
+                    {descAberto && (
+                      <tr><td colSpan={9}>
+                        <div style={{ padding: "0.5rem 0" }} onClick={(e) => e.stopPropagation()}>
+                          <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
+                            {expandDesc!.tipo === "folha" ? "Descontos de folha" : "Descontos de vale"} — {r.pessoa_nome}, {mesCompLabel(r.competencia)}
+                          </p>
+                          <table style={{ width: "100%", maxWidth: 460, fontSize: "0.78rem" }}>
+                            <tbody>
+                              {expandDesc!.tipo === "folha" ? (
+                                [
+                                  { label: "Outros descontos", valor: r.descontos },
+                                  { label: `INSS${r.percentual_inss ? ` (${r.percentual_inss}%)` : ""}`, valor: r.valor_inss },
+                                  { label: `IR${r.percentual_ir ? ` (${r.percentual_ir}%)` : ""}`, valor: r.valor_ir },
+                                ].filter((d) => d.valor).map((d, i) => (
+                                  <tr key={i}>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
+                                    <td style={{ textAlign: "right", color: "var(--red)" }}>− {formatBRL(d.valor)}</td>
+                                  </tr>
+                                ))
+                              ) : (
+                                valeLinhas.map((d, i) => (
+                                  <tr key={i}>
+                                    <td style={{ padding: "0.15rem 0.5rem 0.15rem 0" }}>{d.label}</td>
+                                    <td style={{ textAlign: "right", color: "var(--amber)" }}>{formatBRL(d.valor)}</td>
+                                  </tr>
+                                ))
+                              )}
+                              {expandDesc!.tipo === "folha" && descFolha === 0 && <tr><td style={{ color: "var(--text-muted)" }}>Sem descontos de folha nesta competência.</td></tr>}
+                              {expandDesc!.tipo === "vale" && !valeLinhas.length && <tr><td style={{ color: "var(--text-muted)" }}>Sem parcelas de vale nesta competência.</td></tr>}
+                            </tbody>
+                          </table>
+                        </div>
+                      </td></tr>
+                    )}
                     {pagandoId === r.id && (
-                      <tr><td colSpan={8}>
+                      <tr><td colSpan={9}>
                         <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
                           <div><label style={labelStyleLote}>Data do pagamento</label>
                             <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
@@ -1854,7 +2057,7 @@ function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {expandido && !editando && (
-                      <tr><td colSpan={8}>
+                      <tr><td colSpan={9}>
                         <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
                             <tbody>
@@ -1878,7 +2081,7 @@ function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {editando && (
-                      <tr><td colSpan={8}>
+                      <tr><td colSpan={9}>
                         <div style={{ padding: "0.75rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Pessoa</label>
@@ -1932,7 +2135,7 @@ function FolhaPagamentoView() {
                   </Fragment>
                 );
               })}
-              {regs && !regs.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento de folha ainda.</td></tr>}
+              {regs && !regsFiltrados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{regs.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
             </tbody>
           </table>
         </div>

@@ -7,6 +7,7 @@ import {
 import { fetchRelatoriosManejo } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { SecaoRecolhivel } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /**
  * RelatoriosManejo — listas de trabalho diárias da reprodução (PEV, a inseminar,
@@ -110,7 +111,10 @@ function BadgeCores({ linhas }: { linhas: { cor?: Cor }[] }) {
 }
 
 // Definição de coluna da tabela de manejo.
-type Col = { header: string; render: (row: any) => React.ReactNode; style?: React.CSSProperties };
+// `campo` (opcional): chave do objeto de linha pela qual ordenar ao clicar no
+// cabeçalho. Colunas sem `campo` (semáforo, colunas puramente derivadas) ficam
+// como <th> comum, não clicável.
+type Col = { header: string; campo?: string; render: (row: any) => React.ReactNode; style?: React.CSSProperties };
 
 // Tabela padrão de manejo: 1ª coluna é o semáforo (bolinha por `cor`), demais são as colunas passadas.
 function TabelaManejo({
@@ -122,23 +126,30 @@ function TabelaManejo({
   renderDot?: (row: any) => React.ReactNode;
 }) {
   const dotDe = renderDot || ((row: any) => <Dot cor={row[corKey]} />);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhas);
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table" style={{ margin: 0 }}>
         <thead>
           <tr>
             <th style={{ width: "1.6rem", textAlign: "center" }} title="Semáforo de manejo"></th>
-            {colunas.map((c) => <th key={c.header}>{c.header}</th>)}
+            {colunas.map((c) =>
+              c.campo ? (
+                <ThOrdenavel key={c.header} label={c.header} campo={c.campo} coluna={coluna} dir={dir} ordenar={ordenar} />
+              ) : (
+                <th key={c.header}>{c.header}</th>
+              )
+            )}
           </tr>
         </thead>
         <tbody>
-          {linhas.map((row, i) => (
+          {linhasOrdenadas.map((row, i) => (
             <tr key={`${row.numero ?? row.touro_nome ?? "l"}-${i}`}>
               <td style={{ textAlign: "center" }}>{dotDe(row)}</td>
               {colunas.map((c) => <td key={c.header} style={c.style}>{c.render(row)}</td>)}
             </tr>
           ))}
-          {linhas.length === 0 && (
+          {linhasOrdenadas.length === 0 && (
             <tr>
               <td colSpan={colunas.length + 1} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
                 Nenhum animal nesta lista.
@@ -268,10 +279,10 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.pev}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias pós-parto", render: (r) => r.dias_pos_parto },
-                { header: "Data do parto", render: (r) => fmtData(r.data_parto) },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias pós-parto", campo: "dias_pos_parto", render: (r) => r.dias_pos_parto },
+                { header: "Data do parto", campo: "data_parto", render: (r) => fmtData(r.data_parto) },
               ]}
             />
           </SecaoRecolhivel>
@@ -296,10 +307,10 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.a_inseminar}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias pós-parto", render: (r) => r.dias_pos_parto },
-                { header: "Situação", render: (r) => r.situacao },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias pós-parto", campo: "dias_pos_parto", render: (r) => r.dias_pos_parto },
+                { header: "Situação", campo: "situacao", render: (r) => r.situacao },
               ]}
             />
           </SecaoRecolhivel>
@@ -325,10 +336,10 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.inseminados}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias de inseminada", render: (r) => r.dias_inseminada },
-                { header: "Touro", render: (r) => r.touro || "—", style: { fontWeight: 600 } },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias de inseminada", campo: "dias_inseminada", render: (r) => r.dias_inseminada },
+                { header: "Touro", campo: "touro", render: (r) => r.touro || "—", style: { fontWeight: 600 } },
                 { header: "Cio provável", render: (r) => <Dot cor={r.cor_cio} />, style: { textAlign: "center" } },
               ]}
             />
@@ -357,10 +368,10 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.a_tocar}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias de inseminada", render: (r) => r.dias_inseminada },
-                { header: "Touro", render: (r) => r.touro || "—", style: { fontWeight: 600 } },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias de inseminada", campo: "dias_inseminada", render: (r) => r.dias_inseminada },
+                { header: "Touro", campo: "touro", render: (r) => r.touro || "—", style: { fontWeight: 600 } },
               ]}
             />
 
@@ -377,9 +388,9 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.a_reconfirmar}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias", render: (r) => r.dias_inseminada },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias", campo: "dias_inseminada", render: (r) => r.dias_inseminada },
               ]}
             />
           </SecaoRecolhivel>
@@ -408,12 +419,12 @@ export default function RelatoriosManejo() {
             <TabelaManejo
               linhas={dados.prenhes}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias de gestação", render: (r) => r.dias_gestacao },
-                { header: "Dias pós-parto na concepção", render: (r) => r.dpp_concepcao },
-                { header: "Previsão de parto", render: (r) => fmtData(r.previsao_parto) },
-                { header: "Reconfirmada", render: (r) => (r.reconfirmada ? "Sim" : "Não") },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias de gestação", campo: "dias_gestacao", render: (r) => r.dias_gestacao },
+                { header: "Dias pós-parto na concepção", campo: "dpp_concepcao", render: (r) => r.dpp_concepcao },
+                { header: "Previsão de parto", campo: "previsao_parto", render: (r) => fmtData(r.previsao_parto) },
+                { header: "Reconfirmada", campo: "reconfirmada", render: (r) => (r.reconfirmada ? "Sim" : "Não") },
               ]}
             />
           </SecaoRecolhivel>
@@ -439,10 +450,10 @@ export default function RelatoriosManejo() {
               linhas={dados.secagem}
               renderDot={(r) => <DotsLuzes cor={r.cor} luzes={r.luzes} />}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias para secagem", render: (r) => r.dias_para_secagem },
-                { header: "Previsão de secagem", render: (r) => fmtData(r.previsao_secagem) },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias para secagem", campo: "dias_para_secagem", render: (r) => r.dias_para_secagem },
+                { header: "Previsão de secagem", campo: "previsao_secagem", render: (r) => fmtData(r.previsao_secagem) },
               ]}
             />
           </SecaoRecolhivel>
@@ -472,11 +483,11 @@ export default function RelatoriosManejo() {
               linhas={dados.previsao_partos}
               renderDot={(r) => <DotsLuzes cor={r.cor} luzes={r.luzes} />}
               colunas={[
-                { header: "Nº", render: (r) => r.numero, style: estiloNum },
-                { header: "Grupo", render: (r) => r.grupo, style: estiloMudo },
-                { header: "Dias para parir", render: (r) => r.dias_para_parto },
-                { header: "Previsão de parto", render: (r) => fmtData(r.previsao_parto) },
-                { header: "Dias de gestação", render: (r) => r.dias_gestacao },
+                { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
+                { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
+                { header: "Dias para parir", campo: "dias_para_parto", render: (r) => r.dias_para_parto },
+                { header: "Previsão de parto", campo: "previsao_parto", render: (r) => fmtData(r.previsao_parto) },
+                { header: "Dias de gestação", campo: "dias_gestacao", render: (r) => r.dias_gestacao },
               ]}
             />
           </SecaoRecolhivel>
@@ -510,11 +521,11 @@ export default function RelatoriosManejo() {
                 <TabelaManejo
                   linhas={dados.estoque_semen}
                   colunas={[
-                    { header: "Touro", render: (r) => r.touro_nome, style: estiloNum },
-                    { header: "Código", render: (r) => r.codigo || "—", style: estiloMudo },
-                    { header: "Central", render: (r) => r.central || "—", style: estiloMudo },
-                    { header: "Tipo", render: (r) => (r.tipo === "sexado" ? "Sexado" : "Convencional") },
-                    { header: "Doses", render: (r) => r.doses },
+                    { header: "Touro", campo: "touro_nome", render: (r) => r.touro_nome, style: estiloNum },
+                    { header: "Código", campo: "codigo", render: (r) => r.codigo || "—", style: estiloMudo },
+                    { header: "Central", campo: "central", render: (r) => r.central || "—", style: estiloMudo },
+                    { header: "Tipo", campo: "tipo", render: (r) => (r.tipo === "sexado" ? "Sexado" : "Convencional") },
+                    { header: "Doses", campo: "doses", render: (r) => r.doses },
                   ]}
                 />
               </>
