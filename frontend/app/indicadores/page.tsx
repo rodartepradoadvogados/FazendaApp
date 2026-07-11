@@ -81,7 +81,7 @@ export default function IndicadoresPage() {
           <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{num(prod?.producao_total_dia_kg, " kg")}</p><p className="kpi-label">Produção/dia (últ. controle)</p><Milk size={18} style={{ color: "var(--text-muted)", marginTop: "0.4rem" }} /></div>
           <div className="kpi-card"><p className="kpi-value">{num(prod?.producao_media_kg, " kg")}</p><p className="kpi-label">Média por vaca</p></div>
           <div className="kpi-card"><p className="kpi-value">{num(prod?.del_medio)}</p><p className="kpi-label">DEL médio (dias)</p></div>
-          <div className="kpi-card"><p className="kpi-value">{num(prod?.vacas_com_producao)}</p><p className="kpi-label">Vacas com produção</p></div>
+          <div className="kpi-card"><p className="kpi-value">{num(reb?.vacas_lactacao)}</p><p className="kpi-label">Vacas em lactação atual</p></div>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

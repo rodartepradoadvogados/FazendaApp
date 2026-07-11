@@ -21,7 +21,7 @@ type Campo = [chave: string, rotulo: string, data?: boolean];
 const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "movimentos_lote", titulo: "Movimentações de lote", campos: [["data_movimento", "Data", true], ["lote_origem", "De"], ["lote_destino", "Para"], ["motivo", "Motivo"]] },
   { chave: "partos", titulo: "Partos", campos: [["data_parto", "Data", true], ["ordem_parto", "Ordem"], ["tipo_parto", "Tipo"]] },
-  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["diagnostico", "Diagnóstico"]] },
+  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true]] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF", campos: [["dia", "Dia"], ["descricao", "Descrição"], ["data_prevista", "Prevista", true], ["realizada", "Feito"]] },
   { chave: "controles_leiteiros", titulo: "Controle leiteiro", campos: [["data_controle", "Data", true], ["producao_kg", "Produção (kg)"], ["del_no_controle", "DEL"]] },
   { chave: "pesagens_corporais", titulo: "Pesagens", campos: [["data_pesagem", "Data", true], ["peso_kg", "Peso (kg)"], ["del_dias", "DEL"]] },
