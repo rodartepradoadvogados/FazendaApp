@@ -406,6 +406,20 @@ class PlanoContaGerencial(SQLModel, table=True):
     rmca_custo_alimentacao: Optional[bool] = None
 
 
+class SeedFlag(SQLModel, table=True):
+    """Marcador de migração/seed de dados executado uma única vez.
+
+    Usado por normalizações que devem rodar só na primeira inicialização
+    (ex.: ativar todas as contas gerenciais) e nunca sobrescrever ajustes
+    manuais feitos depois pelo usuário.
+    """
+
+    __tablename__ = "seed_flag"
+
+    chave: str = Field(primary_key=True)
+    aplicado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
 # lista fixa em Python (CONTAS_BANCARIAS); usada em lançamentos/baixas.
