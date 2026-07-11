@@ -71,7 +71,8 @@ export async function login(username: string, senha: string) {
 }
 
 // fetch com token; redireciona ao login se a sessão cair (401).
-function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
+// Exportado para a fila offline do app móvel (lib/offline.ts) reutilizar.
+export function authFetch(url: string, opts: RequestInit = {}): Promise<Response> {
   const token = getToken();
   const headers = new Headers(opts.headers || {});
   if (token) headers.set("Authorization", `Bearer ${token}`);
