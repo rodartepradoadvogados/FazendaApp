@@ -1627,7 +1627,7 @@ type RegistroFolha = {
   percentual_inss: number; percentual_ir: number; valor_inss: number; valor_ir: number;
   valor_vale?: number;
   valor_liquido: number;
-  data_pagamento: string | null; status: string; observacao: string | null;
+  data_pagamento: string | null; data_vencimento?: string | null; status: string; observacao: string | null;
   recorrente: boolean; dia_vencimento: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
   detalhe: { label: string; valor: number }[];
@@ -1960,7 +1960,7 @@ function FolhaPagamentoView() {
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr>
-              <th>Mês</th><th>Funcionário</th><th>Competência</th>
+              <th title="Mês de pagamento (quando paga) ou de vencimento (quando pendente)">Mês</th><th>Funcionário</th><th title="Mês de referência do salário">Competência</th>
               <th style={{ textAlign: "right" }}>Valor bruto</th>
               <th style={{ textAlign: "right" }}>Descontos de folha</th>
               <th style={{ textAlign: "right" }}>Descontos de vale</th>
@@ -1977,10 +1977,11 @@ function FolhaPagamentoView() {
                 return (
                   <Fragment key={r.id}>
                     <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}>
-                      <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}
+                        title={r.data_pagamento ? "Mês em que a folha foi paga" : "Mês de vencimento (pagamento previsto)"}>
                         <span className="flex items-center gap-1">
                           {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                          {mesCompLabel(r.competencia)}
+                          {(() => { const d = r.data_pagamento || r.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
                         </span>
                       </td>
                       <td style={{ fontSize: "0.82rem" }}>

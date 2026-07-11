@@ -328,8 +328,22 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
         # O commit expira os objetos já carregados; recarrega para o model_dump.
         registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
 
+    # Data de vencimento da folha (mês de pagamento) — vem da conta a pagar
+    # gerada. Mapeia numero_lancamento_gerado → data_vencimento.
+    numeros = [r.numero_lancamento_gerado for r in registros if r.numero_lancamento_gerado]
+    venc_por_numero: dict[str, object] = {}
+    if numeros:
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all():
+            if c.numero_lancamento and c.numero_lancamento not in venc_por_numero:
+                venc_por_numero[c.numero_lancamento] = c.data_vencimento
+
     return [
-        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "detalhe": _detalhe_folha(session, r)}
+        {
+            **r.model_dump(),
+            "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
+            "data_vencimento": venc_por_numero.get(r.numero_lancamento_gerado),
+            "detalhe": _detalhe_folha(session, r),
+        }
         for r in registros
     ]
 
