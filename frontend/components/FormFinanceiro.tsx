@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
-  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, criarLancamentoFinanceiro, importarXmlFinanceiro,
+  fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -10,6 +10,8 @@ import NovoItemEstoque from "@/components/NovoItemEstoque";
 import NovaContaGerencial from "@/components/NovaContaGerencial";
 import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
+import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import type { ContaPlano } from "@/lib/contaGerencial";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -63,7 +65,9 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  */
 export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void; onSalvo?: () => void }) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
-  const carregarOpcoes = () => fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {});
+  const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
+  const carregarPlano = () => fetchPlanoContas().then(setPlanoContas).catch(() => {});
+  const carregarOpcoes = () => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); carregarPlano(); };
   useEffect(() => { carregarOpcoes(); }, []);
 
   const [produtosEstoque, setProdutosEstoque] = useState<{ nome: string; fornecedor_nome: string | null }[]>([]);
@@ -121,11 +125,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
-  const contasFiltradas = useMemo(
-    () => opcoes.contas_gerenciais.filter((c) => c.codigo.startsWith(tipo === "receita" ? "2" : "3")),
-    [opcoes, tipo]
-  );
-
   function atualizarItem(idx: number, patch: Partial<Item>) {
     setItens((arr) => arr.map((it, i) => {
       if (i !== idx) return it;
@@ -136,10 +135,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       }
       return novo;
     }));
-  }
-  function escolherContaGerencial(idx: number, valor: string) {
-    const match = contasFiltradas.find((c) => `${c.codigo} — ${c.nome}` === valor);
-    atualizarItem(idx, match ? { codigo_conta_gerencial: match.codigo, nome_conta_gerencial: match.nome } : { codigo_conta_gerencial: "", nome_conta_gerencial: valor });
   }
   function acrescentarItem() { setItens((arr) => [...arr, itemVazio()]); }
   function removerItem(idx: number) { setItens((arr) => (arr.length > 1 ? arr.filter((_, i) => i !== idx) : arr)); }
@@ -166,6 +161,67 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setParcelado(false); setQtdParcelas("2"); setParcelas([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
     setXmlTexto(""); setXmlAberto(false);
+  }
+
+  // ── Rascunho automático ──────────────────────────────────────────────
+  // O usuário costuma sair do lançamento no meio (ex.: para conferir um
+  // cadastro) e perdia tudo. Agora o formulário salva um rascunho sozinho
+  // enquanto está preenchido e, ao voltar, oferece retomar ou descartar.
+  const RASCUNHO_KEY = `rascunho_financeiro_${tipo}`;
+  const [rascunhoPendente, setRascunhoPendente] = useState<any | null>(() => {
+    if (typeof window === "undefined") return null;
+    try { const raw = localStorage.getItem(RASCUNHO_KEY); return raw ? JSON.parse(raw) : null; } catch { return null; }
+  });
+
+  function montarRascunho() {
+    return {
+      itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento,
+      dataEmissao, dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo,
+      parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
+      numeroDocumentoPagamento, salvoEm: new Date().toISOString(),
+    };
+  }
+  function aplicarRascunho(d: any) {
+    if (!d) return;
+    setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
+    setCentroCusto(d.centroCusto || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
+    setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
+    setDataEmissao(d.dataEmissao || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
+    setEntregue(!!d.entregue); setDesconto(d.desconto || ""); setAcrescimo(d.acrescimo || "");
+    setParcelado(!!d.parcelado); setQtdParcelas(d.qtdParcelas || "2"); setParcelas(Array.isArray(d.parcelas) ? d.parcelas : []);
+    setJaPago(!!d.jaPago); setDataPagamento(d.dataPagamento || ""); setValorPago(d.valorPago || "");
+    setContaBancaria(d.contaBancaria || ""); setNumeroDocumentoPagamento(d.numeroDocumentoPagamento || "");
+  }
+
+  // Está "sujo" (com trabalho a perder) se já tem item preenchido ou dados da nota.
+  const sujo = useMemo(() => {
+    const temItem = itens.some((i) => i.produto.trim() || i.nome_conta_gerencial.trim() || i.valor_total.trim() || i.descricao.trim());
+    return Boolean(temItem || fornecedor || numeroDocumento || centroCusto || dataEmissao || Number(desconto) || Number(acrescimo) || jaPago);
+  }, [itens, fornecedor, numeroDocumento, centroCusto, dataEmissao, desconto, acrescimo, jaPago]);
+
+  // Salva/limpa o rascunho e avisa o pai enquanto o formulário muda.
+  useEffect(() => {
+    onSujo?.(sujo);
+    try {
+      if (sujo) localStorage.setItem(RASCUNHO_KEY, JSON.stringify(montarRascunho()));
+      else localStorage.removeItem(RASCUNHO_KEY);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, dataEmissao,
+      dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo, parcelado, qtdParcelas, parcelas,
+      jaPago, dataPagamento, valorPago, contaBancaria, numeroDocumentoPagamento]);
+
+  // Avisa o navegador antes de fechar/atualizar a aba com lançamento em edição.
+  useEffect(() => {
+    const handler = (e: BeforeUnloadEvent) => { if (sujo) { e.preventDefault(); e.returnValue = ""; } };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [sujo]);
+
+  function retomarRascunho() { aplicarRascunho(rascunhoPendente); setRascunhoPendente(null); }
+  function descartarRascunho() {
+    setRascunhoPendente(null);
+    try { localStorage.removeItem(RASCUNHO_KEY); } catch { /* ignore */ }
   }
 
   function aplicarXml(dados: any) {
@@ -309,6 +365,29 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
   return (
     <>
+      {/* Rascunho não salvo de uma edição anterior — retomar ou descartar */}
+      {rascunhoPendente && !sujo && (
+        <div className="card mb-3" style={{ border: "1px solid var(--amber)", background: "rgba(217,119,6,0.08)" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <AlertTriangle size={16} style={{ color: "var(--amber)" }} />
+            <strong style={{ fontSize: "0.85rem" }}>Há um rascunho de lançamento não salvo</strong>
+          </div>
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Você começou um lançamento e saiu sem salvar
+            {rascunhoPendente.salvoEm ? ` (${new Date(rascunhoPendente.salvoEm).toLocaleString("pt-BR")})` : ""}.
+            Deseja retomar o rascunho em edição ou descartá-lo?
+          </p>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={retomarRascunho}>
+              <Check size={14} /> Retomar rascunho
+            </button>
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={descartarRascunho}>
+              <Trash2 size={13} /> Descartar
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Importação de XML de nota */}
       <div
         onDrop={onDrop} onDragOver={(e) => e.preventDefault()}
@@ -362,10 +441,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <Campo label="Conta gerencial">
-                <input list={`fin-contas-${idx}`} style={inputStyle}
-                  value={it.codigo_conta_gerencial ? `${it.codigo_conta_gerencial} — ${it.nome_conta_gerencial}` : it.nome_conta_gerencial}
-                  onChange={(e) => escolherContaGerencial(idx, e.target.value)} placeholder="ex.: 3.01.01.01 — Concentrado protéico" />
-                <datalist id={`fin-contas-${idx}`}>{contasFiltradas.map((c) => <option key={c.codigo} value={`${c.codigo} — ${c.nome}`} />)}</datalist>
+                <SeletorContaGerencial
+                  contas={planoContas}
+                  tipo={tipo}
+                  codigo={it.codigo_conta_gerencial}
+                  nome={it.nome_conta_gerencial}
+                  onSelect={(codigo, nome) => atualizarItem(idx, { codigo_conta_gerencial: codigo, nome_conta_gerencial: nome })}
+                  placeholder="Escolha a conta (só o galho mais baixo)…"
+                />
               </Campo>
               {it.tipo_item === "servico" ? (
                 <Campo label="Serviço">
