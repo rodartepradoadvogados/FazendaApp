@@ -170,12 +170,26 @@ def _competencia_seguinte(competencia: str) -> str:
     return f"{ano:04d}-{mes:02d}"
 
 
-def _aplicar_vale_parcelas(session: Session, pessoa_id: int, competencia: str) -> float:
+def _valor_vale(session: Session, pessoa_id: int, competencia: str) -> float:
     """
-    Soma e marca como aplicadas as parcelas de vale pendentes da pessoa nesta
-    competência — o valor retornado deve ser somado aos descontos do
-    lançamento de folha dessa competência (manual ou gerado pela recorrência).
+    Soma o valor de TODAS as parcelas de vale da pessoa nesta competência —
+    esse é o "desconto de vale" da folha (coluna separada dos "descontos de
+    folha" manuais). Uma parcela pertence a exatamente uma competência e a
+    pessoa tem no máximo uma folha por competência, então somar todas é
+    correto e idempotente (não acumula em recomputações sucessivas).
     """
+    parcelas = session.exec(
+        select(ValeParcela).where(
+            ValeParcela.pessoa_id == pessoa_id,
+            ValeParcela.competencia == competencia,
+        )
+    ).all()
+    return round(sum(p.valor for p in parcelas), 2)
+
+
+def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) -> None:
+    """Marca como aplicadas as parcelas de vale absorvidas por uma folha desta
+    competência — só bookkeeping; o valor_vale vem sempre da SOMA, não daqui."""
     pendentes = session.exec(
         select(ValeParcela).where(
             ValeParcela.pessoa_id == pessoa_id,
@@ -183,13 +197,9 @@ def _aplicar_vale_parcelas(session: Session, pessoa_id: int, competencia: str) -
             ValeParcela.aplicada == False,  # noqa: E712
         )
     ).all()
-    if not pendentes:
-        return 0.0
-    total = round(sum(p.valor for p in pendentes), 2)
     for p in pendentes:
         p.aplicada = True
         session.add(p)
-    return total
 
 
 def _gerar_folha_recorrente(session: Session) -> None:
@@ -217,12 +227,14 @@ def _gerar_folha_recorrente(session: Session) -> None:
             if not existe:
                 ano, mes = (int(x) for x in competencia.split("-"))
                 dia = min(max(modelo.dia_vencimento or 5, 1), 28)
-                descontos = round(modelo.descontos + _aplicar_vale_parcelas(session, modelo.pessoa_id, competencia), 2)
-                valor_liquido = round(modelo.valor_bruto - descontos, 2)
+                descontos = round(modelo.descontos, 2)
+                valor_vale = _valor_vale(session, modelo.pessoa_id, competencia)
+                _marcar_vale_aplicado(session, modelo.pessoa_id, competencia)
+                valor_liquido = round(modelo.valor_bruto - descontos - valor_vale, 2)
                 numero_lancamento = _proximo_numero_lancamento(session, ano)
                 nova = FolhaPagamento(
                     pessoa_id=modelo.pessoa_id, competencia=competencia, valor_bruto=modelo.valor_bruto,
-                    descontos=descontos, valor_liquido=valor_liquido, status="pendente",
+                    descontos=descontos, valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
                 )
@@ -249,21 +261,33 @@ def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
     expansão da linha da folha no frontend (em vez da antiga lista de vales
     solta abaixo do lançamento de vale).
     """
-    parcelas_vale = session.exec(
-        select(ValeParcela).where(
-            ValeParcela.pessoa_id == registro.pessoa_id, ValeParcela.competencia == registro.competencia
-        )
-    ).all()
+    parcelas_vale = sorted(
+        session.exec(
+            select(ValeParcela).where(
+                ValeParcela.pessoa_id == registro.pessoa_id, ValeParcela.competencia == registro.competencia
+            )
+        ).all(),
+        key=lambda p: (p.vale_id, p.id or 0),
+    )
     detalhe = [{"label": "Salário bruto", "valor": registro.valor_bruto}]
     if registro.percentual_inss:
         detalhe.append({"label": f"INSS ({registro.percentual_inss:g}%)", "valor": -registro.valor_inss})
     if registro.percentual_ir:
         detalhe.append({"label": f"IR ({registro.percentual_ir:g}%)", "valor": -registro.valor_ir})
-    for p in sorted(parcelas_vale, key=lambda p: p.competencia):
-        detalhe.append({"label": f"Vale (parcela {p.competencia})", "valor": -p.valor})
-    outros = round(registro.descontos - sum(p.valor for p in parcelas_vale), 2)
-    if abs(outros) > 0.001:
-        detalhe.append({"label": "Outros descontos", "valor": -outros})
+    # Uma linha por parcela de vale, com o valor REAL da parcela (descontos de
+    # vale). Numera a parcela na sequência do PRÓPRIO vale (k/n, ex.: 1/2, 2/2),
+    # ordenando todas as parcelas do vale por competência — não só as deste mês.
+    for p in parcelas_vale:
+        irmas = sorted(
+            session.exec(select(ValeParcela).where(ValeParcela.vale_id == p.vale_id)).all(),
+            key=lambda x: (x.competencia, x.id or 0),
+        )
+        n = len(irmas)
+        k = next((i + 1 for i, x in enumerate(irmas) if x.id == p.id), 1)
+        detalhe.append({"label": f"Vale (parcela {k}/{n})", "valor": -p.valor})
+    # "Descontos de folha" manuais — vêm de registro.descontos, SEM misturar vale.
+    if abs(registro.descontos) > 0.001:
+        detalhe.append({"label": "Outros descontos", "valor": -registro.descontos})
     detalhe.append({"label": "Valor líquido", "valor": registro.valor_liquido})
     return detalhe
 
@@ -273,6 +297,37 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
     _gerar_folha_recorrente(session)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
+
+    # Self-heal: um vale lançado DEPOIS da folha (ainda não paga) não estava
+    # sendo refletido. Recomputa o valor_vale a partir da SOMA das parcelas e,
+    # se mudou, atualiza o líquido e a conta a pagar vinculada.
+    houve_mudanca = False
+    for registro in registros:
+        if registro.status == "pago":
+            continue
+        vv = _valor_vale(session, registro.pessoa_id, registro.competencia)
+        if abs(vv - (registro.valor_vale or 0)) > 0.001:
+            registro.valor_vale = vv
+            registro.valor_liquido = round(
+                registro.valor_bruto - registro.descontos - registro.valor_inss - registro.valor_ir - vv, 2
+            )
+            _marcar_vale_aplicado(session, registro.pessoa_id, registro.competencia)
+            session.add(registro)
+            if registro.numero_lancamento_gerado:
+                conta = session.exec(
+                    select(ContaGerencial).where(
+                        ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado
+                    )
+                ).first()
+                if conta and conta.valor_pago is None:
+                    conta.valor_total = registro.valor_liquido
+                    session.add(conta)
+            houve_mudanca = True
+    if houve_mudanca:
+        session.commit()
+        # O commit expira os objetos já carregados; recarrega para o model_dump.
+        registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
+
     return [
         {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "detalhe": _detalhe_folha(session, r)}
         for r in registros
@@ -288,10 +343,12 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         raise HTTPException(status_code=400, detail="Status inválido")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
-    descontos = round(dados.descontos + _aplicar_vale_parcelas(session, dados.pessoa_id, dados.competencia), 2)
+    descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
+    valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
+    _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
-    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir, 2)
+    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
 
@@ -305,7 +362,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     registro = FolhaPagamento(
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
         descontos=descontos, percentual_inss=dados.percentual_inss, percentual_ir=dados.percentual_ir,
-        valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
+        valor_inss=valor_inss, valor_ir=valor_ir, valor_vale=valor_vale, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
@@ -342,7 +399,10 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
         raise HTTPException(status_code=400, detail="Status inválido")
     valor_inss = round(dados.valor_inss, 2)
     valor_ir = round(dados.valor_ir, 2)
-    valor_liquido = round(dados.valor_bruto - dados.descontos - valor_inss - valor_ir, 2)
+    descontos = round(dados.descontos, 2)  # "descontos de folha" manuais, sem vale
+    valor_vale = _valor_vale(session, dados.pessoa_id, dados.competencia)
+    _marcar_vale_aplicado(session, dados.pessoa_id, dados.competencia)
+    valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
@@ -350,11 +410,12 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.pessoa_id = dados.pessoa_id
     registro.competencia = dados.competencia
     registro.valor_bruto = dados.valor_bruto
-    registro.descontos = dados.descontos
+    registro.descontos = descontos
     registro.percentual_inss = dados.percentual_inss
     registro.percentual_ir = dados.percentual_ir
     registro.valor_inss = valor_inss
     registro.valor_ir = valor_ir
+    registro.valor_vale = valor_vale
     registro.valor_liquido = valor_liquido
     registro.data_pagamento = dados.data_pagamento
     registro.status = dados.status
@@ -478,6 +539,37 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session)) -> dict:
     for competencia, valor in zip(competencias, valores_parcela):
         session.add(ValeParcela(vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor))
     session.commit()
+
+    # Efeito imediato: se já existir uma folha (não paga) para alguma das
+    # competências afetadas, recomputa o valor_vale/líquido e sincroniza a
+    # conta a pagar vinculada — sem depender do self-heal no próximo GET.
+    for competencia in competencias:
+        folha = session.exec(
+            select(FolhaPagamento).where(
+                FolhaPagamento.pessoa_id == dados.pessoa_id,
+                FolhaPagamento.competencia == competencia,
+                FolhaPagamento.status != "pago",
+            )
+        ).first()
+        if not folha:
+            continue
+        folha.valor_vale = _valor_vale(session, dados.pessoa_id, competencia)
+        folha.valor_liquido = round(
+            folha.valor_bruto - folha.descontos - folha.valor_inss - folha.valor_ir - folha.valor_vale, 2
+        )
+        _marcar_vale_aplicado(session, dados.pessoa_id, competencia)
+        session.add(folha)
+        if folha.numero_lancamento_gerado:
+            conta = session.exec(
+                select(ContaGerencial).where(
+                    ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado
+                )
+            ).first()
+            if conta and conta.valor_pago is None:
+                conta.valor_total = folha.valor_liquido
+                session.add(conta)
+    session.commit()
+
     return {**vale.model_dump(), "parcelas_detalhe": [
         {"competencia": c, "valor": v} for c, v in zip(competencias, valores_parcela)
     ]}

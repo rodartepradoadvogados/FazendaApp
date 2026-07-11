@@ -592,6 +592,10 @@ class FolhaPagamento(SQLModel, table=True):
     percentual_ir: float = 0.0
     valor_inss: float = 0.0
     valor_ir: float = 0.0
+    # Descontos de vale (adiantamentos) — coluna SEPARADA de `descontos` (que
+    # passa a ser só os "descontos de folha" manuais). Computado sempre a partir
+    # da SOMA das ValeParcela da competência, para ser idempotente.
+    valor_vale: float = 0.0
     valor_liquido: float
     data_pagamento: Optional[date] = None
     status: str = "pendente"  # pendente | pago

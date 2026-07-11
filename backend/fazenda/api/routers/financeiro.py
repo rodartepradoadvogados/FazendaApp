@@ -4,7 +4,7 @@ Router financeiro — DRE, fluxo de caixa, KPIs e lançamentos financeiros
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
@@ -672,6 +672,31 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
     }
 
 
+class LancamentoEditIn(BaseModel):
+    """Edição dos campos descritivos/de valor de UMA conta gerencial (parcela).
+
+    Todos os campos são opcionais — só os enviados são atualizados. Campos de
+    pagamento (data_pagamento/valor_pago) não entram aqui: editar é
+    independente de dar baixa, e uma conta já paga/recebida pode ser editada.
+    """
+    descricao: Optional[str] = None
+    codigo_conta: Optional[str] = None
+    centro_custo: Optional[str] = None
+    fornecedor_cliente: Optional[str] = None
+    numero_nota: Optional[str] = None
+    tipo_documento: Optional[str] = None
+    data_emissao: Optional[date] = None
+    data_vencimento: Optional[date] = None
+    data_competencia: Optional[date] = None
+    data_prevista_entrada: Optional[date] = None
+    data_pedido: Optional[date] = None
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
+    valor_total: Optional[float] = None
+    desconto_acrescimo: Optional[float] = None
+    responsavel: Optional[str] = None
+
+
 @router.put("/lancamentos/{lancamento_id}/pagar")
 def pagar_lancamento(lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session)) -> dict:
     """Dá baixa (marca como pago/recebido) numa conta a pagar/a receber."""
@@ -727,6 +752,55 @@ def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> d
 
     session.commit()
     return {"baixados": len(baixados), "nao_encontrados": nao_encontrados}
+
+
+# Definido DEPOIS de /baixa-lote de propósito: uma rota de segmento único como
+# /lancamentos/{lancamento_id} capturaria "baixa-lote" e quebraria aquela rota.
+@router.put("/lancamentos/{lancamento_id}")
+def editar_lancamento(lancamento_id: int, dados: LancamentoEditIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Edita os campos descritivos/de valor de UMA conta gerencial (uma parcela),
+    identificada pelo seu id. Não mexe no pagamento — uma conta já paga/recebida
+    também pode ser editada. Quando o lançamento é de parcela única e tem
+    exatamente um item, espelha as mudanças no LancamentoItem para manter os
+    relatórios por item (DRE/RMCA) coerentes.
+    """
+    registro = session.get(ContaGerencial, lancamento_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+
+    enviados = dados.model_dump(exclude_unset=True)
+    for campo, valor in enviados.items():
+        if campo == "centro_custo":
+            registro.centro_custo = mapear_centro_custo(valor)
+        else:
+            setattr(registro, campo, valor)
+    registro.atualizado_em = datetime.utcnow()
+    session.add(registro)
+
+    # Espelha no item quando é seguro (parcela única + 1 item), para relatórios
+    # baseados em LancamentoItem (DRE/RMCA) ficarem consistentes.
+    if registro.parcela_total == 1 and registro.numero_lancamento:
+        itens = session.exec(
+            select(LancamentoItem).where(LancamentoItem.numero_lancamento == registro.numero_lancamento)
+        ).all()
+        if len(itens) == 1:
+            item = itens[0]
+            if "descricao" in enviados:
+                item.descricao = registro.descricao
+            if "valor_total" in enviados:
+                item.valor_total = registro.valor_total
+            if "quantidade" in enviados:
+                item.quantidade = registro.quantidade
+            if "valor_unitario" in enviados:
+                item.valor_unitario = registro.valor_unitario
+            if "codigo_conta" in enviados:
+                item.codigo_conta_gerencial = registro.codigo_conta
+            session.add(item)
+
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
 
 
 @router.post("/importar-xml")
