@@ -25,14 +25,15 @@ function Campo({ label, children, full }: { label: string; children: React.React
 
 type Parcela = { data_vencimento: string; valor: string };
 type TipoItem = "produto" | "servico";
+type ModoValor = "unitario" | "total";
 type Item = {
   codigo_conta_gerencial: string; nome_conta_gerencial: string;
   tipo_item: TipoItem; produto: string; descricao: string;
-  quantidade: string; valor_unitario: string; valor_total: string; valorTotalManual: boolean;
+  quantidade: string; valor_unitario: string; valor_total: string; modoValor: ModoValor;
 };
 const itemVazio = (): Item => ({
   codigo_conta_gerencial: "", nome_conta_gerencial: "", tipo_item: "produto", produto: "", descricao: "",
-  quantidade: "", valor_unitario: "", valor_total: "", valorTotalManual: false,
+  quantidade: "", valor_unitario: "", valor_total: "", modoValor: "unitario",
 });
 
 type Opcoes = {
@@ -98,6 +99,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [tipoDocumento, setTipoDocumento] = useState("");
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
+  const [dataVencimento, setDataVencimento] = useState("");
   const [dataPrevistaEntrada, setDataPrevistaEntrada] = useState("");
   const [dataPedido, setDataPedido] = useState("");
   const [entregue, setEntregue] = useState(false);
@@ -129,9 +131,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setItens((arr) => arr.map((it, i) => {
       if (i !== idx) return it;
       const novo = { ...it, ...patch };
-      const q = Number(novo.quantidade), v = Number(novo.valor_unitario);
-      if (novo.quantidade && novo.valor_unitario && !novo.valorTotalManual && !("valor_total" in patch)) {
-        novo.valor_total = (q * v).toFixed(2);
+      const q = Number(novo.quantidade);
+      if (novo.modoValor === "total") {
+        // Usuário digita o valor total; o unitário é derivado (total ÷ quantidade).
+        // Se a quantidade estiver vazia/0, o unitário fica em branco e o total é usado como está.
+        const t = Number(novo.valor_total);
+        novo.valor_unitario = novo.valor_total && q > 0 ? (t / q).toFixed(2) : "";
+      } else {
+        // Modo unitário (padrão): usuário digita quantidade e unitário; o total é derivado.
+        const v = Number(novo.valor_unitario);
+        novo.valor_total = novo.quantidade && novo.valor_unitario ? (q * v).toFixed(2) : "";
       }
       return novo;
     }));
@@ -156,7 +165,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   function limpar() {
     setItens([itemVazio()]);
     setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
-    setNumeroDocumento(""); setDataEmissao(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
+    setNumeroDocumento(""); setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     setDesconto(""); setAcrescimo("");
     setParcelado(false); setQtdParcelas("2"); setParcelas([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
@@ -176,7 +185,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   function montarRascunho() {
     return {
       itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento,
-      dataEmissao, dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo,
+      dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo,
       parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
       numeroDocumentoPagamento, salvoEm: new Date().toISOString(),
     };
@@ -186,7 +195,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
     setCentroCusto(d.centroCusto || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
-    setDataEmissao(d.dataEmissao || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
+    setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
     setEntregue(!!d.entregue); setDesconto(d.desconto || ""); setAcrescimo(d.acrescimo || "");
     setParcelado(!!d.parcelado); setQtdParcelas(d.qtdParcelas || "2"); setParcelas(Array.isArray(d.parcelas) ? d.parcelas : []);
     setJaPago(!!d.jaPago); setDataPagamento(d.dataPagamento || ""); setValorPago(d.valorPago || "");
@@ -207,7 +216,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       else localStorage.removeItem(RASCUNHO_KEY);
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, dataEmissao,
+  }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, dataEmissao, dataVencimento,
       dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo, parcelado, qtdParcelas, parcelas,
       jaPago, dataPagamento, valorPago, contaBancaria, numeroDocumentoPagamento]);
 
@@ -236,10 +245,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
         quantidade: it.quantidade != null ? String(it.quantidade) : "",
         valor_unitario: it.valor_unitario != null ? String(it.valor_unitario) : "",
         valor_total: it.valor_total != null ? String(it.valor_total) : "",
-        valorTotalManual: it.valor_total != null,
+        // Preserva o total informado na nota (não recalcula por quantidade × unitário).
+        modoValor: it.valor_total != null ? "total" : "unitario",
       })));
     } else if (dados.valor_total != null) {
-      setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), valorTotalManual: true }]);
+      setItens([{ ...itemVazio(), produto: "Importado do XML", valor_total: String(dados.valor_total), modoValor: "total" }]);
     }
     if (Array.isArray(dados.parcelas) && dados.parcelas.length) {
       setParcelado(true);
@@ -274,7 +284,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       if (dados.valor_total != null) setValorPago(String(dados.valor_total));
       if (dados.conta_bancaria) setContaBancaria(dados.conta_bancaria);
       if (!dados.itens?.length && dados.valor_total != null) {
-        setItens([{ ...itemVazio(), produto: dados.observacao || "Recibo anexado", valor_total: String(dados.valor_total), valorTotalManual: true }]);
+        setItens([{ ...itemVazio(), produto: dados.observacao || "Recibo anexado", valor_total: String(dados.valor_total), modoValor: "total" }]);
       }
     }
   }
@@ -330,6 +340,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       tipo_documento: tipoDocumento || null,
       numero_documento: numeroDocumento || null,
       data_emissao: dataEmissao || null,
+      // Só vale para lançamento não-parcelado; nas parcelas cada uma tem seu vencimento.
+      data_vencimento: !parcelado ? (dataVencimento || null) : null,
       data_prevista_entrada: dataPrevistaEntrada || null,
       data_pedido: dataPedido || null,
       entregue,
@@ -472,12 +484,32 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
               </Campo>
             </div>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-3">
+            <div className="flex items-center gap-2 mt-3 mb-1" style={{ flexWrap: "wrap" }}>
+              {(["unitario", "total"] as const).map((m) => (
+                <button key={m} type="button"
+                  title={m === "unitario" ? "Digitar a quantidade e o valor unitário (o total é calculado)" : "Digitar a quantidade e o valor total (o unitário é calculado)"}
+                  onClick={() => atualizarItem(idx, { modoValor: m })}
+                  style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (it.modoValor === m ? "var(--dourado)" : "var(--border)"),
+                    background: it.modoValor === m ? "var(--dourado)" : "transparent",
+                    color: it.modoValor === m ? "#1a1a1a" : "var(--text-muted)", fontWeight: it.modoValor === m ? 700 : 400 }}>
+                  {m === "unitario" ? "Informar valor unitário" : "Informar valor total"}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-1">
               <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={it.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
-              <Campo label="Valor unitário (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={it.valor_unitario} onChange={(e) => atualizarItem(idx, { valor_unitario: e.target.value })} /></Campo>
-              <Campo label="Valor total (R$)">
-                <input type="number" inputMode="decimal" style={inputStyle} value={it.valor_total}
-                  onChange={(e) => atualizarItem(idx, { valor_total: e.target.value, valorTotalManual: true })} />
+              <Campo label={it.modoValor === "unitario" ? "Valor unitário (R$)" : "Valor unitário (R$) — calculado"}>
+                <input type="number" inputMode="decimal"
+                  style={it.modoValor === "unitario" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
+                  value={it.valor_unitario} readOnly={it.modoValor === "total"}
+                  onChange={(e) => atualizarItem(idx, { valor_unitario: e.target.value })} />
+              </Campo>
+              <Campo label={it.modoValor === "total" ? "Valor total (R$)" : "Valor total (R$) — calculado"}>
+                <input type="number" inputMode="decimal"
+                  style={it.modoValor === "total" ? inputStyle : { ...inputStyle, opacity: 0.55, cursor: "not-allowed" }}
+                  value={it.valor_total} readOnly={it.modoValor === "unitario"}
+                  onChange={(e) => atualizarItem(idx, { valor_total: e.target.value })} />
               </Campo>
             </div>
             <button type="button" className="btn-ghost" title="Cadastrar um novo produto, serviço ou conta gerencial" style={{ fontSize: "0.75rem", marginTop: "0.6rem" }}
@@ -505,8 +537,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
           </div>
         </Campo>
         <Campo label="Centro de custo">
-          <input list="fin-centros" style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)} />
-          <datalist id="fin-centros">{opcoes.centros_custo.map((c) => <option key={c} value={c} />)}</datalist>
+          <select style={inputStyle} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+            <option value="">Selecione…</option>
+            {/* Valor legado que não esteja mais na lista canônica — preservado para não perder o dado. */}
+            {centroCusto && !opcoes.centros_custo.includes(centroCusto) && <option value={centroCusto}>{centroCusto}</option>}
+            {opcoes.centros_custo.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
         </Campo>
         <Campo label="Responsável pelo lançamento">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
@@ -523,6 +559,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
         <Campo label="Número do documento"><input style={inputStyle} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></Campo>
         <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} /></Campo>
+        {!parcelado && (
+          <Campo label="Data de vencimento">
+            <input type="date" style={inputStyle} value={dataVencimento} onChange={(e) => setDataVencimento(e.target.value)} />
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+              Usada para lançar em Contas a pagar e na Agenda.
+            </span>
+          </Campo>
+        )}
         <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
         <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
 
