@@ -17,12 +17,12 @@ export function aplicarTema(t: Tema) {
 }
 
 export function ThemeSwitcher() {
-  const [tema, setTema] = useState<Tema>("escuro");
+  const [tema, setTema] = useState<Tema>("misto");
 
   // Sincroniza com o que o script anti-flash já aplicou no <html>.
   useEffect(() => {
-    const atual = (document.documentElement.getAttribute("data-theme") as Tema) || "escuro";
-    setTema(CICLO.includes(atual) ? atual : "escuro");
+    const atual = (document.documentElement.getAttribute("data-theme") as Tema) || "misto";
+    setTema(CICLO.includes(atual) ? atual : "misto");
   }, []);
 
   function ciclar() {

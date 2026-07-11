@@ -19,10 +19,10 @@ export default function RootLayout({
     <html lang="pt-BR" suppressHydrationWarning>
       <head>
         {/* Aplica o tema salvo ANTES de pintar a tela (evita "piscar" o tema
-            errado no carregamento). Padrão: escuro. */}
+            errado no carregamento). Padrão: misto. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='escuro';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','escuro');}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','misto');}})();`,
           }}
         />
       </head>

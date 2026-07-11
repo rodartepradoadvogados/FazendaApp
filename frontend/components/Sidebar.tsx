@@ -24,17 +24,23 @@ import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } fro
 import { LogOut, UserCircle } from "lucide-react";
 import { BullLogo } from "@/components/BullLogo";
 
+// Ordem por fluxo de gestão: (1) ciclo diário — panorama, o que fazer e
+// registrar; (2) áreas de manejo do rebanho; (3) análise e administração;
+// (4) Configurações fica sempre por último (acrescentada dinamicamente).
 const links = [
+  // ── Ciclo diário ──
   { href: "/",            label: "Capa",        icon: Home,          title: "Capa — visão geral da fazenda" },
-  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro" },
   { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir" },
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia" },
-  { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva" },
-  { href: "/relatorios",  label: "Relatórios",   icon: FileBarChart,  title: "Relatórios gerenciais — listas de manejo do dia e gráficos gerenciais do rebanho" },
+  // ── Manejo do rebanho ──
   { href: "/rebanho",     label: "Rebanho",      icon: Beef,          title: "Rebanho — animais, movimentações entre lotes e ficha do animal" },
+  { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva" },
   { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite" },
-  { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote" },
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário" },
+  { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote" },
+  // ── Análise e administração ──
+  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro" },
+  { href: "/relatorios",  label: "Relatórios",   icon: FileBarChart,  title: "Relatórios gerenciais — listas de manejo do dia e gráficos gerenciais do rebanho" },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3,     title: "Financeiro — contas a pagar/receber, folha e indicadores" },
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo" },
 ];
