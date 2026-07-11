@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X } from "lucide-react";
+import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen } from "@/lib/api";
 
 type Semen = {
@@ -13,6 +13,10 @@ const formVazio: Form = { touro_nome: "", codigo: "", central: "", tipo: "conven
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const cellInputStyle: React.CSSProperties = { ...inputStyle, padding: "0.25rem 0.4rem", fontSize: "0.78rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(--surface)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem 0.75rem 0.5rem 2rem", fontSize: "0.85rem" };
+
+// Normaliza texto para busca insensível a maiúsculas e acentos.
+const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
 // Mesmos limiares do relatório de manejo → Estoque de sêmen.
 // Convencional: <15 vermelho, 15–25 amarelo, >25 verde.
@@ -43,6 +47,7 @@ function paraPayload(f: Form) {
 export default function CadastroEstoqueSemen() {
   const [itens, setItens] = useState<Semen[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
 
   // Formulário fixo de inclusão no topo.
   const [novo, setNovo] = useState<Form>(formVazio);
@@ -107,6 +112,11 @@ export default function CadastroEstoqueSemen() {
     }
   };
 
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((s) =>
+    !termoBusca || normalizar(`${s.touro_nome} ${s.codigo ?? ""} ${s.central ?? ""} ${s.observacao ?? ""}`).includes(termoBusca)
+  );
+
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center gap-2">
@@ -151,11 +161,16 @@ export default function CadastroEstoqueSemen() {
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
       {itens && (
-        <div className="overflow-x-auto">
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar touro…" title="Buscar por touro, código, central ou observação" />
+          </div>
+          <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr><th>Touro</th><th>Código</th><th>Central</th><th>Tipo</th><th>Doses</th><th></th></tr></thead>
             <tbody>
-              {itens.map((s) => {
+              {filtrados.map((s) => {
                 const emEdicao = editId === s.id;
                 const nivel = nivelDoses(s.tipo, s.doses);
                 return (
@@ -220,9 +235,11 @@ export default function CadastroEstoqueSemen() {
                 );
               })}
               {!itens.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum touro cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
-        </div>
+          </div>
+        </>
       )}
     </div>
   );
