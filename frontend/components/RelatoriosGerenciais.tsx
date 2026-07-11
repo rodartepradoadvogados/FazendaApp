@@ -8,6 +8,7 @@ import {
   CartesianGrid, Legend,
 } from "recharts";
 import { SecaoRecolhivel } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { fetchRelatorioGerencial } from "@/lib/api";
 
 // ── Estilos e paletas compartilhados ──
@@ -94,6 +95,7 @@ function CardDistribuicaoDel() {
   const { data, loading, error } = useGerencial("distribuicao-del", { ordem, del_min: delMin, del_max: delMax });
 
   const pontos: any[] = (data?.pontos || []).map((p: any, i: number) => ({ ...p, x: i + 1 }));
+  const ordTabela = useOrdenacao<any>(data?.tabela || []);
 
   return (
     <>
@@ -152,10 +154,15 @@ function CardDistribuicaoDel() {
           {data?.tabela?.length > 0 && (
             <table className="fazenda-table" style={{ marginTop: "0.9rem" }}>
               <thead>
-                <tr><th>Parâmetro</th><th>Vacas</th><th>Atual</th><th>Meta</th></tr>
+                <tr>
+                  <ThOrdenavel label="Parâmetro" campo="label" coluna={ordTabela.coluna} dir={ordTabela.dir} ordenar={ordTabela.ordenar} />
+                  <ThOrdenavel label="Vacas" campo="vacas" coluna={ordTabela.coluna} dir={ordTabela.dir} ordenar={ordTabela.ordenar} />
+                  <ThOrdenavel label="Atual" campo="atual" coluna={ordTabela.coluna} dir={ordTabela.dir} ordenar={ordTabela.ordenar} />
+                  <ThOrdenavel label="Meta" campo="meta" coluna={ordTabela.coluna} dir={ordTabela.dir} ordenar={ordTabela.ordenar} />
+                </tr>
               </thead>
               <tbody>
-                {data.tabela.map((r: any, i: number) => (
+                {ordTabela.linhasOrdenadas.map((r: any, i: number) => (
                   <tr key={i}>
                     <td>{r.label}</td>
                     <td>{r.vacas}</td>
@@ -382,6 +389,7 @@ function TooltipFluxo({ active, payload, label }: any) {
 function CardFluxoLactacao() {
   const [meses, setMeses] = useState(8);
   const { data, loading, error } = useGerencial("fluxo-lactacao", { meses });
+  const ordLinhas = useOrdenacao<any>(data?.linhas || []);
 
   return (
     <>
@@ -420,10 +428,15 @@ function CardFluxoLactacao() {
           {data?.linhas?.length > 0 && (
             <table className="fazenda-table" style={{ marginTop: "0.9rem" }}>
               <thead>
-                <tr><th>Mês</th><th>Vacas a secar</th><th>Vacas a parir</th><th>Saldo em lactação</th></tr>
+                <tr>
+                  <ThOrdenavel label="Mês" campo="mes" coluna={ordLinhas.coluna} dir={ordLinhas.dir} ordenar={ordLinhas.ordenar} />
+                  <ThOrdenavel label="Vacas a secar" campo="secar" coluna={ordLinhas.coluna} dir={ordLinhas.dir} ordenar={ordLinhas.ordenar} />
+                  <ThOrdenavel label="Vacas a parir" campo="parir" coluna={ordLinhas.coluna} dir={ordLinhas.dir} ordenar={ordLinhas.ordenar} />
+                  <ThOrdenavel label="Saldo em lactação" campo="saldo_lactacao" coluna={ordLinhas.coluna} dir={ordLinhas.dir} ordenar={ordLinhas.ordenar} />
+                </tr>
               </thead>
               <tbody>
-                {data.linhas.map((r: any, i: number) => (
+                {ordLinhas.linhasOrdenadas.map((r: any, i: number) => (
                   <tr key={i}>
                     <td>{r.mes}</td>
                     <td>{r.secar}</td>

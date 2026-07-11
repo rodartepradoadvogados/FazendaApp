@@ -1035,6 +1035,21 @@ export async function criarBaixaLote(dados: {
   return res.json();
 }
 
+export async function atualizarLancamentoFinanceiro(id: number, dados: {
+  descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
+  fornecedor_cliente?: string | null; numero_nota?: string | null; tipo_documento?: string | null;
+  data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
+  data_prevista_entrada?: string | null; data_pedido?: string | null;
+  quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;
+  desconto_acrescimo?: number | null; responsavel?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar o lançamento"); }
+  return res.json();
+}
+
 export async function importarXmlFinanceiro(xml: string) {
   const res = await authFetch(`${API}/financeiro/importar-xml`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ xml }),

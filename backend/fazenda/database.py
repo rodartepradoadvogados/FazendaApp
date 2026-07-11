@@ -92,6 +92,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("percentual_ir", "FLOAT DEFAULT 0"),
         ("valor_inss", "FLOAT DEFAULT 0"),
         ("valor_ir", "FLOAT DEFAULT 0"),
+        ("valor_vale", "FLOAT DEFAULT 0"),
     ],
     "lote": [
         ("status_lactacao", "VARCHAR"),

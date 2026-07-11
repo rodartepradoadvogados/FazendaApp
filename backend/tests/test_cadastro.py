@@ -476,13 +476,16 @@ class TestValeFuncionario:
             "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
         })
         assert r.status_code == 200
-        assert r.json()["descontos"] == 300.0
+        # Vale agora é coluna SEPARADA (valor_vale); descontos = descontos de folha manuais.
+        assert r.json()["valor_vale"] == 300.0
+        assert r.json()["descontos"] == 0.0
         assert r.json()["valor_liquido"] == 1700.0
 
-        # segunda folha na mesma competência não deve reaplicar a parcela já usada
+        # outra competência (2026-03) não tem parcela de vale → sem desconto de vale
         r2 = c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-03", "valor_bruto": 2000.0,
         })
+        assert r2.json()["valor_vale"] == 0.0
         assert r2.json()["descontos"] == 0.0
 
 
