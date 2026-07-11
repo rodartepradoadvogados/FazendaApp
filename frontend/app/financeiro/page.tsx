@@ -15,6 +15,8 @@ import {
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
 import { RESPONSAVEIS } from "@/lib/constants";
 
@@ -109,6 +111,49 @@ function ThOrd({ rotulo, chave, sortKey, sortDir, onSort, style }: {
   );
 }
 
+// Código da conta gerencial de um lançamento (folha, ou o resumo por nível 1).
+const contaDoLanc = (r: Lanc) => r.conta_completa || r.codigo_conta || "";
+// Uma conta selecionada casa com o próprio código e com todos os descendentes
+// ("3.01" casa "3.01", "3.01.02"…) — filtro por conta e toda a subárvore.
+const casaContaGerencial = (r: Lanc, sel: string) => {
+  if (!sel) return true;
+  const c = contaDoLanc(r);
+  return c === sel || c.startsWith(sel + ".");
+};
+
+/**
+ * Filtro por CONTA GERENCIAL em árvore — reusa o mesmo SeletorContaGerencial
+ * dos Lançamentos (árvore, só folha selecionável, estilo por nível). Quando o
+ * contexto mistura receita e despesa (extrato, DRE, fluxo), mostra as duas
+ * árvores; quando é só um tipo, mostra uma. "Limpar" volta para "Todas".
+ */
+function FiltroContaGerencial({ contas, tipos, codigo, nome, onChange }: {
+  contas: ContaPlano[]; tipos: ("despesa" | "receita")[];
+  codigo: string; nome: string; onChange: (codigo: string, nome: string) => void;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem", minWidth: "220px" }}>
+      {tipos.map((t) => (
+        <SeletorContaGerencial
+          key={t}
+          contas={contas}
+          tipo={t}
+          codigo={codigo}
+          nome={nome}
+          onSelect={onChange}
+          placeholder={tipos.length > 1 ? `Conta de ${t === "receita" ? "receita" : "despesa"}…` : "Todas as contas…"}
+        />
+      ))}
+      {codigo && (
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.7rem", alignSelf: "flex-start" }}
+          title="Voltar a considerar todas as contas gerenciais" onClick={() => onChange("", "")}>
+          Limpar conta
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function FinanceiroPage() {
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -123,13 +168,25 @@ export default function FinanceiroPage() {
   // Nota a tratar (pré-selecionada) quando se chega às sub-abas de
   // Pagamento/Recebimento vindo da lista de Contas a pagar/receber ou da Agenda.
   const [notaAlvoRef, setNotaAlvoRef] = useState<string | null>(null);
-  const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string; nivel: number }[]>([]);
+  const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
+  // Opções de fornecedor/cliente e produto/serviço para os filtros dos relatórios.
+  const [opcoesRel, setOpcoesRel] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
+  // Filtros extras dos relatórios (fluxo/DRE/livro) — além de período e centro.
+  const [relTipo, setRelTipo] = useState<"" | "receita" | "despesa">("");
+  const [relFornecedor, setRelFornecedor] = useState("");
+  const [relProduto, setRelProduto] = useState("");
+  const [relDocumento, setRelDocumento] = useState("");
+  const [relConta, setRelConta] = useState("");
+  const [relContaNome, setRelContaNome] = useState("");
 
   const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
     recarregar();
-    fetchOpcoesFinanceiro().then((d) => setContasBancarias(d.contas_bancarias || [])).catch(() => {});
+    fetchOpcoesFinanceiro().then((d) => {
+      setContasBancarias(d.contas_bancarias || []);
+      setOpcoesRel({ fornecedores: d.fornecedores || [], produtos: d.produtos || [] });
+    }).catch(() => {});
     fetchPlanoContas().then(setPlanoContas).catch(() => {});
   }, []);
 
@@ -163,6 +220,13 @@ export default function FinanceiroPage() {
   }, [regs, inicio]);
 
   const centros = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo))).sort(), [regs]);
+  // Produto/serviço: opções vindas do backend + nomes efetivamente lançados nas
+  // notas (produto e serviço dividem o campo `produto` do item).
+  const opcoesProdutoRel = useMemo(() => {
+    const s = new Set<string>(opcoesRel.produtos);
+    (regs ?? []).forEach((r) => (r.itens || []).forEach((it) => { if (it.produto) s.add(it.produto); }));
+    return Array.from(s).sort((a, b) => a.localeCompare(b, "pt-BR"));
+  }, [opcoesRel.produtos, regs]);
 
   // Base de cada sub-aba de contas: em aberto (sem data de pagamento) ou já quitadas.
   const contasBase = useMemo(() => {
@@ -199,9 +263,15 @@ export default function FinanceiroPage() {
     if (!regs || !inicio || !fim) return [];
     return regs.filter((r) => {
       const d = campoData(r);
-      return d && d >= inicio && d <= fim && (!centro || r.centro_custo === centro);
+      if (!(d && d >= inicio && d <= fim && (!centro || r.centro_custo === centro))) return false;
+      if (relTipo && r.tipo !== relTipo) return false;
+      if (relFornecedor && r.fornecedor !== relFornecedor) return false;
+      if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
+      if (relDocumento && !((r.numero_documento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(relDocumento.toLowerCase()))) return false;
+      if (!casaContaGerencial(r, relConta)) return false;
+      return true;
     });
-  }, [regs, contasBase, rel, inicio, fim, centro, contaBanco]);
+  }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta]);
 
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
@@ -427,6 +497,29 @@ export default function FinanceiroPage() {
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta bancária</label>
                 <select style={inputStyle} value={contaBanco} onChange={(e) => setContaBanco(e.target.value)}><option value="">Todas</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}</select></div>
             )}
+            {!CONTAS_IDS.has(rel) && <>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Tipo</label>
+                <select style={inputStyle} value={relTipo} onChange={(e) => setRelTipo(e.target.value as any)}>
+                  <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
+                </select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fornecedor / cliente</label>
+                <select style={inputStyle} value={relFornecedor} onChange={(e) => setRelFornecedor(e.target.value)}>
+                  <option value="">Todos</option>{opcoesRel.fornecedores.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Produto / serviço</label>
+                <select style={inputStyle} value={relProduto} onChange={(e) => setRelProduto(e.target.value)}>
+                  <option value="">Todos</option>{opcoesProdutoRel.map((p) => <option key={p} value={p}>{p}</option>)}
+                </select></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+                <div style={{ position: "relative" }}>
+                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                  <input style={{ ...inputStyle, paddingLeft: "1.6rem" }} value={relDocumento} onChange={(e) => setRelDocumento(e.target.value)} placeholder="ex.: 4521" /></div></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Conta gerencial</label>
+                <FiltroContaGerencial contas={planoContas}
+                  tipos={relTipo === "receita" ? ["receita"] : relTipo === "despesa" ? ["despesa"] : ["despesa", "receita"]}
+                  codigo={relConta} nome={relContaNome}
+                  onChange={(c, n) => { setRelConta(c); setRelContaNome(n); }} /></div>
+            </>}
             <span style={{ fontSize: "0.75rem", color: "var(--text-muted)", paddingBottom: "0.4rem" }}>
               {!CONTAS_IDS.has(rel) && <>Regime: <strong style={{ color: "var(--dourado-light)" }}>{rel === "dre" ? "competência" : "caixa"}</strong> · </>}
               {filtrados.length} lançamento{filtrados.length === 1 ? "" : "s"}
@@ -435,7 +528,7 @@ export default function FinanceiroPage() {
         </div>
 
         {CONTAS_IDS.has(rel) ? (
-          <TabelaContas rel={rel} itens={filtrados} onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }} />
+          <TabelaContas rel={rel} itens={filtrados} planoContas={planoContas} onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -1027,15 +1120,24 @@ function PatrimonioView() {
   );
 }
 
-function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTratar: (l: Lanc) => void }) {
+function TabelaContas({ rel, itens, planoContas, onTratar }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void }) {
   const emAberto = rel === "a_pagar" || rel === "a_receber";
   const hoje = new Date().toISOString().slice(0, 10);
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
+  // Tipo desta aba (para a árvore de conta gerencial). Extrato mistura os dois.
+  const tiposConta: ("despesa" | "receita")[] =
+    rel === "a_receber" || rel === "recebidas" ? ["receita"]
+    : rel === "extrato" ? ["despesa", "receita"] : ["despesa"];
 
   // Filtros próprios da lista (além do período/centro globais): produto/serviço,
-  // fornecedor/cliente e faixas de vencimento e de pagamento. Todos client-side.
+  // fornecedor/cliente, nº do documento, conta gerencial, tipo (extrato) e faixas
+  // de vencimento e de pagamento. Todos client-side.
   const [fProduto, setFProduto] = useState("");
   const [fContraparte, setFContraparte] = useState("");
+  const [fDocumento, setFDocumento] = useState("");
+  const [fConta, setFConta] = useState("");
+  const [fContaNome, setFContaNome] = useState("");
+  const [fTipo, setFTipo] = useState<"" | "receita" | "despesa">("");
   const [fVencDe, setFVencDe] = useState("");
   const [fVencAte, setFVencAte] = useState("");
   const [fPagDe, setFPagDe] = useState("");
@@ -1055,9 +1157,12 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
   const filtradosLocal = useMemo(() => itens.filter((r) =>
     (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
     (!fContraparte || r.fornecedor === fContraparte) &&
+    (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
+    casaContaGerencial(r, fConta) &&
+    (rel !== "extrato" || !fTipo || r.tipo === fTipo) &&
     (!fVencDe || (r.data_vencimento || "") >= fVencDe) && (!fVencAte || (r.data_vencimento || "") <= fVencAte) &&
     (!fPagDe || (r.data_pagamento || "") >= fPagDe) && (!fPagAte || (r.data_pagamento || "") <= fPagAte)
-  ), [itens, fProduto, fContraparte, fVencDe, fVencAte, fPagDe, fPagAte]);
+  ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel, fVencDe, fVencAte, fPagDe, fPagAte]);
 
   const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
     numero: (r) => (r.numero_lancamento || "").toLowerCase(),
@@ -1078,6 +1183,11 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a lista</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={labelStyleLote}>Nº do documento</label>
+            <div style={{ position: "relative" }}>
+              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+              <input style={{ ...selStyleLote, paddingLeft: "1.6rem" }} value={fDocumento} onChange={(e) => setFDocumento(e.target.value)} placeholder="ex.: 4521 ou LC-2026-00012" />
+            </div></div>
           <div><label style={labelStyleLote}>Produto / serviço</label>
             <select style={selStyleLote} value={fProduto} onChange={(e) => setFProduto(e.target.value)}>
               <option value="">Todos</option>{opcoesProdutoServico.map((p) => <option key={p} value={p}>{p}</option>)}
@@ -1086,6 +1196,15 @@ function TabelaContas({ rel, itens, onTratar }: { rel: Rel; itens: Lanc[]; onTra
             <select style={selStyleLote} value={fContraparte} onChange={(e) => setFContraparte(e.target.value)}>
               <option value="">Todos</option>{opcoesContraparte.map((f) => <option key={f} value={f}>{f}</option>)}
             </select></div>
+          {rel === "extrato" && (
+            <div><label style={labelStyleLote}>Tipo</label>
+              <select style={selStyleLote} value={fTipo} onChange={(e) => setFTipo(e.target.value as any)}>
+                <option value="">Receitas e despesas</option><option value="receita">Só receitas</option><option value="despesa">Só despesas</option>
+              </select></div>
+          )}
+          <div><label style={labelStyleLote}>Conta gerencial</label>
+            <FiltroContaGerencial contas={planoContas} tipos={tiposConta}
+              codigo={fConta} nome={fContaNome} onChange={(c, n) => { setFConta(c); setFContaNome(n); }} /></div>
           <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={fVencDe} onChange={(e) => setFVencDe(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={fVencAte} onChange={(e) => setFVencAte(e.target.value)} /></div>
           {!emAberto && <>

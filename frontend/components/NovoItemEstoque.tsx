@@ -1,7 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro } from "@/lib/api";
+import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas } from "@/lib/api";
+import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
+import type { ContaPlano } from "@/lib/contaGerencial";
 
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
@@ -15,27 +17,29 @@ const inputStyle: React.CSSProperties = {
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
 type Fornecedor = { id: number; nome: string };
-type ContaGerencial = { codigo: string; nome: string };
 
 const vazio = {
   nome: "", numero_produto: "", categoria: "", unidade: "", quantidade: "", estoque_minimo: "",
   valor_unitario: "", local_armazenamento: "", fornecedor_id: "",
   unidade_embalagem: "", medida_embalagem: "", quantidade_embalagem: "",
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
-  conta_gerencial_despesa_padrao: "", conta_gerencial_receita_padrao: "",
-  exibir_necessidade_compra_agenda: false, estocavel: true,
+  conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
+  conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
+  exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
 };
 
 export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (item?: any) => void; onCancelar: () => void }) {
   const [form, setForm] = useState(vazio);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
-  const [contas, setContas] = useState<ContaGerencial[]>([]);
+  const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
+  const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
     fetchFornecedores().then(setFornecedores).catch(() => {});
-    fetchOpcoesFinanceiro().then((d) => setContas(d.contas_gerenciais || [])).catch(() => {});
+    fetchOpcoesFinanceiro().then((d) => setCentrosCusto(d.centros_custo || [])).catch(() => {});
+    fetchPlanoContas().then(setPlanoContas).catch(() => {});
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
@@ -51,10 +55,10 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         numero_produto: str(form.numero_produto),
         categoria: str(form.categoria),
         unidade: str(form.unidade),
-        quantidade: num(form.quantidade),
-        estoque_minimo: num(form.estoque_minimo),
+        quantidade: form.estocavel ? num(form.quantidade) : undefined,
+        estoque_minimo: form.estocavel ? num(form.estoque_minimo) : undefined,
         valor_unitario: num(form.valor_unitario),
-        local_armazenamento: str(form.local_armazenamento),
+        local_armazenamento: form.estocavel ? str(form.local_armazenamento) : undefined,
         fornecedor_id: form.fornecedor_id ? Number(form.fornecedor_id) : undefined,
         unidade_embalagem: str(form.unidade_embalagem),
         medida_embalagem: str(form.medida_embalagem),
@@ -65,8 +69,9 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         centro_custo_padrao: str(form.centro_custo_padrao),
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
-        exibir_necessidade_compra_agenda: form.exibir_necessidade_compra_agenda,
+        exibir_necessidade_compra_agenda: form.estocavel ? form.exibir_necessidade_compra_agenda : false,
         estocavel: form.estocavel,
+        data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
       });
       setForm(vazio);
       onCriado(criado);
@@ -90,10 +95,25 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
           </select>
         </div>
 
-        <div><label style={labelStyle}>Saldo inicial</label><input type="number" style={inputStyle} value={form.quantidade} onChange={(e) => set({ quantidade: e.target.value })} /></div>
-        <div><label style={labelStyle}>Estoque mínimo</label><input type="number" style={inputStyle} value={form.estoque_minimo} onChange={(e) => set({ estoque_minimo: e.target.value })} /></div>
+        {form.estocavel && (
+          <div><label style={labelStyle}>Saldo inicial</label><input type="number" style={inputStyle} value={form.quantidade} onChange={(e) => set({ quantidade: e.target.value })} /></div>
+        )}
+        {form.estocavel && (
+          <div><label style={labelStyle}>Estoque mínimo</label><input type="number" style={inputStyle} value={form.estoque_minimo} onChange={(e) => set({ estoque_minimo: e.target.value })} /></div>
+        )}
         <div><label style={labelStyle}>Valor unitário (R$)</label><input type="number" style={inputStyle} value={form.valor_unitario} onChange={(e) => set({ valor_unitario: e.target.value })} /></div>
-        <div><label style={labelStyle}>Local de armazenamento</label><input style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })} /></div>
+        {form.estocavel && (
+          <div><label style={labelStyle}>Local de armazenamento</label><input style={inputStyle} value={form.local_armazenamento} onChange={(e) => set({ local_armazenamento: e.target.value })} /></div>
+        )}
+        {form.estocavel && (
+          <div>
+            <label style={labelStyle}>Data de início do controle de estoque</label>
+            <input type="date" style={inputStyle} value={form.data_inicio_controle} onChange={(e) => set({ data_inicio_controle: e.target.value })} />
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+              A partir desta data o item passa a ser controlado; lançamentos anteriores não afetam o estoque.
+            </span>
+          </div>
+        )}
 
         <div><label style={labelStyle}>Fornecedor principal</label>
           <select style={inputStyle} value={form.fornecedor_id} onChange={(e) => set({ fornecedor_id: e.target.value })}>
@@ -116,18 +136,34 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         <div><label style={labelStyle}>Quantidade por embalagem</label><input type="number" style={inputStyle} value={form.quantidade_embalagem} onChange={(e) => set({ quantidade_embalagem: e.target.value })} /></div>
         <div><label style={labelStyle}>Carência (dias)</label><input type="number" style={inputStyle} value={form.carencia_dias} onChange={(e) => set({ carencia_dias: e.target.value })} placeholder="período de carência do leite/carne" /></div>
 
-        <div><label style={labelStyle}>Centro de custo padrão</label><input style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })} /></div>
-        <div><label style={labelStyle}>Conta gerencial padrão — Despesa</label>
-          <select style={inputStyle} value={form.conta_gerencial_despesa_padrao} onChange={(e) => set({ conta_gerencial_despesa_padrao: e.target.value })}>
-            <option value="">—</option>
-            {contas.filter((c) => c.codigo.startsWith("3")).map((c) => <option key={c.codigo} value={c.codigo}>{c.codigo} — {c.nome}</option>)}
+        <div><label style={labelStyle}>Centro de custo padrão</label>
+          <select style={inputStyle} value={form.centro_custo_padrao} onChange={(e) => set({ centro_custo_padrao: e.target.value })}>
+            <option value="">Selecione…</option>
+            {centrosCusto.map((c) => <option key={c} value={c}>{c}</option>)}
+            {form.centro_custo_padrao && !centrosCusto.includes(form.centro_custo_padrao) && (
+              <option value={form.centro_custo_padrao}>{form.centro_custo_padrao}</option>
+            )}
           </select>
         </div>
+        <div><label style={labelStyle}>Conta gerencial padrão — Despesa</label>
+          <SeletorContaGerencial
+            contas={planoContas}
+            tipo="despesa"
+            codigo={form.conta_gerencial_despesa_padrao}
+            nome={form.conta_gerencial_despesa_nome}
+            onSelect={(codigo, nome) => set({ conta_gerencial_despesa_padrao: codigo, conta_gerencial_despesa_nome: nome })}
+            placeholder="Escolha a conta de despesa…"
+          />
+        </div>
         <div><label style={labelStyle}>Conta gerencial padrão — Receita</label>
-          <select style={inputStyle} value={form.conta_gerencial_receita_padrao} onChange={(e) => set({ conta_gerencial_receita_padrao: e.target.value })}>
-            <option value="">—</option>
-            {contas.filter((c) => c.codigo.startsWith("2")).map((c) => <option key={c.codigo} value={c.codigo}>{c.codigo} — {c.nome}</option>)}
-          </select>
+          <SeletorContaGerencial
+            contas={planoContas}
+            tipo="receita"
+            codigo={form.conta_gerencial_receita_padrao}
+            nome={form.conta_gerencial_receita_nome}
+            onSelect={(codigo, nome) => set({ conta_gerencial_receita_padrao: codigo, conta_gerencial_receita_nome: nome })}
+            placeholder="Escolha a conta de receita…"
+          />
         </div>
         <div className="flex items-end gap-3">
           <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -140,12 +176,14 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
           </label>
         </div>
 
-        <div style={{ gridColumn: "1 / -1" }}>
-          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-            <input type="checkbox" checked={form.exibir_necessidade_compra_agenda} onChange={(e) => set({ exibir_necessidade_compra_agenda: e.target.checked })} />
-            Exibir necessidade de compra na Agenda quando o estoque ficar abaixo do mínimo
-          </label>
-        </div>
+        {form.estocavel && (
+          <div style={{ gridColumn: "1 / -1" }}>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+              <input type="checkbox" checked={form.exibir_necessidade_compra_agenda} onChange={(e) => set({ exibir_necessidade_compra_agenda: e.target.checked })} />
+              Exibir necessidade de compra na Agenda quando o estoque ficar abaixo do mínimo
+            </label>
+          </div>
+        )}
         {!form.estocavel && (
           <div style={{ gridColumn: "1 / -1", fontSize: "0.72rem", color: "var(--text-muted)" }}>
             Item não estocável: só serve para lançamento financeiro (produto de nota). Não participa de baixa automática

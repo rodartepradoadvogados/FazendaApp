@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from fazenda.models import ContaGerencial
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
+from fazenda.rules.centro_custo import mapear_centro_custo
 
 
 def parse_conta_gerencial(content: bytes) -> list[ContaGerencial]:
@@ -57,7 +58,7 @@ def parse_conta_gerencial(content: bytes) -> list[ContaGerencial]:
             numero_nota=row.get("Nº da nota", row.get("No da nota", "")) or None,
             valor_total=parse_float(row.get("Valor total da parcela", "")),
             valor_pago=parse_float(row.get("Valor pago receb.", "")),
-            centro_custo=row.get("Centro de custo", "") or None,
+            centro_custo=mapear_centro_custo(row.get("Centro de custo", "") or None),
             tipo=tipo,
         )
         contas.append(conta)

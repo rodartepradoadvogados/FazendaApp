@@ -523,6 +523,10 @@ class Estoque(SQLModel, table=True):
     # há baixa de "Saída de ajuste" no período. False = excluído do cálculo mesmo
     # tendo baixa (ex.: item que não é ração/alimento, mas usa o mesmo tipo de baixa).
     considerar_rmca: Optional[bool] = None
+    # A partir desta data o item passa a ter controle de estoque; movimentos e
+    # lançamentos ANTERIORES a ela não repercutem no saldo/custo (só faz sentido
+    # para itens estocáveis). None = sem recorte (considera tudo).
+    data_inicio_controle: Optional[date] = None
 
 
 # ---------------------------------------------------------------------------
