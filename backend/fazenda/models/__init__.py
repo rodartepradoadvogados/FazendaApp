@@ -646,6 +646,21 @@ class ValeParcela(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class TelegramPendente(SQLModel, table=True):
+    """Documento recebido pelo robô do Telegram, aguardando o usuário responder
+    se é receita ou despesa antes de virar um lançamento financeiro."""
+
+    __tablename__ = "telegram_pendente"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chat_id: int = Field(index=True)     # de quem recebeu (para responder)
+    file_id: str                         # id do arquivo no Telegram (para baixar)
+    file_name: Optional[str] = None
+    mime: Optional[str] = None
+    kind: str                            # "xml" | "documento"
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Movimento de estoque (histórico de entradas/saídas lançadas manualmente)
 # ---------------------------------------------------------------------------

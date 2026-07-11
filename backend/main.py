@@ -31,8 +31,10 @@ from fazenda.api.routers import (
     relatorios,
     reproducao,
     sanidade,
+    telegram,
     upload,
 )
+from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
 from fazenda.api.routers.reproducao import deduplicar_partos
@@ -54,6 +56,8 @@ async def lifespan(app: FastAPI):
         seed_cadastro_sanitario(session)
         seed_motivos_baixa(session)
         seed_servicos(session)
+    # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
+    registrar_webhook_telegram()
     yield
 
 
@@ -118,6 +122,9 @@ app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("re
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido)
 app.include_router(notificacoes.router, dependencies=_protegido)
+# Telegram: webhook é público (o Telegram chama sem login; a segurança é o
+# segredo do cabeçalho + a whitelist de chats liberados).
+app.include_router(telegram.router)
 
 
 @app.get("/")
