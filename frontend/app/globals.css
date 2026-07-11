@@ -47,6 +47,12 @@
   --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: var(--text-muted);
+  /* Pílula de aba ativa (TabBar) e ícones de seção recolhível. No escuro o
+     fundo translúcido sobre a tela escura já contrasta bem. */
+  --pill-active-bg: rgba(94, 26, 46, 0.4);
+  --pill-active-fg: var(--dourado-light);
+  --pill-active-border: var(--dourado);
+  --accent-icon: var(--dourado-light);
 }
 
 /* ── Tema CLARO — minimalista, fundo cinza claro, painéis brancos ── */
@@ -75,6 +81,12 @@
   --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: rgba(240, 232, 236, 0.85);
+  /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
+     contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
+  --pill-active-bg: var(--vinho);
+  --pill-active-fg: var(--dourado-light);
+  --pill-active-border: var(--vinho);
+  --accent-icon: var(--vinho);
 }
 
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
@@ -103,6 +115,11 @@
   --sidebar-logo-bg: rgba(255, 255, 255, 0.10);
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: rgba(245, 238, 241, 0.7);
+  /* Conteúdo do misto é claro (cards brancos): mesma regra do tema claro. */
+  --pill-active-bg: var(--vinho);
+  --pill-active-fg: var(--dourado-light);
+  --pill-active-border: var(--vinho);
+  --accent-icon: var(--vinho);
 }
 
 /* ── Tailwind custom colors via CSS vars ── */
