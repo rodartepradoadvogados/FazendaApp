@@ -131,3 +131,15 @@ def test_contagem_pendentes(ctx):
     _msg(c, "hoje")
     _msg(c, "10")
     assert c.get("/aprovacoes/contagem").json()["pendentes"] == 1
+
+
+def test_erro_ao_processar_nao_trava_webhook(ctx, monkeypatch):
+    """Um erro ao tratar a mensagem deve responder 200 (para não travar a fila
+    do Telegram) e avisar o usuário com o detalhe técnico."""
+    c, _, enviados = ctx
+    def _explode(*a, **k):
+        raise RuntimeError("boom-de-teste")
+    monkeypatch.setattr(telegram, "_tratar_mensagem", _explode)
+    r = _msg(c, "/lancar")
+    assert r.status_code == 200  # nunca 500 — não trava a fila
+    assert any("boom-de-teste" in (e.get("text") or "") for e in enviados)
