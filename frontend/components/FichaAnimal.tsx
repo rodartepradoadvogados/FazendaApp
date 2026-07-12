@@ -5,6 +5,7 @@ import { fetchAnimais, fetchFichaAnimal, formatDate } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { SecaoRecolhivel } from "@/components/ui";
 
 type Ficha = {
   animal: Record<string, unknown>;
@@ -230,8 +231,7 @@ export default function FichaAnimal() {
             if (!linhasBrutas.length) return null;
             const linhas = formatarLinhas(s.chave, linhasBrutas);
             return (
-              <div className="card" style={cardStyle} key={s.chave}>
-                <div className="card-header mb-3">{s.titulo} ({linhas.length})</div>
+              <SecaoRecolhivel key={s.chave} titulo={s.titulo} badge={String(linhas.length)}>
                 <div className="overflow-x-auto">
                   <table className="fazenda-table">
                     <thead><tr>{s.colunas.map((c) => <th key={c.key}>{c.header}</th>)}</tr></thead>
@@ -242,7 +242,7 @@ export default function FichaAnimal() {
                     </tbody>
                   </table>
                 </div>
-              </div>
+              </SecaoRecolhivel>
             );
           })}
 

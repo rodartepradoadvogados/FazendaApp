@@ -23,7 +23,7 @@ type Parametros = {
 };
 type Pev = { numero: string | number; grupo: string; dias_pos_parto: number; data_parto: string | null; cor: Cor };
 type AInseminar = { numero: string | number; grupo: string; dias_pos_parto: number; eh_vaca: boolean; situacao: string; cor: Cor };
-type Inseminado = { numero: string | number; grupo: string; dias_inseminada: number; touro: string; cor_dias: Cor; cor_cio: Cor; cor: Cor };
+type Inseminado = { numero: string | number; grupo: string; dias_inseminada: number; data_ultima_ia: string | null; touro: string; tipo: string; cor_dias: Cor; cor_cio: Cor; cor: Cor };
 type ATocar = { numero: string | number; grupo: string; dias_inseminada: number; touro: string; cor: Cor };
 type AReconfirmar = { numero: string | number; grupo: string; dias_inseminada: number; cor: Cor };
 type Prenhe = { numero: string | number; grupo: string; dias_gestacao: number; dpp_concepcao: number; previsao_parto: string | null; reconfirmada: boolean; cor: Cor };
@@ -327,9 +327,10 @@ export default function RelatoriosManejo() {
               nomeArquivoBase="manejo_inseminados"
               colunas={[
                 { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo" },
-                { header: "Dias de inseminada", key: "dias_inseminada" }, { header: "Touro", key: "touro" },
+                { header: "Dias de inseminada", key: "dias_inseminada" }, { header: "Última IA/cobertura", key: "data_ultima_ia" },
+                { header: "Touro", key: "touro" }, { header: "Tipo", key: "tipo" },
               ]}
-              linhas={dados.inseminados.map((r) => ({ numero: r.numero, grupo: r.grupo, dias_inseminada: r.dias_inseminada, touro: r.touro }))}
+              linhas={dados.inseminados.map((r) => ({ numero: r.numero, grupo: r.grupo, dias_inseminada: r.dias_inseminada, data_ultima_ia: fmtData(r.data_ultima_ia), touro: r.touro, tipo: r.tipo }))}
             />
             <DescParagrafo texto={DESC.inseminados} />
             {/* A bolinha principal usa `cor` (= cor_dias); há uma coluna extra de semáforo para o Cio provável (cor_cio). */}
@@ -339,7 +340,9 @@ export default function RelatoriosManejo() {
                 { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
                 { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
                 { header: "Dias de inseminada", campo: "dias_inseminada", render: (r) => r.dias_inseminada },
+                { header: "Última IA/cobertura", campo: "data_ultima_ia", render: (r) => fmtData(r.data_ultima_ia), style: estiloMudo },
                 { header: "Touro", campo: "touro", render: (r) => r.touro || "—", style: { fontWeight: 600 } },
+                { header: "Tipo", campo: "tipo", render: (r) => r.tipo || "—", style: estiloMudo },
                 { header: "Cio provável", render: (r) => <Dot cor={r.cor_cio} />, style: { textAlign: "center" } },
               ]}
             />

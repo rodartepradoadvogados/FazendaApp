@@ -298,7 +298,7 @@ class AgendaEngine:
                     eventos.append(AgendaItem(
                         data=res_scratch.data_scratch,
                         categoria="Reprodutivo",
-                        descricao="Scratch / Diagnóstico (14 dias pós-IA)",
+                        descricao="Aplicar Scratch (0,5) — detector de cio, 14 dias pós-IA",
                         numero_animal=numero,
                     ))
 

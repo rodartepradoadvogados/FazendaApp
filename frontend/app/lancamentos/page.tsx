@@ -8,7 +8,7 @@ import {
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
-  criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos,
+  criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote, fetchMedicamentos,
@@ -68,6 +68,14 @@ function addDias(iso: string, n: number): string {
   if (!iso) return "—";
   const d = new Date(iso + "T00:00:00"); d.setDate(d.getDate() + n);
   return d.toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "2-digit" });
+}
+
+// Nome padrão do protocolo IATF: "IATF <D0> A <D11>" (datas dd/mm/aa).
+function nomeAutoIatf(d0: string): string {
+  if (!d0) return "";
+  const fmt = (iso: string) => new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" });
+  const d11 = new Date(d0 + "T00:00:00"); d11.setDate(d11.getDate() + 11);
+  return `IATF ${fmt(d0)} A ${fmt(d11.toISOString().slice(0, 10))}`;
 }
 
 // Seleção de animal via tabela clara (Nº · Grupo · Categoria · Sit. Rep. · DEL).
@@ -202,12 +210,16 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
 }
 
 function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
+  // Novo protocolo (cria um lançamento) ou adicionar animais a um já existente.
+  const [modo, setModo] = useState<"novo" | "existente">("novo");
   const [emLote, setEmLote] = useState(false);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [um, setUm] = useState("");
   const [d0, setD0] = useState("");
-  const [nomeProtocolo, setNomeProtocolo] = useState("Protocolo padrão");
   const [hormonios, setHormonios] = useState<HormonioIatf[]>([]);
+  // Protocolos já lançados (para "existente").
+  const [existentes, setExistentes] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>([]);
+  const [existenteId, setExistenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -215,19 +227,32 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
+  const nomeProtocolo = nomeAutoIatf(d0);
+
+  useEffect(() => {
+    if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => setExistentes([]));
+  }, [modo]);
+
   async function salvar() {
     setErro(null); setSucesso(null);
     const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
     if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
-    if (!d0) { setErro("Informe a data do D0."); return; }
     setSalvando(true);
     try {
-      const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo, hormonios });
-      setSucesso(`Protocolo agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos criados na Agenda (D0/D7/D9/D11).`);
+      if (modo === "existente") {
+        if (!existenteId) { setErro("Selecione o protocolo existente."); setSalvando(false); return; }
+        const r = await adicionarAnimaisIatf(Number(existenteId), animaisAlvo);
+        setSucesso(`${r.adicionados} animal(is) adicionado(s) ao protocolo "${r.nome_protocolo}".`);
+      } else {
+        if (!d0) { setErro("Informe a data do D0."); setSalvando(false); return; }
+        const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo, hormonios });
+        setSucesso(`Protocolo "${nomeProtocolo}" agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda (D0/D7/D9/D11).`);
+      }
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();
+      if (modo === "existente") fetchLancamentosIatf().then(setExistentes).catch(() => {});
     } catch (e: any) {
-      setErro(e.message || "Erro ao agendar protocolo IATF");
+      setErro(e.message || "Erro ao lançar protocolo IATF");
     } finally {
       setSalvando(false);
     }
@@ -235,15 +260,38 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Protocolo">
+      <TabBar<"novo" | "existente">
+        abas={[
+          { id: "novo", label: "Novo protocolo", title: "Criar um novo protocolo IATF (define D0 e hormônios)" },
+          { id: "existente", label: "Adicionar a protocolo existente", title: "Incluir animais num protocolo já lançado (mesmo D0 e nome)" },
+        ]}
+        ativa={modo}
+        onChange={setModo}
+      />
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        <Campo label="Seleção">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
             <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
           </label>
         </Campo>
-        <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
-        <Campo label="Nome do protocolo"><input style={inputStyle} value={nomeProtocolo} onChange={(e) => setNomeProtocolo(e.target.value)} /></Campo>
+        {modo === "novo" ? (
+          <>
+            <Campo label="Data do D0"><input type="date" style={inputStyle} value={d0} onChange={(e) => setD0(e.target.value)} /></Campo>
+            <Campo label="Nome do protocolo (automático)" full>
+              <input style={{ ...inputStyle, opacity: 0.85 }} readOnly value={nomeProtocolo || "Informe a data do D0…"} />
+            </Campo>
+          </>
+        ) : (
+          <Campo label="Protocolo existente" full>
+            <select style={inputStyle} value={existenteId} onChange={(e) => setExistenteId(e.target.value)}>
+              <option value="">Selecione o protocolo…</option>
+              {existentes.map((l) => <option key={l.lancamento_id} value={l.lancamento_id}>{l.nome_protocolo} — {l.qtd_animais} animal(is)</option>)}
+            </select>
+          </Campo>
+        )}
       </div>
+
       <div className="mt-3">
         <label style={lbl}>Matriz (nº)</label>
         {emLote
@@ -258,24 +306,28 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
       </div>
       <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses). Isso só agenda o protocolo hormonal — a inseminação em si (D11) é lançada à parte, na sub-aba Inseminação.</p>
 
-      <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-        <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
-          Cronograma IATF — vai para a Agenda
-        </div>
-        <div className="overflow-x-auto">
-          <table className="fazenda-table">
-            <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th></tr></thead>
-            <tbody>
-              <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
-              <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
-              <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
-              <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
-            </tbody>
-          </table>
-        </div>
-        <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
-      </div>
-      <EditorHormoniosIatf onChange={setHormonios} />
+      {modo === "novo" && (
+        <>
+          <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+            <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
+              Cronograma IATF — vai para a Agenda
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr><th>Dia</th><th>Data</th><th>Ação / hormônio</th></tr></thead>
+                <tbody>
+                  <tr><td style={{ fontWeight: 700 }}>D0</td><td>{addDias(d0, 0)}</td><td>Implante de progesterona + Benzoato de estradiol + Acetato de buserelina</td></tr>
+                  <tr><td style={{ fontWeight: 700 }}>D7</td><td>{addDias(d0, 7)}</td><td>Cloprostenol</td></tr>
+                  <tr><td style={{ fontWeight: 700 }}>D9</td><td>{addDias(d0, 9)}</td><td>Retirar implante + Cipionato de estradiol + Cloprostenol</td></tr>
+                  <tr><td style={{ fontWeight: 700, color: "var(--green-light)" }}>D11</td><td>{addDias(d0, 11)}</td><td style={{ color: "var(--green-light)" }}>Inseminação (IATF)</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
+          </div>
+          <EditorHormoniosIatf onChange={setHormonios} />
+        </>
+      )}
       <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -441,7 +493,7 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
         <Campo label="Método">
           <select style={inputStyle} value={metodo} onChange={(e) => setMetodo(e.target.value)}>
-            <option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option>
+            <option value="" disabled>Selecione…</option><option>Palpação</option><option>Ultrassom</option><option>Cio de repasse</option>
           </select>
         </Campo>
         <Campo label="Resultado" full>
@@ -449,10 +501,16 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
             <option value="" disabled>Selecione…</option>
             <option value="retoque">Positivo — marcar para retoque (segue em observação para reconfirmar)</option>
             <option value="reconfirmada">Positivo — reconfirmada (prenhez confirmada)</option>
-            <option value="negativo">Negativo ou indefinido</option>
+            <option value="negativo">Negativo (vazia)</option>
+            <option value="indefinido">Indefinido (inconclusivo — reavaliar)</option>
           </select>
         </Campo>
       </div>
+      {metodo === "Cio de repasse" && (
+        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          <strong>Cio de repasse:</strong> a vaca retornou ao cio após a inseminação. Detecção esperada — scratch (adesivo) aplicado por volta de 14 dias após a última IA/monta e cio natural observado entre 15 e 28 dias após o scratch.
+        </p>
+      )}
 
       {animaisComAviso.length > 0 && (
         <div className="mt-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(217,119,6,0.12)", border: "1px solid var(--amber)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
@@ -470,6 +528,11 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
       {resultado === "retoque" && (
         <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
           Os animais entram na <strong>agenda para retoque</strong>, no dia do próximo serviço.
+        </p>
+      )}
+      {resultado === "indefinido" && (
+        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+          Resultado <strong>inconclusivo</strong> — a matriz <strong>não</strong> vira vazia; segue para nova avaliação.
         </p>
       )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}

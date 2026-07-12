@@ -150,8 +150,15 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                     cor_cio = "vermelho"
                 else:
                     cor_cio = None
+                if (us.get("tipo_servico") or "") == "Monta natural":
+                    tipo_ia = "Monta natural"
+                elif us.get("protocolo"):
+                    tipo_ia = "IATF"
+                else:
+                    tipo_ia = "Cio natural"
                 l_inseminados.append({"numero": num, "grupo": grupo, "dias_inseminada": di,
-                                      "touro": us.get("reprodutor"), "cor_dias": cor_di, "cor_cio": cor_cio,
+                                      "data_ultima_ia": us.get("data_servico"), "touro": us.get("reprodutor"),
+                                      "tipo": tipo_ia, "cor_dias": cor_di, "cor_cio": cor_cio,
                                       "cor": cor_di})
 
                 # 4a) Toque — já passou o período de toque e ainda sem diagnóstico
