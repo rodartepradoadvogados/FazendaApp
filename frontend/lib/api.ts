@@ -187,6 +187,27 @@ export async function fetchEstoqueSemen() {
   if (!res.ok) throw new Error(`Estoque de sêmen error: ${res.status}`);
   return res.json();
 }
+export type SemenDisponivel = {
+  touros: { nome: string; tipo: "convencional" | "sexado" | "fazenda"; doses: number }[];
+  totais: { convencional: number; sexado: number };
+  minimos: { convencional: number; sexado: number };
+  abaixo_minimo: { convencional: boolean; sexado: boolean };
+};
+export async function fetchSemenDisponivel() {
+  const res = await authFetch(`${API}/cadastro/estoque-semen/disponivel`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sêmen disponível error: ${res.status}`);
+  return res.json() as Promise<SemenDisponivel>;
+}
+export async function criarServicoLote(dados: {
+  animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
+  reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
+}) {
+  const res = await authFetch(`${API}/reproducao/servico-lote`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar inseminação"); }
+  return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
+}
 type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; central?: string | null; tipo: string; doses: number; observacao?: string | null; ativo?: boolean };
 export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {

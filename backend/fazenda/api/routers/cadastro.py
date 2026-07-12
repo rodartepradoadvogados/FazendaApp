@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
-    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, ServicoCadastro, ValeFuncionario, ValeParcela,
+    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -1046,7 +1046,34 @@ def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn
 # ---------------------------------------------------------------------------
 # Estoque de sêmen — doses por touro (usado no relatório de manejo).
 # ---------------------------------------------------------------------------
-TIPOS_SEMEN = ["convencional", "sexado"]
+TIPOS_SEMEN = ["convencional", "sexado", "fazenda"]
+# Estoque mínimo de sêmen POR CATEGORIA (não por touro). Abaixo disso, gera
+# alerta nas notificações e um evento diário na agenda até a NF suprir.
+MINIMO_SEMEN = {"convencional": 20, "sexado": 5}
+# Touros da fazenda (monta natural) — sempre disponíveis na inseminação.
+TOUROS_FAZENDA = ["Sevaverde", "Frederico"]
+
+
+def seed_semen_categorias(session: Session) -> None:
+    """Garante os touros da fazenda (Sevaverde, Frederico) como categoria
+    'fazenda' e classifica o Hagen como sexado. Idempotente (SeedFlag)."""
+    chave = "semen_categorias_v1"
+    if session.get(SeedFlag, chave):
+        return
+    existentes = {i.touro_nome.strip().lower(): i for i in session.exec(select(EstoqueSemen)).all()}
+    for nome in TOUROS_FAZENDA:
+        atual = existentes.get(nome.lower())
+        if atual:
+            atual.tipo = "fazenda"
+            session.add(atual)
+        else:
+            session.add(EstoqueSemen(touro_nome=nome, tipo="fazenda", doses=0))
+    hagen = existentes.get("hagen")
+    if hagen:
+        hagen.tipo = "sexado"
+        session.add(hagen)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 class EstoqueSemenIn(BaseModel):
@@ -1063,6 +1090,27 @@ class EstoqueSemenIn(BaseModel):
 def listar_estoque_semen(session: Session = Depends(get_session)) -> list[dict]:
     itens = session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all()
     return [i.model_dump() for i in itens]
+
+
+@router.get("/estoque-semen/disponivel")
+def semen_disponivel(session: Session = Depends(get_session)) -> dict:
+    """
+    Para a inseminação: touros por categoria (convencional/sexado/fazenda) e o
+    status do estoque mínimo POR CATEGORIA. Convencional/sexado só entram na
+    lista se tiverem dose em estoque; touros da fazenda (monta natural) sempre.
+    """
+    itens = [i for i in session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all() if i.ativo]
+    totais = {"convencional": 0, "sexado": 0}
+    for i in itens:
+        if i.tipo in totais:
+            totais[i.tipo] += i.doses or 0
+    touros = []
+    for i in itens:
+        # Fazenda sempre aparece; sêmen (conv/sexado) só com dose.
+        if i.tipo == "fazenda" or (i.doses or 0) > 0:
+            touros.append({"nome": i.touro_nome, "tipo": i.tipo, "doses": i.doses or 0})
+    abaixo = {cat: totais[cat] < minimo for cat, minimo in MINIMO_SEMEN.items()}
+    return {"touros": touros, "totais": totais, "minimos": MINIMO_SEMEN, "abaixo_minimo": abaixo}
 
 
 @router.post("/estoque-semen")
