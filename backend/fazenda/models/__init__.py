@@ -1449,3 +1449,21 @@ class BenchmarkRecria(SQLModel, table=True):
     ordem: int = 0
     fonte: str = "Alta CRIA 2026"
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class RegistroCocho(SQLModel, table=True):
+    """Gestão de cocho: leitura diária por lote — quanto foi ofertado, quanto
+    sobrou e quantos animais comeram. Fecha o consumo e a IMS (ingestão de
+    matéria seca) para o Dossiê de Recria."""
+
+    __tablename__ = "registro_cocho"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    data: date = Field(index=True)
+    lote: str = Field(index=True)
+    num_animais: int = 1
+    kg_ofertado: float = 0.0
+    kg_sobra: float = 0.0
+    kg_formulado: Optional[float] = None   # meta formulada (kg total do lote), opcional
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)

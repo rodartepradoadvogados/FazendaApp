@@ -197,3 +197,23 @@ class TestReproducao:
         c1 = j["ciclos"][0]
         assert c1["servidos"] == 2 and c1["prenhes"] == 1
         assert c1["taxa_concepcao"] == 50.0
+
+
+class TestCocho:
+    def test_registro_e_ims(self, client):
+        c, _ = client
+        r = c.post("/recria/cocho", json={"data": "2026-03-01", "lote": "Bezerras", "num_animais": 10,
+                                          "kg_ofertado": 250, "kg_sobra": 25, "kg_formulado": 225})
+        assert r.status_code == 201
+        j = r.json()
+        assert j["kg_consumido"] == 225.0
+        assert j["pct_sobra"] == 10.0
+        assert j["ims_consumida_animal"] == 22.5
+        lst = c.get("/recria/cocho", params={"lote": "Bezerras"}).json()
+        assert lst["registros"][0]["ims_consumida_animal"] == 22.5
+        assert "Bezerras" in lst["lotes"]
+
+    def test_sobra_maior_que_ofertado_erro(self, client):
+        c, _ = client
+        r = c.post("/recria/cocho", json={"data": "2026-03-01", "lote": "X", "num_animais": 5, "kg_ofertado": 10, "kg_sobra": 20})
+        assert r.status_code == 400

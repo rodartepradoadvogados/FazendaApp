@@ -5,20 +5,21 @@
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
 import { useEffect, useState } from "react";
-import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart } from "lucide-react";
+import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat } from "lucide-react";
 import { TabBar } from "@/components/ui";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
-  fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez,
-  type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto,
+  fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez, fetchRecriaCocho, criarRecriaCocho, excluirRecriaCocho,
+  type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto, type RecriaCocho,
 } from "@/lib/api";
 
-type Aba = "saude" | "crescimento" | "reproducao" | "registrar";
+type Aba = "saude" | "crescimento" | "reproducao" | "nutricao" | "registrar";
 const ABAS = [
   { id: "saude" as const, label: "Saúde por idade", icon: Activity, title: "Curva de casos de doença por idade (dias), com o ponto crítico e a incidência por fase" },
   { id: "crescimento" as const, label: "Crescimento", icon: TrendingUp, title: "Peso real médio por mês de idade comparado à faixa de peso-alvo, e benchmark Alta CRIA" },
   { id: "reproducao" as const, label: "Reprodução", icon: Heart, title: "Idade ao 1º parto (Wisconsin), custo de recria excedente e taxa de prenhez por ciclo de 21 dias" },
+  { id: "nutricao" as const, label: "Nutrição", icon: Wheat, title: "Gestão de cocho: ofertado × consumido × sobras por lote e a IMS (ingestão de matéria seca)" },
   { id: "registrar" as const, label: "Registrar caso", icon: PlusCircle, title: "Lançar um caso de doença (animal, doença e data) — alimenta a Saúde por idade" },
 ];
 
@@ -42,6 +43,7 @@ export default function RecriaPage() {
         {aba === "saude" && <AbaSaude />}
         {aba === "crescimento" && <AbaCrescimento />}
         {aba === "reproducao" && <AbaReproducao />}
+        {aba === "nutricao" && <AbaNutricao />}
         {aba === "registrar" && <AbaRegistrar />}
       </div>
     </div>
@@ -382,6 +384,105 @@ function AbaReproducao() {
               </table>
             </div>
           </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────── NUTRIÇÃO ───────────────────────────
+function AbaNutricao() {
+  const [dados, setDados] = useState<{ registros: RecriaCocho[]; lotes: string[] } | null>(null);
+  const [loteFiltro, setLoteFiltro] = useState("");
+  const [form, setForm] = useState<RecriaCocho>({ data: hoje(), lote: "", num_animais: 0, kg_ofertado: 0, kg_sobra: 0, kg_formulado: undefined });
+  const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+  const carregar = () => fetchRecriaCocho(loteFiltro).then(setDados).catch(() => setDados({ registros: [], lotes: [] }));
+  useEffect(() => { carregar(); }, [loteFiltro]);
+
+  async function salvar() {
+    setMsg(null);
+    if (!form.lote.trim()) { setMsg({ tipo: "erro", txt: "Informe o lote." }); return; }
+    try {
+      await criarRecriaCocho({ ...form, kg_formulado: form.kg_formulado || undefined });
+      setMsg({ tipo: "ok", txt: "Leitura de cocho registrada." });
+      setForm({ ...form, kg_ofertado: 0, kg_sobra: 0 }); carregar();
+    } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
+  }
+  const registros = dados?.registros || [];
+  const serie = [...registros].slice(0, 14).reverse(); // mais antigos → recentes para o gráfico
+  return (
+    <div style={{ display: "grid", gap: "1rem" }}>
+      <div style={card}>
+        <div style={{ fontWeight: 700, fontSize: "0.95rem", marginBottom: "0.7rem" }}>Registrar leitura de cocho</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={lbl}>Data</label><input type="date" style={input} value={form.data} onChange={(e) => setForm({ ...form, data: e.target.value })} /></div>
+          <div><label style={lbl}>Lote</label><input style={input} list="cocho-lotes" value={form.lote} onChange={(e) => setForm({ ...form, lote: e.target.value })} placeholder="ex.: Bezerras" />
+            <datalist id="cocho-lotes">{(dados?.lotes || []).map((l) => <option key={l} value={l} />)}</datalist></div>
+          <div><label style={lbl}>Nº de animais</label><input type="number" style={input} value={form.num_animais || ""} onChange={(e) => setForm({ ...form, num_animais: Number(e.target.value) })} /></div>
+          <div><label style={lbl}>Ofertado (kg)</label><input type="number" style={input} value={form.kg_ofertado || ""} onChange={(e) => setForm({ ...form, kg_ofertado: Number(e.target.value) })} /></div>
+          <div><label style={lbl}>Sobra (kg)</label><input type="number" style={input} value={form.kg_sobra || ""} onChange={(e) => setForm({ ...form, kg_sobra: Number(e.target.value) })} /></div>
+          <div><label style={lbl}>Formulado/meta (kg, opcional)</label><input type="number" style={input} value={form.kg_formulado ?? ""} onChange={(e) => setForm({ ...form, kg_formulado: e.target.value === "" ? undefined : Number(e.target.value) })} /></div>
+        </div>
+        <div className="flex items-center gap-3 mt-3">
+          <button className="btn-primary" onClick={salvar} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PlusCircle size={15} /> Registrar</button>
+          {msg && <span style={{ fontSize: "0.82rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</span>}
+        </div>
+      </div>
+
+      {/* Estabilidade de consumo (IMS) */}
+      {serie.length > 1 && (
+        <div style={card}>
+          <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.7rem" }}>Estabilidade de consumo (IMS por animal)</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 4, height: 130, borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)", padding: "0 2px" }}>
+            {serie.map((r) => {
+              const max = Math.max(...serie.map((x) => Math.max(x.ims_consumida_animal || 0, x.ims_formulada_animal || 0)), 1);
+              return (
+                <div key={r.id} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${r.data.split("-").reverse().join("/")} — consumida ${r.ims_consumida_animal} kg`}>
+                  <div style={{ width: "100%", position: "relative", height: `${(100 * (r.ims_consumida_animal || 0)) / max}%`, background: "var(--green-light)", borderRadius: "2px 2px 0 0", minHeight: 2 }}>
+                    {r.ims_formulada_animal ? <div style={{ position: "absolute", left: 0, right: 0, top: `${100 - (100 * (r.ims_formulada_animal) / (r.ims_consumida_animal || r.ims_formulada_animal))}%`, borderTop: "2px dashed var(--dourado)" }} /> : null}
+                  </div>
+                  <span style={{ fontSize: "0.55rem", color: "var(--text-muted)", marginTop: 2 }}>{r.data.slice(8, 10)}/{r.data.slice(5, 7)}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Barra verde = IMS consumida por animal. Linha tracejada = meta formulada. Consumo estável e colado na meta é o ideal.</p>
+        </div>
+      )}
+
+      {/* Tabela diária */}
+      <div style={card}>
+        <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginBottom: "0.6rem" }}>
+          <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>Leituras diárias</div>
+          <select style={{ ...input, width: 200 }} value={loteFiltro} onChange={(e) => setLoteFiltro(e.target.value)}>
+            <option value="">Todos os lotes</option>
+            {(dados?.lotes || []).map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </div>
+        {!registros.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma leitura registrada ainda.</p> : (
+          <div style={{ overflowX: "auto" }}>
+            <table className="fazenda-table">
+              <thead><tr><th>Data</th><th>Lote</th><th>Animais</th><th>Ofertado</th><th>Sobra</th><th>Consumido</th><th>% sobra</th><th>IMS/animal</th><th></th></tr></thead>
+              <tbody>
+                {registros.map((r) => {
+                  const cor = r.pct_sobra == null ? "var(--text-muted)" : r.pct_sobra <= 5 ? "var(--green-light)" : r.pct_sobra <= 10 ? "var(--amber)" : "var(--red)";
+                  return (
+                    <tr key={r.id}>
+                      <td>{r.data.split("-").reverse().join("/")}</td>
+                      <td style={{ fontWeight: 600 }}>{r.lote}</td>
+                      <td>{r.num_animais}</td>
+                      <td>{r.kg_ofertado} kg</td>
+                      <td>{r.kg_sobra} kg</td>
+                      <td>{r.kg_consumido} kg</td>
+                      <td><span style={{ color: cor, fontWeight: 700 }}>{r.pct_sobra != null ? `${r.pct_sobra}%` : "—"}</span></td>
+                      <td><strong>{r.ims_consumida_animal} kg</strong></td>
+                      <td style={{ textAlign: "right" }}><button className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }} onClick={() => excluirRecriaCocho(r.id!).then(carregar)}><Trash2 size={13} /></button></td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
         )}
       </div>
     </div>
