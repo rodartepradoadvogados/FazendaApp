@@ -175,7 +175,7 @@ def calcular_agenda(
             continue
         eventos_protocolo.append({
             "id": chave, "data": ap.data_prevista.isoformat(), "categoria": "sanidade",
-            "descricao": f"{protocolo.nome} — D{etapa.dia} — matriz {lancamento.numero_matriz} — {etapa.produto}",
+            "descricao": f"{protocolo.nome} — D{etapa.dia} — matriz {lancamento.numero_matriz} — {ap.produto or etapa.produto}",
             "numero_animal": lancamento.numero_matriz, "observacao": lancamento.observacao,
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
         })
@@ -300,13 +300,17 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     aplicacao.data_realizacao = hoje
     session.add(aplicacao)
 
+    # Se a etapa foi cadastrada por princípio ativo/classificação, usa o
+    # medicamento escolhido no lançamento; senão, o produto da própria etapa.
+    produto = aplicacao.produto or etapa.produto
+
     session.add(Sanidade(
-        numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=etapa.produto,
+        numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=produto,
         dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
         obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
     ))
 
-    estoque_item = session.exec(select(Estoque).where(Estoque.nome == etapa.produto)).first()
+    estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
     if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
         estoque_item.quantidade = (estoque_item.quantidade or 0) - etapa.dosagem
         if estoque_item.estoque_minimo is not None:

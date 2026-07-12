@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas } from "@/lib/api";
+import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 
@@ -26,6 +26,7 @@ const vazio = {
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
+  principio_ativo: "", classificacao_medicamento: "",
 };
 
 export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (item?: any) => void; onCancelar: () => void }) {
@@ -72,6 +73,8 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         exibir_necessidade_compra_agenda: form.estocavel ? form.exibir_necessidade_compra_agenda : false,
         estocavel: form.estocavel,
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
+        principio_ativo: str(form.principio_ativo),
+        classificacao_medicamento: str(form.classificacao_medicamento),
       });
       setForm(vazio);
       onCriado(criado);
@@ -88,6 +91,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
         <div><label style={labelStyle}>Categoria</label><input style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })} placeholder="ex.: Alimento, Medicamento…" /></div>
+        <div><label style={labelStyle}>Princípio ativo (medicamento)</label><input style={inputStyle} value={form.principio_ativo} onChange={(e) => set({ principio_ativo: e.target.value })} placeholder="ex.: Ivermectina" /></div>
+        <div><label style={labelStyle}>Classificação (medicamento)</label>
+          <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
+            <option value="">—</option>{CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select></div>
         <div><label style={labelStyle}>Unidade</label>
           <select style={inputStyle} value={form.unidade} onChange={(e) => set({ unidade: e.target.value })}>
             <option value="">Selecione…</option>

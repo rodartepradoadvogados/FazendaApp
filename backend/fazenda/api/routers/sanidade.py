@@ -296,6 +296,9 @@ class ProtocoloLancamentoIn(BaseModel):
     classificacao_mastite: str | None = None  # "clinica" | "subclinica" | "ambiental"
     resultado_cmt: str | None = None
     tetos_afetados: list[str] = []  # subconjunto de AE/AD/PD/PE
+    # Medicamento escolhido por etapa (etapa_id -> nome do medicamento), quando
+    # a etapa foi cadastrada por princípio ativo/classificação.
+    escolhas_medicamento: dict[str, str] = {}
 
 
 def _serializar_lancamento_protocolo(session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, str]) -> dict:
@@ -346,6 +349,18 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         if teto not in TETOS_VALIDOS:
             raise HTTPException(status_code=400, detail=f"Teto inválido: {teto} (aceitos: {', '.join(TETOS_VALIDOS)})")
 
+    # Etapas cadastradas por princípio ativo/classificação exigem escolher o
+    # medicamento real no lançamento (guardado por etapa em cada aplicação).
+    produto_por_etapa: dict[int, str | None] = {}
+    for etapa in etapas:
+        if getattr(etapa, "criterio_tipo", "medicamento") != "medicamento":
+            escolhido = (dados.escolhas_medicamento.get(str(etapa.id)) or "").strip()
+            if not escolhido:
+                raise HTTPException(status_code=400, detail=f"Escolha o medicamento da etapa D{etapa.dia} ({etapa.produto}).")
+            produto_por_etapa[etapa.id] = escolhido
+        else:
+            produto_por_etapa[etapa.id] = None
+
     protocolos = {protocolo.id: protocolo.nome}
     lancamentos_criados = []
     for numero in numeros:
@@ -361,7 +376,10 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
 
         for etapa in etapas:
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - 1)
-            session.add(ProtocoloSanitarioAplicacao(lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista))
+            session.add(ProtocoloSanitarioAplicacao(
+                lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
+                produto=produto_por_etapa.get(etapa.id),
+            ))
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
 

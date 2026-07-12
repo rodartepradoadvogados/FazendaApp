@@ -11,7 +11,7 @@ import {
   criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
-  fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
+  fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
 } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -1193,7 +1193,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   );
 }
 
-type ProtocoloEtapaLocal = { dia: number; produto: string; dosagem: number; unidade: string; via?: string | null };
+type ProtocoloEtapaLocal = { id?: number; dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null };
 type ProtocoloLocal = { id: number; nome: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapaLocal[] };
 const TETOS = ["AE", "AD", "PD", "PE"] as const;
 const CLASSIFICACOES_MASTITE = [["clinica", "Clínica"], ["subclinica", "Subclínica"], ["ambiental", "Ambiental"]] as const;
@@ -1228,6 +1228,9 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const [classificacaoMastite, setClassificacaoMastite] = useState("");
   const [resultadoCmt, setResultadoCmt] = useState("");
   const [tetosSel, setTetosSel] = useState<Set<string>>(new Set());
+  // Etapas cadastradas por princípio ativo/classificação: escolher o medicamento agora.
+  const [escolhasMed, setEscolhasMed] = useState<Record<number, string>>({});
+  const [medOpcoes, setMedOpcoes] = useState<Record<number, { nome: string; quantidade?: number | null; unidade?: string | null }[]>>({});
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -1281,6 +1284,24 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const protocolo = protocolos.find((p) => p.id === Number(protocoloId));
   const toggleTeto = (t: string) => setTetosSel((p) => { const s = new Set(p); s.has(t) ? s.delete(t) : s.add(t); return s; });
 
+  // Ao escolher o protocolo, carrega os medicamentos que cumprem o critério de
+  // cada etapa cadastrada por princípio ativo/classificação.
+  const etapasCriterio = useMemo(
+    () => (protocolo?.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") !== "medicamento" && e.id != null),
+    [protocolo]
+  );
+  useEffect(() => {
+    setEscolhasMed({});
+    if (!protocolo) { setMedOpcoes({}); return; }
+    const crit = (protocolo.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") !== "medicamento" && e.id != null);
+    if (!crit.length) { setMedOpcoes({}); return; }
+    Promise.all(crit.map((e) =>
+      fetchMedicamentos(e.criterio_tipo === "principio_ativo" ? { principio_ativo: e.produto } : { classificacao: e.produto })
+        .then((m) => [e.id as number, m] as const).catch(() => [e.id as number, [] as any[]] as const)
+    )).then((pares) => setMedOpcoes(Object.fromEntries(pares)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [protocoloId]);
+
   const cronograma = useMemo(() => {
     if (!protocolo || !dataInicio) return [];
     return [...protocolo.etapas].sort((a, b) => a.dia - b.dia).map((e) => ({
@@ -1294,6 +1315,8 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
     const numeros = protocolo.eh_mastite ? (matriz ? [matriz] : []) : numerosSelecionados;
     if (!numeros.length) { setErro("Selecione ao menos um animal, lote ou categoria."); return; }
     if (protocolo.eh_mastite && !classificacaoMastite) { setErro("Informe a classificação da mastite (clínica, subclínica ou ambiental)."); return; }
+    const faltando = etapasCriterio.find((e) => !escolhasMed[e.id as number]);
+    if (faltando) { setErro(`Escolha o medicamento da etapa D${faltando.dia} (${faltando.produto}).`); return; }
 
     setSalvando(true);
     try {
@@ -1302,6 +1325,7 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
         responsavel: responsavel || undefined, observacao: observacao || undefined,
         classificacao_mastite: classificacaoMastite || undefined, resultado_cmt: resultadoCmt || undefined,
         tetos_afetados: Array.from(tetosSel),
+        escolhas_medicamento: Object.fromEntries(etapasCriterio.map((e) => [String(e.id), escolhasMed[e.id as number]])),
       });
       setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.`);
       setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setResultadoCmt(""); setTetosSel(new Set());
@@ -1323,6 +1347,24 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
           </select>
         </Campo>
         <Campo label="Data de início (D1)"><input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></Campo>
+
+        {etapasCriterio.length > 0 && (
+          <div style={{ gridColumn: "1 / -1", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem" }}>
+            <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {etapasCriterio.map((e) => (
+                <div key={e.id}>
+                  <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : "Classificação"}: <strong>{e.produto}</strong></label>
+                  <select style={inputStyle} value={escolhasMed[e.id as number] || ""} onChange={(ev) => setEscolhasMed((s) => ({ ...s, [e.id as number]: ev.target.value }))}>
+                    <option value="">Selecione o medicamento…</option>
+                    {(medOpcoes[e.id as number] || []).map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
+                  </select>
+                  {!(medOpcoes[e.id as number] || []).length && <p style={{ fontSize: "0.7rem", color: "var(--amber)" }}>Nenhum medicamento cadastrado com esse critério.</p>}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {protocolo?.eh_mastite ? (
           <Campo label="Matriz (nº)" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>

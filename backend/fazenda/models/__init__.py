@@ -486,6 +486,11 @@ class Estoque(SQLModel, table=True):
     categoria: Optional[str] = None
     numero_produto: Optional[str] = None
     nome: str = Field(index=True)
+    # Metadados de medicamento — permitem cadastrar/protocolar por princípio
+    # ativo ou por classificação (antimicrobiano, anti-inflamatório, antibiótico…)
+    # e, na hora de aplicar, listar os medicamentos que cumprem o requisito.
+    principio_ativo: Optional[str] = None
+    classificacao_medicamento: Optional[str] = None
     quantidade: Optional[float] = None
     estoque_minimo: Optional[float] = None
     unidade: Optional[str] = None
@@ -880,7 +885,11 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
     dia: int  # 1, 2, 3... nunca 0
-    produto: str
+    # Como o medicamento é definido: "medicamento" (produto = item de estoque,
+    # aplicação já definida), "principio_ativo" ou "classificacao" (produto
+    # guarda o critério; o medicamento real é escolhido no lançamento).
+    criterio_tipo: str = Field(default="medicamento")
+    produto: str  # nome do medicamento OU o valor do critério (princípio/classificação)
     dosagem: float
     unidade: str
     via: Optional[str] = None
@@ -916,6 +925,9 @@ class ProtocoloSanitarioAplicacao(SQLModel, table=True):
     lancamento_id: int = Field(foreign_key="protocolo_sanitario_lancamento.id")
     etapa_id: int = Field(foreign_key="protocolo_sanitario_etapa.id")
     data_prevista: date
+    # Medicamento escolhido no lançamento quando a etapa foi cadastrada por
+    # princípio ativo/classificação (None = usa o produto da própria etapa).
+    produto: Optional[str] = None
     realizada: bool = False
     data_realizacao: Optional[date] = None
 

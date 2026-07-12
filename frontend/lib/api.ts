@@ -658,8 +658,24 @@ export async function atualizarEventoSanitario(id: number, dados: EventoSanitari
   return res.json();
 }
 
+// Classificações de medicamento (para cadastrar/protocolar por classificação).
+export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"];
+
+// Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um
+// protocolo cadastrado por princípio ativo ou classificação.
+export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string }) {
+  const params = new URLSearchParams();
+  if (filtro.principio_ativo) params.set("principio_ativo", filtro.principio_ativo);
+  if (filtro.classificacao) params.set("classificacao", filtro.classificacao);
+  const res = await authFetch(`${API}/estoque/medicamentos?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
+  return res.json();
+}
+
 // ── Protocolo sanitário (cadastro + lançamento) ──
-export type ProtocoloEtapa = { dia: number; produto: string; dosagem: number; unidade: string; via?: string | null };
+// criterio_tipo: "medicamento" (produto = item de estoque), "principio_ativo"
+// ou "classificacao" (produto = o valor do critério; medicamento escolhido no lançamento).
+export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null };
 export async function fetchProtocolosSanitarios() {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);
@@ -687,6 +703,7 @@ export async function fetchLancamentosProtocolo() {
 export async function lancarProtocoloSanitario(dados: {
   protocolo_id: number; numeros_matriz: string[]; data_inicio: string; responsavel?: string; observacao?: string;
   classificacao_mastite?: string; resultado_cmt?: string; tetos_afetados?: string[];
+  escolhas_medicamento?: Record<string, string>;
 }) {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
