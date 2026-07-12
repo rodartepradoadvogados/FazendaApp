@@ -50,6 +50,9 @@ TIPOS_SERVICO = [("IA", "Inseminação (IA)"), ("Monta natural", "Monta natural"
 TIPOS_BAIXA = [("morte", "Morte"), ("descarte_voluntario", "Descarte voluntário"), ("descarte_involuntario", "Descarte involuntário")]
 MOTIVOS_BAIXA = [("venda", "Venda"), ("abate", "Abate"), ("acidente", "Acidente"), ("doenca", "Doença")]
 SEXO_CRIA = [("F", "Fêmea"), ("M", "Macho")]
+# Unidades aceitas na aplicação/baixa de estoque (mesma lista de rules/unidades).
+UNIDADES = [("ml", "ml"), ("L", "L"), ("unidade", "unidade"), ("dose", "dose"),
+            ("kg", "kg"), ("saca 30kg", "saca 30kg"), ("saca 60kg", "saca 60kg")]
 
 
 # ── Catálogo de fluxos ─────────────────────────────────────────────────────
@@ -119,7 +122,7 @@ FLUXOS: dict[str, dict] = {
             C("data_aplicacao", "Qual a <b>data da aplicação</b>?", "data"),
             C("produto", "Qual o <b>produto/medicamento</b>?", "texto"),
             C("quantidade", "Qual a <b>quantidade/dose</b> por animal?", "numero"),
-            C("unidade", "Qual a <b>unidade</b>? (ex.: mL, dose, g)", "texto"),
+            C("unidade", "Qual a <b>unidade</b>?", "opcoes", opcoes=UNIDADES),
         ],
     },
     "baixa_animal": {
