@@ -53,6 +53,12 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("estocavel", "BOOLEAN"), ("considerar_rmca", "BOOLEAN"),
         ("data_inicio_controle", "DATE"),
     ],
+    "evento_sanitario": [
+        ("tipo_agendamento", "VARCHAR DEFAULT 'nenhum'"), ("categoria_alvo", "VARCHAR"), ("doenca_id", "INTEGER"),
+        ("data_primeiro", "DATE"), ("frequencia_valor", "INTEGER"), ("frequencia_unidade", "VARCHAR"),
+        ("gatilho", "VARCHAR"), ("gatilho_lote", "VARCHAR"), ("gatilho_idade_meses", "INTEGER"), ("offset_dias", "INTEGER"),
+        ("produto_padrao", "VARCHAR"), ("dose_padrao", "FLOAT"), ("unidade_padrao", "VARCHAR"), ("via_padrao", "VARCHAR"),
+    ],
     "fornecedor": [("categoria", "VARCHAR")],
     "pessoa": [("salario_base", "FLOAT")],
     "usuario": [("permissoes", "VARCHAR")],

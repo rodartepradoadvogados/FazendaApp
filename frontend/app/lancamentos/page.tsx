@@ -6,7 +6,7 @@ import {
   ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
-  fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade,
+  fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
@@ -897,6 +897,26 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Vindo da Agenda ("Dar baixa" de um evento sanitário): ao salvar, marca o
+  // evento como realizado para sumir da Agenda.
+  const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
+
+  // Pré-preenche a partir da Agenda (medicamento padrão do evento sanitário),
+  // deixando tudo editável na hora.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("ir") !== "sanidade_aplicacao") return;
+    const numero = qs.get("numero_matriz");
+    if (numero) { setModo("animal"); setAnimal(numero); }
+    const data = qs.get("data"); if (data) setDataAplicacao(data);
+    const produto = qs.get("produto");
+    if (produto) {
+      setItens([{
+        produto, via: qs.get("via") || "", quantidade: qs.get("dose") || "", unidade: qs.get("unidade") || "",
+      }]);
+    }
+    setEventoAgenda(qs.get("evento_agenda"));
+  }, []);
 
   const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
   // Lista de produtos vem do relatório de sanidade (medicamentos já aplicados),
@@ -929,7 +949,8 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
         data_aplicacao: dataAplicacao, animais: animaisAlvo, responsavel: responsavel || undefined, observacao: observacao || undefined,
         itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
       });
-      setSucesso(`${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}`);
+      if (eventoAgenda) { await marcarEventoRealizado(eventoAgenda).catch(() => {}); setEventoAgenda(null); }
+      setSucesso(`${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}${eventoAgenda ? " Baixado da Agenda." : ""}`);
       setItens([itemSanidadeVazio()]); setObservacao("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar aplicação de sanidade");

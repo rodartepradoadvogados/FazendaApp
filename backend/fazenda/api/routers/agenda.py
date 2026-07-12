@@ -20,6 +20,7 @@ from fazenda.models import (
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
+from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules.unidades import pode_dar_baixa_direta
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
@@ -219,6 +220,10 @@ def calcular_agenda(
             "protocolo": lancamento.nome_protocolo,
         })
 
+    # Eventos sanitários agendados (por época ou por evento de vida) — cada um
+    # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
+    eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados)
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -239,7 +244,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos

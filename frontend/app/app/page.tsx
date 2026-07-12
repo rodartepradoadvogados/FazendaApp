@@ -28,6 +28,10 @@ type Evento = {
   lote?: string | null;
   tipo?: string | null;
   animais?: string[] | null;
+  produto?: string | null;
+  dose?: number | null;
+  unidade?: string | null;
+  via?: string | null;
 };
 
 type Agenda = { eventos?: Evento[] };
@@ -111,11 +115,23 @@ export default function AgendaMovel() {
       jaFeito ? n.delete(e.id) : n.add(e.id);
       return n;
     });
+    // Dar baixa num evento sanitário de um animal COM medicamento padrão:
+    // gera a aplicação (que dá a saída de estoque) em vez de só marcar feito.
+    const darBaixaSanidade = !jaFeito && e.tipo === "evento_sanitario" && e.numero_animal && e.produto && e.dose != null && e.unidade;
     try {
-      const r = jaFeito
-        ? await enviarOuEnfileirar(`/agenda/realizados/${encodeURIComponent(e.id)}`, {}, `Desfazer: ${resumo(e)}`, "DELETE")
-        : await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      let r;
+      if (darBaixaSanidade) {
+        r = await enviarOuEnfileirar("/sanidade/aplicacoes", {
+          data_aplicacao: hoje, animais: [e.numero_animal],
+          itens: [{ produto: e.produto, quantidade: e.dose, unidade: e.unidade, via: e.via || undefined }],
+        }, `Aplicação ${e.produto} — animal ${e.numero_animal}`, "POST");
+      } else if (jaFeito) {
+        r = await enviarOuEnfileirar(`/agenda/realizados/${encodeURIComponent(e.id)}`, {}, `Desfazer: ${resumo(e)}`, "DELETE");
+      } else {
+        r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      }
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else if (darBaixaSanidade) setAviso({ tipo: "ok", msg: "Aplicação lançada e estoque baixado." });
     } catch (err) {
       // Servidor recusou (ex.: 403 sem permissão) — desfaz o otimista.
       setFeitos((p) => {

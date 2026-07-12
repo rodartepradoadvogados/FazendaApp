@@ -255,6 +255,22 @@ export default function AgendaPage() {
                               <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                                 <Wheat size={12} /> Ir para Dieta
                               </a>
+                            ) : (e as any).tipo === "evento_sanitario" ? (
+                              (() => {
+                                const ev = e as any;
+                                const p = new URLSearchParams({ ir: "sanidade_aplicacao", evento_agenda: e.id });
+                                if (e.numero_animal) p.set("numero_matriz", e.numero_animal);
+                                if (ev.produto) p.set("produto", ev.produto);
+                                if (ev.dose != null) p.set("dose", String(ev.dose));
+                                if (ev.unidade) p.set("unidade", ev.unidade);
+                                if (ev.via) p.set("via", ev.via);
+                                if (e.data) p.set("data", e.data);
+                                return (
+                                  <a href={`/lancamentos?${p.toString()}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar (gera a aplicação e a saída de estoque)">
+                                    <Syringe size={12} /> Dar baixa (aplicar)
+                                  </a>
+                                );
+                              })()
                             ) : (
                               <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                             )}
