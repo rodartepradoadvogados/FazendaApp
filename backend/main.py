@@ -30,6 +30,7 @@ from fazenda.api.routers import (
     notificacoes,
     parametros,
     producao,
+    recria,
     relatorios,
     reproducao,
     sanidade,
@@ -41,6 +42,7 @@ from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
 from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias, seed_estoque_semen_inicial
+from fazenda.api.routers.recria import seed_recria
 from fazenda.rules.farmacia import bootstrap_farmacia
 
 
@@ -64,6 +66,8 @@ async def lifespan(app: FastAPI):
         # Farmácia: catálogo de princípios ativos/marcas + compatibilização do
         # estoque já existente (idempotente, sem perda de dados).
         bootstrap_farmacia(session)
+        # Recria: metas, curva de peso-alvo e janelas de ponto crítico padrão.
+        seed_recria(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield
@@ -120,6 +124,7 @@ app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("repro
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(farmacia.router, dependencies=_protegido)
 app.include_router(sanidade.router, dependencies=_protegido)
+app.include_router(recria.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])

@@ -1,9 +1,10 @@
 "use client";
 import { useState } from "react";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, Wheat, Pill, Scale } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, Wheat, Pill, Scale, Baby } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAlimentacao from "./CadastroAlimentacao";
 import CadastroPesagem from "./CadastroPesagem";
+import CadastroRecria from "./CadastroRecria";
 import Farmacia from "./Farmacia";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
@@ -30,6 +31,7 @@ const ABAS = [
   ["pessoas", "Pessoas", Users],
   ["sanitario", "Sanitário", HeartPulse],
   ["pesagem", "Pesagem do rebanho", Scale],
+  ["recria", "Recria (Dossiê)", Baby],
   ["excluir", "Excluir cadastros", Trash2],
 ] as const;
 
@@ -70,6 +72,7 @@ export default function Cadastro() {
       {aba === "pessoas" && <CadastroPessoas />}
       {aba === "sanitario" && <CadastroSanitario />}
       {aba === "pesagem" && <CadastroPesagem />}
+      {aba === "recria" && <CadastroRecria />}
       {aba === "excluir" && (
         <>
           <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>

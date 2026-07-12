@@ -1349,3 +1349,82 @@ class MotivoMovimentacao(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ===========================================================================
+# MÓDULO RECRIA — Dossiê de Desempenho Zootécnico
+# Novas tabelas que sustentam o acompanhamento de bezerras/novilhas:
+# ocorrências clínicas (fonte das curvas doença×idade), metas, curva de
+# peso-alvo por idade, fases de idade (coorte) e janelas de ponto crítico.
+# ===========================================================================
+class OcorrenciaClinica(SQLModel, table=True):
+    """Caso clínico de doença num animal, numa data. É a matéria-prima das
+    curvas 'casos por idade' e da incidência por fase do Dossiê de Recria."""
+
+    __tablename__ = "ocorrencia_clinica"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    doenca: str = Field(index=True)          # nome da doença (ex.: Diarreia, Pneumonia, TPB)
+    data_ocorrencia: date = Field(index=True)
+    observacao: Optional[str] = None
+    origem: str = "manual"                    # "manual" | "importacao" | "sanidade"
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MetaRecria(SQLModel, table=True):
+    """Metas gerenciais da recria (linha única, id=1). Espelha a aba
+    PARÂMETROS da planilha do consultor."""
+
+    __tablename__ = "meta_recria"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    idade_parto_meses: float = 24.0
+    idade_prenhez_meses: float = 14.5
+    idade_1a_cobertura_meses: float = 13.5
+    taxa_prenhez_meta: float = 42.5
+    desvio_padrao_meta: float = 1.7
+    custo_diario_recria: float = 12.0
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PesoAlvoIdade(SQLModel, table=True):
+    """Curva de peso-alvo: faixa mín/máx de peso (kg) esperada por mês de vida."""
+
+    __tablename__ = "peso_alvo_idade"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    mes: int = Field(index=True, unique=True)   # idade em meses (1..24)
+    peso_min_kg: float
+    peso_max_kg: float
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FaseRecria(SQLModel, table=True):
+    """Faixa de idade (em dias) usada para agrupar casos/incidência. Editável
+    pelo consultor. Ex.: '30–60 dias'."""
+
+    __tablename__ = "fase_recria"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str
+    dia_min: int = Field(index=True)
+    dia_max: int
+    ordem: int = 0
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class JanelaPontoCritico(SQLModel, table=True):
+    """Janela crítica de uma doença: faixa de idade (dias) de maior incidência
+    e a antecedência (dias) com que o alerta preventivo entra na Agenda."""
+
+    __tablename__ = "janela_ponto_critico"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    doenca: str = Field(index=True)
+    dia_min: int
+    dia_max: int
+    dias_antecedencia: int = 3
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
