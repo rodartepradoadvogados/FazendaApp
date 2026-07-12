@@ -41,12 +41,13 @@ function classeSoro(brix: number | null): string {
 const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] = [
   { chave: "partos", titulo: "Partos", colunas: [
     { header: "Data", key: "data_partoFmt" }, { header: "Ordem", key: "ordem_parto" }, { header: "Tipo", key: "tipo_parto" },
+    { header: "Cria 1", key: "numero_cria_1" }, { header: "Cria 2", key: "numero_cria_2" },
     { header: "Sexo cria 1", key: "sexo_cria_1" }, { header: "Sexo cria 2", key: "sexo_cria_2" },
     { header: "Gemelar?", key: "gemelar" }, { header: "Retenção de placenta?", key: "retencao_placenta" },
   ] },
   { chave: "servicos", titulo: "Reprodução — Serviço/IA e diagnóstico", colunas: [
     { header: "Data serviço", key: "data_servicoFmt" }, { header: "Tipo", key: "tipo_servico" }, { header: "Protocolo", key: "protocolo" },
-    { header: "Reprodutor", key: "reprodutor" }, { header: "Tentativa", key: "ordem_tentativa" },
+    { header: "Pai (touro/sêmen)", key: "reprodutor" }, { header: "NAAB do pai", key: "reprodutor_naab" }, { header: "Tentativa", key: "ordem_tentativa" },
     { header: "Data diagnóstico", key: "data_diagnosticoFmt" }, { header: "Diagnóstico", key: "diagnostico" },
   ] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF (D0/D7/D9/D11)", colunas: [
@@ -353,7 +354,21 @@ export default function FichaAnimal() {
                     <thead><tr>{s.colunas.map((c) => <th key={c.key}>{c.header}</th>)}</tr></thead>
                     <tbody>
                       {linhas.map((l, i) => (
-                        <tr key={i}>{s.colunas.map((c) => <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(l[c.key] ?? "—")}</td>)}</tr>
+                        <tr key={i}>{s.colunas.map((c) => {
+                          const val = l[c.key];
+                          // Número da cria: link para abrir a ficha da própria cria.
+                          if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
+                            return (
+                              <td key={c.key} style={{ fontSize: "0.78rem" }}>
+                                <button onClick={() => buscar(String(val))} title={`Abrir a ficha da cria ${val}`}
+                                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "var(--dourado-light)", textDecoration: "underline", fontWeight: 600, fontSize: "0.78rem" }}>
+                                  {String(val)}
+                                </button>
+                              </td>
+                            );
+                          }
+                          return <td key={c.key} style={{ fontSize: "0.78rem" }}>{String(val ?? "—")}</td>;
+                        })}</tr>
                       ))}
                     </tbody>
                   </table>

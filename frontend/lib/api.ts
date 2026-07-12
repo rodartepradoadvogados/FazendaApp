@@ -209,7 +209,7 @@ export async function criarServicoLote(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar inseminação"); }
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
-type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; central?: string | null; tipo: string; doses: number; observacao?: string | null; ativo?: boolean };
+type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; observacao?: string | null; ativo?: boolean };
 export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

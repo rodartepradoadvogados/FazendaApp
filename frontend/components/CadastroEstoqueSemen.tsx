@@ -4,11 +4,11 @@ import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "luci
 import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen } from "@/lib/api";
 
 type Semen = {
-  id: number; touro_nome: string; codigo: string | null; central: string | null;
+  id: number; touro_nome: string; codigo: string | null; naab: string | null; central: string | null;
   tipo: string; doses: number; observacao: string | null; ativo: boolean;
 };
-type Form = { touro_nome: string; codigo: string; central: string; tipo: string; doses: string; observacao: string };
-const formVazio: Form = { touro_nome: "", codigo: "", central: "", tipo: "convencional", doses: "", observacao: "" };
+type Form = { touro_nome: string; codigo: string; naab: string; central: string; tipo: string; doses: string; observacao: string };
+const formVazio: Form = { touro_nome: "", codigo: "", naab: "", central: "", tipo: "convencional", doses: "", observacao: "" };
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const cellInputStyle: React.CSSProperties = { ...inputStyle, padding: "0.25rem 0.4rem", fontSize: "0.78rem" };
@@ -40,6 +40,7 @@ function paraPayload(f: Form) {
   return {
     touro_nome: f.touro_nome.trim(),
     codigo: s(f.codigo),
+    naab: s(f.naab),
     central: s(f.central),
     tipo: f.tipo,
     doses: Number(f.doses) || 0,
@@ -83,7 +84,7 @@ export default function CadastroEstoqueSemen() {
 
   const abrirEdicao = (s: Semen) => {
     setEditForm({
-      touro_nome: s.touro_nome, codigo: s.codigo ?? "", central: s.central ?? "",
+      touro_nome: s.touro_nome, codigo: s.codigo ?? "", naab: s.naab ?? "", central: s.central ?? "",
       tipo: s.tipo, doses: String(s.doses ?? ""), observacao: s.observacao ?? "",
     });
     setEditId(s.id); setMsgEdit(null);
@@ -117,7 +118,7 @@ export default function CadastroEstoqueSemen() {
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((s) =>
-    !termoBusca || normalizar(`${s.touro_nome} ${s.codigo ?? ""} ${s.central ?? ""} ${s.observacao ?? ""}`).includes(termoBusca)
+    !termoBusca || normalizar(`${s.touro_nome} ${s.codigo ?? ""} ${s.naab ?? ""} ${s.central ?? ""} ${s.observacao ?? ""}`).includes(termoBusca)
   );
 
   return (
@@ -136,8 +137,11 @@ export default function CadastroEstoqueSemen() {
             <input style={inputStyle} value={novo.touro_nome} title="Nome do touro" placeholder="Nome do touro"
               onChange={(e) => setNovo({ ...novo, touro_nome: e.target.value })} /></div>
           <div><label style={labelStyle}>Código</label>
-            <input style={inputStyle} value={novo.codigo} title="Código do touro (ex.: registro/NAAB)"
+            <input style={inputStyle} value={novo.codigo} title="Código de registro do touro"
               onChange={(e) => setNovo({ ...novo, codigo: e.target.value })} /></div>
+          <div><label style={labelStyle}>NAAB</label>
+            <input style={inputStyle} value={novo.naab} title="Código NAAB do touro (ex.: 7HO12345)" placeholder="Ex.: 7HO12345"
+              onChange={(e) => setNovo({ ...novo, naab: e.target.value })} /></div>
           <div><label style={labelStyle}>Central</label>
             <input style={inputStyle} value={novo.central} title="Central de genética — ex.: ABS, Alta, Semex" placeholder="Ex.: ABS, Alta, Semex"
               onChange={(e) => setNovo({ ...novo, central: e.target.value })} /></div>
@@ -172,7 +176,7 @@ export default function CadastroEstoqueSemen() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Touro</th><th>Código</th><th>Central</th><th>Tipo</th><th>Doses</th><th></th></tr></thead>
+            <thead><tr><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th>Doses</th><th></th></tr></thead>
             <tbody>
               {filtrados.map((s) => {
                 const emEdicao = editId === s.id;
@@ -185,6 +189,8 @@ export default function CadastroEstoqueSemen() {
                           onChange={(e) => setEditForm({ ...editForm, touro_nome: e.target.value })} /></td>
                         <td><input style={cellInputStyle} value={editForm.codigo} title="Código do touro"
                           onChange={(e) => setEditForm({ ...editForm, codigo: e.target.value })} /></td>
+                        <td><input style={cellInputStyle} value={editForm.naab} title="Código NAAB do touro"
+                          onChange={(e) => setEditForm({ ...editForm, naab: e.target.value })} /></td>
                         <td><input style={cellInputStyle} value={editForm.central} title="Central de genética"
                           onChange={(e) => setEditForm({ ...editForm, central: e.target.value })} /></td>
                         <td><select style={cellInputStyle} value={editForm.tipo} title="Tipo de sêmen"
@@ -211,6 +217,7 @@ export default function CadastroEstoqueSemen() {
                           {s.touro_nome}{!s.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
                         </td>
                         <td style={{ fontSize: "0.78rem" }}>{s.codigo || "—"}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{s.naab || "—"}</td>
                         <td style={{ fontSize: "0.78rem" }}>{s.central || "—"}</td>
                         <td style={{ textTransform: "capitalize" }}>{s.tipo === "sexado" ? "Sexado" : "Convencional"}</td>
                         <td>
@@ -233,13 +240,13 @@ export default function CadastroEstoqueSemen() {
                       </tr>
                     )}
                     {emEdicao && msgEdit && (
-                      <tr><td colSpan={6} style={{ color: "var(--red)", fontSize: "0.78rem", paddingTop: 0 }}>{msgEdit}</td></tr>
+                      <tr><td colSpan={7} style={{ color: "var(--red)", fontSize: "0.78rem", paddingTop: 0 }}>{msgEdit}</td></tr>
                     )}
                   </Fragment>
                 );
               })}
-              {!itens.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum touro cadastrado ainda.</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+              {!itens.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum touro cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
           </div>

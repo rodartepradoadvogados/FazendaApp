@@ -214,6 +214,8 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
         tipo_parto=dados.tipo_parto,
         sexo_cria_1=dados.crias[0].sexo if len(dados.crias) > 0 else None,
         sexo_cria_2=dados.crias[1].sexo if len(dados.crias) > 1 else None,
+        numero_cria_1=dados.crias[0].numero if len(dados.crias) > 0 else None,
+        numero_cria_2=dados.crias[1].numero if len(dados.crias) > 1 else None,
         gemelar=dados.gemelar if dados.gemelar is not None else len(dados.crias) > 1,
         retencao_placenta=dados.retencao_placenta,
     )

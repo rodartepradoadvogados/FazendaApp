@@ -1185,6 +1185,7 @@ def seed_estoque_semen_inicial(session: Session) -> None:
 class EstoqueSemenIn(BaseModel):
     touro_nome: str
     codigo: str | None = None
+    naab: str | None = None
     central: str | None = None
     tipo: str = "convencional"
     doses: int = 0
