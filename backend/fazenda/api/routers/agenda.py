@@ -14,7 +14,7 @@ from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, Animal, AplicacaoAgendada, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
-    ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
+    ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
 )
@@ -394,10 +394,48 @@ def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: 
         aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
 
     hoje = date.today()
+    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
+    responsavel = getattr(lancamento, "responsavel", None)
+
+    # Hormônios cadastrados para este dia (ex.: D0 = 1ml SincroCP + 2ml Estron).
+    # Cada vaca confirmada gera uma aplicação em Sanidade e uma baixa de estoque.
+    hormonios = session.exec(
+        select(ProtocoloIatfHormonio).where(
+            ProtocoloIatfHormonio.lancamento_id == lancamento_id,
+            ProtocoloIatfHormonio.dia == dia,
+        )
+    ).all()
+
     for ap in aplicacoes:
         ap.realizada = True
         ap.data_realizacao = hoje
         session.add(ap)
+        for h in hormonios:
+            session.add(Sanidade(
+                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=h.produto,
+                dose=h.dose, unidade=h.unidade, via=h.via, responsavel=responsavel,
+                obs=f"Protocolo IATF — D{dia}",
+            ))
+
+    # Baixa de estoque: uma vez por hormônio, dose × nº de vacas confirmadas.
+    n_vacas = len(aplicacoes)
+    if n_vacas:
+        for h in hormonios:
+            if not h.dose:
+                continue
+            estoque_item = session.exec(select(Estoque).where(Estoque.nome == h.produto)).first()
+            if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(h.unidade, estoque_item.unidade):
+                total = h.dose * n_vacas
+                estoque_item.quantidade = (estoque_item.quantidade or 0) - total
+                if estoque_item.estoque_minimo is not None:
+                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+                estoque_item.atualizado_em = datetime.utcnow()
+                session.add(estoque_item)
+                session.add(MovimentoEstoque(
+                    nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
+                    unidade=estoque_item.unidade, data_movimento=hoje,
+                    observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
+                ))
     session.commit()
 
 

@@ -926,7 +926,8 @@ export async function sugestaoLoteEvento(dados: { numero_matriz: string; categor
 }
 
 // ── Serviço/IA: protocolo IATF (só agenda) e inseminação (o evento em si) ──
-export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo?: string }) {
+export type HormonioIatf = { dia: number; produto: string; dose?: number | null; unidade?: string; via?: string };
+export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: string; protocolo?: string; hormonios?: HormonioIatf[] }) {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

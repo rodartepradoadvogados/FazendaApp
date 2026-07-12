@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, SeedFlag, Servico,
+    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento, SeedFlag, Servico,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
@@ -236,10 +236,21 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
     return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas}
 
 
+class HormonioIatfIn(BaseModel):
+    dia: int  # 0, 7 ou 9 (D11 é inseminação, sem hormônio)
+    produto: str
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+
+
 class ProtocoloIatfIn(BaseModel):
     animais: list[str]
     data_d0: date
     protocolo: str = "Protocolo IATF"
+    # Medicamentos por dia (ex.: D0 = 1ml SincroCP + 2ml Estron). Opcional —
+    # sem eles, o protocolo funciona como antes (sem baixa de estoque).
+    hormonios: list[HormonioIatfIn] = []
 
 
 @router.post("/protocolo-iatf")
@@ -258,6 +269,23 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
     session.add(lancamento)
     session.flush()  # garante lancamento.id antes de criar as aplicações
 
+    # Medicamentos por dia (aplicados a todas as vacas do passo). Se o usuário
+    # informou hormônios, a descrição de cada dia passa a listá-los.
+    hormonios_por_dia: dict[int, list[HormonioIatfIn]] = {}
+    for h in dados.hormonios:
+        if (h.produto or "").strip():
+            hormonios_por_dia.setdefault(h.dia, []).append(h)
+            session.add(ProtocoloIatfHormonio(
+                lancamento_id=lancamento.id, dia=h.dia, produto=h.produto.strip(),
+                dose=h.dose, unidade=h.unidade, via=h.via,
+            ))
+
+    def _descricao_dia(dias: int, padrao: str) -> str:
+        hs = hormonios_por_dia.get(dias)
+        if not hs:
+            return padrao
+        return " + ".join(f"{h.dose or ''}{(' ' + h.unidade) if h.unidade else ''} {h.produto}".strip() for h in hs)
+
     eventos_criados = 0
     for numero in dados.animais:
         for dias, descricao in PASSOS_PROTOCOLO_IATF:
@@ -265,7 +293,7 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
                 lancamento_id=lancamento.id,
                 numero_matriz=numero,
                 dia=dias,
-                descricao=descricao,
+                descricao=_descricao_dia(dias, descricao),
                 data_prevista=dados.data_d0 + timedelta(days=dias),
             ))
             eventos_criados += 1

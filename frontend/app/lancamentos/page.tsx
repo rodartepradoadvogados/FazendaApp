@@ -22,6 +22,8 @@ import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
+import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
+import type { HormonioIatf } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
 
@@ -205,6 +207,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   const [um, setUm] = useState("");
   const [d0, setD0] = useState("");
   const [nomeProtocolo, setNomeProtocolo] = useState("Protocolo padrão");
+  const [hormonios, setHormonios] = useState<HormonioIatf[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -219,7 +222,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
     if (!d0) { setErro("Informe a data do D0."); return; }
     setSalvando(true);
     try {
-      const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo });
+      const r = await criarProtocoloIatf({ animais: animaisAlvo, data_d0: d0, protocolo: nomeProtocolo, hormonios });
       setSucesso(`Protocolo agendado para ${r.animais} animal(is) — ${r.eventos_criados} eventos criados na Agenda (D0/D7/D9/D11).`);
       setSel(new Set()); setUm("");
       recarregarAtivosRef.current();
@@ -272,6 +275,7 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         </div>
         <p style={nota}>Ao salvar, cria os eventos D0/D7/D9/D11 na Agenda para cada animal selecionado.</p>
       </div>
+      <EditorHormoniosIatf onChange={setHormonios} />
       <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}

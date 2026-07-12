@@ -194,6 +194,25 @@ class ProtocoloIatfAplicacao(SQLModel, table=True):
     data_realizacao: Optional[date] = None
 
 
+class ProtocoloIatfHormonio(SQLModel, table=True):
+    """
+    Medicamento(s) aplicado(s) num dia do protocolo IATF (ex.: D0 = 1ml SincroCP
+    + 2ml Estron). Definido uma vez por lançamento/dia e aplicado a todas as
+    vacas daquele passo. Ao confirmar o dia, dá baixa de estoque e registra a
+    aplicação em Sanidade para cada vaca.
+    """
+
+    __tablename__ = "protocolo_iatf_hormonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lancamento_id: int = Field(foreign_key="protocolo_iatf_lancamento.id", index=True)
+    dia: int
+    produto: str
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Parto
 # ---------------------------------------------------------------------------
