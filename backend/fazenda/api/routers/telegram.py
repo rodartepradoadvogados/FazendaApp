@@ -181,16 +181,33 @@ async def telegram_webhook(
 
     update = await request.json()
 
-    # 1) Clique num botão (receita/despesa/cancelar).
-    if "callback_query" in update:
-        _tratar_callback(session, update["callback_query"])
-        return {"ok": True}
-
-    # 2) Mensagem (documento/foto ou comando).
-    msg = update.get("message") or update.get("edited_message")
-    if msg:
-        _tratar_mensagem(session, msg)
+    # SEMPRE responde 200 ao Telegram, mesmo se der erro ao processar: um erro
+    # numa mensagem não pode travar a fila (o Telegram reenvia a mesma update
+    # em loop e bloqueia as próximas). Em caso de erro, avisa o usuário com o
+    # detalhe técnico — ajuda muito o diagnóstico.
+    try:
+        if "callback_query" in update:
+            _tratar_callback(session, update["callback_query"])
+        else:
+            msg = update.get("message") or update.get("edited_message")
+            if msg:
+                _tratar_mensagem(session, msg)
+    except Exception as e:  # noqa: BLE001
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        chat_id = _chat_id_do_update(update)
+        if chat_id:
+            _enviar(chat_id, f"⚠️ Tive um problema ao processar isso. Detalhe técnico:\n<code>{str(e)[:400]}</code>")
     return {"ok": True}
+
+
+def _chat_id_do_update(update: dict) -> int | None:
+    if "callback_query" in update:
+        return (((update["callback_query"] or {}).get("message") or {}).get("chat") or {}).get("id")
+    msg = update.get("message") or update.get("edited_message") or {}
+    return (msg.get("chat") or {}).get("id")
 
 
 def _boas_vindas(chat_id: int) -> str:
@@ -516,6 +533,9 @@ def registrar_webhook_telegram() -> None:
         payload = {
             "url": f"{base}/telegram/webhook",
             "allowed_updates": ["message", "callback_query"],
+            # Limpa a fila de updates presos ao reiniciar (evita que uma mensagem
+            # que deu erro no passado fique reenviando e travando as novas).
+            "drop_pending_updates": True,
         }
         if settings.telegram_webhook_secret:
             payload["secret_token"] = settings.telegram_webhook_secret
