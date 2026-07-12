@@ -1219,6 +1219,19 @@ export async function criarBaixaLote(dados: {
   return res.json();
 }
 
+// Baixa em lote com pagamento diferente por nota (data/valor/conta/forma por linha).
+export type BaixaLoteItem = {
+  lancamento_id: number; data_pagamento: string; valor_pago: number;
+  conta_bancaria?: string; forma_pagamento?: string; data_vencimento_cartao?: string; numero_documento_pagamento?: string;
+};
+export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
+  const res = await authFetch(`${API}/financeiro/lancamentos/baixa-lote-detalhada`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao dar baixa em lote"); }
+  return res.json();
+}
+
 export async function atualizarLancamentoFinanceiro(id: number, dados: {
   descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
   fornecedor_cliente?: string | null; numero_nota?: string | null; tipo_documento?: string | null;

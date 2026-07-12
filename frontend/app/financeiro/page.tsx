@@ -5,7 +5,7 @@ import {
   RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight,
 } from "lucide-react";
 import {
-  fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
+  fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
   criarVale, atualizarLancamentoFinanceiro,
 } from "@/lib/api";
@@ -854,6 +854,11 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   const [formaPagamento, setFormaPagamento] = useState("");
   const [dataVencimentoCartao, setDataVencimentoCartao] = useState("");
   const [numeroComprovante, setNumeroComprovante] = useState("");
+  // "unico" = mesmo pagamento p/ todas; "linha" = data/valor/conta/forma por nota.
+  const [modoLote, setModoLote] = useState<"unico" | "linha">("unico");
+  type LinhaPag = { data: string; valor: string; conta: string; forma: string; vencCartao: string; comprovante: string };
+  const [porLinha, setPorLinha] = useState<Record<number, LinhaPag>>({});
+  const patchLinha = (id: number, patch: Partial<LinhaPag>) => setPorLinha((p) => ({ ...p, [id]: { ...p[id], ...patch } }));
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
@@ -896,6 +901,21 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   );
   const totalSelecionado = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)).reduce((a, r) => a + r.valor, 0), [filtrados, selecionados]);
   const totalFiltrado = useMemo(() => filtrados.reduce((a, r) => a + r.valor, 0), [filtrados]);
+  const notasSelecionadas = useMemo(() => filtrados.filter((r) => selecionados.has(r.id)), [filtrados, selecionados]);
+
+  // Garante uma linha de pagamento para cada nota selecionada (default: data e
+  // conta/forma do pagamento único; valor = valor cheio da nota).
+  useEffect(() => {
+    setPorLinha((p) => {
+      const n = { ...p };
+      for (const r of notasSelecionadas) {
+        if (!n[r.id]) n[r.id] = { data: dataPagamento, valor: String(r.valor), conta: contaBancaria, forma: formaPagamento, vencCartao: "", comprovante: "" };
+      }
+      return n;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [notasSelecionadas]);
+  const totalPagoLinha = useMemo(() => notasSelecionadas.reduce((a, r) => a + (Number(porLinha[r.id]?.valor) || 0), 0), [notasSelecionadas, porLinha]);
 
   // Ordenação clicável sobre o resultado JÁ filtrado.
   const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtrados, {
@@ -909,17 +929,34 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
   async function darBaixaEmLote() {
     setMsg(null);
     if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos uma nota em aberto." }); return; }
-    if (formaPagamento === "credito" && !dataVencimentoCartao) { setMsg({ tipo: "erro", texto: "Informe a data de vencimento do cartão." }); return; }
     setSalvando(true);
     try {
-      const r = await criarBaixaLote({
-        lancamento_ids: Array.from(selecionados), data_pagamento: dataPagamento,
-        conta_bancaria: contaBancaria || undefined, forma_pagamento: formaPagamento || undefined,
-        data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
-        numero_documento_pagamento: numeroComprovante || undefined,
-      });
+      let r;
+      if (modoLote === "linha") {
+        for (const n of notasSelecionadas) {
+          const l = porLinha[n.id];
+          if (l?.forma === "credito" && !l.vencCartao) { setMsg({ tipo: "erro", texto: `Informe o vencimento do cartão da nota ${n.numero_documento || n.numero_lancamento || n.id}.` }); setSalvando(false); return; }
+        }
+        r = await criarBaixaLoteDetalhada(notasSelecionadas.map((n) => {
+          const l = porLinha[n.id];
+          return {
+            lancamento_id: n.id, data_pagamento: l?.data || dataPagamento, valor_pago: Number(l?.valor) || 0,
+            conta_bancaria: l?.conta || undefined, forma_pagamento: l?.forma || undefined,
+            data_vencimento_cartao: l?.forma === "credito" ? l.vencCartao : undefined,
+            numero_documento_pagamento: l?.comprovante || undefined,
+          };
+        }));
+      } else {
+        if (formaPagamento === "credito" && !dataVencimentoCartao) { setMsg({ tipo: "erro", texto: "Informe a data de vencimento do cartão." }); setSalvando(false); return; }
+        r = await criarBaixaLote({
+          lancamento_ids: Array.from(selecionados), data_pagamento: dataPagamento,
+          conta_bancaria: contaBancaria || undefined, forma_pagamento: formaPagamento || undefined,
+          data_vencimento_cartao: formaPagamento === "credito" ? dataVencimentoCartao : undefined,
+          numero_documento_pagamento: numeroComprovante || undefined,
+        });
+      }
       setMsg({ tipo: "sucesso", texto: `${r.baixados} lançamento(s) baixado(s) com sucesso.` });
-      setSelecionados(new Set()); setNumeroComprovante("");
+      setSelecionados(new Set()); setNumeroComprovante(""); setPorLinha({});
       carregar();
       onFeito?.();
     } catch (e: any) {
@@ -1033,34 +1070,88 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
 
       {selecionados.size > 0 && (
         <div className="card">
-          <div className="card-header mb-3">Pagamento único para {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</div>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div><label style={labelStyleLote}>Data do pagamento</label>
-              <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
-            <div><label style={labelStyleLote}>Conta corrente</label>
-              <select style={selStyleLote} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
-                <option value="">Selecione…</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
-              </select></div>
-            <div><label style={labelStyleLote}>Forma</label>
-              <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
-                <option value="">Selecione…</option>{Object.entries(LABEL_FORMA_PAGAMENTO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-              </select></div>
-            {formaPagamento === "credito" ? (
-              <div><label style={labelStyleLote}>Vencimento do cartão</label>
-                <input type="date" style={selStyleLote} value={dataVencimentoCartao} onChange={(e) => setDataVencimentoCartao(e.target.value)} /></div>
-            ) : (
-              <div><label style={labelStyleLote}>Nº do comprovante de pagamento</label>
-                <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} /></div>
-            )}
+          <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <span>Baixa de {selecionados.size} lançamento(s) — {formatBRL(totalSelecionado)}</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setModoLote("unico")} style={{ fontSize: "0.74rem", padding: "0.3rem 0.7rem", borderRadius: 999, cursor: "pointer", border: "1px solid " + (modoLote === "unico" ? "var(--dourado)" : "var(--border)"), background: modoLote === "unico" ? "rgba(94,26,46,0.4)" : "transparent", color: modoLote === "unico" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoLote === "unico" ? 700 : 500 }}>Pagamento único</button>
+              <button onClick={() => setModoLote("linha")} style={{ fontSize: "0.74rem", padding: "0.3rem 0.7rem", borderRadius: 999, cursor: "pointer", border: "1px solid " + (modoLote === "linha" ? "var(--dourado)" : "var(--border)"), background: modoLote === "linha" ? "rgba(94,26,46,0.4)" : "transparent", color: modoLote === "linha" ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: modoLote === "linha" ? 700 : 500 }}>Ajustar por linha</button>
+            </div>
           </div>
-          {formaPagamento === "credito" && (
-            <div className="mb-3" style={{ maxWidth: "280px" }}>
-              <label style={labelStyleLote}>Nº do comprovante de pagamento</label>
-              <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} />
+
+          {modoLote === "unico" ? (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                <div><label style={labelStyleLote}>Data do pagamento</label>
+                  <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+                <div><label style={labelStyleLote}>Conta corrente</label>
+                  <select style={selStyleLote} value={contaBancaria} onChange={(e) => setContaBancaria(e.target.value)}>
+                    <option value="">Selecione…</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
+                  </select></div>
+                <div><label style={labelStyleLote}>Forma</label>
+                  <select style={selStyleLote} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
+                    <option value="">Selecione…</option>{Object.entries(LABEL_FORMA_PAGAMENTO).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                  </select></div>
+                {formaPagamento === "credito" ? (
+                  <div><label style={labelStyleLote}>Vencimento do cartão</label>
+                    <input type="date" style={selStyleLote} value={dataVencimentoCartao} onChange={(e) => setDataVencimentoCartao(e.target.value)} /></div>
+                ) : (
+                  <div><label style={labelStyleLote}>Nº do comprovante de pagamento</label>
+                    <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} /></div>
+                )}
+              </div>
+              {formaPagamento === "credito" && (
+                <div className="mb-3" style={{ maxWidth: "280px" }}>
+                  <label style={labelStyleLote}>Nº do comprovante de pagamento</label>
+                  <input style={selStyleLote} value={numeroComprovante} onChange={(e) => setNumeroComprovante(e.target.value)} />
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="mb-3">
+              <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                Cada nota com sua própria data, valor, conta e forma. Valor diferente do total vira desconto/acréscimo.
+                Total a pagar: <strong style={{ color: "var(--text)" }}>{formatBRL(totalPagoLinha)}</strong> (de {formatBRL(totalSelecionado)}).
+              </p>
+              <div className="overflow-x-auto" style={{ maxHeight: "340px" }}>
+                <table className="fazenda-table" style={{ margin: 0, fontSize: "0.78rem" }}>
+                  <thead><tr>
+                    <th>Nota / fornecedor</th><th style={{ textAlign: "right" }}>Valor</th>
+                    <th>Data pgto</th><th>Valor pago</th><th>Conta</th><th>Forma</th><th>Compr.</th>
+                  </tr></thead>
+                  <tbody>
+                    {notasSelecionadas.map((n) => {
+                      const l = porLinha[n.id] || { data: dataPagamento, valor: String(n.valor), conta: "", forma: "", vencCartao: "", comprovante: "" };
+                      return (
+                        <tr key={n.id}>
+                          <td style={{ maxWidth: 180 }}>
+                            <strong>{n.numero_documento || n.numero_lancamento || "—"}</strong>
+                            <br /><span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>{n.fornecedor || "—"}</span>
+                          </td>
+                          <td style={{ textAlign: "right", color: n.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(n.valor)}</td>
+                          <td><input type="date" style={{ ...selStyleLote, minWidth: 130 }} value={l.data} onChange={(e) => patchLinha(n.id, { data: e.target.value })} /></td>
+                          <td><input type="number" inputMode="decimal" style={{ ...selStyleLote, width: 100 }} value={l.valor} onChange={(e) => patchLinha(n.id, { valor: e.target.value })} /></td>
+                          <td>
+                            <select style={{ ...selStyleLote, minWidth: 110 }} value={l.conta} onChange={(e) => patchLinha(n.id, { conta: e.target.value })}>
+                              <option value="">—</option>{contasBancarias.map((c) => <option key={c}>{c}</option>)}
+                            </select>
+                          </td>
+                          <td>
+                            <select style={{ ...selStyleLote, minWidth: 110 }} value={l.forma} onChange={(e) => patchLinha(n.id, { forma: e.target.value })}>
+                              <option value="">—</option>{Object.entries(LABEL_FORMA_PAGAMENTO).map(([v, lb]) => <option key={v} value={v}>{lb}</option>)}
+                            </select>
+                            {l.forma === "credito" && <input type="date" title="Vencimento do cartão" style={{ ...selStyleLote, minWidth: 110, marginTop: 3 }} value={l.vencCartao} onChange={(e) => patchLinha(n.id, { vencCartao: e.target.value })} />}
+                          </td>
+                          <td><input style={{ ...selStyleLote, width: 90 }} value={l.comprovante} onChange={(e) => patchLinha(n.id, { comprovante: e.target.value })} /></td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
           {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
-          <button className="btn-primary" title="Baixar todas as notas selecionadas com este pagamento único" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
+          <button className="btn-primary" title={modoLote === "linha" ? "Baixar cada nota com o seu próprio pagamento" : "Baixar todas as notas selecionadas com este pagamento único"} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
         </div>

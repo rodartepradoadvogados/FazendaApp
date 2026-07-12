@@ -166,6 +166,22 @@ class BaixaLoteIn(BaseModel):
     numero_documento_pagamento: Optional[str] = None
 
 
+class BaixaLoteItemIn(BaseModel):
+    """Pagamento de UMA nota dentro da baixa em lote — cada uma com sua própria
+    data, valor, conta e forma."""
+    lancamento_id: int
+    data_pagamento: date
+    valor_pago: float
+    conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None
+    data_vencimento_cartao: Optional[date] = None
+    numero_documento_pagamento: Optional[str] = None
+
+
+class BaixaLoteDetalhadaIn(BaseModel):
+    itens: list[BaixaLoteItemIn]
+
+
 class XmlIn(BaseModel):
     xml: str
 
@@ -749,6 +765,41 @@ def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> d
         registro.numero_documento_pagamento = dados.numero_documento_pagamento
         session.add(registro)
         baixados.append(lancamento_id)
+
+    session.commit()
+    return {"baixados": len(baixados), "nao_encontrados": nao_encontrados}
+
+
+@router.put("/lancamentos/baixa-lote-detalhada")
+def baixa_lote_detalhada(dados: BaixaLoteDetalhadaIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Dá baixa em várias notas de uma vez, mas cada uma com o SEU próprio
+    pagamento (data, valor, conta, forma e comprovante) — permite pagar cada
+    conta de forma diferente numa única operação. Valor diferente do total vira
+    desconto/acréscimo (como na baixa individual).
+    """
+    if not dados.itens:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento")
+    for it in dados.itens:
+        if it.forma_pagamento == "credito" and not it.data_vencimento_cartao:
+            raise HTTPException(status_code=400, detail=f"Informe o vencimento do cartão do lançamento {it.lancamento_id}")
+
+    baixados = []
+    nao_encontrados = []
+    for it in dados.itens:
+        registro = session.get(ContaGerencial, it.lancamento_id)
+        if not registro:
+            nao_encontrados.append(it.lancamento_id)
+            continue
+        registro.data_pagamento = it.data_pagamento
+        registro.valor_pago = it.valor_pago
+        registro.desconto_acrescimo = round(it.valor_pago - (registro.valor_total or 0), 2)
+        registro.conta_bancaria = it.conta_bancaria
+        registro.forma_pagamento = it.forma_pagamento
+        registro.data_vencimento_cartao = it.data_vencimento_cartao if it.forma_pagamento == "credito" else None
+        registro.numero_documento_pagamento = it.numero_documento_pagamento
+        session.add(registro)
+        baixados.append(it.lancamento_id)
 
     session.commit()
     return {"baixados": len(baixados), "nao_encontrados": nao_encontrados}
