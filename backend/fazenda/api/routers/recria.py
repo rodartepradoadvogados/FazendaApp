@@ -21,7 +21,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
-    Parto, PesagemCorporal, PesoAlvoIdade, Servico,
+    Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico,
 )
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
@@ -195,6 +195,70 @@ def reproducao_taxa_prenhez(
         "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
         "total_servicos": len(servicos),
     }
+
+
+# --- Pilar Nutrição (gestão de cocho + IMS) --------------------------------
+class CochoIn(BaseModel):
+    data: date
+    lote: str
+    num_animais: int = 1
+    kg_ofertado: float = 0.0
+    kg_sobra: float = 0.0
+    kg_formulado: float | None = None
+    observacao: str | None = None
+
+
+def _serializa_cocho(r: RegistroCocho) -> dict:
+    consumido = max(0.0, (r.kg_ofertado or 0) - (r.kg_sobra or 0))
+    n = r.num_animais or 1
+    return {
+        **r.model_dump(),
+        "kg_consumido": round(consumido, 1),
+        "pct_sobra": round(100 * (r.kg_sobra or 0) / r.kg_ofertado, 1) if r.kg_ofertado else None,
+        "ims_consumida_animal": round(consumido / n, 2),
+        "ims_formulada_animal": round((r.kg_formulado or 0) / n, 2) if r.kg_formulado else None,
+    }
+
+
+@router.get("/cocho")
+def listar_cocho(
+    lote: str = "", ini: date | None = None, fim: date | None = None, session: Session = Depends(get_session),
+) -> dict:
+    linhas = session.exec(select(RegistroCocho).order_by(RegistroCocho.data.desc())).all()
+    saida = []
+    for r in linhas:
+        if lote and r.lote != lote:
+            continue
+        if ini and r.data < ini:
+            continue
+        if fim and r.data > fim:
+            continue
+        saida.append(_serializa_cocho(r))
+    lotes = sorted({r.lote for r in linhas})
+    return {"registros": saida, "lotes": lotes}
+
+
+@router.post("/cocho", status_code=201)
+def criar_cocho(dados: CochoIn, session: Session = Depends(get_session)) -> dict:
+    if not dados.lote.strip():
+        raise HTTPException(status_code=400, detail="Informe o lote.")
+    if dados.kg_sobra > dados.kg_ofertado:
+        raise HTTPException(status_code=400, detail="A sobra não pode ser maior que o ofertado.")
+    r = RegistroCocho(**dados.model_dump())
+    r.lote = dados.lote.strip()
+    session.add(r)
+    session.commit()
+    session.refresh(r)
+    return _serializa_cocho(r)
+
+
+@router.delete("/cocho/{cocho_id}")
+def excluir_cocho(cocho_id: int, session: Session = Depends(get_session)) -> dict:
+    r = session.get(RegistroCocho, cocho_id)
+    if r:
+        session.delete(r)
+        session.commit()
+    return {"ok": True}
 
 
 # --- Ocorrências clínicas (lançamento) -------------------------------------
