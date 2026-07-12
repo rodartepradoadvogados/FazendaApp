@@ -16,7 +16,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
+    AgendamentoPesagem, Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
     Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
@@ -821,6 +821,72 @@ _listar_doencas, _criar_doenca, _atualizar_doenca = _crud_nome_ativo(Doenca)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)
+
+
+# ---------------------------------------------------------------------------
+# Agendamento de pesagem do rebanho (acompanhamento da evolução de peso) —
+# periodicidade por fase + dia da semana, que alimenta a Agenda.
+# ---------------------------------------------------------------------------
+class AgendamentoPesagemIn(BaseModel):
+    nome: str
+    ativo: bool = True
+    idade_min_dias: int | None = None
+    idade_max_dias: int | None = None
+    categoria_alvo: str | None = None
+    frequencia_valor: int = 15
+    frequencia_unidade: str = "dias"  # "dias" | "meses"
+    dia_semana: int = 1  # 0=segunda … 6=domingo
+    data_referencia: date
+
+
+@router.get("/agendamentos-pesagem")
+def listar_agendamentos_pesagem(session: Session = Depends(get_session)) -> list[dict]:
+    return [a.model_dump() for a in session.exec(select(AgendamentoPesagem).order_by(AgendamentoPesagem.nome)).all()]
+
+
+def _valida_pesagem(dados: AgendamentoPesagemIn) -> None:
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome da fase (ex.: Bezerras até desmama)")
+    if dados.frequencia_unidade not in ("dias", "meses"):
+        raise HTTPException(status_code=400, detail="Frequência inválida (dias ou meses)")
+    if dados.frequencia_valor <= 0:
+        raise HTTPException(status_code=400, detail="A periodicidade deve ser maior que zero")
+    if not (0 <= dados.dia_semana <= 6):
+        raise HTTPException(status_code=400, detail="Dia da semana inválido")
+
+
+@router.post("/agendamentos-pesagem", status_code=201)
+def criar_agendamento_pesagem(dados: AgendamentoPesagemIn, session: Session = Depends(get_session)) -> dict:
+    _valida_pesagem(dados)
+    obj = AgendamentoPesagem(**{**dados.model_dump(), "nome": dados.nome.strip()})
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
+
+
+@router.put("/agendamentos-pesagem/{item_id}")
+def atualizar_agendamento_pesagem(item_id: int, dados: AgendamentoPesagemIn, session: Session = Depends(get_session)) -> dict:
+    obj = session.get(AgendamentoPesagem, item_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Agendamento não encontrado")
+    _valida_pesagem(dados)
+    for k, v in {**dados.model_dump(), "nome": dados.nome.strip()}.items():
+        setattr(obj, k, v)
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
+
+
+@router.delete("/agendamentos-pesagem/{item_id}")
+def excluir_agendamento_pesagem(item_id: int, session: Session = Depends(get_session)) -> dict:
+    obj = session.get(AgendamentoPesagem, item_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Agendamento não encontrado")
+    session.delete(obj)
+    session.commit()
+    return {"ok": True}
 
 # Evento sanitário — cadastro RICO (nome + agendamento por época/evento +
 # medicamento padrão). Alimenta o calendário sanitário e a Agenda.

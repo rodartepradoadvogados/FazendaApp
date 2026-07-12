@@ -114,17 +114,17 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
 
 @router.get("/medicamentos")
 def listar_medicamentos(
-    principio_ativo: str = "", classificacao: str = "",
+    principio_ativo: str = "", classificacao: str = "", doenca: str = "",
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Medicamentos (itens de estoque) que cumprem um critério — usado ao
-    lançar um protocolo cadastrado por princípio ativo ou por classificação.
+    lançar por princípio ativo, por classificação OU por doença.
 
-    O casamento por princípio ativo usa a Farmácia: além do texto legado
+    O casamento por princípio ativo/doença usa a Farmácia: além do texto legado
     `principio_ativo`, resolve o vínculo relacional (principio_ativo_id →
-    PrincipioAtivo.nome), para que os hormônios/medicamentos ligados ao princípio
-    apareçam mesmo sem o campo texto preenchido."""
-    from fazenda.models import PrincipioAtivo
+    PrincipioAtivo.nome / PrincipioAtivo.doenca_id → Doenca.nome), para que os
+    medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto."""
+    from fazenda.models import Doenca, PrincipioAtivo
 
     pa_ids: set[int] = set()
     if principio_ativo:
@@ -132,6 +132,15 @@ def listar_medicamentos(
         for pa in session.exec(select(PrincipioAtivo)).all():
             if (pa.nome or "").strip().lower() == alvo:
                 pa_ids.add(pa.id)
+
+    # Doença → princípios ativos ligados a ela (via doenca_id da Farmácia).
+    pa_ids_doenca: set[int] = set()
+    if doenca:
+        alvo_d = doenca.strip().lower()
+        doenca_ids = {d.id for d in session.exec(select(Doenca)).all() if (d.nome or "").strip().lower() == alvo_d}
+        for pa in session.exec(select(PrincipioAtivo)).all():
+            if pa.doenca_id in doenca_ids:
+                pa_ids_doenca.add(pa.id)
 
     itens = session.exec(select(Estoque)).all()
     saida = []
@@ -141,6 +150,8 @@ def listar_medicamentos(
             casa_link = e.principio_ativo_id in pa_ids
             if not (casa_texto or casa_link):
                 continue
+        if doenca and e.principio_ativo_id not in pa_ids_doenca:
+            continue
         if classificacao and (e.classificacao_medicamento or "").strip().lower() != classificacao.strip().lower():
             continue
         saida.append({

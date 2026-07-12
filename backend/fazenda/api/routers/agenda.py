@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
@@ -23,6 +23,7 @@ from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
+from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -131,6 +132,16 @@ def calcular_agenda(
         eventos_manuais=manuais,
         dias_contas_a_pagar=dias,
     )
+
+    # BST a cada 12 dias ancorado na ÚLTIMA APLICAÇÃO lançada (não no último
+    # serviço): a próxima dose é 12 dias após a aplicação de BST mais recente.
+    MARCADORES_BST = ("lactotropin", "boostin", "bst", "somatotrop")
+    datas_bst = [
+        s.data_aplicacao for s in session.exec(select(Sanidade)).all()
+        if s.data_aplicacao and any(m in (s.produto or "").lower() for m in MARCADORES_BST)
+    ]
+    if datas_bst:
+        result.proxima_visita_bst = max(datas_bst) + timedelta(days=12)
 
     # Remove da lista os eventos já marcados como "realizado" (workflow da agenda).
     realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
@@ -346,6 +357,42 @@ def calcular_agenda(
                 "fonte": "auto", "cor": "var(--dourado)", "ref": str(d.id), "tipo": "nova_dieta", "lote": d.lote,
             })
 
+    # Pesagem do rebanho (acompanhamento da evolução de peso): cada agendamento
+    # (fase) gera um lembrete na Agenda nos dias configurados (periodicidade +
+    # dia da semana), com a contagem de animais da faixa de idade-alvo.
+    eventos_pesagem = []
+    agend_pesagem = session.exec(select(AgendamentoPesagem).where(AgendamentoPesagem.ativo == True)).all()  # noqa: E712
+    if agend_pesagem:
+        # Todos os animais ativos (inclui bezerros de ambos os sexos) com nascimento.
+        todos_ativos = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        animais_pesagem = [a for a in todos_ativos if not a.eh_semen]
+        for ag in agend_pesagem:
+            for dref in ocorrencias_pesagem(ag.data_referencia, ag.frequencia_valor, ag.frequencia_unidade,
+                                            ag.dia_semana, data, data + timedelta(days=dias)):
+                chave = f"pesagem_{ag.id}_{dref.isoformat()}"
+                if chave in realizados:
+                    continue
+                # Conta os animais-alvo na data da pesagem (por idade e/ou categoria).
+                alvo = []
+                for a in animais_pesagem:
+                    idade = idade_dias(a.data_nasc, dref)
+                    if ag.idade_min_dias is not None and (idade is None or idade < ag.idade_min_dias):
+                        continue
+                    if ag.idade_max_dias is not None and (idade is None or idade > ag.idade_max_dias):
+                        continue
+                    if ag.categoria_alvo and (a.categoria_abrev or "").strip().lower() != ag.categoria_alvo.strip().lower():
+                        continue
+                    alvo.append(a.numero)
+                if not alvo and (ag.idade_min_dias is not None or ag.idade_max_dias is not None or ag.categoria_alvo):
+                    continue  # fase com alvo definido mas sem animais hoje → não polui a agenda
+                eventos_pesagem.append({
+                    "id": chave, "data": dref.isoformat(), "categoria": "Produção",
+                    "descricao": f"Pesagem — {ag.nome}" + (f" ({len(alvo)} animais)" if alvo else ""),
+                    "numero_animal": None, "observacao": "Pesagem corporal do rebanho (evolução de peso). Toque para lançar.",
+                    "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "pesagem_rebanho",
+                    "animais": sorted(alvo, key=chave_numero),
+                })
+
     # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
     # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
     # repor). Mínimos: convencional 20, sexado 5 (ver cadastro.MINIMO_SEMEN).
@@ -389,7 +436,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_nova_dieta
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos
@@ -469,7 +516,7 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     ))
 
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
-    if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
+    if estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
         estoque_item.quantidade = (estoque_item.quantidade or 0) - etapa.dosagem
         if estoque_item.estoque_minimo is not None:
             estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
@@ -501,7 +548,7 @@ def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
     ))
 
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == ag.produto)).first()
-    if ag.dose and estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(ag.unidade, estoque_item.unidade):
+    if ag.dose and estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(ag.unidade, estoque_item.unidade):
         estoque_item.quantidade = (estoque_item.quantidade or 0) - ag.dose
         if estoque_item.estoque_minimo is not None:
             estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
