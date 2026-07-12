@@ -35,12 +35,15 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
     for s in session.exec(select(Sanidade)).all():
         d = s.data_aplicacao
         registros.append({
+            "id": s.id,
             "numero": s.numero_matriz,
             "raca": s.raca or "(sem raça)",
             "produto": s.produto,
             "categoria": s.categoria or "Outros",
             "dose": s.dose,
             "unidade": s.unidade,
+            "via": s.via,
+            "responsavel": s.responsavel,
             "atividade": s.atividade,
             "obs": s.obs,
             "data": d.isoformat() if d else None,
@@ -127,6 +130,58 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
 
     session.commit()
     return {"criados": criados, "avisos": avisos}
+
+
+class EditarAplicacaoIn(BaseModel):
+    """Edição de UMA aplicação já lançada, direto na lista de Sanidade.
+    Todos os campos são opcionais — só o que vier é alterado."""
+    data_aplicacao: date | None = None
+    produto: str | None = None
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+    responsavel: str | None = None
+    obs: str | None = None
+
+
+@router.put("/aplicacoes/{aplicacao_id}")
+def editar_aplicacao(aplicacao_id: int, dados: EditarAplicacaoIn, session: Session = Depends(get_session)) -> dict:
+    """Corrige uma aplicação diretamente na lista (produto, dose, unidade, via,
+    responsável, data, observação). Não mexe no estoque — é só ajuste do registro."""
+    s = session.get(Sanidade, aplicacao_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+
+    campos = dados.model_dump(exclude_unset=True)
+    if "unidade" in campos and campos["unidade"]:
+        produto = campos.get("produto", s.produto)
+        estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
+        compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
+        if campos["unidade"] not in compativeis:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Unidade "{campos["unidade"]}" não é compatível com o produto "{produto}" (aceitas: {", ".join(compativeis)})',
+            )
+
+    for campo, valor in campos.items():
+        setattr(s, campo, valor)
+    s.atualizado_em = datetime.utcnow()
+    session.add(s)
+    session.commit()
+    session.refresh(s)
+    return {"id": s.id, "numero": s.numero_matriz, "produto": s.produto, "dose": s.dose, "unidade": s.unidade}
+
+
+@router.delete("/aplicacoes/{aplicacao_id}")
+def excluir_aplicacao(aplicacao_id: int, session: Session = Depends(get_session)) -> dict:
+    """Exclui uma aplicação da lista de Sanidade. O estoque não é reposto
+    automaticamente — se precisar, ajuste o estoque manualmente."""
+    s = session.get(Sanidade, aplicacao_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    session.delete(s)
+    session.commit()
+    return {"excluido": True, "id": aplicacao_id}
 
 
 # ---------------------------------------------------------------------------
