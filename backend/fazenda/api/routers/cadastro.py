@@ -1002,7 +1002,7 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
 # ---------------------------------------------------------------------------
 VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]
-CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao"]
+CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doenca"]
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
 
 

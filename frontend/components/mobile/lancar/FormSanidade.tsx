@@ -2,9 +2,9 @@
 // Sub-tela SANIDADE: aplicação avulsa de um produto OU lançamento de um
 // protocolo sanitário — por animal ou por lote.
 // Endpoints: POST /sanidade/aplicacoes | POST /sanidade/protocolos/lancamentos.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { fetchEstoque, fetchProtocolosSanitarios } from "@/lib/api";
+import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
@@ -30,6 +30,21 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
   const [via, setVia] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [aplicado, setAplicado] = useState(true);
+  // Filtrar o medicamento por doença / princípio ativo (abre só os que casam).
+  const [filtrarPor, setFiltrarPor] = useState<"todos" | "principio_ativo" | "doenca">("todos");
+  const [criterio, setCriterio] = useState("");
+  const [principiosNomes, setPrincipiosNomes] = useState<string[]>([]);
+  const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
+  const [medicamentosFiltrados, setMedicamentosFiltrados] = useState<string[] | null>(null);
+  useEffect(() => {
+    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosNomes(d.map((p) => p.nome))).catch(() => {});
+    fetchDoencas().then((d: any[]) => setDoencasNomes(d.map((x) => x.nome))).catch(() => {});
+  }, []);
+  useEffect(() => {
+    if (filtrarPor === "todos" || !criterio) { setMedicamentosFiltrados(null); return; }
+    const filtro = filtrarPor === "principio_ativo" ? { principio_ativo: criterio } : { doenca: criterio };
+    fetchMedicamentos(filtro).then((m: any[]) => setMedicamentosFiltrados(m.map((x) => x.nome))).catch(() => setMedicamentosFiltrados([]));
+  }, [filtrarPor, criterio]);
   // Protocolo sanitário
   const [protocoloId, setProtocoloId] = useState("");
   const [classifMastite, setClassifMastite] = useState("");
@@ -42,7 +57,10 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     return Array.from(set).sort();
   }, [animais]);
 
-  const produtos = useMemo(() => estoque.dados.map((e) => e.nome).sort(), [estoque.dados]);
+  const produtos = useMemo(() => {
+    const base = medicamentosFiltrados ?? estoque.dados.map((e) => e.nome);
+    return [...base].sort();
+  }, [estoque.dados, medicamentosFiltrados]);
   const compativeis = useMemo(() => unidadesCompativeis(estoque.dados.find((e) => e.nome === produto)?.unidade), [estoque.dados, produto]);
   const protoSel = protocolos.dados.find((p) => String(p.id) === protocoloId);
 
@@ -143,8 +161,23 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
         </>
       ) : (
         <>
+          <MobCampo label="Filtrar medicamento por">
+            <select className="mob-input" value={filtrarPor} onChange={(e) => { setFiltrarPor(e.target.value as typeof filtrarPor); setCriterio(""); setProduto(""); }}>
+              <option value="todos">Todos os medicamentos</option>
+              <option value="principio_ativo">Princípio ativo</option>
+              <option value="doenca">Doença</option>
+            </select>
+          </MobCampo>
+          {filtrarPor !== "todos" && (
+            <MobCampo label={filtrarPor === "principio_ativo" ? "Princípio ativo" : "Doença"}>
+              <select className="mob-input" value={criterio} onChange={(e) => { setCriterio(e.target.value); setProduto(""); }}>
+                <option value="">Selecione…</option>
+                {(filtrarPor === "principio_ativo" ? principiosNomes : doencasNomes).map((c) => <option key={c} value={c}>{c}</option>)}
+              </select>
+            </MobCampo>
+          )}
           <MobCampo label="Produto / medicamento">
-            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)}>
+            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)} disabled={filtrarPor !== "todos" && !criterio}>
               <option value="">Selecione o produto…</option>
               {produtos.map((nome) => {
                 const est = estoque.dados.find((e) => e.nome === nome);
