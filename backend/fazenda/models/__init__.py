@@ -1428,3 +1428,24 @@ class JanelaPontoCritico(SQLModel, table=True):
     dias_antecedencia: int = 3
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class BenchmarkRecria(SQLModel, table=True):
+    """Referência externa de benchmarking (ex.: Alta CRIA): percentis do setor
+    (TOP 5/10/25/50/75%) por indicador, e o valor atual da fazenda."""
+
+    __tablename__ = "benchmark_recria"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    indicador: str = Field(index=True)
+    unidade: Optional[str] = None            # "%", "g/dia", etc.
+    melhor_e_maior: bool = True              # True: quanto MAIOR melhor (GMD); False: quanto menor (mortalidade)
+    top5: Optional[float] = None
+    top10: Optional[float] = None
+    top25: Optional[float] = None
+    top50: Optional[float] = None
+    top75: Optional[float] = None
+    valor_fazenda: Optional[float] = None
+    ordem: int = 0
+    fonte: str = "Alta CRIA 2026"
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)

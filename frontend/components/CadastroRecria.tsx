@@ -7,7 +7,8 @@ import { Baby, Check, Trash2, Plus } from "lucide-react";
 import {
   fetchRecriaMetas, salvarRecriaMetas, fetchRecriaPesoAlvo, salvarRecriaPesoAlvo, excluirRecriaPesoAlvo,
   fetchRecriaFases, criarRecriaFase, excluirRecriaFase, fetchRecriaJanelas, criarRecriaJanela, excluirRecriaJanela,
-  type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela,
+  fetchRecriaBenchmark, salvarRecriaBenchmark,
+  type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela, type RecriaBenchmark,
 } from "@/lib/api";
 
 const input: React.CSSProperties = { padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", width: "100%" };
@@ -25,6 +26,42 @@ export default function CadastroRecria() {
       <SecPesoAlvo />
       <SecFases />
       <SecJanelas />
+      <SecBenchmark />
+    </div>
+  );
+}
+
+function SecBenchmark() {
+  const [lista, setLista] = useState<RecriaBenchmark[]>([]);
+  const [msg, setMsg] = useState("");
+  const carregar = () => fetchRecriaBenchmark().then(setLista).catch(() => {});
+  useEffect(() => { carregar(); }, []);
+  const set = (i: number, campo: keyof RecriaBenchmark, valor: any) =>
+    setLista((ls) => ls.map((b, k) => (k === i ? { ...b, [campo]: valor === "" ? null : Number(valor) } : b)));
+  return (
+    <div style={card}>
+      <div style={secTit}>Benchmark externo (Alta CRIA)</div>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Percentis do setor por indicador e o valor atual da fazenda. Já vem preenchido com a Alta CRIA 2026.</p>
+      <div style={{ overflowX: "auto" }}>
+        <table className="fazenda-table">
+          <thead><tr><th>Indicador</th><th>TOP 5%</th><th>TOP 25%</th><th>TOP 50%</th><th>TOP 75%</th><th>Fazenda</th><th></th></tr></thead>
+          <tbody>
+            {lista.map((b, i) => (
+              <tr key={b.indicador}>
+                <td style={{ fontWeight: 600, fontSize: "0.78rem" }}>{b.indicador} <span style={{ color: "var(--text-muted)" }}>({b.unidade})</span></td>
+                <td><input type="number" style={{ ...input, width: 70 }} value={b.top5 ?? ""} onChange={(e) => set(i, "top5", e.target.value)} /></td>
+                <td><input type="number" style={{ ...input, width: 70 }} value={b.top25 ?? ""} onChange={(e) => set(i, "top25", e.target.value)} /></td>
+                <td><input type="number" style={{ ...input, width: 70 }} value={b.top50 ?? ""} onChange={(e) => set(i, "top50", e.target.value)} /></td>
+                <td><input type="number" style={{ ...input, width: 70 }} value={b.top75 ?? ""} onChange={(e) => set(i, "top75", e.target.value)} /></td>
+                <td><input type="number" style={{ ...input, width: 70 }} value={b.valor_fazenda ?? ""} onChange={(e) => set(i, "valor_fazenda", e.target.value)} /></td>
+                <td><button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--dourado)" }}
+                  onClick={() => salvarRecriaBenchmark(b).then(() => { setMsg(`${b.indicador} salvo.`); carregar(); }).catch((e) => setMsg(e.message))}>Salvar</button></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {msg && <p style={{ fontSize: "0.8rem", color: "var(--green-light)", marginTop: "0.5rem" }}>{msg}</p>}
     </div>
   );
 }

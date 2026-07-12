@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
+    Animal, BenchmarkRecria, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
     PesagemCorporal, PesoAlvoIdade,
 )
 from fazenda.rules.coorte import (
@@ -323,6 +323,68 @@ def excluir_janela(janela_id: int, session: Session = Depends(get_session)) -> d
     return {"ok": True}
 
 
+# --- Cadastros: Benchmark externo (Alta CRIA) ------------------------------
+class BenchmarkIn(BaseModel):
+    indicador: str
+    unidade: str | None = None
+    melhor_e_maior: bool = True
+    top5: float | None = None
+    top10: float | None = None
+    top25: float | None = None
+    top50: float | None = None
+    top75: float | None = None
+    valor_fazenda: float | None = None
+    ordem: int = 0
+    fonte: str = "Alta CRIA 2026"
+
+
+def _faixa_benchmark(b: BenchmarkRecria) -> str | None:
+    """Classifica o valor da fazenda na escala de percentis (TOP 5..75%)."""
+    v = b.valor_fazenda
+    if v is None:
+        return None
+    # Ordena os cortes do melhor para o pior conforme o sentido do indicador.
+    cortes = [("TOP 5%", b.top5), ("TOP 10%", b.top10), ("TOP 25%", b.top25), ("TOP 50%", b.top50), ("TOP 75%", b.top75)]
+    cortes = [(nome, c) for nome, c in cortes if c is not None]
+    if not cortes:
+        return None
+    for nome, c in cortes:
+        if (b.melhor_e_maior and v >= c) or ((not b.melhor_e_maior) and v <= c):
+            return nome
+    return "Abaixo do TOP 75%"
+
+
+@router.get("/benchmark")
+def listar_benchmark(session: Session = Depends(get_session)) -> list[dict]:
+    linhas = session.exec(select(BenchmarkRecria).order_by(BenchmarkRecria.ordem, BenchmarkRecria.indicador)).all()
+    return [{**b.model_dump(), "faixa_fazenda": _faixa_benchmark(b)} for b in linhas]
+
+
+@router.post("/benchmark", status_code=201)
+def salvar_benchmark(dados: BenchmarkIn, session: Session = Depends(get_session)) -> dict:
+    """Upsert por indicador."""
+    b = session.exec(select(BenchmarkRecria).where(BenchmarkRecria.indicador == dados.indicador)).first()
+    if b:
+        for campo, valor in dados.model_dump().items():
+            setattr(b, campo, valor)
+        b.atualizado_em = datetime.utcnow()
+    else:
+        b = BenchmarkRecria(**dados.model_dump())
+    session.add(b)
+    session.commit()
+    session.refresh(b)
+    return {**b.model_dump(), "faixa_fazenda": _faixa_benchmark(b)}
+
+
+@router.delete("/benchmark/{benchmark_id}")
+def excluir_benchmark(benchmark_id: int, session: Session = Depends(get_session)) -> dict:
+    b = session.get(BenchmarkRecria, benchmark_id)
+    if b:
+        session.delete(b)
+        session.commit()
+    return {"ok": True}
+
+
 # --- Seed idempotente ------------------------------------------------------
 # Curva de peso-alvo padrão (Foto 7 do dossiê): mês -> (mín, máx) em kg.
 _PESO_ALVO_PADRAO = [
@@ -340,10 +402,29 @@ _JANELAS_PADRAO = [
 ]
 
 
+# Benchmark Alta CRIA 2026 (Vacaria Tijuca — "Benchmarking Total"):
+# (indicador, unidade, maior_melhor, top5, top10, top25, top50, top75, fazenda).
+_BENCHMARK_PADRAO = [
+    ("Eficiência de colostragem (excelente)", "%", True, 94, 86, 74, 59, 41, 57),
+    ("GMD nascimento–30 dias", "g/dia", True, 981, 928, 796, 661, 547, None),
+    ("GMD 30–60 dias", "g/dia", True, 1068, 985, 910, 830, 773, None),
+    ("GMD nascimento–desmama", "g/dia", True, 1015, 991, 897, 822, 756, 626),
+    ("Ocorrência de diarreia", "%", False, 3.6, 7.7, 25.0, 39.7, 68.4, 16),
+    ("Ocorrência de doenças respiratórias", "%", False, 1.6, 3.4, 7.7, 15.9, 27.2, 9),
+    ("Taxa de mortalidade", "%", False, 2.2, 2.6, 4.4, 7.6, 13.5, 2.2),
+]
+
+
 def seed_recria(session: Session) -> None:
     """Cria metas (linha única), curva de peso-alvo e janelas padrão se vazio."""
     if not session.get(MetaRecria, 1):
         session.add(MetaRecria(id=1))
+    if not session.exec(select(BenchmarkRecria)).first():
+        for i, (ind, un, maior, t5, t10, t25, t50, t75, faz) in enumerate(_BENCHMARK_PADRAO):
+            session.add(BenchmarkRecria(
+                indicador=ind, unidade=un, melhor_e_maior=maior,
+                top5=t5, top10=t10, top25=t25, top50=t50, top75=t75, valor_fazenda=faz, ordem=i,
+            ))
     if not session.exec(select(PesoAlvoIdade)).first():
         for mes, mn, mx in _PESO_ALVO_PADRAO:
             # Garante mín<=máx (a Foto 7 tem casos de faixa estreita/invertida).
