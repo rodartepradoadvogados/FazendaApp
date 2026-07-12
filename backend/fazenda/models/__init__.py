@@ -137,6 +137,7 @@ class Servico(SQLModel, table=True):
     tipo_servico: Optional[str] = None
     protocolo: Optional[str] = None
     reprodutor: Optional[str] = None
+    inseminador: Optional[str] = None  # quem fez a IA/cobertura (responsável)
     ordem_tentativa: Optional[int] = None
     intervalo_tentativas: Optional[int] = None
     data_diagnostico: Optional[date] = None

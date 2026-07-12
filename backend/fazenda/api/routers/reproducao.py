@@ -461,6 +461,7 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session))
         tipo_servico=dados.tipo_servico,
         protocolo=dados.protocolo,
         reprodutor=dados.reprodutor,
+        inseminador=dados.responsavel,
         ordem_tentativa=ordem_tentativa,
         intervalo_tentativas=intervalo,
         del_servico=animal.del_dias,
@@ -499,7 +500,8 @@ def _nome_auto_iatf(d0: date) -> str:
 
 
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
-                          tipo_servico: str, protocolo: str | None, reprodutor: str | None) -> Servico | None:
+                          tipo_servico: str, protocolo: str | None, reprodutor: str | None,
+                          inseminador: str | None = None) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
     commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
     animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
@@ -516,7 +518,7 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     servico = Servico(
         animal_id=animal.id, numero_matriz=numero_matriz, raca_matriz=animal.raca,
         data_nasc_matriz=animal.data_nasc, data_servico=data_servico, tipo_servico=tipo_servico,
-        protocolo=protocolo, reprodutor=reprodutor, ordem_tentativa=ordem_tentativa,
+        protocolo=protocolo, reprodutor=reprodutor, inseminador=inseminador, ordem_tentativa=ordem_tentativa,
         intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1,
     )
     session.add(servico)
@@ -613,7 +615,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             session.flush()
             protocolo_name = alvo.nome_protocolo
 
-        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor)
+        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel)
         if s is None:
             incompativeis.append(numero)
         else:
