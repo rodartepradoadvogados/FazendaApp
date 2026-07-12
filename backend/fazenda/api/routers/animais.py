@@ -162,6 +162,15 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         return [r.model_dump() for r in rows]
 
     partos = session.exec(select(Parto).where(Parto.numero_matriz == numero).order_by(Parto.data_parto)).all()
+    # Ordem de parto = posição cronológica (1º, 2º, 3º…). Quando a fonte não
+    # traz o número (ex.: animal com um único parto), deriva pela ordem da data
+    # — o primeiro parto é sempre "1", não fica em branco/zero.
+    partos_dump = []
+    for idx, p in enumerate(partos):
+        d = p.model_dump()
+        if not d.get("ordem_parto"):
+            d["ordem_parto"] = idx + 1
+        partos_dump.append(d)
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero).order_by(Servico.data_servico)).all()
 
     protocolos_iatf = session.exec(
@@ -210,7 +219,7 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
 
     return {
         "animal": animal.model_dump(),
-        "partos": _dump(partos),
+        "partos": partos_dump,
         "servicos": _dump(servicos),
         "protocolos_iatf": _dump(protocolos_iatf),
         "movimentos_lote": _dump(movimentos_lote),

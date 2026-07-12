@@ -8,7 +8,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
-import { TabBar } from "@/components/ui";
+import { TabBar, MultiFiltro } from "@/components/ui";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -103,7 +103,7 @@ function CalendarioSanitarioView() {
 type Aplic = {
   id: number; numero: string; raca: string; produto: string; categoria: string;
   dose: number | null; unidade: string | null; via: string | null; responsavel: string | null;
-  atividade: string | null; obs: string | null;
+  atividade: string | null; obs: string | null; ordem_parto: number | null;
   data: string | null; ano: number | null; mes: string | null;
 };
 
@@ -118,6 +118,7 @@ function AplicacoesView() {
   const [fim, setFim] = useState("");
   const [buscaProd, setBuscaProd] = useState("");
   const [buscaAnimal, setBuscaAnimal] = useState("");
+  const [fOrdemParto, setFOrdemParto] = useState<string[]>([]);
   const [editId, setEditId] = useState<number | null>(null);
   const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
@@ -175,9 +176,10 @@ function AplicacoesView() {
       (!ini || (a.data ? a.data >= ini : false)) &&
       (!fim || (a.data ? a.data <= fim : false)) &&
       (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
-      (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase()))
+      (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+      (fOrdemParto.length === 0 || (a.ordem_parto !== null && fOrdemParto.includes(String(a.ordem_parto))))
     );
-  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal]);
+  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal, fOrdemParto]);
 
   // Quando há filtro por período (de/até), as linhas SEM data ficam de fora — conta quantas para avisar o usuário.
   const semDataExcluidas = useMemo(() => {
@@ -215,7 +217,7 @@ function AplicacoesView() {
       {regs && <>
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria</label>
               <select style={selStyle} value={fCat} onChange={(e) => setFCat(e.target.value)}><option value="">Todas</option>{opc((a) => a.categoria).map((o) => <option key={o}>{o}</option>)}</select></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
@@ -226,6 +228,7 @@ function AplicacoesView() {
               <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaProd} onChange={(e) => setBuscaProd(e.target.value)} placeholder="ex.: Ivermectina" /></div></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
               <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaAnimal} onChange={(e) => setBuscaAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <MultiFiltro label="Ordem de parto" opcoes={opc((a) => a.ordem_parto == null ? null : String(a.ordem_parto))} selecionados={fOrdemParto} onChange={setFOrdemParto} formatar={(v) => `${v}ª`} />
           </div>
         </div>
 
