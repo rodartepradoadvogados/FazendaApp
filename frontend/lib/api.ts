@@ -1571,6 +1571,13 @@ export const fetchRecriaIdadeParto = (): Promise<RecriaIdadeParto> => _rGet(`/re
 export const fetchRecriaTaxaPrenhez = (ini: string, fim: string, vwp = 0): Promise<{ ciclos: RecriaCiclo[]; taxa_prenhez_media: number | null; total_servicos: number }> =>
   _rGet(`/recria/reproducao/taxa-prenhez?ini=${ini}&fim=${fim}&vwp_dias=${vwp}`);
 
+export type RecriaDossie = {
+  gerado_em: string;
+  kpis: Record<string, number | null>;
+  secoes: { titulo: string; colunas: { header: string; key: string }[]; linhas: Record<string, unknown>[] }[];
+};
+export const fetchRecriaDossie = (): Promise<RecriaDossie> => _rGet(`/recria/dossie`);
+
 export type RecriaCocho = { id?: number; data: string; lote: string; num_animais: number; kg_ofertado: number; kg_sobra: number; kg_formulado?: number | null; observacao?: string | null; kg_consumido?: number; pct_sobra?: number | null; ims_consumida_animal?: number; ims_formulada_animal?: number | null };
 export const fetchRecriaCocho = (lote = "", ini = "", fim = ""): Promise<{ registros: RecriaCocho[]; lotes: string[] }> => {
   const p = new URLSearchParams(); if (lote) p.set("lote", lote); if (ini) p.set("ini", ini); if (fim) p.set("fim", fim);

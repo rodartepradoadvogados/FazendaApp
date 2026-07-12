@@ -197,6 +197,92 @@ def reproducao_taxa_prenhez(
     }
 
 
+# --- Dossiê Zootécnico (montador do PDF) -----------------------------------
+@router.get("/dossie")
+def montar_dossie(session: Session = Depends(get_session)) -> dict:
+    """
+    Reúne, num único pacote, tudo que compõe o Dossiê Zootécnico da recria —
+    saúde (incidência por fase), crescimento (peso real × alvo), reprodução
+    (idade ao 1º parto/Wisconsin + custo excedente) e composição por categoria.
+    Devolve KPIs de capa e uma lista de seções (título + colunas + linhas) já no
+    formato que o front usa para montar o PDF de várias páginas.
+    """
+    hoje = date.today()
+    nasc = _nascimentos(session)
+
+    # Crescimento: peso real × alvo por mês de idade (reusa a mesma lógica).
+    crescimento = crescimento_peso_alvo(session)["linhas"]
+
+    # Reprodução: idade ao 1º parto (Wisconsin) + custo excedente.
+    repro = reproducao_idade_parto(session)
+    est = repro.get("estatisticas") or {}
+    custo = repro.get("custo_excedente") or {}
+
+    # Composição por categoria de manejo.
+    comp = composicao_categorias(session)["composicao"]
+
+    # Saúde: incidência por fase, somada sobre todas as doenças lançadas.
+    fases = _fases(session)
+    casos_por_animal_idade = []
+    for o in session.exec(select(OcorrenciaClinica)).all():
+        if not o.data_ocorrencia:
+            continue
+        d = idade_em_dias(nasc.get(o.numero_matriz), o.data_ocorrencia)
+        if d is not None:
+            casos_por_animal_idade.append((o.numero_matriz, d))
+    idade_atual = _idade_atual(session, hoje)
+    incidencia = incidencia_por_fase(casos_por_animal_idade, idade_atual, fases)
+
+    secoes = [
+        {
+            "titulo": "Composição atual do rebanho por categoria de manejo",
+            "colunas": [{"header": "Categoria", "key": "categoria"}, {"header": "Animais", "key": "n"}],
+            "linhas": comp,
+        },
+        {
+            "titulo": "Crescimento — peso real médio × peso-alvo por idade",
+            "colunas": [
+                {"header": "Idade (meses)", "key": "mes"}, {"header": "Peso real (kg)", "key": "peso_medio_real"},
+                {"header": "Alvo mín (kg)", "key": "peso_min_alvo"}, {"header": "Alvo máx (kg)", "key": "peso_max_alvo"},
+                {"header": "Pesagens", "key": "n_pesagens"}, {"header": "Dentro do alvo", "key": "dentro_txt"},
+            ],
+            "linhas": [
+                {**l, "dentro_txt": ("—" if l["dentro_do_alvo"] is None else "Sim" if l["dentro_do_alvo"] else "Não")}
+                for l in crescimento
+            ],
+        },
+        {
+            "titulo": "Saúde — incidência de doenças por fase de vida",
+            "colunas": [
+                {"header": "Fase", "key": "fase"}, {"header": "Casos", "key": "casos"},
+                {"header": "Animais em risco", "key": "animais_em_risco"}, {"header": "Incidência (%)", "key": "incidencia_pct"},
+            ],
+            "linhas": incidencia,
+        },
+        {
+            "titulo": "Reprodução — distribuição da idade ao 1º parto",
+            "colunas": [
+                {"header": "Idade (meses)", "key": "mes"}, {"header": "Animais", "key": "n"}, {"header": "%", "key": "pct"},
+            ],
+            "linhas": [l for l in (repro.get("distribuicao") or []) if l.get("n")],
+        },
+    ]
+
+    return {
+        "gerado_em": hoje.isoformat(),
+        "kpis": {
+            "meta_idade_parto": repro.get("meta_idade_parto"),
+            "idade_media_1o_parto": est.get("media"),
+            "desvio_idade_parto": est.get("desvio_padrao"),
+            "n_animais_1o_parto": est.get("n"),
+            "custo_excedente_total": custo.get("custo_total"),
+            "dias_excedentes_medios": custo.get("dias_por_novilha"),
+            "total_recria": sum(c["n"] for c in comp) if comp else 0,
+        },
+        "secoes": [s for s in secoes if s["linhas"]],
+    }
+
+
 # --- Parâmetros de categoria de manejo -------------------------------------
 def _status_reprodutivo(sit_rep: str | None) -> str:
     """Refina a categoria de aptidão pelo status reprodutivo (a partir do sit_rep)."""

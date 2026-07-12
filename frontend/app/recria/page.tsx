@@ -5,14 +5,26 @@
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
 import { useEffect, useState } from "react";
-import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat } from "lucide-react";
+import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download } from "lucide-react";
 import { TabBar } from "@/components/ui";
+import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
   fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez, fetchRecriaCocho, criarRecriaCocho, excluirRecriaCocho,
+  fetchRecriaDossie,
   type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto, type RecriaCocho,
 } from "@/lib/api";
+
+const KPI_ROTULOS: Record<string, string> = {
+  meta_idade_parto: "Meta idade ao 1º parto (meses)",
+  idade_media_1o_parto: "Idade média ao 1º parto (meses)",
+  desvio_idade_parto: "Desvio-padrão (meses)",
+  n_animais_1o_parto: "Novilhas com 1º parto",
+  custo_excedente_total: "Custo de recria excedente (R$)",
+  dias_excedentes_medios: "Dias excedentes por novilha",
+  total_recria: "Animais na recria (total)",
+};
 
 type Aba = "saude" | "crescimento" | "reproducao" | "nutricao" | "registrar";
 const ABAS = [
@@ -30,14 +42,48 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 
 export default function RecriaPage() {
   const [aba, setAba] = useState<Aba>("saude");
+  const [gerando, setGerando] = useState(false);
+  const [erroDossie, setErroDossie] = useState<string | null>(null);
+
+  async function exportarDossie() {
+    setGerando(true); setErroDossie(null);
+    try {
+      const d = await fetchRecriaDossie();
+      // Capa: os KPIs viram a primeira seção (indicador × valor).
+      const capa: SecaoFicha = {
+        titulo: "Indicadores-chave",
+        colunas: [{ header: "Indicador", key: "indicador" }, { header: "Valor", key: "valor" }],
+        linhas: Object.entries(d.kpis)
+          .filter(([, v]) => v !== null && v !== undefined)
+          .map(([k, v]) => ({ indicador: KPI_ROTULOS[k] || k, valor: v })),
+      };
+      const secoes: SecaoFicha[] = [capa, ...d.secoes];
+      await exportarFichaPDF(
+        "Dossiê Zootécnico da Recria",
+        `Bezerras e novilhas · gerado em ${new Date(d.gerado_em + "T00:00:00").toLocaleDateString("pt-BR")}`,
+        secoes,
+        "dossie_recria",
+      );
+    } catch (e: any) {
+      setErroDossie(e.message || "Não foi possível gerar o dossiê.");
+    } finally { setGerando(false); }
+  }
+
   return (
     <div className="p-6 animate-in">
-      <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Baby size={22} style={{ color: "var(--dourado)" }} /> Recria — Dossiê Zootécnico</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Acompanhamento de bezerras e novilhas: em que idade cada doença mais aparece (o <strong>ponto crítico</strong>), a incidência por fase e o crescimento em peso.
-        </p>
+      <div className="mb-4 flex items-start justify-between gap-3" style={{ flexWrap: "wrap" }}>
+        <div>
+          <h1 className="text-2xl font-bold flex items-center gap-2"><Baby size={22} style={{ color: "var(--dourado)" }} /> Recria — Dossiê Zootécnico</h1>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
+            Acompanhamento de bezerras e novilhas: em que idade cada doença mais aparece (o <strong>ponto crítico</strong>), a incidência por fase e o crescimento em peso.
+          </p>
+        </div>
+        <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", whiteSpace: "nowrap" }}
+          onClick={exportarDossie} disabled={gerando} title="Gerar o Dossiê Zootécnico completo (saúde, crescimento e reprodução) em PDF">
+          <Download size={14} /> {gerando ? "Gerando…" : "Exportar Dossiê (PDF)"}
+        </button>
       </div>
+      {erroDossie && <div className="alert-critico mb-3" style={{ fontSize: "0.82rem" }}><AlertTriangle size={16} /><span>{erroDossie}</span></div>}
       <TabBar abas={ABAS} ativa={aba} onChange={setAba} />
       <div style={{ marginTop: "1rem" }}>
         {aba === "saude" && <AbaSaude />}
