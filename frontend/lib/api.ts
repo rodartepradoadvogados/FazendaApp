@@ -1570,3 +1570,6 @@ export const fetchRecriaCocho = (lote = "", ini = "", fim = ""): Promise<{ regis
 };
 export const criarRecriaCocho = (d: RecriaCocho) => _rSend(`/recria/cocho`, "POST", d);
 export const excluirRecriaCocho = (id: number) => _rSend(`/recria/cocho/${id}`, "DELETE");
+
+export type Estratificacao = { total: number; estratos: Record<string, number>; percentuais: Record<string, number>; vacas_total: number; pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number };
+export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);

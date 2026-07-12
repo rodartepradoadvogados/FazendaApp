@@ -103,3 +103,40 @@ class TestFichaAnimal:
         assert corpo["partos"] == []
         assert corpo["colostragem"] is None
         assert corpo["baixa"] is None
+
+
+def test_estratificacao_rebanho():
+    from datetime import date, timedelta
+    from fastapi.testclient import TestClient
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine
+    import fazenda.database as database
+    from fazenda.models import Animal, Parto, Servico
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+    def _ov():
+        with Session(engine) as s: yield s
+    import main
+    from fazenda.auth import get_current_user
+    main.app.dependency_overrides[database.get_session] = _ov
+    class U: id=1; papel="admin"; ativo=True; username="t"
+    main.app.dependency_overrides[get_current_user] = lambda: U()
+    hoje = date.today()
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            s.add(Animal(numero="1", data_nasc=hoje - timedelta(days=30), ativo=True, sexo="F"))   # aleitamento
+            s.add(Animal(numero="2", data_nasc=hoje - timedelta(days=200), ativo=True, sexo="F"))  # recria 4-11m
+            s.add(Animal(numero="3", data_nasc=hoje - timedelta(days=500), ativo=True, sexo="F"))  # recria 12-24m
+            s.add(Animal(numero="4", data_nasc=hoje - timedelta(days=800), ativo=True, sexo="F"))  # novilha >24m
+            s.add(Animal(numero="5", data_nasc=hoje - timedelta(days=1500), ativo=True, sexo="F", grupo_primario="01 Lact"))  # vaca lactação
+            s.add(Parto(numero_matriz="5", data_parto=hoje - timedelta(days=100), ordem_parto=1))
+            s.commit()
+        j = c.get("/animais/estratificacao").json()
+        assert j["total"] == 5
+        assert j["estratos"]["aleitamento_0_3m"] == 1
+        assert j["estratos"]["recria_4_11m"] == 1
+        assert j["estratos"]["recria_12_24m"] == 1
+        assert j["estratos"]["novilhas_acima_24m"] == 1
+        assert j["estratos"]["vacas_lactacao"] == 1
+        assert j["pct_lactacao_sobre_total"] == 20.0
+    main.app.dependency_overrides.clear()

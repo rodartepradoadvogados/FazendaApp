@@ -3,6 +3,8 @@ Router de animais — listagem e consulta de animais.
 """
 from __future__ import annotations
 
+from datetime import date
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
@@ -61,6 +63,79 @@ def listar_animais(
         saida.append(d)
     saida.sort(key=lambda d: chave_numero(d["numero"]))
     return saida
+
+
+# Lotes de lactação (convenção do sistema, mesma da Produção).
+LOTES_LACTACAO = ("01", "02", "03")
+
+
+def _codigo_lote(g: str | None) -> str | None:
+    return g[:2] if g and len(g) >= 2 and g[:2].isdigit() else None
+
+
+@router.get("/estratificacao")
+def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
+    """Composição do rebanho (fêmeas ativas) por faixa etária e, nas adultas,
+    por situação (lactação / secas / pré-parto). Alimenta o gráfico do Rebanho."""
+    hoje = date.today()
+    ult_parto: dict[str, date] = {}
+    for p in session.exec(select(Parto)).all():
+        if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
+            ult_parto[p.numero_matriz] = p.data_parto
+    ult_pos: dict[str, date] = {}
+    for s in session.exec(select(Servico)).all():
+        if s.data_servico and (s.diagnostico or "").strip().upper() == "POSITIVO":
+            if s.numero_matriz not in ult_pos or s.data_servico > ult_pos[s.numero_matriz]:
+                ult_pos[s.numero_matriz] = s.data_servico
+
+    estratos = {
+        "aleitamento_0_3m": 0, "recria_4_11m": 0, "recria_12_24m": 0,
+        "novilhas_acima_24m": 0, "vacas_lactacao": 0, "vacas_secas": 0, "vacas_pre_parto": 0,
+        "sem_data_nasc": 0,
+    }
+    total = 0
+    for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
+        if a.eh_semen or a.sexo == "M":
+            continue
+        total += 1
+        pariu = a.numero in ult_parto
+        if pariu:
+            # Vaca adulta: lactação (lote 01–03), pré-parto (prenhe e gestação
+            # avançada ≥ 240 dias) ou seca.
+            gest = (hoje - ult_pos[a.numero]).days if a.numero in ult_pos else None
+            if _codigo_lote(a.grupo_primario) in LOTES_LACTACAO:
+                estratos["vacas_lactacao"] += 1
+            elif gest is not None and gest >= 240:
+                estratos["vacas_pre_parto"] += 1
+            else:
+                estratos["vacas_secas"] += 1
+            continue
+        # Fêmea que ainda não pariu → classifica por idade.
+        if not a.data_nasc:
+            estratos["sem_data_nasc"] += 1
+            continue
+        d = (hoje - a.data_nasc).days
+        if d <= 90:
+            estratos["aleitamento_0_3m"] += 1
+        elif d <= 364:
+            estratos["recria_4_11m"] += 1
+        elif d <= 730:
+            estratos["recria_12_24m"] += 1
+        else:
+            estratos["novilhas_acima_24m"] += 1
+
+    def pct(n: int) -> float:
+        return round(100 * n / total, 1) if total else 0.0
+
+    vacas = estratos["vacas_lactacao"] + estratos["vacas_secas"] + estratos["vacas_pre_parto"]
+    return {
+        "total": total,
+        "estratos": estratos,
+        "percentuais": {k: pct(v) for k, v in estratos.items()},
+        "vacas_total": vacas,
+        "pct_lactacao_sobre_total": pct(estratos["vacas_lactacao"]),
+        "pct_lactacao_sobre_vacas": round(100 * estratos["vacas_lactacao"] / vacas, 1) if vacas else 0.0,
+    }
 
 
 @router.get("/{numero}")
