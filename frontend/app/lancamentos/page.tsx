@@ -13,7 +13,9 @@ import {
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
+  fetchApresentacoesFarmacia,
 } from "@/lib/api";
+import type { ApresentacaoFarmacia } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -1035,8 +1037,8 @@ function unidadesCompativeis(unidadeEstoque: string | null | undefined): string[
   return grupo || [unidadeEstoque];
 }
 
-type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string };
-const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "" });
+type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string; estoque_id?: number | null };
+const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "", estoque_id: null });
 
 function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
@@ -1055,6 +1057,10 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   // Vindo da Agenda ("Dar baixa" de um evento sanitário): ao salvar, marca o
   // evento como realizado para sumir da Agenda.
   const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
+  // "Qual frasco/apresentação você está usando?" — por item, as apresentações
+  // (frascos/marcas) do mesmo princípio ativo que existem no estoque. Só pergunta
+  // quando há mais de uma.
+  const [frascosPorItem, setFrascosPorItem] = useState<Record<number, ApresentacaoFarmacia[]>>({});
 
   // Pré-preenche a partir da Agenda (medicamento padrão do evento sanitário),
   // deixando tudo editável na hora.
@@ -1084,7 +1090,13 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   });
   const escolherProduto = (idx: number, produto: string) => {
     const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
-    atualizarItem(idx, { produto, unidade: compativeis[0] || "" });
+    atualizarItem(idx, { produto, unidade: compativeis[0] || "", estoque_id: null });
+    // "Qual frasco?": busca as apresentações do mesmo princípio ativo. Mais de
+    // uma → o usuário escolhe; só uma → já fixa nela.
+    fetchApresentacoesFarmacia({ produto }).then((fr) => {
+      setFrascosPorItem((p) => ({ ...p, [idx]: fr }));
+      if (fr.length === 1) atualizarItem(idx, { estoque_id: fr[0].estoque_id });
+    }).catch(() => setFrascosPorItem((p) => ({ ...p, [idx]: [] })));
   };
   const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
   const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
@@ -1104,7 +1116,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
       const aplicadoEfetivo = aplicado && dataAplicacao <= hojeStr;
       const r = await criarAplicacaoSanidade({
         data_aplicacao: dataAplicacao, animais: animaisAlvo, responsavel: responsavel || undefined, observacao: observacao || undefined,
-        itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+        itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade, estoque_id: i.estoque_id ?? undefined })),
         aplicado: aplicadoEfetivo,
       });
       if (aplicadoEfetivo && eventoAgenda) { await marcarEventoRealizado(eventoAgenda).catch(() => {}); setEventoAgenda(null); }
@@ -1177,6 +1189,21 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
                   </select>
                 </Campo>
               </div>
+              {(frascosPorItem[idx]?.length ?? 0) > 1 && (
+                <div style={{ marginTop: "0.6rem", background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+                  <label style={{ fontSize: "0.76rem", fontWeight: 700, color: "var(--dourado-light)", display: "block", marginBottom: "0.3rem" }}>
+                    Qual frasco/apresentação você está usando agora?
+                  </label>
+                  <select style={inputStyle} value={item.estoque_id ?? ""} onChange={(e) => atualizarItem(idx, { estoque_id: e.target.value ? Number(e.target.value) : null })}>
+                    <option value="">Selecione o frasco…</option>
+                    {frascosPorItem[idx].map((f) => (
+                      <option key={f.estoque_id} value={f.estoque_id}>
+                        {f.nome}{f.marca ? ` · ${f.marca}` : ""} — saldo {f.saldo} {f.unidade || ""}{!f.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
               {item.produto && <EstoqueRestante estoque={estoque} produto={item.produto} quantidade={Number(item.quantidade) || 0} />}
               {itens.length > 1 && (
                 <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>

@@ -21,6 +21,7 @@ from fazenda.models import (
     Lote, MovimentoEstoque,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
+from fazenda.rules.farmacia import pode_baixar_estoque
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
 NUM_TRATOS = 2
@@ -87,6 +88,10 @@ def _dar_baixa_automatica(session: Session) -> dict:
     for item in consumo_total:
         estoque_item = session.exec(select(Estoque).where(Estoque.nome == item["ingrediente"])).first()
         if not estoque_item or not item["consumo_dia"] or estoque_item.estocavel is False:
+            continue
+        # Gatilho de comunicação: só deduz insumo cujo estoque inicial/primeira
+        # compra já foi registrado (None = insumo legado, mantém comportamento).
+        if not pode_baixar_estoque(estoque_item):
             continue
         baixa = round(item["consumo_dia"] * dias, 2)
         estoque_item.quantidade = round((estoque_item.quantidade or 0) - baixa, 2)

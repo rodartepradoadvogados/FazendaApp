@@ -18,6 +18,7 @@ from fazenda.models import (
     ProtocoloSanitarioLancamento, Sanidade,
 )
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
 TETOS_VALIDOS = ["AE", "AD", "PD", "PE"]
@@ -65,6 +66,10 @@ class ItemAplicacaoIn(BaseModel):
     via: str | None = None
     quantidade: float
     unidade: str
+    # "Qual frasco/apresentação você está usando?" — quando há mais de uma
+    # apresentação (marca/tamanho) do mesmo princípio no estoque, o front manda
+    # o id do item escolhido para abater do recipiente certo.
+    estoque_id: int | None = None
 
 
 class AplicacaoIn(BaseModel):
@@ -105,7 +110,13 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
     criados = 0
     avisos: list[str] = []
     for item in dados.itens:
-        estoque_item = session.exec(select(Estoque).where(Estoque.nome == item.produto)).first()
+        # Se o usuário escolheu o frasco/apresentação específico ("qual frasco?"),
+        # abate dele; senão, cai no item pelo nome do produto (comportamento antigo).
+        estoque_item = None
+        if item.estoque_id is not None:
+            estoque_item = session.get(Estoque, item.estoque_id)
+        if estoque_item is None:
+            estoque_item = session.exec(select(Estoque).where(Estoque.nome == item.produto)).first()
         compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
         if item.unidade not in compativeis:
             raise HTTPException(
@@ -128,6 +139,13 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
 
         if estoque_item and estoque_item.estocavel is False:
             pass
+        elif estoque_item and not pode_baixar_estoque(estoque_item):
+            # Gatilho de comunicação: sem estoque inicial/primeira compra, a
+            # aplicação é registrada mas NÃO baixa (o item pede inicialização).
+            avisos.append(
+                f'Aplicação de "{item.produto}" registrada, mas sem baixa: registre o estoque inicial '
+                f'ou a primeira compra do item para começar o controle de baixas.'
+            )
         elif estoque_item and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
             total = item.quantidade * len(dados.animais)
             estoque_item.quantidade = (estoque_item.quantidade or 0) - total

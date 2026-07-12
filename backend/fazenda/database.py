@@ -54,6 +54,16 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("estocavel", "BOOLEAN"), ("considerar_rmca", "BOOLEAN"),
         ("data_inicio_controle", "DATE"),
         ("principio_ativo", "VARCHAR"), ("classificacao_medicamento", "VARCHAR"),
+        ("principio_ativo_id", "INTEGER"), ("medicamento_comercial_id", "INTEGER"),
+        ("laboratorio", "VARCHAR"),
+        ("volume_por_apresentacao", "FLOAT"), ("volume_unidade", "VARCHAR"),
+        ("estoque_inicializado", "BOOLEAN"),
+    ],
+    "principio_ativo": [
+        ("categoria_software", "VARCHAR"), ("uso_principal", "VARCHAR"), ("justificativa", "VARCHAR"),
+        ("doenca_id", "INTEGER"), ("eh_biologico", "BOOLEAN DEFAULT 0"),
+        ("unidade_base", "VARCHAR"), ("unidade_apresentacao", "VARCHAR"),
+        ("estoque_minimo_apresentacoes", "FLOAT DEFAULT 1"),
     ],
     "evento_sanitario": [
         ("tipo_agendamento", "VARCHAR DEFAULT 'nenhum'"), ("categoria_alvo", "VARCHAR"), ("doenca_id", "INTEGER"),
