@@ -1,39 +1,14 @@
 "use client";
-// Tela REBANHO do app de campo: três abas em pílula no topo
-// (Ficha do Animal · Movimentar · Baixar).
-import { useState } from "react";
+// Tela REBANHO do app de campo: ficha do animal (consulta).
+// Movimentar e Baixar animal foram para a tela LANÇAR.
 import { MobTitulo } from "@/components/mobile/ui";
 import Ficha from "@/components/mobile/rebanho/Ficha";
-import Movimentar from "@/components/mobile/rebanho/Movimentar";
-import Baixar from "@/components/mobile/rebanho/Baixar";
-
-type Aba = "ficha" | "movimentar" | "baixar";
-const ABAS: { chave: Aba; rotulo: string }[] = [
-  { chave: "ficha", rotulo: "Ficha" },
-  { chave: "movimentar", rotulo: "Movimentar" },
-  { chave: "baixar", rotulo: "Baixar" },
-];
 
 export default function Pagina() {
-  const [aba, setAba] = useState<Aba>("ficha");
-
   return (
     <div>
       <MobTitulo>Rebanho</MobTitulo>
-
-      {/* As três pílulas dividem a largura da tela — nada fica cortado. */}
-      <div style={{ display: "flex", gap: "0.5rem", marginBottom: "1rem" }}>
-        {ABAS.map((a) => (
-          <button key={a.chave} type="button" className={`mob-pill${aba === a.chave ? " ativa" : ""}`}
-            style={{ whiteSpace: "nowrap", flex: 1, textAlign: "center", padding: "0.6rem 0.4rem" }} onClick={() => setAba(a.chave)}>
-            {a.rotulo}
-          </button>
-        ))}
-      </div>
-
-      {aba === "ficha" && <Ficha />}
-      {aba === "movimentar" && <Movimentar />}
-      {aba === "baixar" && <Baixar />}
+      <Ficha />
     </div>
   );
 }

@@ -3,7 +3,7 @@
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useState } from "react";
-import { Activity, Milk, Syringe, Wheat, Package, Search, X, ChevronRight } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, MinusCircle, Search, X, ChevronRight } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
 import { fetchAnimais } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
@@ -11,16 +11,18 @@ import { FormReprodutivo } from "./FormReprodutivo";
 import { FormProducao } from "./FormProducao";
 import { FormSanidade } from "./FormSanidade";
 import { FormAlimentacao } from "./FormAlimentacao";
-import { FormEstoque } from "./FormEstoque";
+import Movimentar from "@/components/mobile/rebanho/Movimentar";
+import Baixar from "@/components/mobile/rebanho/Baixar";
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "estoque";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
   producao: "Produção (leite)",
   sanidade: "Sanidade",
   alimentacao: "Alimentação",
-  estoque: "Estoque",
+  movimentar: "Movimentar animais",
+  baixar: "Baixar animal",
 };
 
 export function LancarTela() {
@@ -37,7 +39,8 @@ export function LancarTela() {
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
-        {tela === "estoque" && <FormEstoque />}
+        {tela === "movimentar" && <Movimentar />}
+        {tela === "baixar" && <Baixar />}
       </div>
     );
   }
@@ -56,9 +59,8 @@ export function LancarTela() {
         <MobBloco icone={<Milk size={24} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
         <MobBloco icone={<Syringe size={24} />} label="Sanidade" onClick={() => setTela("sanidade")} />
         <MobBloco icone={<Wheat size={24} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
-        <div style={{ gridColumn: "1 / -1", display: "grid" }}>
-          <MobBloco icone={<Package size={24} />} label="Estoque" onClick={() => setTela("estoque")} />
-        </div>
+        <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" onClick={() => setTela("movimentar")} />
+        <MobBloco icone={<MinusCircle size={24} />} label="Baixar animal" onClick={() => setTela("baixar")} />
       </div>
     </div>
   );
