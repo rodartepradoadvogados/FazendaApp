@@ -21,14 +21,17 @@ const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-
 // Mesmos limiares do relatório de manejo → Estoque de sêmen.
 // Convencional: <15 vermelho, 15–25 amarelo, >25 verde.
 // Sexado:       <5 vermelho, 5–15 amarelo, >15 verde.
+// Mínimos por categoria (iguais aos do backend: convencional 20, sexado 5).
+// Touro da fazenda é monta natural — não conta dose.
 function nivelDoses(tipo: string, doses: number): { cor: string; rotulo: string } {
+  if (tipo === "fazenda") return { cor: "var(--text-muted)", rotulo: "monta natural" };
   if (tipo === "sexado") {
-    if (doses < 5) return { cor: "var(--red)", rotulo: "estoque baixo" };
-    if (doses <= 15) return { cor: "var(--amber)", rotulo: "estoque médio" };
+    if (doses < 5) return { cor: "var(--red)", rotulo: "abaixo do mínimo (5)" };
+    if (doses <= 10) return { cor: "var(--amber)", rotulo: "estoque médio" };
     return { cor: "var(--green-light)", rotulo: "estoque bom" };
   }
-  if (doses < 15) return { cor: "var(--red)", rotulo: "estoque baixo" };
-  if (doses <= 25) return { cor: "var(--amber)", rotulo: "estoque médio" };
+  if (doses < 20) return { cor: "var(--red)", rotulo: "abaixo do mínimo (20)" };
+  if (doses <= 30) return { cor: "var(--amber)", rotulo: "estoque médio" };
   return { cor: "var(--green-light)", rotulo: "estoque bom" };
 }
 
@@ -142,6 +145,7 @@ export default function CadastroEstoqueSemen() {
             <select style={inputStyle} value={novo.tipo} title="Tipo de sêmen" onChange={(e) => setNovo({ ...novo, tipo: e.target.value })}>
               <option value="convencional">Convencional</option>
               <option value="sexado">Sexado</option>
+              <option value="fazenda">Touro da fazenda (monta natural)</option>
             </select></div>
           <div><label style={labelStyle}>Doses</label>
             <input style={inputStyle} type="number" min={0} value={novo.doses} title="Quantidade de doses disponíveis"
