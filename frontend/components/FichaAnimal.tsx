@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { FileText, AlertTriangle, Download } from "lucide-react";
-import { fetchAnimais, fetchFichaAnimal, formatDate } from "@/lib/api";
+import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react";
+import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -113,6 +113,13 @@ function formatarLinhas(chave: string, linhas: Record<string, unknown>[]): Recor
 
 const cardStyle: React.CSSProperties = { marginBottom: "1rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+const inpStyle: React.CSSProperties = { width: "100%", padding: "0.35rem 0.5rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
+const btnEdit: React.CSSProperties = { fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" };
+
+// Um campo editável (label + input/select) para os formulários da ficha.
+function CampoEdit({ label, children }: { label: string; children: React.ReactNode }) {
+  return <div><label style={labelStyle}>{label}</label>{children}</div>;
+}
 
 export default function FichaAnimal() {
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
@@ -120,6 +127,13 @@ export default function FichaAnimal() {
   const [ficha, setFicha] = useState<Ficha | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  // Edição inline: cadastro do animal e colostragem/IgG.
+  const [editAnimal, setEditAnimal] = useState(false);
+  const [formAnimal, setFormAnimal] = useState<Record<string, any>>({});
+  const [editColostro, setEditColostro] = useState(false);
+  const [formColostro, setFormColostro] = useState<Record<string, any>>({});
+  const [salvando, setSalvando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
 
@@ -136,6 +150,60 @@ export default function FichaAnimal() {
     } finally {
       setCarregando(false);
     }
+  }
+
+  function abrirEditAnimal() {
+    const a2: any = ficha?.animal || {};
+    setFormAnimal({
+      nome: a2.nome ?? "", sexo: a2.sexo ?? "", raca: a2.raca ?? "",
+      categoria_abrev: a2.categoria_abrev ?? "", grupo_primario: a2.grupo_primario ?? "",
+      data_nasc: a2.data_nasc ?? "", data_entrada: a2.data_entrada ?? "",
+      mae_numero: a2.mae_numero ?? "", mae_nome: a2.mae_nome ?? "",
+      proprietario: a2.proprietario ?? "", valor: a2.valor ?? "", observacoes: a2.observacoes ?? "",
+    });
+    setEditAnimal(true); setAviso(null);
+  }
+  async function salvarAnimal() {
+    setSalvando(true); setAviso(null);
+    try {
+      const payload: Record<string, any> = { numero, ...formAnimal };
+      Object.keys(payload).forEach((k) => { if (payload[k] === "") payload[k] = null; });
+      if (payload.valor != null) payload.valor = Number(payload.valor) || null;
+      await atualizarAnimalFicha(numero, payload);
+      setEditAnimal(false); setAviso("Ficha atualizada.");
+      await buscar(numero);
+    } catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
+    finally { setSalvando(false); }
+  }
+
+  function abrirEditColostro() {
+    const c: any = ficha?.colostragem || {};
+    setFormColostro({
+      tomou_colostro: c.tomou_colostro == null ? "" : String(c.tomou_colostro),
+      litros_colostro: c.litros_colostro ?? "", brix_colostro: c.brix_colostro ?? "",
+      data_colostro: c.data_colostro ?? "", brix_soro: c.brix_soro ?? "",
+      data_teste_sangue: c.data_teste_sangue ?? "", observacao: c.observacao ?? "",
+    });
+    setEditColostro(true); setAviso(null);
+  }
+  async function salvarColostro() {
+    setSalvando(true); setAviso(null);
+    try {
+      const f = formColostro;
+      await registrarColostragem({
+        numero_animal: numero,
+        tomou_colostro: f.tomou_colostro === "" ? undefined : f.tomou_colostro === "true",
+        litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
+        brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
+        data_colostro: f.data_colostro || undefined,
+        brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
+        data_teste_sangue: f.data_teste_sangue || undefined,
+        observacao: f.observacao || undefined,
+      });
+      setEditColostro(false); setAviso("Colostragem/IgG salvos.");
+      await buscar(numero);
+    } catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
+    finally { setSalvando(false); }
   }
 
   async function exportarPDF() {
@@ -171,36 +239,84 @@ export default function FichaAnimal() {
 
       {ficha && a && (
         <>
+          {aviso && <div className="mb-3" style={{ fontSize: "0.8rem", color: "var(--green-light)" }}>{aviso}</div>}
           <div className="card" style={cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
               <span>{String(a.nome || a.numero)} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>(nº {String(a.numero)})</span></span>
-              <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={exportarPDF}>
-                <Download size={13} /> Exportar PDF (ficha completa)
-              </button>
+              <div className="flex items-center gap-2">
+                {!editAnimal && <button className="btn-ghost" style={btnEdit} onClick={abrirEditAnimal}><Pencil size={13} /> Editar cadastro</button>}
+                <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={exportarPDF}>
+                  <Download size={13} /> Exportar PDF
+                </button>
+              </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
-              <div><span style={labelStyle}>Sexo</span><br />{a.sexo === "M" ? "Macho" : a.sexo === "F" ? "Fêmea" : "—"}</div>
-              <div><span style={labelStyle}>Categoria</span><br />{String(a.categoria_abrev || a.categoria_completa || "—")}</div>
-              <div><span style={labelStyle}>Lote atual</span><br />{String(a.grupo_primario || "—")}</div>
-              <div><span style={labelStyle}>Data de nascimento</span><br />{a.data_nasc ? formatDate(a.data_nasc as string) : "—"}</div>
-              <div><span style={labelStyle}>Mãe</span><br />{String(a.mae_numero || "—")}</div>
-              <div><span style={labelStyle}>Raça</span><br />{String(a.raca || "—")}</div>
-              <div><span style={labelStyle}>Situação</span><br />{a.ativo ? "Ativo" : "Baixado"}</div>
-              <div><span style={labelStyle}>Data de entrada</span><br />{a.data_entrada ? formatDate(a.data_entrada as string) : "—"}</div>
-            </div>
+            {editAnimal ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <CampoEdit label="Nome"><input style={inpStyle} value={formAnimal.nome} onChange={(e) => setFormAnimal((f) => ({ ...f, nome: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Sexo"><select style={inpStyle} value={formAnimal.sexo} onChange={(e) => setFormAnimal((f) => ({ ...f, sexo: e.target.value }))}><option value="">—</option><option value="F">Fêmea</option><option value="M">Macho</option></select></CampoEdit>
+                  <CampoEdit label="Categoria"><input style={inpStyle} value={formAnimal.categoria_abrev} onChange={(e) => setFormAnimal((f) => ({ ...f, categoria_abrev: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Lote"><input style={inpStyle} value={formAnimal.grupo_primario} onChange={(e) => setFormAnimal((f) => ({ ...f, grupo_primario: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Data de nascimento"><input type="date" style={inpStyle} value={formAnimal.data_nasc || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_nasc: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Data de entrada"><input type="date" style={inpStyle} value={formAnimal.data_entrada || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_entrada: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Raça"><input style={inpStyle} value={formAnimal.raca} onChange={(e) => setFormAnimal((f) => ({ ...f, raca: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Mãe (nº)"><input style={inpStyle} value={formAnimal.mae_numero} onChange={(e) => setFormAnimal((f) => ({ ...f, mae_numero: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Valor (R$)"><input type="number" style={inpStyle} value={formAnimal.valor} onChange={(e) => setFormAnimal((f) => ({ ...f, valor: e.target.value }))} /></CampoEdit>
+                  <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observações"><input style={inpStyle} value={formAnimal.observacoes} onChange={(e) => setFormAnimal((f) => ({ ...f, observacoes: e.target.value }))} /></CampoEdit></div>
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={salvarAnimal}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
+                  <button className="btn-ghost" style={btnEdit} onClick={() => setEditAnimal(false)}><X size={13} /> Cancelar</button>
+                </div>
+              </>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Sexo</span><br />{a.sexo === "M" ? "Macho" : a.sexo === "F" ? "Fêmea" : "—"}</div>
+                <div><span style={labelStyle}>Categoria</span><br />{String(a.categoria_abrev || a.categoria_completa || "—")}</div>
+                <div><span style={labelStyle}>Lote atual</span><br />{String(a.grupo_primario || "—")}</div>
+                <div><span style={labelStyle}>Data de nascimento</span><br />{a.data_nasc ? formatDate(a.data_nasc as string) : "—"}</div>
+                <div><span style={labelStyle}>Mãe</span><br />{String(a.mae_numero || "—")}</div>
+                <div><span style={labelStyle}>Raça</span><br />{String(a.raca || "—")}</div>
+                <div><span style={labelStyle}>Situação</span><br />{a.ativo ? "Ativo" : "Baixado"}</div>
+                <div><span style={labelStyle}>Data de entrada</span><br />{a.data_entrada ? formatDate(a.data_entrada as string) : "—"}</div>
+                <div><span style={labelStyle}>Valor</span><br />{a.valor != null ? `R$ ${a.valor}` : "—"}</div>
+              </div>
+            )}
           </div>
 
-          {ficha.colostragem && (
-            <div className="card" style={cardStyle}>
-              <div className="card-header mb-3">Colostragem e teste de sangue (IgG)</div>
+          <div className="card" style={cardStyle}>
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Colostragem e teste de sangue (IgG)</span>
+              {!editColostro && <button className="btn-ghost" style={btnEdit} onClick={abrirEditColostro}><Pencil size={13} /> {ficha.colostragem ? "Editar" : "Lançar"}</button>}
+            </div>
+            {editColostro ? (
+              <>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                  <CampoEdit label="Tomou colostro?"><select style={inpStyle} value={formColostro.tomou_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, tomou_colostro: e.target.value }))}><option value="">—</option><option value="true">Sim</option><option value="false">Não</option></select></CampoEdit>
+                  <CampoEdit label="Litros de colostro"><input type="number" style={inpStyle} value={formColostro.litros_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, litros_colostro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Brix colostro (%)"><input type="number" style={inpStyle} value={formColostro.brix_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_colostro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Data do colostro"><input type="date" style={inpStyle} value={formColostro.data_colostro || ""} onChange={(e) => setFormColostro((f) => ({ ...f, data_colostro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Brix soro / IgG (%)"><input type="number" style={inpStyle} value={formColostro.brix_soro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_soro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Data do teste de sangue"><input type="date" style={inpStyle} value={formColostro.data_teste_sangue || ""} onChange={(e) => setFormColostro((f) => ({ ...f, data_teste_sangue: e.target.value }))} /></CampoEdit>
+                  <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observação"><input style={inpStyle} value={formColostro.observacao} onChange={(e) => setFormColostro((f) => ({ ...f, observacao: e.target.value }))} /></CampoEdit></div>
+                </div>
+                <div className="flex items-center gap-2 mt-3">
+                  <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={salvarColostro}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
+                  <button className="btn-ghost" style={btnEdit} onClick={() => setEditColostro(false)}><X size={13} /> Cancelar</button>
+                </div>
+              </>
+            ) : ficha.colostragem ? (
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
                 <div><span style={labelStyle}>Tomou colostro?</span><br />{ficha.colostragem.tomou_colostro == null ? "—" : ficha.colostragem.tomou_colostro ? "Sim" : "Não"}</div>
                 <div><span style={labelStyle}>Litros</span><br />{String(ficha.colostragem.litros_colostro ?? "—")}</div>
                 <div><span style={labelStyle}>Brix colostro (%)</span><br />{String(ficha.colostragem.brix_colostro ?? "—")} — {classeColostro(ficha.colostragem.brix_colostro as number | null)}</div>
                 <div><span style={labelStyle}>Brix soro (%)</span><br />{String(ficha.colostragem.brix_soro ?? "—")} — {classeSoro(ficha.colostragem.brix_soro as number | null)}</div>
               </div>
-            </div>
-          )}
+            ) : (
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Dados de colostragem/IgG ainda não lançados. Clique em <strong>Lançar</strong> para preencher.</p>
+            )}
+          </div>
 
           {ficha.compra && (
             <div className="card" style={cardStyle}>

@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, Animal, AplicacaoAgendada, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
+    AgendaManual, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
@@ -249,6 +249,46 @@ def calcular_agenda(
         "produto": a.produto, "dose": a.dose, "unidade": a.unidade, "via": a.via,
     } for a in aplic_agendadas if f"aplic_agendada_{a.id}" not in realizados]
 
+    # Colostragem + exame de sangue (IgG) das bezerras recém-nascidas —
+    # 24h após o parto (sempre no dia seguinte). Se ao lançar o parto não se
+    # preencheu a colostragem ou o IgG, entram como pendência até completar.
+    # Só considera partos dos últimos 30 dias (não spamma nascimentos antigos).
+    eventos_colostro = []
+    limite_parto = data - timedelta(days=30)
+    partos_recentes = session.exec(
+        select(Parto).where(Parto.data_parto >= limite_parto, Parto.data_parto <= data)
+    ).all()
+    if partos_recentes:
+        colostro_por_animal = {c.numero_animal: c for c in session.exec(select(ColostragemBezerra)).all()}
+        # Bezerras (crias) por (mãe, data de nascimento) para casar com o parto.
+        crias_por_chave: dict[tuple[str, object], list[Animal]] = {}
+        for a in session.exec(select(Animal).where(Animal.ativo == True, Animal.mae_numero != None)).all():  # noqa: E711,E712
+            crias_por_chave.setdefault((a.mae_numero, a.data_nasc), []).append(a)
+        for parto in partos_recentes:
+            dia_seguinte = (parto.data_parto + timedelta(days=1)).isoformat()
+            for cria in crias_por_chave.get((parto.numero_matriz, parto.data_parto), []):
+                col = colostro_por_animal.get(cria.numero)
+                colostro_falta = col is None or (col.litros_colostro is None and col.brix_colostro is None)
+                igg_falta = col is None or col.brix_soro is None
+                if colostro_falta:
+                    chave = f"colostragem_pendente_{cria.numero}"
+                    if chave not in realizados:
+                        eventos_colostro.append({
+                            "id": chave, "data": dia_seguinte, "categoria": "sanidade",
+                            "descricao": f"Preencher dados da colostragem — bezerra {cria.numero}",
+                            "numero_animal": cria.numero, "observacao": "Colostro/Brix não lançados no parto — registre na ficha do animal.",
+                            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "colostragem_pendente",
+                        })
+                if igg_falta:
+                    chave = f"igg_pendente_{cria.numero}"
+                    if chave not in realizados:
+                        eventos_colostro.append({
+                            "id": chave, "data": dia_seguinte, "categoria": "sanidade",
+                            "descricao": f"Fazer exame de sangue (IgG) — bezerra {cria.numero}",
+                            "numero_animal": cria.numero, "observacao": "Teste de sangue (Brix do soro) não lançado — registre na ficha do animal.",
+                            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "igg_pendente",
+                        })
+
     # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
     # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
     # repor). Mínimos: convencional 20, sexado 5 (ver cadastro.MINIMO_SEMEN).
@@ -292,7 +332,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos

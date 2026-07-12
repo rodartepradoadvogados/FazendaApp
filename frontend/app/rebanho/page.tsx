@@ -219,12 +219,12 @@ const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar",
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
-  { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
-  { id: "mover", label: "Movimentar animais", icon: ArrowRightLeft, title: "Transferir animais entre lotes" },
-  { id: "baixar", label: "Baixar animal", icon: Skull, title: "Registrar morte/descarte/venda" },
-  { id: "comprar", label: "Comprar animal", icon: ShoppingCart, title: "Registrar compra de animal" },
+  { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "historico", label: "Histórico", icon: History, title: "Histórico de movimentações" },
-  { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Todos os lançamentos da vida de um animal" },
+  { id: "mover", label: "Movimentar animais", icon: ArrowRightLeft, title: "Transferir animais entre lotes" },
+  { id: "comprar", label: "Comprar animal", icon: ShoppingCart, title: "Registrar compra de animal" },
+  { id: "baixar", label: "Baixar animal", icon: Skull, title: "Registrar morte/descarte/venda" },
+  { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
 export default function RebanhoPage() {
