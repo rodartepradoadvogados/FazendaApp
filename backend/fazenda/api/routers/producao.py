@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, LancamentoItem, Lote,
+    Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, LancamentoItem, Lote,
     PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
 )
 from fazenda.ordenacao import chave_numero
@@ -423,6 +423,10 @@ class SecagemIn(BaseModel):
     observacao: str | None = None
     responsavel: str | None = None
     produtos: list[ItemSecagemIn] = []
+    # Igual à Aplicação de Sanidade: se o produto de secagem ainda não foi
+    # aplicado (ou a data é futura), não baixa estoque agora — vira uma
+    # aplicação programada na Agenda, que baixa ao confirmar.
+    aplicado: bool = True
 
 
 @router.post("/secagem")
@@ -440,6 +444,10 @@ def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session))
         observacao=dados.observacao,
     ))
 
+    # Data futura ou "ainda não apliquei" → os produtos de secagem não baixam
+    # estoque agora; viram aplicações programadas (Agenda/pendências).
+    materializar = dados.aplicado and dados.data_secagem <= date.today()
+
     avisos: list[str] = []
     for item in dados.produtos:
         estoque_item = session.exec(select(Estoque).where(Estoque.nome == item.produto)).first()
@@ -449,6 +457,13 @@ def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session))
                 status_code=400,
                 detail=f'Unidade "{item.unidade}" não é compatível com o produto "{item.produto}" (aceitas: {", ".join(compativeis)})',
             )
+        if not materializar:
+            session.add(AplicacaoAgendada(
+                numero_matriz=dados.numero_matriz, data=dados.data_secagem, produto=item.produto,
+                dose=item.quantidade, unidade=item.unidade, via=item.via, responsavel=dados.responsavel,
+                observacao="Secagem", aplicado=False,
+            ))
+            continue
         session.add(Sanidade(
             numero_matriz=dados.numero_matriz,
             data_aplicacao=dados.data_secagem,
@@ -471,8 +486,11 @@ def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session))
                 f'"{item.unidade}" e "{estoque_item.unidade}" (unidade de estoque do produto).'
             )
 
+    if dados.produtos and not materializar:
+        avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
+
     session.commit()
-    return {"criado": True, "avisos": avisos, "lote_sugerido": _lote_das_secas(session)}
+    return {"criado": True, "avisos": avisos, "programado": not materializar, "lote_sugerido": _lote_das_secas(session)}
 
 
 class SugestaoLoteEventoIn(BaseModel):
