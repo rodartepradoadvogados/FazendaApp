@@ -1051,8 +1051,10 @@ class EstoqueSemen(SQLModel, table=True):
     touro_nome: str = Field(index=True)
     codigo: Optional[str] = None
     central: Optional[str] = None  # central de genética (ex.: ABS, Alta, Semex)
-    tipo: str = "convencional"  # convencional | sexado
+    tipo: str = "convencional"  # convencional | sexado | fazenda
     doses: int = 0
+    valor_unitario: Optional[float] = None  # R$ por dose (para relatório de payback)
+    local_armazenamento: Optional[str] = None  # ex.: "Caneca 1"
     observacao: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

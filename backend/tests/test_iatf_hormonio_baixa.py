@@ -124,3 +124,55 @@ class TestConfirmarBaixaEstoque:
         with Session(engine) as s:
             assert s.exec(select(Sanidade)).all() == []
             assert s.exec(select(MovimentoEstoque)).all() == []
+
+
+class TestQualMedicamentoNoConfirm:
+    """Ao confirmar o dia (ex.: D9), o usuário escolhe QUAL medicamento/frasco
+    foi usado; a baixa vai para o frasco escolhido (estoque_id) e não mais só
+    pelo nome do produto/princípio."""
+
+    def _princípio_com_dois_frascos(self, engine):
+        from fazenda.models import PrincipioAtivo
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Cipionato de Estradiol", unidade_base="ml")
+            s.add(pa); s.commit(); s.refresh(pa)
+            a = Estoque(nome="E.C.P.", principio_ativo_id=pa.id, quantidade=50, unidade="ml", estoque_inicializado=True)
+            b = Estoque(nome="SincroCP", principio_ativo_id=pa.id, quantidade=50, unidade="ml", estoque_inicializado=True)
+            s.add(a); s.add(b); s.commit()
+            return pa.id, a.id, b.id
+
+    def test_evento_expoe_hormonios_com_opcoes(self, client):
+        c, engine = client
+        pa_id, a_id, b_id = self._princípio_com_dois_frascos(engine)
+        # Lança o protocolo com o hormônio de D9 definido pelo princípio (via um
+        # dos medicamentos do princípio, ex.: E.C.P.).
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["800"], "data_d0": "2026-07-01", "protocolo": "IATF teste",
+            "hormonios": [{"dia": 9, "produto": "E.C.P.", "dose": 2, "unidade": "ml"}],
+        })
+        eventos = c.get("/agenda/", params={"data": "2026-07-10", "dias": 30}).json()["eventos"]
+        d9 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 9)
+        assert d9["hormonios"], "o dia deve expor os hormônios estruturados"
+        opcoes = {o["nome"] for o in d9["hormonios"][0]["opcoes"]}
+        assert {"E.C.P.", "SincroCP"} <= opcoes  # os dois frascos do princípio
+
+    def test_confirmar_com_medicamento_abate_do_frasco_escolhido(self, client):
+        c, engine = client
+        pa_id, a_id, b_id = self._princípio_com_dois_frascos(engine)
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["800", "801"], "data_d0": "2026-07-01", "protocolo": "IATF teste",
+            "hormonios": [{"dia": 9, "produto": "E.C.P.", "dose": 2, "unidade": "ml"}],
+        })
+        eventos = c.get("/agenda/", params={"data": "2026-07-10", "dias": 30}).json()["eventos"]
+        d9 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 9)
+        # Confirma escolhendo o frasco B (SincroCP) para as 2 vacas.
+        r = c.post("/agenda/realizados", json={
+            "evento_id": d9["id"],
+            "medicamentos": [{"produto": "SincroCP", "estoque_id": b_id, "dose": 2, "unidade": "ml"}],
+        })
+        assert r.status_code == 200
+        with Session(engine) as s:
+            assert s.get(Estoque, a_id).quantidade == 50        # E.C.P. intacto
+            assert s.get(Estoque, b_id).quantidade == 50 - 4    # SincroCP: 2ml × 2 vacas
+            sanidades = s.exec(select(Sanidade)).all()
+            assert {sa.produto for sa in sanidades} == {"SincroCP"}

@@ -117,10 +117,11 @@ export async function fetchAgenda(data?: string, dias?: number) {
   return res.json();
 }
 
-export async function marcarEventoRealizado(eventoId: string, animais?: string[]) {
+export type MedicamentoIatf = { produto: string; estoque_id?: number | null; dose?: number | null; unidade?: string | null; via?: string | null };
+export async function marcarEventoRealizado(eventoId: string, animais?: string[], medicamentos?: MedicamentoIatf[]) {
   const res = await authFetch(`${API}/agenda/realizados`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ evento_id: eventoId, animais: animais || undefined }),
+    body: JSON.stringify({ evento_id: eventoId, animais: animais || undefined, medicamentos: medicamentos && medicamentos.length ? medicamentos : undefined }),
   });
   if (!res.ok) throw new Error("Erro ao marcar como realizado");
   return res.json();

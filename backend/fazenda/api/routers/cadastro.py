@@ -1076,12 +1076,54 @@ def seed_semen_categorias(session: Session) -> None:
     session.commit()
 
 
+# Carga inicial do estoque de sêmen (planilha "estoque_de_semen.csv"): touro,
+# categoria, doses, valor unitário e local. Roda UMA vez (SeedFlag); depois o
+# usuário edita pela tela sem ser sobrescrito.
+SEED_ESTOQUE_SEMEN = [
+    # (touro, tipo, doses, valor_unitario, local)
+    ("COORS", "convencional", 2, 4.19, "Caneca 1"),
+    ("GUINESS", "convencional", 1, 22.67, "Caneca 1"),
+    ("HAGEN", "sexado", 2, 125.00, "Caneca 1"),
+    ("JAG", "convencional", 1, 0.0, "Caneca 1"),
+    ("MOSAIC", "convencional", 1, 0.0, "Caneca 1"),
+    ("PRAFESS", "convencional", 1, 0.0, "Caneca 1"),
+    ("STORMY", "convencional", 1, 0.0, "Caneca 1"),
+]
+
+
+def seed_estoque_semen_inicial(session: Session) -> None:
+    """Lança o estoque de sêmen da planilha (upsert por touro). Idempotente
+    (SeedFlag) — não sobrescreve edições posteriores do usuário."""
+    chave = "estoque_semen_inicial_v1"
+    if session.get(SeedFlag, chave):
+        return
+    existentes = {i.touro_nome.strip().lower(): i for i in session.exec(select(EstoqueSemen)).all()}
+    for touro, tipo, doses, valor, local in SEED_ESTOQUE_SEMEN:
+        atual = existentes.get(touro.lower())
+        if atual:
+            atual.tipo = tipo
+            atual.doses = doses
+            atual.valor_unitario = valor
+            atual.local_armazenamento = local
+            atual.atualizado_em = datetime.utcnow()
+            session.add(atual)
+        else:
+            session.add(EstoqueSemen(
+                touro_nome=touro, codigo=touro, tipo=tipo, doses=doses,
+                valor_unitario=valor, local_armazenamento=local,
+            ))
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
 class EstoqueSemenIn(BaseModel):
     touro_nome: str
     codigo: str | None = None
     central: str | None = None
     tipo: str = "convencional"
     doses: int = 0
+    valor_unitario: float | None = None
+    local_armazenamento: str | None = None
     observacao: str | None = None
     ativo: bool = True
 
