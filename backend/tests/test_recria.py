@@ -11,7 +11,7 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import Animal, PesagemCorporal, PesoAlvoIdade
@@ -183,6 +183,39 @@ class TestReproducao:
         assert 25.5 <= j["estatisticas"]["media"] <= 26.5
         assert j["custo_excedente"]["custo_total"] > 0  # há novilha acima de 24 meses
         assert any(d["mes"] == 24 for d in j["distribuicao"])
+
+    def test_dossie_reune_secoes_e_kpis(self, client):
+        from fazenda.models import Animal, Parto
+        c, engine = client
+        with Session(engine) as s:
+            for num, meses in [("401", 23), ("402", 30)]:
+                s.add(Animal(numero=num, data_nasc=date(2024, 1, 1), ativo=True))
+                s.add(Parto(numero_matriz=num, data_parto=date(2024, 1, 1) + timedelta(days=round(meses * 30.44)), ordem_parto=1))
+            s.commit()
+        j = c.get("/recria/dossie").json()
+        assert j["kpis"]["n_animais_1o_parto"] == 2
+        assert j["kpis"]["idade_media_1o_parto"] is not None
+        titulos = [sec["titulo"] for sec in j["secoes"]]
+        assert any("idade ao 1º parto" in t for t in titulos)
+        # Cada seção tem colunas e linhas prontas para o PDF.
+        for sec in j["secoes"]:
+            assert sec["colunas"] and sec["linhas"]
+
+    def test_importar_dairycomp_cria_nascimento_e_parto(self, client):
+        from fazenda.models import Animal, Parto
+        c, engine = client
+        csv = "numero_matriz,data_nascimento,data_parto,ordem_parto\n501,10/03/2022,05/06/2024,1\n"
+        r = c.post("/importar/dairycomp", files={"file": ("dairycomp.csv", csv, "text/csv")})
+        assert r.status_code == 200
+        assert r.json()["criados"] == 1
+        with Session(engine) as s:
+            a = s.exec(select(Animal).where(Animal.numero == "501")).first()
+            assert a is not None and a.data_nasc == date(2022, 3, 10)
+            p = s.exec(select(Parto).where(Parto.numero_matriz == "501")).first()
+            assert p is not None and p.data_parto == date(2024, 6, 5)
+        # Reimportar não duplica o parto (dedup por animal + data).
+        r2 = c.post("/importar/dairycomp", files={"file": ("dairycomp.csv", csv, "text/csv")})
+        assert r2.json()["criados"] == 0
 
     def test_taxa_prenhez_ciclos(self, client):
         from fazenda.models import Servico

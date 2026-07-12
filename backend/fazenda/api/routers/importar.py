@@ -23,8 +23,8 @@ from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.database import get_session
-from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Sanidade
-from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float
+from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Parto, Sanidade
+from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
 
 router = APIRouter(prefix="/importar", tags=["importar"])
 
@@ -88,6 +88,15 @@ CATEGORIAS_NOVAS = {
             "esd_pct", "lactose_pct",
         ],
         "exemplo": ["", "05/07/2026", "181", "11", "3,69", "3,42", "12,69", "9,00", "4,69"],
+    },
+    "dairycomp": {
+        "label": "DairyComp 305 — nascimentos e partos (idade ao 1º parto)",
+        "colunas": [
+            "numero_matriz (ID)", "data_nascimento/BDAT (DD/MM/AAAA)", "data_parto/FDAT (DD/MM/AAAA, vazio = novilha)",
+            "ordem_parto/LACT",
+        ],
+        "colunas_csv": ["numero_matriz", "data_nascimento", "data_parto", "ordem_parto"],
+        "exemplo": ["464", "10/03/2022", "05/06/2024", "1"],
     },
 }
 
@@ -436,6 +445,72 @@ async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(
         criados += 1
 
     return {"categoria": "qualidade_leite", "criados": criados, "erros": erros}
+
+
+@router.post("/dairycomp")
+async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """
+    Importa um export do DairyComp 305 (uma linha por animal/parto) com a data
+    de nascimento e as datas de parto — alimenta a idade ao 1º parto (Wisconsin)
+    do Dossiê da Recria. Cria/atualiza a data de nascimento do animal e insere
+    os partos que ainda não existem (deduplicados por animal + data). Nunca
+    apaga nada; só acrescenta o que falta.
+    """
+    content = await file.read()
+    animais_atualizados = 0
+    partos_criados = 0
+    erros: list[str] = []
+
+    # Índice dos partos já existentes por (animal, data) para deduplicar.
+    existentes = {
+        (p.numero_matriz, p.data_parto) for p in session.exec(select(Parto)).all() if p.data_parto
+    }
+
+    # O DairyComp exporta separado por vírgula; o resto do site usa ';'. Aceita
+    # os dois — detecta pelo cabeçalho e lê com o csv padrão.
+    import csv as _csv
+    import io as _io
+    texto = content.decode("utf-8-sig", errors="replace")
+    primeira = texto.splitlines()[0] if texto.strip() else ""
+    delim = ";" if primeira.count(";") >= primeira.count(",") else ","
+    linhas_dict = [
+        {k.strip(): (v or "").strip() for k, v in r.items()}
+        for r in _csv.DictReader(_io.StringIO(texto), delimiter=delim)
+    ]
+
+    for i, row in enumerate(linhas_dict, start=2):
+        numero = (row.get("numero_matriz") or "").strip()
+        if not numero:
+            erros.append(f"Linha {i}: número do animal (ID) é obrigatório")
+            continue
+        data_nasc = parse_date(row.get("data_nascimento", ""))
+        data_parto = parse_date(row.get("data_parto", ""))
+        ordem = parse_int(row.get("ordem_parto", ""))
+
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if not animal:
+            animal = Animal(numero=numero, data_nasc=data_nasc, ativo=True)
+            session.add(animal)
+            session.commit()
+            session.refresh(animal)
+            animais_atualizados += 1
+        elif data_nasc and animal.data_nasc != data_nasc:
+            animal.data_nasc = data_nasc
+            session.add(animal)
+            animais_atualizados += 1
+
+        if data_parto and (numero, data_parto) not in existentes:
+            session.add(Parto(
+                animal_id=animal.id, numero_matriz=numero, data_parto=data_parto, ordem_parto=ordem,
+            ))
+            existentes.add((numero, data_parto))
+            partos_criados += 1
+
+    session.commit()
+    return {
+        "categoria": "dairycomp", "criados": partos_criados,
+        "animais_atualizados": animais_atualizados, "erros": erros,
+    }
 
 
 @router.post("/backfill")
