@@ -147,3 +147,22 @@ class TestCadastros:
         assert any(f["nome"] == "Teste" for f in c.get("/recria/fases").json())
         c.delete(f"/recria/fases/{fid}")
         assert not any(f["nome"] == "Teste" for f in c.get("/recria/fases").json())
+
+
+class TestBenchmark:
+    def test_benchmark_semeado_e_faixa(self, client):
+        c, _ = client
+        linhas = c.get("/recria/benchmark").json()
+        colostro = next((b for b in linhas if "colostragem" in b["indicador"].lower()), None)
+        assert colostro is not None
+        assert colostro["valor_fazenda"] == 57
+        assert colostro["faixa_fazenda"] is not None  # classificado
+        mort = next((b for b in linhas if "mortalidade" in b["indicador"].lower()), None)
+        assert mort["faixa_fazenda"] == "TOP 5%"  # 2,2 é o melhor corte
+
+    def test_benchmark_upsert(self, client):
+        c, _ = client
+        c.post("/recria/benchmark", json={"indicador": "Ocorrência de diarreia", "unidade": "%", "melhor_e_maior": False,
+                                          "top5": 3.6, "top25": 25, "top75": 68.4, "valor_fazenda": 10, "ordem": 4})
+        linhas = [b for b in c.get("/recria/benchmark").json() if b["indicador"] == "Ocorrência de diarreia"]
+        assert len(linhas) == 1 and linhas[0]["valor_fazenda"] == 10

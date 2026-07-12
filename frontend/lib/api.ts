@@ -1550,3 +1550,8 @@ export const excluirRecriaFase = (id: number) => _rSend(`/recria/fases/${id}`, "
 export const fetchRecriaJanelas = (): Promise<RecriaJanela[]> => _rGet(`/recria/janelas`);
 export const criarRecriaJanela = (d: RecriaJanela) => _rSend(`/recria/janelas`, "POST", d);
 export const excluirRecriaJanela = (id: number) => _rSend(`/recria/janelas/${id}`, "DELETE");
+
+export type RecriaBenchmark = { id?: number; indicador: string; unidade?: string | null; melhor_e_maior: boolean; top5?: number | null; top10?: number | null; top25?: number | null; top50?: number | null; top75?: number | null; valor_fazenda?: number | null; ordem: number; fonte: string; faixa_fazenda?: string | null };
+export const fetchRecriaBenchmark = (): Promise<RecriaBenchmark[]> => _rGet(`/recria/benchmark`);
+export const salvarRecriaBenchmark = (d: RecriaBenchmark) => _rSend(`/recria/benchmark`, "POST", d);
+export const excluirRecriaBenchmark = (id: number) => _rSend(`/recria/benchmark/${id}`, "DELETE");

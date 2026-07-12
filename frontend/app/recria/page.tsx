@@ -9,8 +9,8 @@ import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle } from "l
 import { TabBar } from "@/components/ui";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
-  fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia,
-  type RecriaCurva, type RecriaOcorrencia,
+  fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
+  type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark,
 } from "@/lib/api";
 
 type Aba = "saude" | "crescimento" | "registrar";
@@ -181,6 +181,7 @@ function AbaCrescimento() {
   const comReal = linhas.filter((l) => l.peso_medio_real != null);
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
+      <BenchmarkAltaCria />
       <div style={card}>
         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
           Peso real médio das bezerras por mês de idade, comparado à <strong>faixa de peso-alvo</strong> (cadastrável em Configurações › Cadastro › Recria).
@@ -212,6 +213,59 @@ function AbaCrescimento() {
             </tbody>
           </table>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function BenchmarkAltaCria() {
+  const [lista, setLista] = useState<RecriaBenchmark[] | null>(null);
+  useEffect(() => { fetchRecriaBenchmark().then(setLista).catch(() => setLista([])); }, []);
+  if (lista === null || !lista.length) return null;
+  const corFaixa = (f?: string | null) =>
+    f === "TOP 5%" || f === "TOP 10%" ? "var(--green-light)" : f === "TOP 25%" ? "var(--amber)" : f == null ? "var(--text-muted)" : "var(--red)";
+  return (
+    <div style={card}>
+      <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.2rem" }}>Benchmark externo — Alta CRIA 2026</div>
+      <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>Onde a fazenda está em relação ao setor (TOP 5% = elite). A bolinha é a fazenda; o verde é a zona TOP.</p>
+      <div style={{ display: "grid", gap: "0.9rem" }}>
+        {lista.map((b) => {
+          // Escala do pior (TOP 75) ao melhor (TOP 5). Barra sempre da esquerda (pior) p/ direita (melhor).
+          const cortes = [b.top75, b.top50, b.top25, b.top10, b.top5].filter((x) => x != null) as number[];
+          if (!cortes.length) return null;
+          const lo = Math.min(...cortes, ...(b.valor_fazenda != null ? [b.valor_fazenda] : []));
+          const hi = Math.max(...cortes, ...(b.valor_fazenda != null ? [b.valor_fazenda] : []));
+          const span = Math.max(hi - lo, 0.0001);
+          // posição: para "maior melhor", direita=maior. Para "menor melhor", invertido.
+          const pos = (v: number) => {
+            const p = (v - lo) / span; return b.melhor_e_maior ? p : 1 - p;
+          };
+          const top5p = pos(b.top5!); const top25p = pos(b.top25!);
+          const zonaEsq = Math.min(top5p, 1) * 100;
+          return (
+            <div key={b.indicador}>
+              <div className="flex items-center justify-between" style={{ marginBottom: 4 }}>
+                <span style={{ fontSize: "0.82rem", fontWeight: 600 }}>{b.indicador} <span style={{ color: "var(--text-muted)", fontWeight: 400 }}>({b.unidade})</span></span>
+                <span style={{ fontSize: "0.78rem" }}>
+                  {b.valor_fazenda != null ? <><strong>{b.valor_fazenda}</strong> · <span style={{ color: corFaixa(b.faixa_fazenda), fontWeight: 700 }}>{b.faixa_fazenda}</span></> : <span style={{ color: "var(--text-muted)" }}>sem dado da fazenda</span>}
+                </span>
+              </div>
+              <div style={{ position: "relative", height: 14, borderRadius: 999, background: "var(--surface-2)", border: "1px solid var(--border)", overflow: "hidden" }}>
+                {/* zona TOP (do melhor até o TOP 25%) em verde */}
+                <div style={{ position: "absolute", top: 0, bottom: 0, right: 0, width: `${100 - Math.min(top25p, 1) * 100}%`, background: "rgba(76,122,60,0.35)" }} />
+                {/* marca do TOP 5% */}
+                <div title="TOP 5%" style={{ position: "absolute", top: 0, bottom: 0, left: `${Math.min(top5p, 1) * 100}%`, width: 2, background: "var(--green-light)" }} />
+                {/* bolinha da fazenda */}
+                {b.valor_fazenda != null && (
+                  <div title={`Fazenda: ${b.valor_fazenda}`} style={{ position: "absolute", top: "50%", left: `calc(${Math.min(Math.max(pos(b.valor_fazenda), 0), 1) * 100}% - 6px)`, transform: "translateY(-50%)", width: 12, height: 12, borderRadius: "50%", background: corFaixa(b.faixa_fazenda), border: "2px solid var(--surface)" }} />
+                )}
+              </div>
+              <div className="flex items-center justify-between" style={{ fontSize: "0.62rem", color: "var(--text-muted)", marginTop: 2 }}>
+                <span>pior (TOP 75%)</span><span>elite (TOP 5%) →</span>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
