@@ -5,6 +5,7 @@
 import { useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { fetchEstoque } from "@/lib/api";
+import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
   MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis,
@@ -21,6 +22,8 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
   const [produto, setProduto] = useState("");
   const [quantidade, setQuantidade] = useState("");
   const [unidade, setUnidade] = useState("");
+  const [via, setVia] = useState("");
+  const [responsavel, setResponsavel] = useState("");
 
   // Lotes = grupos primários distintos dos animais (mesma base do desktop).
   const lotes = useMemo(() => {
@@ -48,9 +51,12 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     if (!unidade) return erroValidacao("Selecione a unidade.");
     enviar(
       "/sanidade/aplicacoes",
-      { data_aplicacao: data, animais: alvo, itens: [{ produto, quantidade: Number(quantidade), unidade }] },
+      {
+        data_aplicacao: data, animais: alvo, responsavel: responsavel || undefined,
+        itens: [{ produto, quantidade: Number(quantidade), unidade, via: via || undefined }],
+      },
       `Aplicação ${produto} — ${modo === "animal" ? `animal ${animal}` : `lote ${lote}`}`,
-      () => { setProduto(""); setQuantidade(""); setUnidade(""); },
+      () => { setProduto(""); setQuantidade(""); setUnidade(""); setVia(""); },
     );
   }
 
@@ -97,6 +103,18 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
           </select>
         </MobCampo>
       </div>
+      <MobCampo label="Via de aplicação">
+        <select className="mob-input" value={via} onChange={(e) => setVia(e.target.value)}>
+          <option value="">Selecione…</option>
+          {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      </MobCampo>
+      <MobCampo label="Responsável">
+        <select className="mob-input" value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+          <option value="">Selecione…</option>
+          {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </MobCampo>
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>

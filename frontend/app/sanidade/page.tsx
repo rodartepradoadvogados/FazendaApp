@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X } from "lucide-react";
 import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate } from "@/lib/api";
+import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -201,12 +202,6 @@ function AplicacoesView() {
     return Array.from(by.keys()).sort().map((mes) => ({ mes, n: by.get(mes)! }));
   }, [filtrados]);
 
-  const topProdutos = useMemo(() => {
-    const by = new Map<string, number>();
-    filtrados.forEach((a) => by.set(a.produto, (by.get(a.produto) ?? 0) + 1));
-    return Array.from(by.entries()).map(([produto, n]) => ({ produto, n })).sort((a, b) => b.n - a.n).slice(0, 10);
-  }, [filtrados]);
-
   const animaisTratados = new Set(filtrados.map((a) => a.numero)).size;
   const produtos = new Set(filtrados.map((a) => a.produto)).size;
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -276,14 +271,7 @@ function AplicacoesView() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="card">
-            <div className="card-header mb-3">Top Produtos</div>
-            <table className="fazenda-table">
-              <thead><tr><th>Produto</th><th style={{ textAlign: "right" }}>Aplic.</th></tr></thead>
-              <tbody>{topProdutos.map((p) => <tr key={p.produto}><td style={{ fontSize: "0.8rem" }}>{p.produto}</td><td style={{ textAlign: "right", fontWeight: 700 }}>{p.n}</td></tr>)}</tbody>
-            </table>
-          </div>
+        <div className="grid grid-cols-1 gap-4">
           <div className="card">
             <div className="card-header mb-3 flex items-center justify-between">
               <span>Aplicações</span>
@@ -335,9 +323,17 @@ function AplicacoesView() {
                                   {UNIDADES_APLIC.map((u) => <option key={u} value={u}>{u}</option>)}
                                 </select></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Via</label>
-                                <input style={inp} value={editVals.via} onChange={(e) => setEditVals((s) => ({ ...s, via: e.target.value }))} /></div>
+                                <select style={inp} value={editVals.via} onChange={(e) => setEditVals((s) => ({ ...s, via: e.target.value }))}>
+                                  <option value="">—</option>
+                                  {!VIAS_APLICACAO.includes(editVals.via) && editVals.via && <option value={editVals.via}>{editVals.via}</option>}
+                                  {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                                </select></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Responsável</label>
-                                <input style={inp} value={editVals.responsavel} onChange={(e) => setEditVals((s) => ({ ...s, responsavel: e.target.value }))} /></div>
+                                <select style={inp} value={editVals.responsavel} onChange={(e) => setEditVals((s) => ({ ...s, responsavel: e.target.value }))}>
+                                  <option value="">—</option>
+                                  {!RESPONSAVEIS.includes(editVals.responsavel) && editVals.responsavel && <option value={editVals.responsavel}>{editVals.responsavel}</option>}
+                                  {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+                                </select></div>
                               <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Observação</label>
                                 <input style={inp} value={editVals.obs} onChange={(e) => setEditVals((s) => ({ ...s, obs: e.target.value }))} /></div>
                             </div>

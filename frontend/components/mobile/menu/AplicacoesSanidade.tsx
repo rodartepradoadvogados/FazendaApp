@@ -10,6 +10,7 @@ import {
   fetchSanidade, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate,
 } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 
 type Aplic = {
   id: number; numero: string; produto: string; categoria: string | null;
@@ -154,12 +155,18 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                             {UNIDADES.map((u) => <option key={u} value={u}>{u}</option>)}
                           </select></div>
                       </div>
-                      <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.6rem" }}>
-                        <div style={{ flex: 1 }}><label style={rotulo}>Via</label>
-                          <input style={inp} value={vals.via} onChange={(e) => setVals((s) => ({ ...s, via: e.target.value }))} /></div>
-                        <div style={{ flex: 1 }}><label style={rotulo}>Responsável</label>
-                          <input style={inp} value={vals.responsavel} onChange={(e) => setVals((s) => ({ ...s, responsavel: e.target.value }))} /></div>
-                      </div>
+                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Via</label>
+                        <select style={inp} value={vals.via} onChange={(e) => setVals((s) => ({ ...s, via: e.target.value }))}>
+                          <option value="">—</option>
+                          {!VIAS_APLICACAO.includes(vals.via) && vals.via && <option value={vals.via}>{vals.via}</option>}
+                          {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                        </select></div>
+                      <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Responsável</label>
+                        <select style={inp} value={vals.responsavel} onChange={(e) => setVals((s) => ({ ...s, responsavel: e.target.value }))}>
+                          <option value="">—</option>
+                          {!RESPONSAVEIS.includes(vals.responsavel) && vals.responsavel && <option value={vals.responsavel}>{vals.responsavel}</option>}
+                          {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
+                        </select></div>
                       <div style={{ marginBottom: "0.2rem" }}><label style={rotulo}>Observação</label>
                         <input style={inp} value={vals.obs} onChange={(e) => setVals((s) => ({ ...s, obs: e.target.value }))} /></div>
                       <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.7rem" }}>

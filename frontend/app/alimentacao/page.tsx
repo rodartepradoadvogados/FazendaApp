@@ -67,20 +67,22 @@ function PlanoPorLote({ a }: { a: any }) {
                 <span style={{ fontSize: "0.8rem", color: l.efetivo === 0 ? "var(--text-muted)" : "var(--dourado-light)" }}>{l.efetivo} cab.</span>
               </button>
               {aberto && (
-                <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Por cabeça</th><th style={{ textAlign: "right" }}>Lote/dia</th><th style={{ textAlign: "right" }}>Lote/trato</th></tr></thead>
-                  <tbody>
-                    {l.itens.map((i: any) => (
-                      <tr key={i.ingrediente}>
-                        <td style={{ fontSize: "0.82rem" }}>{i.ingrediente}</td>
-                        <td style={{ textAlign: "right" }}>{fmt(i.por_cabeca)} {i.unidade}</td>
-                        <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(i.consumo_dia)} {i.unidade}</td>
-                        <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmt(i.consumo_dia / TRATOS)} {i.unidade}</td>
-                      </tr>
-                    ))}
-                    {!l.itens.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem dieta para este lote.</td></tr>}
-                  </tbody>
-                </table>
+                <div style={{ overflowX: "auto" }}>
+                  <table className="fazenda-table" style={{ margin: 0, minWidth: 440 }}>
+                    <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Por cabeça</th><th style={{ textAlign: "right" }}>Lote/dia</th><th style={{ textAlign: "right" }}>Lote/trato</th></tr></thead>
+                    <tbody>
+                      {l.itens.map((i: any) => (
+                        <tr key={i.ingrediente}>
+                          <td style={{ fontSize: "0.82rem", whiteSpace: "nowrap" }}>{i.ingrediente}</td>
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>{fmt(i.por_cabeca)} {i.unidade}</td>
+                          <td style={{ textAlign: "right", fontWeight: 700, whiteSpace: "nowrap" }}>{fmt(i.consumo_dia)} {i.unidade}</td>
+                          <td style={{ textAlign: "right", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{fmt(i.consumo_dia / TRATOS)} {i.unidade}</td>
+                        </tr>
+                      ))}
+                      {!l.itens.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem dieta para este lote.</td></tr>}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           );

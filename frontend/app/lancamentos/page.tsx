@@ -14,7 +14,7 @@ import {
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
 } from "@/lib/api";
-import { RESPONSAVEIS } from "@/lib/constants";
+import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
@@ -976,7 +976,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
                 <Campo label="Via">
                   <select style={inputStyle} value={item.via} onChange={(e) => atualizarItem(idx, { via: e.target.value })}>
                     <option value="">Selecione…</option>
-                    {["Intramuscular", "Subcutânea", "Oral", "Intravenosa", "Tópica"].map((o) => <option key={o}>{o}</option>)}
+                    {VIAS_APLICACAO.map((o) => <option key={o}>{o}</option>)}
                   </select>
                 </Campo>
                 <Campo label="Quantidade (dose)"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
