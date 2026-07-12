@@ -4,7 +4,7 @@ import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lu
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioLeiteItalac } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -23,6 +23,7 @@ const COLUNAS_FILTRADOS = [
 
 type Ctrl = {
   numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null;
+  ordem_parto: number | null; data_ult_parto: string | null;
   ordenha1_kg: number | null; ordenha2_kg: number | null; ordenha3_kg: number | null; grupo_primario: string | null;
 };
 
@@ -104,6 +105,7 @@ export default function ProducaoPage() {
   const [fMes, setFMes] = useState("");
   const [fDelMin, setFDelMin] = useState("");
   const [fDelMax, setFDelMax] = useState("");
+  const [fOrdemParto, setFOrdemParto] = useState<string[]>([]);
 
   const [ucModo, setUcModo] = useState<"animal" | "lote" | "rebanho">("rebanho");
   const [ucN, setUcN] = useState<1 | 2 | 3>(1);
@@ -157,9 +159,10 @@ export default function ProducaoPage() {
       (!fAno || String(r.ano) === fAno) &&
       (!fMes || (r.data ? r.data.slice(5, 7) === fMes : false)) &&
       (delMin === null || (r.del !== null && r.del >= delMin)) &&
-      (delMax === null || (r.del !== null && r.del <= delMax))
+      (delMax === null || (r.del !== null && r.del <= delMax)) &&
+      (fOrdemParto.length === 0 || (r.ordem_parto !== null && fOrdemParto.includes(String(r.ordem_parto))))
     );
-  }, [regs, fAno, fMes, delMin, delMax]);
+  }, [regs, fAno, fMes, delMin, delMax, fOrdemParto]);
 
   const comProd = useMemo(() => filtrados.filter((r) => r.producao_kg !== null && r.producao_kg > 0), [filtrados]);
 
@@ -184,6 +187,35 @@ export default function ProducaoPage() {
       return { numero, raca: arr[0].raca, media: media(vals), pico: Math.max(...vals), ultima: vals[vals.length - 1], n: arr.length };
     }).sort((a, b) => b.media - a.media);
   }, [comProd]);
+
+  // Produção acumulada e projeção de 305 dias por lactação (animal + ordem de
+  // parto). Total estimado na lactação = média diária × DEL atual; projeção de
+  // 305 dias = média diária × 305 — leitura simples para o produtor.
+  const lactacoes305 = useMemo(() => {
+    const by = new Map<string, Ctrl[]>();
+    comProd.forEach((r) => {
+      const chave = `${r.numero}||${r.ordem_parto ?? "?"}`;
+      (by.get(chave) ?? by.set(chave, []).get(chave)!).push(r);
+    });
+    return Array.from(by.entries()).map(([chave, arr]) => {
+      const [numero, ordem] = chave.split("||");
+      const vals = arr.map((r) => r.producao_kg!);
+      const med = media(vals);
+      const dels = arr.map((r) => r.del).filter((v): v is number => v != null);
+      const delAtual = dels.length ? Math.max(...dels) : null;
+      return {
+        numero, ordem_parto: ordem === "?" ? null : Number(ordem), raca: arr[0].raca,
+        media: med, del_atual: delAtual, n: arr.length,
+        total_estimado: delAtual != null ? Math.round(med * delAtual) : null,
+        projecao_305: Math.round(med * 305),
+      };
+    }).sort((a, b) => (b.projecao_305 - a.projecao_305));
+  }, [comProd]);
+  const ordLact305 = useOrdenacao(lactacoes305);
+  const COLUNAS_305 = [
+    { header: "Vaca", key: "numero" }, { header: "Ordem parto", key: "ordem_parto" }, { header: "Média/dia (kg)", key: "media" },
+    { header: "DEL atual", key: "del_atual" }, { header: "Total na lactação (kg)", key: "total_estimado" }, { header: "Projeção 305d (kg)", key: "projecao_305" }, { header: "Controles", key: "n" },
+  ];
 
   const filtradosOrdenadosBase = useMemo(() => [...filtrados].sort((a, b) => comparaNumero(a.numero, b.numero)), [filtrados]);
   const filtradosExport = useMemo(() => filtradosOrdenadosBase.map((r) => ({
@@ -260,7 +292,7 @@ export default function ProducaoPage() {
         <>
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
                 <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.ano === null ? null : String(r.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Mês</label>
@@ -269,8 +301,9 @@ export default function ProducaoPage() {
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 30" style={selStyle} value={fDelMin} onChange={(e) => setFDelMin(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL até (dias)</label>
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 120" style={selStyle} value={fDelMax} onChange={(e) => setFDelMax(e.target.value)} /></div>
+              <MultiFiltro label="Ordem de parto" opcoes={opcoes(regs, (r) => r.ordem_parto === null ? null : String(r.ordem_parto))} selecionados={fOrdemParto} onChange={setFOrdemParto} formatar={(v) => `${v}ª`} />
             </div>
-            {(fAno || fMes || fDelMin || fDelMax) && <button className="btn-ghost" title="Remover todos os filtros aplicados (ano, mês e faixa de DEL)" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); }}>Limpar filtros</button>}
+            {(fAno || fMes || fDelMin || fDelMax || fOrdemParto.length > 0) && <button className="btn-ghost" title="Remover todos os filtros aplicados (ano, mês, faixa de DEL e ordem de parto)" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); setFOrdemParto([]); }}>Limpar filtros</button>}
           </div>
 
           <div className="card mb-4">
@@ -496,6 +529,47 @@ export default function ProducaoPage() {
                 ))}
               </tbody>
             </table>
+          </SecaoRecolhivel>
+
+          <SecaoRecolhivel
+            titulo="Produção na lactação e projeção de 305 dias"
+            icon={TrendingUp}
+            badge={<span style={badgeStyle}>{lactacoes305.length} lactações</span>}
+            descricao="Por lactação (vaca + ordem de parto), a média diária, o total acumulado estimado e a projeção de produção em 305 dias. Use o filtro de ordem de parto acima para comparar 1ª, 2ª, 3ª lactação.">
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Total na lactação = média diária × DEL atual · Projeção 305 dias = média diária × 305. Estimativas a partir
+              das pesagens do controle leiteiro dentro do filtro selecionado.
+            </p>
+            <div className="flex items-center justify-end mb-3">
+              <ExportarBotoes titulo="Produção na lactação e projeção 305 dias" nomeArquivoBase="producao_305dias" colunas={COLUNAS_305} linhas={lactacoes305} />
+            </div>
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <ThOrdenavel label="Vaca" campo="numero" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} />
+                  <ThOrdenavel label="Ordem parto" campo="ordem_parto" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} />
+                  <ThOrdenavel label="Média/dia (kg)" campo="media" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} alinhar="right" />
+                  <ThOrdenavel label="DEL atual" campo="del_atual" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Total na lactação (kg)" campo="total_estimado" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Projeção 305d (kg)" campo="projecao_305" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Controles" campo="n" coluna={ordLact305.coluna} dir={ordLact305.dir} ordenar={ordLact305.ordenar} alinhar="right" />
+                </tr></thead>
+                <tbody>
+                  {ordLact305.linhasOrdenadas.map((l, i) => (
+                    <tr key={`${l.numero}-${l.ordem_parto}-${i}`}>
+                      <td style={{ fontWeight: 700 }}>{l.numero}</td>
+                      <td>{l.ordem_parto != null ? `${l.ordem_parto}ª` : "—"}</td>
+                      <td style={{ textAlign: "right", color: "var(--green-light)", fontWeight: 600 }}>{l.media}</td>
+                      <td style={{ textAlign: "right" }}>{l.del_atual ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.total_estimado != null ? l.total_estimado.toLocaleString("pt-BR") : "—"}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{l.projecao_305.toLocaleString("pt-BR")}</td>
+                      <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{l.n}</td>
+                    </tr>
+                  ))}
+                  {!lactacoes305.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma lactação no filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
           </SecaoRecolhivel>
 
           <SecaoRecolhivel

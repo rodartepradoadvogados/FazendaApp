@@ -14,7 +14,7 @@ from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, LancamentoItem, Lote,
-    PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
+    Parto, PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.alimentacao import calcular_consumo
@@ -50,9 +50,15 @@ def obter_producao(session: Session = Depends(get_session)) -> dict:
 def listar_controles(session: Session = Depends(get_session)) -> dict:
     """Registros de controle leiteiro achatados para o dashboard interativo."""
     grupo_por_numero = {a.numero: a.grupo_primario for a in session.exec(select(Animal)).all()}
+    # Ordem de parto por animal derivada do nº de partos, para preencher os
+    # controles cuja ordem veio vazia (o primeiro parto é sempre "1").
+    partos_por_numero: dict[str, int] = {}
+    for p in session.exec(select(Parto)).all():
+        partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     registros = []
     for c in session.exec(select(ControleLeiteiro)).all():
         d = c.data_controle
+        ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
         registros.append({
             "numero": c.numero_matriz,
             "raca": c.raca or "(sem raça)",
@@ -60,6 +66,8 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
             "ano": d.year if d else None,
             "producao_kg": c.producao_kg,
             "del": c.del_no_controle,
+            "ordem_parto": ordem,
+            "data_ult_parto": c.data_ult_parto.isoformat() if c.data_ult_parto else None,
             "ordenha1_kg": c.ordenha1_kg,
             "ordenha2_kg": c.ordenha2_kg,
             "ordenha3_kg": c.ordenha3_kg,

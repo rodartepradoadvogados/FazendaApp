@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
-    PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
+    Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, Sanidade,
 )
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
@@ -32,6 +32,9 @@ FREQUENCIAS = ["dias", "meses", "anos"]
 @router.get("/aplicacoes")
 def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
     """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
+    partos_por_numero: dict[str, int] = {}
+    for p in session.exec(select(Parto)).all():
+        partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     registros = []
     for s in session.exec(select(Sanidade)).all():
         d = s.data_aplicacao
@@ -47,6 +50,7 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
             "responsavel": s.responsavel,
             "atividade": s.atividade,
             "obs": s.obs,
+            "ordem_parto": partos_por_numero.get(s.numero_matriz) or None,
             "data": d.isoformat() if d else None,
             "ano": d.year if d else None,
             "mes": f"{d.year}-{d.month:02d}" if d else None,
