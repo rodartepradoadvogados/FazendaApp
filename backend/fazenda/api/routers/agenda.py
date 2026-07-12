@@ -173,11 +173,19 @@ def calcular_agenda(
         protocolo = protocolos_por_id.get(lancamento.protocolo_id) if lancamento else None
         if not etapa or not lancamento or not protocolo:
             continue
+        produto = ap.produto or etapa.produto
         eventos_protocolo.append({
             "id": chave, "data": ap.data_prevista.isoformat(), "categoria": "sanidade",
-            "descricao": f"{protocolo.nome} — D{etapa.dia} — matriz {lancamento.numero_matriz} — {ap.produto or etapa.produto}",
+            "descricao": f"{protocolo.nome} — D{etapa.dia} — matriz {lancamento.numero_matriz} — {produto}",
             "numero_animal": lancamento.numero_matriz, "observacao": lancamento.observacao,
             "fonte": "auto", "cor": "var(--dourado)", "ref": None,
+            # Agrupa no app as aplicações do mesmo protocolo/dia/data (lote) para
+            # oferecer "lote ou individual". Cada evento continua confirmável por
+            # si (id próprio), então o backend não muda.
+            "tipo": "protocolo_sanitario",
+            "grupo": f"psan_{lancamento.protocolo_id}_{etapa.dia}_{ap.data_prevista.isoformat()}",
+            "grupo_titulo": f"{protocolo.nome} — D{etapa.dia}",
+            "produto": produto,
         })
 
     # Protocolo IATF — agrupa por (lançamento, dia): uma linha por etapa do
