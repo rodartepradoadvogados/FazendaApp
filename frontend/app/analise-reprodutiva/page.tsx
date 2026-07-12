@@ -4,7 +4,7 @@ import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { SecaoRecolhivel } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 
 function comparaNumero(a: string, b: string) {
   return isNaN(+a) || isNaN(+b) ? a.localeCompare(b) : +a - +b;
@@ -13,7 +13,7 @@ function comparaNumero(a: string, b: string) {
 const COLUNAS_SERVICOS = [
   { header: "Nº", key: "numero" }, { header: "Raça", key: "raca" }, { header: "Categoria", key: "categoria" },
   { header: "Data", key: "data" }, { header: "Tipo", key: "tipo_servico" }, { header: "Método", key: "metodo_ia" },
-  { header: "Touro", key: "touro" }, { header: "Protocolo", key: "protocolo" },
+  { header: "Touro", key: "touro" }, { header: "Inseminador", key: "inseminador" }, { header: "Protocolo", key: "protocolo" },
   { header: "Ordem parto", key: "ordem_parto" }, { header: "Ordem tentativa", key: "ordem_tentativa" },
   { header: "DEL serviço", key: "del_servico" }, { header: "Diagnóstico", key: "diagnostico" },
 ];
@@ -21,7 +21,7 @@ const COLUNAS_SERVICOS = [
 type Reg = {
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
-  tipo_servico: string; protocolo: string; touro: string; metodo_ia: string;
+  tipo_servico: string; protocolo: string; touro: string; inseminador: string; metodo_ia: string;
   ano: number | null; mes: string | null; data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
 };
@@ -31,7 +31,8 @@ type Reg = {
 const DIMENSOES: { key: keyof Reg; label: string }[] = [
   { key: "tipo_servico", label: "Tipo de serviço" },
   { key: "metodo_ia", label: "Método (IATF / cio)" },
-  { key: "touro", label: "Touro" },
+  { key: "touro", label: "Touro / sêmen" },
+  { key: "inseminador", label: "Inseminador" },
   { key: "ordem_parto", label: "Ordem de parto" },
   { key: "ordem_tentativa", label: "Ordem de tentativa" },
 ];
@@ -94,7 +95,7 @@ function ComboChart({ dados }: { dados: { mes: string; diag: number; pct: number
 export default function AnaliseReprodutivaPage() {
   const [regs, setRegs] = useState<Reg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [filtros, setFiltros] = useState<Record<string, string>>({});
+  const [filtros, setFiltros] = useState<Record<string, string[]>>({});
   const [dimensao, setDimensao] = useState<keyof Reg>("tipo_servico");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
@@ -112,7 +113,7 @@ export default function AnaliseReprodutivaPage() {
       (!fim || (r.data ? r.data <= fim : false)) &&
       DIMENSOES.every(({ key }) => {
         const f = filtros[key as string];
-        return !f || String(r[key]) === f;
+        return !f || f.length === 0 || f.includes(String(r[key]));
       }));
   }, [regs, filtros, ini, fim]);
 
@@ -183,17 +184,12 @@ export default function AnaliseReprodutivaPage() {
                 <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} />
               </div>
               {DIMENSOES.map(({ key, label }) => (
-                <div key={key as string}>
-                  <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>{label}</label>
-                  <select style={selStyle} value={filtros[key as string] ?? ""}
-                    onChange={(e) => setFiltros((p) => ({ ...p, [key as string]: e.target.value }))}>
-                    <option value="">Todos</option>
-                    {opcoes(regs, key).map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
-                </div>
+                <MultiFiltro key={key as string} label={label} opcoes={opcoes(regs, key)}
+                  selecionados={filtros[key as string] ?? []}
+                  onChange={(v) => setFiltros((p) => ({ ...p, [key as string]: v }))} />
               ))}
             </div>
-            {Object.values(filtros).some(Boolean) && (
+            {Object.values(filtros).some((v) => v && v.length) && (
               <button onClick={() => setFiltros({})} className="btn-ghost" title="Remover todos os filtros de dimensão aplicados" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }}>
                 Limpar filtros
               </button>
@@ -258,6 +254,7 @@ export default function AnaliseReprodutivaPage() {
                   <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Método" campo="metodo_ia" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Touro / sêmen" campo="touro" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  <ThOrdenavel label="Inseminador" campo="inseminador" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Protocolo" campo="protocolo" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                 </tr></thead>
@@ -270,11 +267,12 @@ export default function AnaliseReprodutivaPage() {
                       <td style={{ fontSize: "0.78rem" }}>{r.tipo_servico || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.metodo_ia || "—"}</td>
                       <td style={{ fontWeight: 600 }}>{r.touro || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.inseminador && r.inseminador !== "(sem inseminador)" ? r.inseminador : "—"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.protocolo || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.diagnostico || "—"}</td>
                     </tr>
                   ))}
-                  {!filtrados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro atual.</td></tr>}
+                  {!filtrados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro atual.</td></tr>}
                 </tbody>
               </table>
             </div>

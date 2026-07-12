@@ -10,7 +10,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { TabBar } from "@/components/ui";
+import { TabBar, MultiFiltro } from "@/components/ui";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -83,8 +83,8 @@ function EstratificacaoRebanho() {
 function RebanhoVisaoGeral() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fGrupo, setFGrupo] = useState("");
-  const [fSit, setFSit] = useState("");
+  const [fGrupo, setFGrupo] = useState<string[]>([]);
+  const [fSit, setFSit] = useState<string[]>([]);
   const [busca, setBusca] = useState("");
   const [abertos, setAbertos] = useState<Set<string>>(new Set());
   const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
@@ -102,8 +102,8 @@ function RebanhoVisaoGeral() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((a) =>
-      (!fGrupo || a.grupo_primario === fGrupo) &&
-      (!fSit || a.sit_rep === fSit) &&
+      (fGrupo.length === 0 || (a.grupo_primario ? fGrupo.includes(a.grupo_primario) : false)) &&
+      (fSit.length === 0 || (a.sit_rep ? fSit.includes(a.sit_rep) : false)) &&
       (!busca || a.numero.toLowerCase().includes(busca.toLowerCase()))
     );
   }, [regs, fGrupo, fSit, busca]);
@@ -151,10 +151,8 @@ function RebanhoVisaoGeral() {
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Grupo</label>
-                <select style={selStyle} value={fGrupo} onChange={(e) => setFGrupo(e.target.value)}><option value="">Todos</option>{opc((a) => a.grupo_primario).map((o) => <option key={o}>{o}</option>)}</select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Situação rep.</label>
-                <select style={selStyle} value={fSit} onChange={(e) => setFSit(e.target.value)}><option value="">Todas</option>{opc((a) => a.sit_rep).map((o) => <option key={o}>{o}</option>)}</select></div>
+              <MultiFiltro label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
+              <MultiFiltro label="Situação rep." opcoes={opc((a) => a.sit_rep)} selecionados={fSit} onChange={setFSit} />
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar nº</label>
                 <div style={{ position: "relative" }}>
                   <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
