@@ -66,9 +66,12 @@ def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_sessi
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     afetados = 0
+    nao_encontrados: list[str] = []
     for numero in dados.animais:
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        chave = (numero or "").strip()
+        animal = session.exec(select(Animal).where(Animal.numero == chave)).first()
         if not animal:
+            nao_encontrados.append(chave)
             continue
         animal.a_descartar = dados.descartar
         if dados.observacao:
@@ -77,7 +80,14 @@ def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_sessi
         session.add(animal)
         afetados += 1
     session.commit()
-    return {"afetados": afetados, "descartar": dados.descartar}
+    # Nenhum animal foi encontrado — devolve um erro claro com os números, em vez
+    # de um "not found" genérico (que confunde com rota inexistente).
+    if afetados == 0:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Animal(is) não encontrado(s): {', '.join(nao_encontrados) or '—'}",
+        )
+    return {"afetados": afetados, "descartar": dados.descartar, "nao_encontrados": nao_encontrados}
 
 
 @router.get("/")
