@@ -515,6 +515,20 @@ class Estoque(SQLModel, table=True):
     # e, na hora de aplicar, listar os medicamentos que cumprem o requisito.
     principio_ativo: Optional[str] = None
     classificacao_medicamento: Optional[str] = None
+    # Vínculo relacional com a farmácia (hierarquia = princípio ativo). O texto
+    # `principio_ativo` acima é mantido para histórico/compatibilização.
+    principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
+    medicamento_comercial_id: Optional[int] = Field(default=None, foreign_key="medicamento_comercial.id")
+    laboratorio: Optional[str] = None
+    # Unificação de volumes: tamanho de UMA apresentação (frasco/pote/seringa) e
+    # sua unidade. Ex.: frasco de 250 → volume_por_apresentacao=250, volume_unidade="ml".
+    # O nº de apresentações em estoque = quantidade / volume_por_apresentacao.
+    volume_por_apresentacao: Optional[float] = None
+    volume_unidade: Optional[str] = None
+    # Gatilho de comunicação: enquanto False, aplicações/dietas NÃO baixam este
+    # item (só registram o manejo) e um alerta pede o estoque inicial. None =
+    # item legado (já em uso) — tratado como inicializado para não quebrar baixas.
+    estoque_inicializado: Optional[bool] = None
     quantidade: Optional[float] = None
     estoque_minimo: Optional[float] = None
     unidade: Optional[str] = None
@@ -799,10 +813,42 @@ class AplicacaoAgendada(SQLModel, table=True):
 # Cadastros de apoio ao Calendário sanitário (Configurações > Cadastro).
 # ---------------------------------------------------------------------------
 class PrincipioAtivo(SQLModel, table=True):
+    """Espinha dorsal da farmácia: o princípio ativo (ou, para biológicos, o
+    antígeno/doença combatida). Marcas comerciais e itens de estoque penduram
+    aqui. O somatório de estoque e o alerta de mínimo são calculados no nível do
+    princípio (ver rules/farmacia)."""
+
     __tablename__ = "principio_ativo"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    # Enriquecimento (documento base de princípios ativos).
+    categoria_software: Optional[str] = None  # ex.: "Antimicrobiano Sistêmico Injetável", "AINE", "Biológico (Vacina)"
+    uso_principal: Optional[str] = None
+    justificativa: Optional[str] = None
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")  # p/ biológicos: doença combatida
+    eh_biologico: bool = False  # antígeno/vacina/diagnóstico (agrupado por doença, não por molécula)
+    # Unificação de volumes: unidade canônica em que o saldo das apresentações é
+    # somado (ml, L, dose, unidade, g). O mínimo é medido em "apresentações
+    # primárias" (frascos/potes/seringas): padrão 1.
+    unidade_base: Optional[str] = None            # ml | L | dose | unidade | g
+    unidade_apresentacao: Optional[str] = None    # frasco | seringa | dose | dispositivo | pote | galão | caixa
+    estoque_minimo_apresentacoes: float = 1.0
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MedicamentoComercial(SQLModel, table=True):
+    """Marca comercial + laboratório de um princípio ativo (tabela filha). Ex.:
+    Maxicam 2%/Ourofino → Meloxicam. Catálogo relacional; um item de estoque
+    físico referencia uma marca (ou pelo menos o princípio)."""
+
+    __tablename__ = "medicamento_comercial"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    principio_ativo_id: int = Field(foreign_key="principio_ativo.id", index=True)
+    nome_comercial: str = Field(index=True)
+    laboratorio: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 

@@ -589,7 +589,7 @@ export async function fetchUnidadesCompativeis(produto: string) {
 
 export async function criarAplicacaoSanidade(dados: {
   data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
-  itens: { produto: string; via?: string; quantidade: number; unidade: string }[];
+  itens: { produto: string; via?: string; quantidade: number; unidade: string; estoque_id?: number | null }[];
   aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
@@ -870,6 +870,70 @@ export async function registrarRealDieta(id: number, dados: { data: string; iten
 export async function fetchComparativoDieta(id: number) {
   const res = await authFetch(`${API}/alimentacao/dietas/${id}/comparativo`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Comparativo da dieta error: ${res.status}`);
+  return res.json();
+}
+
+// ── Farmácia (estoque por princípio ativo) ──
+export type ApresentacaoFarmacia = {
+  estoque_id: number; nome: string; marca: string | null; medicamento_comercial_id: number | null;
+  saldo: number; unidade: string | null; volume_por_apresentacao: number | null; volume_unidade: string | null;
+  apresentacoes: number | null; estoque_inicializado: boolean;
+};
+export type PrincipioFarmacia = {
+  id: number; nome: string; categoria_software: string | null; uso_principal: string | null; justificativa: string | null;
+  eh_biologico: boolean; doenca_id: number | null; unidade_base: string | null; unidade_apresentacao: string | null;
+  estoque_minimo_apresentacoes: number; total_base: number | null; total_apresentacoes: number;
+  qtd_marcas_estoque: number; abaixo_minimo: boolean; precisa_inicializar: boolean; itens: ApresentacaoFarmacia[];
+};
+export async function fetchFarmaciaPrincipios() {
+  const res = await authFetch(`${API}/farmacia/principios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Farmácia error: ${res.status}`);
+  return res.json() as Promise<PrincipioFarmacia[]>;
+}
+export async function fetchFarmaciaDetalhe(id: number) {
+  const res = await authFetch(`${API}/farmacia/principios/${id}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Detalhe do princípio error: ${res.status}`);
+  return res.json();
+}
+export async function atualizarPrincipioFarmacia(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/farmacia/principios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar princípio"); }
+  return res.json();
+}
+export async function criarPrincipioFarmacia(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/farmacia/principios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar princípio"); }
+  return res.json();
+}
+export async function criarMarcaFarmacia(dados: { principio_ativo_id: number; nome_comercial: string; laboratorio?: string }) {
+  const res = await authFetch(`${API}/farmacia/medicamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar marca"); }
+  return res.json();
+}
+export async function excluirMarcaFarmacia(id: number) {
+  const res = await authFetch(`${API}/farmacia/medicamentos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir marca"); }
+  return res.json();
+}
+export async function fetchApresentacoesFarmacia(params: { principio_ativo_id?: number; produto?: string }) {
+  const qs = new URLSearchParams();
+  if (params.principio_ativo_id != null) qs.set("principio_ativo_id", String(params.principio_ativo_id));
+  if (params.produto) qs.set("produto", params.produto);
+  const res = await authFetch(`${API}/farmacia/apresentacoes?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Apresentações error: ${res.status}`);
+  return res.json() as Promise<ApresentacaoFarmacia[]>;
+}
+export async function inicializarEstoqueFarmacia(estoqueId: number, dados: { quantidade: number; data?: string; observacao?: string }) {
+  const res = await authFetch(`${API}/farmacia/estoque/${estoqueId}/inicializar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao inicializar estoque"); }
   return res.json();
 }
 
