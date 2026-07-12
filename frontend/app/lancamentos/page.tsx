@@ -1037,8 +1037,8 @@ function unidadesCompativeis(unidadeEstoque: string | null | undefined): string[
   return grupo || [unidadeEstoque];
 }
 
-type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string; estoque_id?: number | null };
-const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "", estoque_id: null });
+type ItemSanidade = { produto: string; via: string; quantidade: string; unidade: string; estoque_id?: number | null; definirPor: "medicamento" | "principio_ativo" | "doenca"; criterio: string };
+const itemSanidadeVazio = (): ItemSanidade => ({ produto: "", via: "", quantidade: "", unidade: "", estoque_id: null, definirPor: "medicamento", criterio: "" });
 
 function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [modo, setModo] = useState<"animal" | "lote">("animal");
@@ -1061,6 +1061,16 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   // (frascos/marcas) do mesmo princípio ativo que existem no estoque. Só pergunta
   // quando há mais de uma.
   const [frascosPorItem, setFrascosPorItem] = useState<Record<number, ApresentacaoFarmacia[]>>({});
+  // Lançamento por doença ou princípio ativo: abre só os medicamentos que
+  // correspondem ao critério (via Farmácia). Listas de opções e produtos
+  // filtrados por item.
+  const [principiosNomes, setPrincipiosNomes] = useState<string[]>([]);
+  const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
+  const [opcoesPorItem, setOpcoesPorItem] = useState<Record<number, string[]>>({});
+  useEffect(() => {
+    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosNomes(d.map((p) => p.nome))).catch(() => {});
+    fetchDoencas().then((d: any[]) => setDoencasNomes(d.map((x) => x.nome))).catch(() => {});
+  }, []);
 
   // Pré-preenche a partir da Agenda (medicamento padrão do evento sanitário),
   // deixando tudo editável na hora.
@@ -1073,6 +1083,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
     const produto = qs.get("produto");
     if (produto) {
       setItens([{
+        ...itemSanidadeVazio(),
         produto, via: qs.get("via") || "", quantidade: qs.get("dose") || "", unidade: qs.get("unidade") || "",
       }]);
     }
@@ -1100,6 +1111,21 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   };
   const acrescentarItem = () => setItens((p) => [...p, itemSanidadeVazio()]);
   const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
+
+  // Muda o modo de escolha do medicamento (todos / por princípio ativo / por doença).
+  const escolherDefinirPor = (idx: number, valor: ItemSanidade["definirPor"]) => {
+    atualizarItem(idx, { definirPor: valor, criterio: "", produto: "", unidade: "", estoque_id: null });
+    setOpcoesPorItem((o) => ({ ...o, [idx]: [] }));
+  };
+  const escolherCriterio = (idx: number, criterio: string) => {
+    atualizarItem(idx, { criterio, produto: "", unidade: "", estoque_id: null });
+    if (!criterio) { setOpcoesPorItem((o) => ({ ...o, [idx]: [] })); return; }
+    const def = itens[idx].definirPor;
+    const filtro = def === "principio_ativo" ? { principio_ativo: criterio } : { doenca: criterio };
+    fetchMedicamentos(filtro)
+      .then((m: any[]) => setOpcoesPorItem((o) => ({ ...o, [idx]: m.map((x) => x.nome) })))
+      .catch(() => setOpcoesPorItem((o) => ({ ...o, [idx]: [] })));
+  };
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -1166,15 +1192,35 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
           const compativeis = unidadesCompativeis(estoqueItem?.unidade);
           return (
             <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ marginBottom: "0.6rem" }}>
+                <Campo label="Definir medicamento por">
+                  <select style={inputStyle} value={item.definirPor} onChange={(e) => escolherDefinirPor(idx, e.target.value as ItemSanidade["definirPor"])}>
+                    <option value="medicamento">Medicamento (todos)</option>
+                    <option value="principio_ativo">Princípio ativo</option>
+                    <option value="doenca">Doença</option>
+                  </select>
+                </Campo>
+                {item.definirPor !== "medicamento" && (
+                  <Campo label={item.definirPor === "principio_ativo" ? "Princípio ativo" : "Doença"}>
+                    <select style={inputStyle} value={item.criterio} onChange={(e) => escolherCriterio(idx, e.target.value)}>
+                      <option value="">Selecione…</option>
+                      {(item.definirPor === "principio_ativo" ? principiosNomes : doencasNomes).map((c) => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </Campo>
+                )}
+              </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Campo label={`Produto/medicamento ${idx + 1}`}>
-                  <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)}>
+                  <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)} disabled={item.definirPor !== "medicamento" && !item.criterio}>
                     <option value="" disabled>Selecione…</option>
-                    {listaProdutos.map((nome) => {
+                    {(item.definirPor === "medicamento" ? listaProdutos : (opcoesPorItem[idx] || [])).map((nome) => {
                       const est = estoque.find((e) => e.nome === nome);
                       return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
                     })}
                   </select>
+                  {item.definirPor !== "medicamento" && item.criterio && !(opcoesPorItem[idx] || []).length && (
+                    <p style={{ fontSize: "0.68rem", color: "var(--amber)", marginTop: 2 }}>Nenhum medicamento com esse critério.</p>
+                  )}
                 </Campo>
                 <Campo label="Via">
                   <select style={inputStyle} value={item.via} onChange={(e) => atualizarItem(idx, { via: e.target.value })}>
@@ -1493,7 +1539,7 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
     const crit = (protocolo.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") !== "medicamento" && e.id != null);
     if (!crit.length) { setMedOpcoes({}); return; }
     Promise.all(crit.map((e) =>
-      fetchMedicamentos(e.criterio_tipo === "principio_ativo" ? { principio_ativo: e.produto } : { classificacao: e.produto })
+      fetchMedicamentos(e.criterio_tipo === "principio_ativo" ? { principio_ativo: e.produto } : e.criterio_tipo === "doenca" ? { doenca: e.produto } : { classificacao: e.produto })
         .then((m) => [e.id as number, m] as const).catch(() => [e.id as number, [] as any[]] as const)
     )).then((pares) => setMedOpcoes(Object.fromEntries(pares)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1551,7 +1597,7 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {etapasCriterio.map((e) => (
                 <div key={e.id}>
-                  <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : "Classificação"}: <strong>{e.produto}</strong></label>
+                  <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação"}: <strong>{e.produto}</strong></label>
                   <select style={inputStyle} value={escolhasMed[e.id as number] || ""} onChange={(ev) => setEscolhasMed((s) => ({ ...s, [e.id as number]: ev.target.value }))}>
                     <option value="">Selecione o medicamento…</option>
                     {(medOpcoes[e.id as number] || []).map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}

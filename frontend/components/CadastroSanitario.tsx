@@ -16,6 +16,7 @@ import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
 const CRITERIOS: [string, string][] = [
   ["medicamento", "Medicamento"],
   ["principio_ativo", "Princípio ativo"],
+  ["doenca", "Doença"],
   ["classificacao", "Classificação"],
 ];
 
@@ -249,12 +250,16 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
                 {CRITERIOS.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}
               </select></div>
             <div style={{ gridColumn: "span 2" }}>
-              <label style={labelStyle}>{(e.criterio_tipo || "medicamento") === "medicamento" ? "Medicamento" : (e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : "Classificação")}</label>
+              <label style={labelStyle}>{(e.criterio_tipo || "medicamento") === "medicamento" ? "Medicamento" : (e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação")}</label>
               {(e.criterio_tipo || "medicamento") === "medicamento" ? (
                 <EstoquePicker itens={estoque} value={e.produto} onChange={(v) => atualizarEtapa(idx, { produto: v })} />
               ) : e.criterio_tipo === "principio_ativo" ? (
                 <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
                   <option value="">Selecione…</option>{principios.map((p) => <option key={p.id} value={p.nome}>{p.nome}</option>)}
+                </select>
+              ) : e.criterio_tipo === "doenca" ? (
+                <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
+                  <option value="">Selecione…</option>{doencas.map((d) => <option key={d.id} value={d.nome}>{d.nome}</option>)}
                 </select>
               ) : (
                 <select style={inputStyle} value={e.produto} onChange={(ev) => atualizarEtapa(idx, { produto: ev.target.value })}>
