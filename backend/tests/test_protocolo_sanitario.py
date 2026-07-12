@@ -252,6 +252,31 @@ class TestAgendaEBaixaAutomatica:
             assert sanidade is not None  # aplicação ainda é registrada em Sanidade
 
 
+class TestAgrupamentoLote:
+    """Aplicações do mesmo protocolo/dia/data compartilham `grupo` para o app
+    oferecer 'lote ou individual' — cada animal continua confirmável por si."""
+
+    def _protocolo_simples(self, c):
+        return c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Vermifugação", "etapas": [_etapa(1, produto="Ivermectina", unidade="ml")],
+        }).json()["id"]
+
+    def test_animais_do_lote_compartilham_grupo(self, client):
+        c, engine = client
+        pid = self._protocolo_simples(c)
+        c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700", "701", "702"], "data_inicio": "2026-03-01",
+        })
+        eventos = c.get("/agenda/", params={"data": "2026-02-01", "dias": 60}).json()["eventos"]
+        san = [e for e in eventos if e.get("tipo") == "protocolo_sanitario"]
+        assert len(san) == 3
+        grupos = {e["grupo"] for e in san}
+        assert len(grupos) == 1  # mesmo protocolo/dia/data → um só grupo
+        assert {e["numero_animal"] for e in san} == {"700", "701", "702"}
+        # Cada um tem id próprio (confirmável individualmente).
+        assert len({e["id"] for e in san}) == 3
+
+
 class TestCadastroPorCriterio:
     """Cadastro por princípio ativo/classificação → escolher o medicamento no
     lançamento → baixa usa o medicamento escolhido."""

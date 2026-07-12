@@ -36,7 +36,35 @@ type Evento = {
   dia?: number | null;
   hormonio?: string | null;
   protocolo?: string | null;
+  grupo?: string | null;
+  grupo_titulo?: string | null;
 };
+
+// Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
+// "lote ou individual" no app. Cada item continua sendo um evento próprio.
+type GrupoSan = { grupo: string; titulo: string; produto: string | null; data: string; categoria: string; itens: Evento[] };
+type Renderavel = { kind: "evento"; e: Evento } | { kind: "grupo"; g: GrupoSan };
+
+// Agrupa os eventos de protocolo sanitário que compartilham `grupo`; os demais
+// passam direto. O grupo aparece na posição do seu primeiro item.
+function montarLista(evs: Evento[]): Renderavel[] {
+  const grupos = new Map<string, GrupoSan>();
+  const saida: Renderavel[] = [];
+  for (const e of evs) {
+    if (e.tipo === "protocolo_sanitario" && e.grupo) {
+      let g = grupos.get(e.grupo);
+      if (!g) {
+        g = { grupo: e.grupo, titulo: e.grupo_titulo || e.descricao, produto: e.produto || null, data: e.data, categoria: e.categoria, itens: [] };
+        grupos.set(e.grupo, g);
+        saida.push({ kind: "grupo", g });
+      }
+      g.itens.push(e);
+    } else {
+      saida.push({ kind: "evento", e });
+    }
+  }
+  return saida;
+}
 
 type Agenda = { eventos?: Evento[] };
 
@@ -95,6 +123,34 @@ export default function AgendaMovel() {
   const [iatfModo, setIatfModo] = useState<Record<string, "lote" | "individual">>({});
   // Vacas já confirmadas individualmente dentro de um cartão (some da lista).
   const [iatfVacasFeitas, setIatfVacasFeitas] = useState<Record<string, Set<string>>>({});
+
+  // Grupos de protocolo sanitário (aplicação em lote): mesma pergunta lote/individual.
+  const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
+  const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
+
+  const abrirSan = (grupo: string) => setSanAberto((p) => { const n = new Set(p); n.has(grupo) ? n.delete(grupo) : n.add(grupo); return n; });
+
+  // Confirma um item (uma matriz) do grupo — usa o id próprio do evento, então
+  // o backend dá a baixa de estoque daquela aplicação como já fazia.
+  async function confirmarSanItem(it: Evento) {
+    if (feitos.has(it.id)) return;
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(it.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: it.id }, `Concluir: ${resumo(it)}`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(it.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
+  // Confirma todas as matrizes pendentes do grupo (lote).
+  async function confirmarSanLote(g: GrupoSan) {
+    for (const it of g.itens) {
+      if (!feitos.has(it.id)) await confirmarSanItem(it);
+    }
+    setAviso({ tipo: "ok", msg: `Aplicação confirmada em ${g.itens.length} animal(is).` });
+  }
 
   const abrirIatf = (id: string, animais: string[]) => {
     setIatfAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
@@ -189,6 +245,82 @@ export default function AgendaMovel() {
   const d1 = maisDias(hoje, 1);
   const d2 = maisDias(hoje, 2);
   const eventosDe = (dia: string) => (agenda?.eventos || []).filter((e) => e.data === dia);
+
+  // Cartão de um GRUPO de protocolo sanitário (lote) — pergunta lote/individual,
+  // depois confirma todas ou uma matriz por vez.
+  function renderGrupoSanitario(g: GrupoSan) {
+    const { chave, rotulo } = catInfo(g.categoria);
+    const aberto = sanAberto.has(g.grupo);
+    const modo = sanModo[g.grupo];
+    const feitasCount = g.itens.filter((it) => feitos.has(it.id)).length;
+    const tudoFeito = feitasCount === g.itens.length;
+    return (
+      <MobCard key={g.grupo} style={{ marginBottom: "0.6rem" }}>
+        <button type="button" onClick={() => abrirSan(g.grupo)}
+          style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+            <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: tudoFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: tudoFeito ? "line-through" : "none" }}>{g.titulo}</div>
+            <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+              {g.itens.length} animal{g.itens.length !== 1 ? "is" : ""}{g.produto ? ` · ${g.produto}` : ""}{feitasCount ? ` · ${feitasCount} feito(s)` : ""}
+            </div>
+          </div>
+          <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+        </button>
+
+        {aberto && (
+          <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+            {g.produto && (
+              <div style={{ fontSize: "0.82rem", marginBottom: "0.6rem" }}><strong>Aplicar:</strong> {g.produto}</div>
+            )}
+            {!modo ? (
+              <>
+                <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginBottom: "0.55rem" }}>Como deseja confirmar a aplicação?</p>
+                <div style={{ display: "flex", gap: "0.6rem" }}>
+                  <button type="button" className="mob-btn" style={{ flex: 1 }} onClick={() => setSanModo((p) => ({ ...p, [g.grupo]: "lote" }))}>Em lote (todas)</button>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setSanModo((p) => ({ ...p, [g.grupo]: "individual" }))}>Individual</button>
+                </div>
+              </>
+            ) : modo === "lote" ? (
+              <>
+                <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Animais do lote:</p>
+                {g.itens.map((it) => (
+                  <div key={it.id} style={{ padding: "0.45rem 0.2rem", borderBottom: "1px solid var(--mob-border)", fontWeight: 800, fontSize: "1.02rem", color: feitos.has(it.id) ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feitos.has(it.id) ? "line-through" : "none" }}>
+                    {it.numero_animal}
+                  </div>
+                ))}
+                <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }} disabled={tudoFeito} onClick={() => confirmarSanLote(g)}>
+                  Confirmar todas ({g.itens.length - feitasCount} pendente{g.itens.length - feitasCount !== 1 ? "s" : ""})
+                </button>
+              </>
+            ) : (
+              <>
+                <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Confirme animal por animal — aplicado?</p>
+                {g.itens.map((it) => {
+                  const jaFeita = feitos.has(it.id);
+                  return (
+                    <div key={it.id} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.2rem", borderBottom: "1px solid var(--mob-border)" }}>
+                      <span style={{ fontWeight: 800, fontSize: "1.05rem", flex: 1, color: jaFeita ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: jaFeita ? "line-through" : "none" }}>{it.numero_animal}</span>
+                      {jaFeita ? (
+                        <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Aplicado</span>
+                      ) : (
+                        <button type="button" className="mob-btn" style={{ width: "auto", padding: "0.4rem 1.1rem" }} onClick={() => confirmarSanItem(it)}>Sim</button>
+                      )}
+                    </div>
+                  );
+                })}
+                {tudoFeito && <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)", marginTop: "0.6rem" }}>Todos os animais confirmados.</p>}
+              </>
+            )}
+          </div>
+        )}
+      </MobCard>
+    );
+  }
+
+  function renderRenderavel(r: Renderavel) {
+    return r.kind === "grupo" ? renderGrupoSanitario(r.g) : renderCartao(r.e);
+  }
 
   function renderCartao(e: Evento) {
     const { chave, rotulo } = catInfo(e.categoria);
@@ -319,7 +451,7 @@ export default function AgendaMovel() {
         <div style={{ marginTop: "0.6rem" }}>
           {evs.length === 0
             ? <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem", padding: "0.3rem 0.2rem" }}>Nada agendado.</p>
-            : evs.map(renderCartao)}
+            : montarLista(evs).map(renderRenderavel)}
         </div>
       </details>
     );
@@ -364,7 +496,7 @@ export default function AgendaMovel() {
               </p>
             </div>
           ) : (
-            eventos.map(renderCartao)
+            montarLista(eventos).map(renderRenderavel)
           )}
 
           {/* Consulta antecipada: os dois dias seguintes, recolhidos. */}
