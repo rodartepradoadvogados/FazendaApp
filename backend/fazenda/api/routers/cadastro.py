@@ -21,6 +21,7 @@ from fazenda.models import (
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
@@ -817,10 +818,102 @@ router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)
 
-_listar_eventos, _criar_evento, _atualizar_evento = _crud_nome_ativo(EventoSanitario)
-router.get("/eventos-sanitarios")(_listar_eventos)
-router.post("/eventos-sanitarios")(_criar_evento)
-router.put("/eventos-sanitarios/{item_id}")(_atualizar_evento)
+# Evento sanitário — cadastro RICO (nome + agendamento por época/evento +
+# medicamento padrão). Alimenta o calendário sanitário e a Agenda.
+FREQUENCIAS_EVENTO = ["dias", "meses", "anos"]
+TIPOS_AGENDAMENTO = ["nenhum", "epoca", "evento"]
+GATILHOS_EVENTO = ["nascimento", "entrada_lote", "novilha_apta", "secagem", "parto"]
+
+
+class EventoSanitarioIn(BaseModel):
+    nome: str
+    ativo: bool = True
+    tipo_agendamento: str = "nenhum"
+    categoria_alvo: str | None = None
+    doenca_id: int | None = None
+    data_primeiro: date | None = None
+    frequencia_valor: int | None = None
+    frequencia_unidade: str | None = None
+    gatilho: str | None = None
+    gatilho_lote: str | None = None
+    gatilho_idade_meses: int | None = None
+    offset_dias: int | None = None
+    produto_padrao: str | None = None
+    dose_padrao: float | None = None
+    unidade_padrao: str | None = None
+    via_padrao: str | None = None
+
+
+def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
+    d = ev.model_dump()
+    d["doenca_nome"] = None
+    if ev.doenca_id:
+        doenca = session.get(Doenca, ev.doenca_id)
+        d["doenca_nome"] = doenca.nome if doenca else None
+    if ev.tipo_agendamento == "epoca" and ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade:
+        d["proxima_ocorrencia"] = proxima_ocorrencia(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade).isoformat()
+    else:
+        d["proxima_ocorrencia"] = None
+    return d
+
+
+def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session) -> None:
+    if dados.tipo_agendamento not in TIPOS_AGENDAMENTO:
+        raise HTTPException(status_code=400, detail=f"Tipo de agendamento inválido (use: {', '.join(TIPOS_AGENDAMENTO)})")
+    if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
+        raise HTTPException(status_code=400, detail="Doença não encontrada")
+    if dados.tipo_agendamento == "epoca":
+        if not dados.data_primeiro:
+            raise HTTPException(status_code=400, detail="Informe a data do primeiro evento (agendamento por época)")
+        if not dados.frequencia_valor or dados.frequencia_valor <= 0:
+            raise HTTPException(status_code=400, detail="Informe uma frequência maior que zero")
+        if dados.frequencia_unidade not in FREQUENCIAS_EVENTO:
+            raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS_EVENTO)})")
+    if dados.tipo_agendamento == "evento":
+        if dados.gatilho not in GATILHOS_EVENTO:
+            raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
+        if dados.gatilho == "entrada_lote" and not (dados.gatilho_lote or "").strip():
+            raise HTTPException(status_code=400, detail="Informe o lote do gatilho (entrada no lote)")
+        if dados.gatilho == "novilha_apta" and not dados.gatilho_idade_meses:
+            raise HTTPException(status_code=400, detail="Informe a idade-alvo em meses (aptidão de novilha)")
+
+
+@router.get("/eventos-sanitarios")
+def listar_eventos_sanitarios(session: Session = Depends(get_session)) -> list[dict]:
+    eventos = session.exec(select(EventoSanitario).order_by(EventoSanitario.nome)).all()
+    return [_dto_evento_sanitario(session, ev) for ev in eventos]
+
+
+@router.post("/eventos-sanitarios")
+def criar_evento_sanitario(dados: EventoSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um evento sanitário com o nome '{nome}'")
+    _validar_evento_sanitario(dados, session)
+    ev = EventoSanitario(**{**dados.model_dump(), "nome": nome})
+    session.add(ev)
+    session.commit()
+    session.refresh(ev)
+    return _dto_evento_sanitario(session, ev)
+
+
+@router.put("/eventos-sanitarios/{item_id}")
+def atualizar_evento_sanitario(item_id: int, dados: EventoSanitarioIn, session: Session = Depends(get_session)) -> dict:
+    ev = session.get(EventoSanitario, item_id)
+    if not ev:
+        raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_evento_sanitario(dados, session)
+    for campo, valor in {**dados.model_dump(), "nome": nome}.items():
+        setattr(ev, campo, valor)
+    session.add(ev)
+    session.commit()
+    session.refresh(ev)
+    return _dto_evento_sanitario(session, ev)
 
 _listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa)
 router.get("/motivos-baixa")(_listar_motivos_baixa)

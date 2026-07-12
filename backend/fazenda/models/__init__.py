@@ -764,13 +764,42 @@ class Doenca(SQLModel, table=True):
 
 
 class EventoSanitario(SQLModel, table=True):
-    """Nome do evento/protocolo sanitário (ex.: Vermífugo, Brucelose B19, Leptospirose)."""
+    """
+    Evento/protocolo sanitário (ex.: Vermífugo, Brucelose B19, Leptospirose).
+    Além do nome, guarda o AGENDAMENTO — por época (recorrência fixa) ou por
+    evento de vida (gatilho: nascimento, entrada em lote, aptidão de novilha…) —
+    e o MEDICAMENTO PADRÃO, editável no momento do lançamento. Isso alimenta o
+    calendário sanitário e a Agenda.
+    """
 
     __tablename__ = "evento_sanitario"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
     ativo: bool = True
+
+    # Agendamento: "nenhum" (só o nome, retrocompatível) | "epoca" | "evento".
+    tipo_agendamento: str = Field(default="nenhum")
+    categoria_alvo: Optional[str] = None  # ex.: "Bezerras (3 a 8 meses)"
+    doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
+
+    # Por época — recorrência fixa a partir de uma data de referência.
+    data_primeiro: Optional[date] = None
+    frequencia_valor: Optional[int] = None
+    frequencia_unidade: Optional[str] = None  # "dias" | "meses" | "anos"
+
+    # Por evento de vida — gatilho + parâmetros do gatilho.
+    gatilho: Optional[str] = None  # "nascimento" | "entrada_lote" | "novilha_apta" | "secagem" | "parto"
+    gatilho_lote: Optional[str] = None       # código do lote (para entrada_lote)
+    gatilho_idade_meses: Optional[int] = None  # idade-alvo (para novilha_apta)
+    offset_dias: Optional[int] = None        # dias após o gatilho para agendar (default 0)
+
+    # Medicamento padrão — sugerido no lançamento, editável na hora.
+    produto_padrao: Optional[str] = None
+    dose_padrao: Optional[float] = None
+    unidade_padrao: Optional[str] = None
+    via_padrao: Optional[str] = None
+
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

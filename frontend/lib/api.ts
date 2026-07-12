@@ -628,10 +628,35 @@ export const fetchDoencas = _doencas.listar;
 export const criarDoenca = _doencas.criar;
 export const atualizarDoenca = _doencas.atualizar;
 
-const _eventosSanitarios = _crudNomeAtivo("eventos-sanitarios", "Evento sanitário");
-export const fetchEventosSanitarios = _eventosSanitarios.listar;
-export const criarEventoSanitario = _eventosSanitarios.criar;
-export const atualizarEventoSanitario = _eventosSanitarios.atualizar;
+// Evento sanitário — cadastro rico (nome + agendamento por época/evento +
+// medicamento padrão). Alimenta o calendário sanitário e a Agenda.
+export type EventoSanitarioPayload = {
+  nome: string; ativo?: boolean;
+  tipo_agendamento?: "nenhum" | "epoca" | "evento";
+  categoria_alvo?: string | null; doenca_id?: number | null;
+  data_primeiro?: string | null; frequencia_valor?: number | null; frequencia_unidade?: string | null;
+  gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
+  produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;
+};
+export async function fetchEventosSanitarios() {
+  const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Evento sanitário error: ${res.status}`);
+  return res.json();
+}
+export async function criarEventoSanitario(dados: EventoSanitarioPayload) {
+  const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  return res.json();
+}
+export async function atualizarEventoSanitario(id: number, dados: EventoSanitarioPayload) {
+  const res = await authFetch(`${API}/cadastro/eventos-sanitarios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
+  return res.json();
+}
 
 // ── Protocolo sanitário (cadastro + lançamento) ──
 export type ProtocoloEtapa = { dia: number; produto: string; dosagem: number; unidade: string; via?: string | null };
