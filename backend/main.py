@@ -40,7 +40,7 @@ from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
 from fazenda.api.routers.reproducao import deduplicar_partos
-from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias
+from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias, seed_estoque_semen_inicial
 from fazenda.rules.farmacia import bootstrap_farmacia
 
 
@@ -60,6 +60,7 @@ async def lifespan(app: FastAPI):
         seed_motivos_baixa(session)
         seed_servicos(session)
         seed_semen_categorias(session)
+        seed_estoque_semen_inicial(session)
         # Farmácia: catálogo de princípios ativos/marcas + compatibilização do
         # estoque já existente (idempotente, sem perda de dados).
         bootstrap_farmacia(session)

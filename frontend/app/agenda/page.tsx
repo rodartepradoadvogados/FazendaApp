@@ -142,11 +142,25 @@ export default function AgendaPage() {
   const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo);
   const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
 
+  // Protocolo IATF: qual medicamento/frasco foi aplicado em cada hormônio do
+  // dia (ex.: D9). Chave = eventoId → índice do hormônio → estoque_id escolhido.
+  const [medIatf, setMedIatf] = useState<Record<string, Record<number, number | null>>>({});
+  const escolherMedIatf = (eventoId: string, idx: number, estoqueId: number | null) =>
+    setMedIatf((p) => ({ ...p, [eventoId]: { ...(p[eventoId] || {}), [idx]: estoqueId } }));
+
   const [marcando, setMarcando] = useState<Set<string>>(new Set());
-  const marcarRealizado = async (eventoId: string, animais?: string[]) => {
+  const marcarRealizado = async (eventoId: string, animais?: string[], hormonios?: any[]) => {
     setMarcando((p) => new Set(p).add(eventoId));
     try {
-      await marcarEventoRealizado(eventoId, animais);
+      // Monta os medicamentos aplicados (com o frasco escolhido) a partir dos
+      // hormônios do dia e da seleção do usuário.
+      const sel = medIatf[eventoId] || {};
+      const medicamentos = (hormonios || []).map((h: any, idx: number) => {
+        const estoqueId = sel[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : null);
+        const op = (h.opcoes || []).find((o: any) => o.estoque_id === estoqueId);
+        return { produto: op?.nome || h.produto, estoque_id: estoqueId ?? undefined, dose: h.dose, unidade: h.unidade, via: h.via };
+      }).filter((m: any) => m.produto);
+      await marcarEventoRealizado(eventoId, animais, medicamentos);
       cancelarConfirmacao(eventoId);
       await carregar();
       if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
@@ -295,7 +309,7 @@ export default function AgendaPage() {
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
                             <td onClick={(ev) => ev.stopPropagation()}>
-                              {!ehD11 && <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />}
+                              {!ehD11 && <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id, undefined, e.hormonios)} />}
                             </td>
                           </tr>
                           {abertoIatf && (
@@ -332,10 +346,40 @@ export default function AgendaPage() {
                                       ))}
                                     </tbody>
                                   </table>
+                                  {!ehD11 && (e.hormonios?.length ?? 0) > 0 && (
+                                    <div style={{ marginTop: "0.6rem", background: "var(--surface)", border: "1px solid var(--dourado)", borderRadius: 8, padding: "0.55rem 0.7rem" }}>
+                                      <div style={{ fontSize: "0.74rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.35rem" }}>
+                                        Qual medicamento/frasco você está usando?
+                                      </div>
+                                      {e.hormonios.map((h: any, idx: number) => {
+                                        const sel = medIatf[e.id]?.[idx] ?? (h.opcoes?.length === 1 ? h.opcoes[0].estoque_id : "");
+                                        return (
+                                          <div key={idx} className="flex items-center gap-2" style={{ marginBottom: "0.3rem", flexWrap: "wrap" }}>
+                                            <span style={{ fontSize: "0.76rem", minWidth: 130 }}>
+                                              {h.produto}{h.dose ? ` · ${h.dose}${h.unidade || ""}` : ""}
+                                            </span>
+                                            {(h.opcoes?.length ?? 0) === 0 ? (
+                                              <span style={{ fontSize: "0.72rem", color: "var(--amber)" }}>Sem medicamento em estoque para este princípio.</span>
+                                            ) : (
+                                              <select style={{ width: "auto", minWidth: 220, fontSize: "0.76rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface-2)", border: "1px solid var(--border)", color: "var(--text)" }} value={sel ?? ""}
+                                                onChange={(ev) => escolherMedIatf(e.id, idx, ev.target.value ? Number(ev.target.value) : null)}>
+                                                <option value="">Selecione o frasco…</option>
+                                                {h.opcoes.map((o: any) => (
+                                                  <option key={o.estoque_id} value={o.estoque_id}>
+                                                    {o.nome}{o.marca ? ` · ${o.marca}` : ""} — saldo {o.saldo} {o.unidade || ""}{!o.estoque_inicializado ? " (sem estoque inicial)" : ""}
+                                                  </option>
+                                                ))}
+                                              </select>
+                                            )}
+                                          </div>
+                                        );
+                                      })}
+                                    </div>
+                                  )}
                                   {!ehD11 && (
                                     <div className="flex items-center gap-2 mt-2">
                                       <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
-                                        onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                        onClick={() => marcarRealizado(e.id, Array.from(checks), e.hormonios)}>
                                         <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
                                       </button>
                                     </div>

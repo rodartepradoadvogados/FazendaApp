@@ -22,6 +22,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
 from fazenda.rules.unidades import pode_dar_baixa_direta
+from fazenda.rules.farmacia import pode_baixar_estoque
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -205,6 +206,42 @@ def calcular_agenda(
     for ap in aplicacoes_iatf:
         grupos_iatf.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
 
+    # Hormônios cadastrados por (lançamento, dia) + as opções de medicamento
+    # (frascos em estoque) do princípio ativo de cada um, para o "qual
+    # medicamento/frasco?" na hora de confirmar o dia (ex.: D9).
+    from fazenda.models import MedicamentoComercial, PrincipioAtivo
+    _todos_estoque = session.exec(select(Estoque)).all()
+    _pa_por_nome = {(p.nome or "").strip().lower(): p for p in session.exec(select(PrincipioAtivo)).all()}
+
+    def _opcoes_medicamento(produto: str) -> tuple[int | None, list[dict]]:
+        """Dado o produto/princípio de um hormônio, resolve o princípio ativo e
+        lista os frascos em estoque para o usuário escolher qual está usando."""
+        item = next((e for e in _todos_estoque if (e.nome or "").strip().lower() == (produto or "").strip().lower()), None)
+        pa_id = item.principio_ativo_id if item else None
+        if pa_id is None:
+            pa = _pa_por_nome.get((produto or "").strip().lower())
+            pa_id = pa.id if pa else None
+        opcoes = []
+        for e in _todos_estoque:
+            if pa_id is not None and e.principio_ativo_id == pa_id:
+                opcoes.append({"estoque_id": e.id, "nome": e.nome, "marca": e.laboratorio,
+                               "saldo": e.quantidade or 0, "unidade": e.unidade,
+                               "estoque_inicializado": e.estoque_inicializado is not False})
+        # Se o próprio produto é um item de estoque (sem princípio), ele é a opção.
+        if not opcoes and item is not None:
+            opcoes.append({"estoque_id": item.id, "nome": item.nome, "marca": item.laboratorio,
+                           "saldo": item.quantidade or 0, "unidade": item.unidade,
+                           "estoque_inicializado": item.estoque_inicializado is not False})
+        return pa_id, opcoes
+
+    hormonios_por_grupo: dict[tuple[int, int], list[dict]] = {}
+    for h in session.exec(select(ProtocoloIatfHormonio)).all():
+        pa_id, opcoes = _opcoes_medicamento(h.produto)
+        hormonios_por_grupo.setdefault((h.lancamento_id, h.dia), []).append({
+            "produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via,
+            "principio_ativo_id": pa_id, "opcoes": opcoes,
+        })
+
     eventos_iatf = []
     DIAS_PROTOCOLO_IATF = [0, 7, 9, 11]
     for (lancamento_id, dia), aps in grupos_iatf.items():
@@ -227,6 +264,7 @@ def calcular_agenda(
             "numero_animal": None, "observacao": proxima_etapa,
             "fonte": "manual", "cor": "var(--dourado)", "ref": None,
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
+            "hormonios": hormonios_por_grupo.get((lancamento_id, dia), []),
             "protocolo": lancamento.nome_protocolo,
         })
 
@@ -382,9 +420,22 @@ def calcular_agenda(
     }
 
 
+class MedicamentoIatfIn(BaseModel):
+    produto: str  # nome do medicamento/frasco escolhido (item de estoque)
+    estoque_id: int | None = None  # "qual frasco?" — abate deste item específico
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+
+
 class RealizadoIn(BaseModel):
     evento_id: str
     animais: list[str] | None = None  # subconjunto opcional (protocolo_iatf) — None = todos do grupo
+    # Medicamentos efetivamente aplicados neste dia do protocolo IATF, com o
+    # frasco escolhido ("qual medicamento você está usando?"). Quando vem, é ele
+    # que gera a aplicação em Sanidade e a baixa; sem ele, cai nos hormônios
+    # cadastrados no lançamento (comportamento anterior).
+    medicamentos: list[MedicamentoIatfIn] | None = None
 
 
 def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
@@ -464,11 +515,19 @@ def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
     session.commit()
 
 
-def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: list[str] | None) -> None:
+def _marcar_protocolo_iatf_realizado(
+    session: Session, evento_id: str, animais: list[str] | None,
+    medicamentos: list["MedicamentoIatfIn"] | None = None,
+) -> None:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) do protocolo IATF
     como realizadas. Sem `animais`, marca o grupo inteiro; com `animais`,
     confirma só esse subconjunto — os demais continuam pendentes no grupo.
+
+    `medicamentos` (opcional): os frascos que o usuário escolheu na hora de
+    confirmar o dia ("qual medicamento?"). Quando vem, é ele que gera a
+    aplicação em Sanidade e a baixa (abatendo do frasco pelo estoque_id); sem
+    ele, usa os hormônios cadastrados no lançamento.
     """
     resto = evento_id.removeprefix("protocolo_iatf_")
     lancamento_id_str, dia_str = resto.rsplit("_", 1)
@@ -489,45 +548,66 @@ def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: 
     lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
     responsavel = getattr(lancamento, "responsavel", None)
 
-    # Hormônios cadastrados para este dia (ex.: D0 = 1ml SincroCP + 2ml Estron).
-    # Cada vaca confirmada gera uma aplicação em Sanidade e uma baixa de estoque.
-    hormonios = session.exec(
-        select(ProtocoloIatfHormonio).where(
-            ProtocoloIatfHormonio.lancamento_id == lancamento_id,
-            ProtocoloIatfHormonio.dia == dia,
-        )
-    ).all()
+    # Aplicados: o que o usuário escolheu ao confirmar (com o frasco), OU, na
+    # falta disso, os hormônios cadastrados no lançamento. Normaliza os dois
+    # numa lista de dicts {produto, dose, unidade, via, estoque_id}.
+    if medicamentos:
+        aplicados = [
+            {"produto": m.produto, "dose": m.dose, "unidade": m.unidade, "via": m.via, "estoque_id": m.estoque_id}
+            for m in medicamentos if (m.produto or "").strip()
+        ]
+    else:
+        hormonios = session.exec(
+            select(ProtocoloIatfHormonio).where(
+                ProtocoloIatfHormonio.lancamento_id == lancamento_id,
+                ProtocoloIatfHormonio.dia == dia,
+            )
+        ).all()
+        aplicados = [
+            {"produto": h.produto, "dose": h.dose, "unidade": h.unidade, "via": h.via, "estoque_id": None}
+            for h in hormonios
+        ]
 
     for ap in aplicacoes:
         ap.realizada = True
         ap.data_realizacao = hoje
         session.add(ap)
-        for h in hormonios:
+        for m in aplicados:
             session.add(Sanidade(
-                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=h.produto,
-                dose=h.dose, unidade=h.unidade, via=h.via, responsavel=responsavel,
+                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
+                dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Protocolo IATF — D{dia}",
             ))
 
-    # Baixa de estoque: uma vez por hormônio, dose × nº de vacas confirmadas.
+    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
+    # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
     n_vacas = len(aplicacoes)
     if n_vacas:
-        for h in hormonios:
-            if not h.dose:
+        for m in aplicados:
+            if not m["dose"]:
                 continue
-            estoque_item = session.exec(select(Estoque).where(Estoque.nome == h.produto)).first()
-            if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(h.unidade, estoque_item.unidade):
-                total = h.dose * n_vacas
-                estoque_item.quantidade = (estoque_item.quantidade or 0) - total
-                if estoque_item.estoque_minimo is not None:
-                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-                estoque_item.atualizado_em = datetime.utcnow()
-                session.add(estoque_item)
-                session.add(MovimentoEstoque(
-                    nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
-                    unidade=estoque_item.unidade, data_movimento=hoje,
-                    observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
-                ))
+            estoque_item = None
+            if m["estoque_id"] is not None:
+                estoque_item = session.get(Estoque, m["estoque_id"])
+            if estoque_item is None:
+                estoque_item = session.exec(select(Estoque).where(Estoque.nome == m["produto"])).first()
+            if not estoque_item or estoque_item.estocavel is False:
+                continue
+            if not pode_baixar_estoque(estoque_item):
+                continue
+            if not pode_dar_baixa_direta(m["unidade"], estoque_item.unidade):
+                continue
+            total = m["dose"] * n_vacas
+            estoque_item.quantidade = (estoque_item.quantidade or 0) - total
+            if estoque_item.estoque_minimo is not None:
+                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+            estoque_item.atualizado_em = datetime.utcnow()
+            session.add(estoque_item)
+            session.add(MovimentoEstoque(
+                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
+                unidade=estoque_item.unidade, data_movimento=hoje,
+                observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
+            ))
     session.commit()
 
 
@@ -535,7 +615,7 @@ def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: 
 def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
     if dados.evento_id.startswith("protocolo_iatf_"):
-        _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais)
+        _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
         return {"marcado": True}
 
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)).first()

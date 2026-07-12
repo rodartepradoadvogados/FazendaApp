@@ -118,17 +118,35 @@ def listar_medicamentos(
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Medicamentos (itens de estoque) que cumprem um critério — usado ao
-    lançar um protocolo cadastrado por princípio ativo ou por classificação."""
+    lançar um protocolo cadastrado por princípio ativo ou por classificação.
+
+    O casamento por princípio ativo usa a Farmácia: além do texto legado
+    `principio_ativo`, resolve o vínculo relacional (principio_ativo_id →
+    PrincipioAtivo.nome), para que os hormônios/medicamentos ligados ao princípio
+    apareçam mesmo sem o campo texto preenchido."""
+    from fazenda.models import PrincipioAtivo
+
+    pa_ids: set[int] = set()
+    if principio_ativo:
+        alvo = principio_ativo.strip().lower()
+        for pa in session.exec(select(PrincipioAtivo)).all():
+            if (pa.nome or "").strip().lower() == alvo:
+                pa_ids.add(pa.id)
+
     itens = session.exec(select(Estoque)).all()
     saida = []
     for e in itens:
-        if principio_ativo and (e.principio_ativo or "").strip().lower() != principio_ativo.strip().lower():
-            continue
+        if principio_ativo:
+            casa_texto = (e.principio_ativo or "").strip().lower() == principio_ativo.strip().lower()
+            casa_link = e.principio_ativo_id in pa_ids
+            if not (casa_texto or casa_link):
+                continue
         if classificacao and (e.classificacao_medicamento or "").strip().lower() != classificacao.strip().lower():
             continue
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
+            "laboratorio": e.laboratorio, "estoque_id": e.id,
         })
     return sorted(saida, key=lambda x: x["nome"])
 
