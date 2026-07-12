@@ -217,3 +217,34 @@ class TestCocho:
         c, _ = client
         r = c.post("/recria/cocho", json={"data": "2026-03-01", "lote": "X", "num_animais": 5, "kg_ofertado": 10, "kg_sobra": 20})
         assert r.status_code == 400
+
+
+class TestCategoriaManejo:
+    def test_composicao_e_classificacao(self, client):
+        from fazenda.models import Animal, PesagemCorporal
+        from datetime import date, timedelta
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="C1", data_nasc=hoje - timedelta(days=30), ativo=True, sexo="F"))    # aleitamento
+            s.add(Animal(numero="C2", data_nasc=hoje - timedelta(days=150), ativo=True, sexo="F"))   # recria 1
+            s.add(Animal(numero="C3", data_nasc=hoje - timedelta(days=300), ativo=True, sexo="F"))   # recria 2
+            s.add(Animal(numero="C4", data_nasc=hoje - timedelta(days=420), ativo=True, sexo="F", sit_rep="Ges."))
+            s.add(PesagemCorporal(numero_matriz="C4", data_pesagem=hoje, peso_kg=400))               # apta → gestante
+            s.commit()
+        j = c.get("/recria/categorias/composicao").json()
+        comp = {x["categoria"]: x["n"] for x in j["composicao"]}
+        assert comp.get("Aleitamento") == 1
+        assert comp.get("Recria 1", 0) >= 1  # C2 + os animais do fixture (~192 dias)
+        assert comp.get("Recria 2") == 1
+        assert comp.get("Gestante") == 1
+
+    def test_categorias_semeadas_crud(self, client):
+        c, _ = client
+        cats = c.get("/recria/categorias").json()
+        assert any(x["nome"] == "Aleitamento" for x in cats)
+        cid = c.post("/recria/categorias", json={"nome": "Teste", "dia_min": 0, "dia_max": 10, "ordem": 9}).json()["id"]
+        c.put(f"/recria/categorias/{cid}", json={"nome": "Teste2", "dia_min": 0, "dia_max": 20, "ordem": 9})
+        assert any(x["nome"] == "Teste2" for x in c.get("/recria/categorias").json())
+        c.delete(f"/recria/categorias/{cid}")
+        assert not any(x["nome"] == "Teste2" for x in c.get("/recria/categorias").json())
