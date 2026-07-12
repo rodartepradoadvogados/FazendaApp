@@ -908,7 +908,7 @@ export async function fetchSecagemInfo(numeroMatriz: string) {
 }
 export async function criarSecagem(dados: {
   numero_matriz: string; data_secagem: string; motivo: string; escore_condicao_corporal?: number | null;
-  observacao?: string; responsavel?: string;
+  observacao?: string; responsavel?: string; aplicado?: boolean;
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {

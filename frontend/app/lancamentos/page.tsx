@@ -1802,6 +1802,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   const [observacao, setObservacao] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
+  const [aplicado, setAplicado] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -1833,10 +1834,11 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
 
     setSalvando(true);
     try {
+      const aplicadoEfetivo = aplicado && dataSecagem <= new Date().toISOString().slice(0, 10);
       const r = await criarSecagem({
         numero_matriz: matriz, data_secagem: dataSecagem, motivo,
         escore_condicao_corporal: ecc ? Number(ecc) : null,
-        observacao: observacao || undefined, responsavel: responsavel || undefined,
+        observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
         produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
       });
       let msg = "Secagem lançada com sucesso.";
@@ -1920,6 +1922,19 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
         })}
       </div>
       <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+
+      {itens.some((i) => i.produto) && (
+        <Campo label="O(s) produto(s) de secagem já foram aplicados?">
+          {dataSecagem > new Date().toISOString().slice(0, 10) ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--amber)" }}>Data futura — o(s) produto(s) serão <strong>programados na Agenda</strong> (não baixa estoque até você dar baixa).</p>
+          ) : (
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={aplicado} onChange={() => setAplicado(true)} /> Sim — aplicar e baixar o estoque agora</label>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={!aplicado} onChange={() => setAplicado(false)} /> Não — só programar na Agenda</label>
+            </div>
+          )}
+        </Campo>
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}

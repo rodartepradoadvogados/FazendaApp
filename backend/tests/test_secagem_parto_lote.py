@@ -4,7 +4,7 @@ vida (nascimento/parto/secagem) e o novo endpoint real de Parto/nascimento.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, Estoque, Lote, Parto, Sanidade, Secagem, Servico
+from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lote, Parto, Sanidade, Secagem, Servico
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
@@ -108,6 +108,42 @@ class TestRegistrarSecagem:
             assert aplicacao.atividade == "Secagem"
             item = s.exec(select(Estoque).where(Estoque.nome == "Tetradelta")).first()
             assert item.quantidade == 16
+
+    def test_data_futura_programa_produto_sem_baixar_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
+            s.commit()
+
+        futuro = (date.today() + timedelta(days=10)).isoformat()
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "500", "data_secagem": futuro, "motivo": "rotina",
+            "produtos": [{"produto": "Tetradelta", "quantidade": 4, "unidade": "dose"}],
+        })
+        assert r.status_code == 200
+        assert r.json()["programado"] is True
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            # Estoque intacto e nada de Sanidade — só uma aplicação programada.
+            assert s.exec(select(Estoque).where(Estoque.nome == "Tetradelta")).first().quantidade == 20
+            assert s.exec(select(Sanidade).where(Sanidade.numero_matriz == "500")).first() is None
+            prog = s.exec(select(AplicacaoAgendada).where(AplicacaoAgendada.numero_matriz == "500")).first()
+            assert prog is not None and prog.produto == "Tetradelta" and prog.aplicado is False
+
+    def test_nao_aplicado_programa_mesmo_com_data_de_hoje(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
+            s.commit()
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "500", "data_secagem": date.today().isoformat(), "motivo": "rotina", "aplicado": False,
+            "produtos": [{"produto": "Tetradelta", "quantidade": 4, "unidade": "dose"}],
+        })
+        assert r.status_code == 200 and r.json()["programado"] is True
+        with Session(engine) as s:
+            from sqlmodel import select
+            assert s.exec(select(Estoque).where(Estoque.nome == "Tetradelta")).first().quantidade == 20
 
     def test_motivo_invalido_da_400(self, client):
         c, _ = client
