@@ -20,7 +20,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, BenchmarkRecria, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
+    Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
     Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico,
 )
 from fazenda.rules.coorte import (
@@ -195,6 +195,113 @@ def reproducao_taxa_prenhez(
         "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
         "total_servicos": len(servicos),
     }
+
+
+# --- Parâmetros de categoria de manejo -------------------------------------
+def _status_reprodutivo(sit_rep: str | None) -> str:
+    """Refina a categoria de aptidão pelo status reprodutivo (a partir do sit_rep)."""
+    s = (sit_rep or "").strip().lower()
+    if s.startswith("ges") or "prenh" in s:
+        return "Gestante"
+    if s.startswith("ins") or "insem" in s:
+        return "Inseminada"
+    return "Apta"
+
+
+def classificar_categoria(dias: int | None, peso: float | None, sit_rep: str | None, categorias: list[CategoriaManejo]) -> str:
+    """Categoria de manejo de um animal por idade (dias) e peso, respeitando os
+    parâmetros cadastrados. Na categoria de aptidão, o status reprodutivo assume."""
+    if dias is None:
+        return "Sem data de nascimento"
+    peso_faltou: CategoriaManejo | None = None
+    for cat in sorted(categorias, key=lambda c: (c.ordem, c.dia_min)):
+        if dias < cat.dia_min:
+            continue
+        if cat.dia_max is not None and dias > cat.dia_max:
+            continue
+        peso_baixo = cat.peso_min_kg is not None and (peso is None or peso < cat.peso_min_kg)
+        peso_alto = cat.peso_max_kg is not None and peso is not None and peso > cat.peso_max_kg
+        if peso_baixo or peso_alto:
+            peso_faltou = peso_faltou or cat
+            continue
+        if cat.usa_status_reprodutivo:
+            return _status_reprodutivo(sit_rep)
+        return cat.nome
+    # Idade compatível com uma categoria, mas o peso ainda não alcançou o alvo.
+    if peso_faltou is not None:
+        return f"{peso_faltou.nome} (abaixo do peso)"
+    return "Fora das faixas"
+
+
+@router.get("/categorias/composicao")
+def composicao_categorias(session: Session = Depends(get_session)) -> dict:
+    """Conta os animais ativos em cada categoria de manejo (idade/peso/status)."""
+    categorias = session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all()  # noqa: E712
+    ult_peso: dict[str, float] = {}
+    for p in session.exec(select(PesagemCorporal).order_by(PesagemCorporal.data_pesagem)).all():
+        if p.peso_kg:
+            ult_peso[p.numero_matriz] = p.peso_kg  # a última pesagem (ordenada asc) prevalece
+    hoje = date.today()
+    cont: dict[str, int] = {}
+    for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
+        if a.eh_semen or a.sexo == "M":
+            continue
+        dias = (hoje - a.data_nasc).days if a.data_nasc else None
+        cat = classificar_categoria(dias, ult_peso.get(a.numero), a.sit_rep, categorias)
+        cont[cat] = cont.get(cat, 0) + 1
+    return {"composicao": [{"categoria": k, "n": cont[k]} for k in sorted(cont)], "total": sum(cont.values())}
+
+
+class CategoriaManejoIn(BaseModel):
+    nome: str
+    dia_min: int = 0
+    dia_max: int | None = None
+    peso_min_kg: float | None = None
+    peso_max_kg: float | None = None
+    usa_status_reprodutivo: bool = False
+    ordem: int = 0
+    ativo: bool = True
+
+
+@router.get("/categorias")
+def listar_categorias(session: Session = Depends(get_session)) -> list[dict]:
+    linhas = session.exec(select(CategoriaManejo).order_by(CategoriaManejo.ordem, CategoriaManejo.dia_min)).all()
+    return [l.model_dump() for l in linhas]
+
+
+@router.post("/categorias", status_code=201)
+def criar_categoria(dados: CategoriaManejoIn, session: Session = Depends(get_session)) -> dict:
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome da categoria.")
+    c = CategoriaManejo(**dados.model_dump())
+    c.nome = dados.nome.strip()
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c.model_dump()
+
+
+@router.put("/categorias/{categoria_id}")
+def atualizar_categoria(categoria_id: int, dados: CategoriaManejoIn, session: Session = Depends(get_session)) -> dict:
+    c = session.get(CategoriaManejo, categoria_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    for campo, valor in dados.model_dump().items():
+        setattr(c, campo, valor)
+    c.nome = dados.nome.strip()
+    session.add(c)
+    session.commit()
+    session.refresh(c)
+    return c.model_dump()
+
+
+@router.delete("/categorias/{categoria_id}")
+def excluir_categoria(categoria_id: int, session: Session = Depends(get_session)) -> dict:
+    c = session.get(CategoriaManejo, categoria_id)
+    if c:
+        session.delete(c)
+        session.commit()
+    return {"ok": True}
 
 
 # --- Pilar Nutrição (gestão de cocho + IMS) --------------------------------
@@ -559,4 +666,10 @@ def seed_recria(session: Session) -> None:
     if not session.exec(select(JanelaPontoCritico)).first():
         for doenca, dmin, dmax, ant in _JANELAS_PADRAO:
             session.add(JanelaPontoCritico(doenca=doenca, dia_min=dmin, dia_max=dmax, dias_antecedencia=ant))
+    if not session.exec(select(CategoriaManejo)).first():
+        # Parâmetros de categoria (idade em dias / peso em kg).
+        session.add(CategoriaManejo(nome="Aleitamento", dia_min=0, dia_max=90, peso_max_kg=100, ordem=0))
+        session.add(CategoriaManejo(nome="Recria 1", dia_min=91, dia_max=210, ordem=1))
+        session.add(CategoriaManejo(nome="Recria 2", dia_min=211, dia_max=390, ordem=2))
+        session.add(CategoriaManejo(nome="Recria apta", dia_min=391, dia_max=None, peso_min_kg=370, usa_status_reprodutivo=True, ordem=3))
     session.commit()

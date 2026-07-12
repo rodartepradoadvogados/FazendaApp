@@ -1573,3 +1573,10 @@ export const excluirRecriaCocho = (id: number) => _rSend(`/recria/cocho/${id}`, 
 
 export type Estratificacao = { total: number; estratos: Record<string, number>; percentuais: Record<string, number>; vacas_total: number; pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number };
 export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);
+
+export type CategoriaManejo = { id?: number; nome: string; dia_min: number; dia_max?: number | null; peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean; ordem: number; ativo: boolean };
+export const fetchCategoriasManejo = (): Promise<CategoriaManejo[]> => _rGet(`/recria/categorias`);
+export const criarCategoriaManejo = (d: CategoriaManejo) => _rSend(`/recria/categorias`, "POST", d);
+export const atualizarCategoriaManejo = (id: number, d: CategoriaManejo) => _rSend(`/recria/categorias/${id}`, "PUT", d);
+export const excluirCategoriaManejo = (id: number) => _rSend(`/recria/categorias/${id}`, "DELETE");
+export const fetchComposicaoCategorias = (): Promise<{ composicao: { categoria: string; n: number }[]; total: number }> => _rGet(`/recria/categorias/composicao`);

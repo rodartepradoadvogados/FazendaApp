@@ -8,7 +8,8 @@ import {
   fetchRecriaMetas, salvarRecriaMetas, fetchRecriaPesoAlvo, salvarRecriaPesoAlvo, excluirRecriaPesoAlvo,
   fetchRecriaFases, criarRecriaFase, excluirRecriaFase, fetchRecriaJanelas, criarRecriaJanela, excluirRecriaJanela,
   fetchRecriaBenchmark, salvarRecriaBenchmark,
-  type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela, type RecriaBenchmark,
+  fetchCategoriasManejo, criarCategoriaManejo, atualizarCategoriaManejo, excluirCategoriaManejo, fetchComposicaoCategorias,
+  type RecriaMetas, type RecriaPesoAlvo, type RecriaFase, type RecriaJanela, type RecriaBenchmark, type CategoriaManejo,
 } from "@/lib/api";
 
 const input: React.CSSProperties = { padding: "0.4rem 0.55rem", borderRadius: 6, fontSize: "0.82rem", background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)", width: "100%" };
@@ -22,6 +23,7 @@ export default function CadastroRecria() {
       <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", margin: 0 }}>
         Parâmetros do <strong>Dossiê Zootécnico</strong> (aba Recria). Ajuste as metas, a faixa de peso esperada por idade, as fases e as janelas de ponto crítico.
       </p>
+      <SecCategorias />
       <SecMetas />
       <SecPesoAlvo />
       <SecFases />
@@ -62,6 +64,66 @@ function SecBenchmark() {
         </table>
       </div>
       {msg && <p style={{ fontSize: "0.8rem", color: "var(--green-light)", marginTop: "0.5rem" }}>{msg}</p>}
+    </div>
+  );
+}
+
+function SecCategorias() {
+  const [lista, setLista] = useState<CategoriaManejo[]>([]);
+  const [comp, setComp] = useState<{ categoria: string; n: number }[]>([]);
+  const [form, setForm] = useState<CategoriaManejo>({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: 0, ativo: true });
+  const [editId, setEditId] = useState<number | null>(null);
+  const carregar = () => { fetchCategoriasManejo().then(setLista).catch(() => {}); fetchComposicaoCategorias().then((d) => setComp(d.composicao)).catch(() => {}); };
+  useEffect(() => { carregar(); }, []);
+  const num = (v: string): number | null => v === "" ? null : Number(v);
+  const salvar = () => {
+    if (!form.nome.trim()) return;
+    const p = editId ? atualizarCategoriaManejo(editId, form) : criarCategoriaManejo(form);
+    p.then(() => { setForm({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: lista.length, ativo: true }); setEditId(null); carregar(); });
+  };
+  return (
+    <div style={card}>
+      <div style={secTit}><Baby size={15} /> Parâmetros de categoria (idade / peso)</div>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Faixas que classificam cada animal automaticamente. Na categoria de aptidão, o status reprodutivo (apta/inseminada/gestante) assume.</p>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end mb-2">
+        <div style={{ gridColumn: "span 2" }}><label style={lbl}>Nome</label><input style={input} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Recria 1" /></div>
+        <div><label style={lbl}>Dia mín.</label><input type="number" style={input} value={form.dia_min} onChange={(e) => setForm({ ...form, dia_min: Number(e.target.value) })} /></div>
+        <div><label style={lbl}>Dia máx.</label><input type="number" style={input} value={form.dia_max ?? ""} onChange={(e) => setForm({ ...form, dia_max: num(e.target.value) })} placeholder="∞" /></div>
+        <div><label style={lbl}>Peso mín. (kg)</label><input type="number" style={input} value={form.peso_min_kg ?? ""} onChange={(e) => setForm({ ...form, peso_min_kg: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Peso máx. (kg)</label><input type="number" style={input} value={form.peso_max_kg ?? ""} onChange={(e) => setForm({ ...form, peso_max_kg: num(e.target.value) })} /></div>
+      </div>
+      <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.8rem" }}>
+        <input type="checkbox" checked={form.usa_status_reprodutivo} onChange={(e) => setForm({ ...form, usa_status_reprodutivo: e.target.checked })} /> Categoria de aptidão (usa status reprodutivo)
+      </label>
+      <div className="flex items-center gap-2 mb-3">
+        <button className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }} onClick={salvar}><Check size={14} /> {editId ? "Salvar" : "Adicionar categoria"}</button>
+        {editId && <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => { setEditId(null); setForm({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: 0, ativo: true }); }}>Cancelar</button>}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <table className="fazenda-table">
+          <thead><tr><th>Categoria</th><th>Idade (dias)</th><th>Peso (kg)</th><th>Aptidão?</th><th>Animais hoje</th><th></th></tr></thead>
+          <tbody>
+            {lista.map((c) => (
+              <tr key={c.id}>
+                <td style={{ fontWeight: 600 }}>{c.nome}</td>
+                <td>{c.dia_min}–{c.dia_max ?? "∞"}</td>
+                <td>{c.peso_min_kg ?? "—"}{c.peso_max_kg ? `–${c.peso_max_kg}` : ""}</td>
+                <td>{c.usa_status_reprodutivo ? "Sim" : "—"}</td>
+                <td>{comp.filter((x) => x.categoria === c.nome || (c.usa_status_reprodutivo && ["Apta", "Inseminada", "Gestante"].includes(x.categoria))).reduce((a, b) => a + b.n, 0) || 0}</td>
+                <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                  <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setEditId(c.id!); setForm(c); }}>Editar</button>
+                  <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluirCategoriaManejo(c.id!).then(carregar)}><Trash2 size={13} /></button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {comp.length > 0 && (
+        <p style={{ fontSize: "0.74rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+          Composição atual: {comp.map((x) => `${x.categoria} (${x.n})`).join(" · ")}
+        </p>
+      )}
     </div>
   );
 }

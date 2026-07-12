@@ -1467,3 +1467,22 @@ class RegistroCocho(SQLModel, table=True):
     kg_formulado: Optional[float] = None   # meta formulada (kg total do lote), opcional
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class CategoriaManejo(SQLModel, table=True):
+    """Parâmetro de categoria de manejo por idade/peso (aleitamento, recria 1,
+    recria 2, apta). Cadastrável; classifica cada animal automaticamente. Na
+    categoria de aptidão, o status reprodutivo (apta/inseminada/gestante) assume."""
+
+    __tablename__ = "categoria_manejo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)
+    dia_min: int = 0
+    dia_max: Optional[int] = None          # None = sem limite superior
+    peso_min_kg: Optional[float] = None
+    peso_max_kg: Optional[float] = None
+    usa_status_reprodutivo: bool = False   # True: a partir daqui, o status reprodutivo assume
+    ordem: int = 0
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
