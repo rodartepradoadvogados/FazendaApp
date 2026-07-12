@@ -27,6 +27,11 @@ type Ctrl = {
 };
 
 const LOTES_LACTACAO = ["01", "02", "03"];
+// Nome do mês (o filtro de mês não repete o ano — o ano tem seu próprio filtro).
+const MESES_NOME: Record<string, string> = {
+  "01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril", "05": "Maio", "06": "Junho",
+  "07": "Julho", "08": "Agosto", "09": "Setembro", "10": "Outubro", "11": "Novembro", "12": "Dezembro",
+};
 const codigoLote = (g: string | null) => (g && g.length >= 2 && /\d\d/.test(g.slice(0, 2)) ? g.slice(0, 2) : null);
 
 const FAIXAS: [number, number, string][] = [
@@ -150,7 +155,7 @@ export default function ProducaoPage() {
     if (!regs) return [];
     return regs.filter((r) =>
       (!fAno || String(r.ano) === fAno) &&
-      (!fMes || (r.data ? r.data.slice(0, 7) === fMes : false)) &&
+      (!fMes || (r.data ? r.data.slice(5, 7) === fMes : false)) &&
       (delMin === null || (r.del !== null && r.del >= delMin)) &&
       (delMax === null || (r.del !== null && r.del <= delMax))
     );
@@ -259,7 +264,7 @@ export default function ProducaoPage() {
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
                 <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.ano === null ? null : String(r.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Mês</label>
-                <select style={selStyle} value={fMes} onChange={(e) => setFMes(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.data ? r.data.slice(0, 7) : null).map((o) => <option key={o}>{o}</option>)}</select></div>
+                <select style={selStyle} value={fMes} onChange={(e) => setFMes(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.data ? r.data.slice(5, 7) : null).map((o) => <option key={o} value={o}>{MESES_NOME[o] || o}</option>)}</select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL de (dias)</label>
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 30" style={selStyle} value={fDelMin} onChange={(e) => setFDelMin(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL até (dias)</label>
