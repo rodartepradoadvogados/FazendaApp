@@ -167,3 +167,112 @@ def test_erro_ao_processar_nao_trava_webhook(ctx, monkeypatch):
     r = _msg(c, "/lancar")
     assert r.status_code == 200  # nunca 500 — não trava a fila
     assert any("boom-de-teste" in (e.get("text") or "") for e in enviados)
+
+
+def _seed_animal(engine, numero="1234"):
+    from fazenda.models import Animal
+    with Session(engine) as s:
+        s.add(Animal(numero=numero, sexo="F", ativo=True))
+        s.commit()
+
+
+def test_inseminacao_natureza_iatf_e_touro_por_categoria(ctx):
+    c, engine, _ = ctx
+    _seed_animal(engine, "1234")
+    from fazenda.models import EstoqueSemen
+    with Session(engine) as s:
+        s.add(EstoqueSemen(touro_nome="COORS", tipo="convencional", doses=2))
+        s.commit()
+
+    _cb(c, "flow:inseminacao")
+    _msg(c, "1234")                 # numero_matriz
+    _msg(c, "10/07/2026")          # data_servico
+    _cb(c, "ans:1")                # natureza → IATF (índice 1)
+    _cb(c, "ans:0")                # touro → COORS (único da lista)
+
+    with Session(engine) as s:
+        pend = s.exec(select(LancamentoPendente)).first()
+        assert pend and pend.tipo == "inseminacao"
+        dados = json.loads(pend.payload)
+        assert dados["natureza"] == "iatf"
+        assert dados["touro"] == "COORS"
+        pid = pend.id
+
+    r = c.post(f"/aprovacoes/{pid}/aprovar")
+    assert r.status_code == 200, r.text
+    from fazenda.models import Servico
+    with Session(engine) as s:
+        serv = s.exec(select(Servico).where(Servico.numero_matriz == "1234")).first()
+        assert serv is not None
+        assert serv.tipo_servico == "IA"
+        assert serv.protocolo == "IATF"
+        assert serv.reprodutor == "COORS"
+
+
+def test_inseminacao_monta_natural_lista_so_touro_fazenda(ctx):
+    c, engine, _ = ctx
+    _seed_animal(engine, "1234")
+    from fazenda.models import EstoqueSemen
+    with Session(engine) as s:
+        s.add(EstoqueSemen(touro_nome="COORS", tipo="convencional", doses=2))   # sêmen (IA) — não deve aparecer
+        s.add(EstoqueSemen(touro_nome="Sevaverde", tipo="fazenda", doses=0))     # touro da fazenda
+        s.commit()
+
+    _cb(c, "flow:inseminacao")
+    _msg(c, "1234")
+    _msg(c, "10/07/2026")
+    _cb(c, "ans:2")                # natureza → monta natural
+    _cb(c, "ans:0")                # touro (só Sevaverde deve estar disponível)
+
+    with Session(engine) as s:
+        dados = json.loads(s.exec(select(LancamentoPendente)).first().payload)
+        assert dados["natureza"] == "monta_natural"
+        assert dados["touro"] == "Sevaverde"
+
+
+def test_diagnostico_indefinido_com_metodo(ctx):
+    c, engine, _ = ctx
+    _seed_animal(engine, "1234")
+    from fazenda.models import Servico
+    from datetime import date
+    with Session(engine) as s:
+        s.add(Servico(numero_matriz="1234", data_servico=date(2026, 6, 1), tipo_servico="IA"))
+        s.commit()
+
+    _cb(c, "flow:diagnostico")
+    _msg(c, "1234")
+    _msg(c, "10/07/2026")
+    _cb(c, "ans:3")                # resultado → indefinido (índice 3)
+    _cb(c, "ans:1")                # metodo → Ultrassom (índice 1)
+
+    with Session(engine) as s:
+        pid = s.exec(select(LancamentoPendente)).first().id
+    c.post(f"/aprovacoes/{pid}/aprovar")
+    with Session(engine) as s:
+        serv = s.exec(select(Servico).where(Servico.numero_matriz == "1234")).first()
+        assert serv.diagnostico == "INDEFINIDO"
+        assert serv.metodo_diagnostico == "Ultrassom"
+
+
+def test_reconfirmacao_segundo_exame(ctx):
+    c, engine, _ = ctx
+    _seed_animal(engine, "1234")
+    from fazenda.models import Servico
+    from datetime import date
+    with Session(engine) as s:
+        s.add(Servico(numero_matriz="1234", data_servico=date(2026, 5, 1), tipo_servico="IA"))
+        s.commit()
+
+    _cb(c, "flow:reconfirmacao")
+    _msg(c, "1234")
+    _msg(c, "10/07/2026")
+    _cb(c, "ans:0")                # resultado → positivo
+
+    with Session(engine) as s:
+        pend = s.exec(select(LancamentoPendente)).first()
+        assert pend.tipo == "reconfirmacao"
+        pid = pend.id
+    c.post(f"/aprovacoes/{pid}/aprovar")
+    with Session(engine) as s:
+        serv = s.exec(select(Servico).where(Servico.numero_matriz == "1234")).first()
+        assert serv.diagnostico_reconfirmacao == "POSITIVO"

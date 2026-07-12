@@ -17,7 +17,7 @@ from typing import Callable
 
 from sqlmodel import Session, select
 
-from fazenda.models import Animal, Lote
+from fazenda.models import Animal, EstoqueSemen, Lote
 
 
 # ── Tipos de campo ─────────────────────────────────────────────────────────
@@ -43,10 +43,35 @@ def _lotes_opcoes(session: Session) -> list[tuple[str, str]]:
     return [(c, r) for c, r in vistos.items()]
 
 
+def _touros_opcoes(session: Session, dados: dict) -> list[tuple[str, str]]:
+    """Touros/sêmen disponíveis para a inseminação, por categoria — como no site.
+    Monta natural → só touros da fazenda; IA (cio natural/IATF) → sêmen com dose
+    em estoque (convencional/sexado). Rotulados pela categoria."""
+    natureza = (dados or {}).get("natureza")
+    rotulo_cat = {"convencional": "convencional", "sexado": "sexado", "fazenda": "fazenda"}
+    itens = [i for i in session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all() if i.ativo]
+    saida: list[tuple[str, str]] = []
+    for i in itens:
+        if natureza == "monta_natural":
+            if i.tipo != "fazenda":
+                continue
+        else:  # cio natural ou IATF → sêmen com dose (touro da fazenda também serve)
+            if i.tipo != "fazenda" and (i.doses or 0) <= 0:
+                continue
+        doses = f" · {i.doses} dose(s)" if i.tipo != "fazenda" else ""
+        saida.append((i.touro_nome, f"{i.touro_nome} ({rotulo_cat.get(i.tipo, i.tipo)}{doses})"))
+    return saida
+
+
 MOTIVOS_SECAGEM = [("doente", "Doente"), ("baixa_producao", "Baixa produção"), ("comportamento", "Comportamento"),
                    ("mastite", "Mastite"), ("casco", "Casco"), ("rotina", "Rotina"), ("outros", "Outros")]
-RESULTADOS_DIAG = [("reconfirmada", "Prenhe (confirmada)"), ("retoque", "Prenhe — marcar retoque"), ("negativo", "Vazia")]
-TIPOS_SERVICO = [("IA", "Inseminação (IA)"), ("Monta natural", "Monta natural")]
+RESULTADOS_DIAG = [("reconfirmada", "Prenhe (confirmada)"), ("retoque", "Prenhe — marcar retoque"),
+                   ("negativo", "Vazia"), ("indefinido", "Indefinido (reavaliar)")]
+METODOS_DIAG = [("Palpação", "Palpação (toque)"), ("Ultrassom", "Ultrassom"), ("Cio de repasse", "Cio de repasse")]
+# Natureza do serviço reprodutivo (alinha com o site): cio natural (IA sem
+# protocolo), IATF (IA em protocolo) ou monta natural (touro).
+NATUREZA_SERVICO = [("cio_natural", "Cio natural (IA)"), ("iatf", "IATF (protocolo)"), ("monta_natural", "Monta natural")]
+RESULTADOS_RECONF = [("positivo", "Confirmada (positivo)"), ("negativo", "Perdeu a gestação (negativo)")]
 TIPOS_BAIXA = [("morte", "Morte"), ("descarte_voluntario", "Descarte voluntário"), ("descarte_involuntario", "Descarte involuntário")]
 MOTIVOS_BAIXA = [("venda", "Venda"), ("abate", "Abate"), ("acidente", "Acidente"), ("doenca", "Doença")]
 SEXO_CRIA = [("F", "Fêmea"), ("M", "Macho")]
@@ -87,8 +112,8 @@ FLUXOS: dict[str, dict] = {
         "campos": [
             C("numero_matriz", "Qual o <b>número da vaca</b>?", "animal"),
             C("data_servico", "Qual a <b>data do serviço</b>?", "data"),
-            C("tipo_servico", "Foi <b>inseminação</b> ou <b>monta natural</b>?", "opcoes", opcoes=TIPOS_SERVICO),
-            C("reprodutor", "Qual o <b>touro/sêmen</b>? (ou <code>pular</code>)", "texto", obrigatorio=False),
+            C("natureza", "Foi <b>cio natural</b>, <b>IATF</b> ou <b>monta natural</b>?", "opcoes", opcoes=NATUREZA_SERVICO),
+            C("touro", "Qual o <b>touro/sêmen</b> (por categoria)?", "opcoes", opcoes=_touros_opcoes, obrigatorio=False),
         ],
     },
     "protocolo_iatf": {
@@ -113,6 +138,15 @@ FLUXOS: dict[str, dict] = {
             C("numero_matriz", "Qual o <b>número da vaca</b>?", "animal"),
             C("data_diagnostico", "Qual a <b>data do diagnóstico</b>?", "data"),
             C("resultado", "Qual o <b>resultado</b>?", "opcoes", opcoes=RESULTADOS_DIAG),
+            C("metodo", "Qual o <b>método</b>?", "opcoes", opcoes=METODOS_DIAG, obrigatorio=False),
+        ],
+    },
+    "reconfirmacao": {
+        "rotulo": "🔁 Reconfirmação (2º exame)",
+        "campos": [
+            C("numero_matriz", "Qual o <b>número da vaca</b>?", "animal"),
+            C("data_reconfirmacao", "Qual a <b>data da reconfirmação</b>?", "data"),
+            C("resultado", "Qual o <b>resultado</b> do 2º exame?", "opcoes", opcoes=RESULTADOS_RECONF),
         ],
     },
     "sanidade": {
@@ -200,15 +234,24 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
 
     if tipo == "inseminacao":
         from fazenda.api.routers.reproducao import ServicoIn, registrar_servico
+        # Natureza (cio natural / IATF / monta natural) → tipo_servico + protocolo,
+        # como no site: monta = touro; IATF = IA em protocolo; cio natural = IA sem protocolo.
+        natureza = dados.get("natureza") or "cio_natural"
+        tipo_servico = "Monta natural" if natureza == "monta_natural" else "IA"
+        protocolo = "IATF" if natureza == "iatf" else None
+        touro = dados.get("touro") or dados.get("reprodutor")  # reprodutor: compat. com fluxo antigo
         return registrar_servico(ServicoIn(
             numero_matriz=dados["numero_matriz"], data_servico=_d(dados["data_servico"]),
-            tipo_servico=dados.get("tipo_servico") or "IA",
-            reprodutor=(dados.get("reprodutor") if str(dados.get("reprodutor") or "").strip().lower() not in ("pular", "-", "") else None),
+            tipo_servico=tipo_servico, protocolo=protocolo,
+            reprodutor=(touro if str(touro or "").strip().lower() not in ("pular", "-", "") else None),
         ), session)
 
     if tipo == "protocolo_iatf":
-        from fazenda.api.routers.reproducao import ProtocoloIatfIn, lancar_protocolo_iatf
-        return lancar_protocolo_iatf(ProtocoloIatfIn(animais=_lista(dados["animais"]), data_d0=_d(dados["data_d0"])), session)
+        from fazenda.api.routers.reproducao import ProtocoloIatfIn, lancar_protocolo_iatf, _nome_auto_iatf
+        d0 = _d(dados["data_d0"])
+        return lancar_protocolo_iatf(ProtocoloIatfIn(
+            animais=_lista(dados["animais"]), data_d0=d0, protocolo=_nome_auto_iatf(d0),
+        ), session)
 
     if tipo == "troca_lote":
         from fazenda.api.routers.movimentacoes import MoverIn, mover_animais
@@ -220,7 +263,17 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
 
     if tipo == "diagnostico":
         from fazenda.api.routers.reproducao import DiagnosticoIn, registrar_diagnostico
-        return registrar_diagnostico(DiagnosticoIn(numero_matriz=dados["numero_matriz"], data_diagnostico=_d(dados["data_diagnostico"]), resultado=dados["resultado"]), session)
+        return registrar_diagnostico(DiagnosticoIn(
+            numero_matriz=dados["numero_matriz"], data_diagnostico=_d(dados["data_diagnostico"]),
+            resultado=dados["resultado"], metodo=dados.get("metodo") or None,
+        ), session)
+
+    if tipo == "reconfirmacao":
+        from fazenda.api.routers.reproducao import ReconfirmacaoIn, registrar_reconfirmacao
+        return registrar_reconfirmacao(ReconfirmacaoIn(
+            numero_matriz=dados["numero_matriz"], data_reconfirmacao=_d(dados["data_reconfirmacao"]),
+            resultado=dados["resultado"],
+        ), session)
 
     if tipo == "sanidade":
         from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
