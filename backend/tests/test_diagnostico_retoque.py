@@ -76,6 +76,23 @@ class TestRegistrarDiagnostico:
         })
         assert r.status_code == 400
 
+    def test_indefinido_e_distinto_de_negativo(self, client):
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "indefinido",
+        })
+        assert r.status_code == 200
+        assert r.json()["diagnostico"] == "INDEFINIDO"
+        assert r.json()["retoque"] is False
+
+    def test_metodo_cio_de_repasse_persistido(self, client):
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
+            "metodo": "Cio de repasse",
+        })
+        assert r.status_code == 200
+        assert r.json()["metodo_diagnostico"] == "Cio de repasse"
+        assert r.json()["diagnostico"] == "NEGATIVO"
+
 
 class TestRetoqueNaAgenda:
     def test_entra_na_agenda_no_dia_do_proximo_servico(self, client):

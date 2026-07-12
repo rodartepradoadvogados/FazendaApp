@@ -209,7 +209,7 @@ export async function excluirEstoqueSemen(id: number) {
 }
 
 export async function salvarDiagnostico(dados: {
-  numero_matriz: string; data_diagnostico: string; resultado: "retoque" | "reconfirmada" | "negativo"; metodo?: string;
+  numero_matriz: string; data_diagnostico: string; resultado: "retoque" | "reconfirmada" | "negativo" | "indefinido"; metodo?: string;
 }) {
   const res = await authFetch(`${API}/reproducao/diagnostico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -937,6 +937,18 @@ export async function criarProtocoloIatf(dados: { animais: string[]; data_d0: st
 export async function fetchProtocolosIatfAtivos() {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/ativos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos IATF ativos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchLancamentosIatf() {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf/lancamentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lançamentos IATF error: ${res.status}`);
+  return res.json() as Promise<{ lancamento_id: number; nome_protocolo: string; data_d0: string; qtd_animais: number }[]>;
+}
+export async function adicionarAnimaisIatf(lancamentoId: number, animais: string[]) {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ animais }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar animais ao protocolo"); }
   return res.json();
 }
 export async function criarServico(dados: {

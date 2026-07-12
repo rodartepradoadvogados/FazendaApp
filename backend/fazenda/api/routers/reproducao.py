@@ -95,8 +95,8 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
 class DiagnosticoIn(BaseModel):
     numero_matriz: str
     data_diagnostico: date
-    resultado: str  # "retoque" | "reconfirmada" | "negativo"
-    metodo: str | None = None
+    resultado: str  # "retoque" | "reconfirmada" | "negativo" | "indefinido"
+    metodo: str | None = None  # Palpação | Ultrassom | Cio de repasse
 
 
 @router.post("/diagnostico")
@@ -104,9 +104,10 @@ def registrar_diagnostico(dados: DiagnosticoIn, session: Session = Depends(get_s
     """
     Registra o resultado do diagnóstico de gestação no serviço mais recente da
     matriz. Se marcado "retoque", o lembrete de reconfirmação entra na agenda
-    na data do próximo serviço (agenda_engine.py).
+    na data do próximo serviço (agenda_engine.py). "Indefinido" (inconclusivo)
+    é distinto de "negativo" — a matriz não vira vazia, segue para reavaliar.
     """
-    if dados.resultado not in ("retoque", "reconfirmada", "negativo"):
+    if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
 
     servico = session.exec(
@@ -118,11 +119,15 @@ def registrar_diagnostico(dados: DiagnosticoIn, session: Session = Depends(get_s
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
 
     servico.data_diagnostico = dados.data_diagnostico
+    servico.metodo_diagnostico = dados.metodo
     if dados.resultado == "retoque":
         servico.diagnostico = "POSITIVO"
         servico.retoque = True
     elif dados.resultado == "reconfirmada":
         servico.diagnostico = "POSITIVO"
+        servico.retoque = False
+    elif dados.resultado == "indefinido":
+        servico.diagnostico = "INDEFINIDO"
         servico.retoque = False
     else:
         servico.diagnostico = "NEGATIVO"
@@ -338,6 +343,84 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
             "animais": animais_status,
         })
     return ativos
+
+
+@router.get("/protocolo-iatf/lancamentos")
+def listar_lancamentos_iatf(session: Session = Depends(get_session)) -> list[dict]:
+    """
+    Todos os lançamentos de protocolo IATF (para adicionar animais a um
+    protocolo já existente — mesmo D0 e mesmo nome). Mais recentes primeiro.
+    """
+    lancamentos = session.exec(
+        select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc(), ProtocoloIatfLancamento.id.desc())
+    ).all()
+    aplicacoes = session.exec(select(ProtocoloIatfAplicacao)).all()
+    animais_por_lanc: dict[int, set[str]] = {}
+    for ap in aplicacoes:
+        animais_por_lanc.setdefault(ap.lancamento_id, set()).add(ap.numero_matriz)
+    return [
+        {
+            "lancamento_id": l.id,
+            "nome_protocolo": l.nome_protocolo,
+            "data_d0": l.data_d0.isoformat(),
+            "qtd_animais": len(animais_por_lanc.get(l.id, set())),
+        }
+        for l in lancamentos
+    ]
+
+
+class AdicionarAnimaisIatfIn(BaseModel):
+    animais: list[str]
+
+
+@router.post("/protocolo-iatf/{lancamento_id}/animais")
+def adicionar_animais_iatf(lancamento_id: int, dados: AdicionarAnimaisIatfIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Adiciona animais a um protocolo IATF já lançado (esqueci de incluí-los na
+    hora). Reaproveita a MESMA data de D0 e os mesmos hormônios por dia; ignora
+    animais que já estão no protocolo.
+    """
+    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
+    if not lancamento:
+        raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
+    if not dados.animais:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+
+    ja_no_protocolo = {
+        a.numero_matriz for a in session.exec(
+            select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento_id)
+        ).all()
+    }
+    # Hormônios por dia deste lançamento → mesma descrição das etapas.
+    hormonios = session.exec(
+        select(ProtocoloIatfHormonio).where(ProtocoloIatfHormonio.lancamento_id == lancamento_id)
+    ).all()
+    hormonios_por_dia: dict[int, list[ProtocoloIatfHormonio]] = {}
+    for h in hormonios:
+        hormonios_por_dia.setdefault(h.dia, []).append(h)
+
+    def _descricao_dia(dias: int, padrao: str) -> str:
+        hs = hormonios_por_dia.get(dias)
+        if not hs:
+            return padrao
+        return " + ".join(f"{h.dose or ''}{(' ' + h.unidade) if h.unidade else ''} {h.produto}".strip() for h in hs)
+
+    novos = 0
+    for numero in dados.animais:
+        if numero in ja_no_protocolo:
+            continue
+        for dias, descricao in PASSOS_PROTOCOLO_IATF:
+            session.add(ProtocoloIatfAplicacao(
+                lancamento_id=lancamento_id,
+                numero_matriz=numero,
+                dia=dias,
+                descricao=_descricao_dia(dias, descricao),
+                data_prevista=lancamento.data_d0 + timedelta(days=dias),
+            ))
+        novos += 1
+
+    session.commit()
+    return {"adicionados": novos, "lancamento_id": lancamento_id, "nome_protocolo": lancamento.nome_protocolo}
 
 
 class ServicoIn(BaseModel):

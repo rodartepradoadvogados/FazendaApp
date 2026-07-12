@@ -83,6 +83,36 @@ class TestEventoAgrupado:
         assert "progesterona" in d0["hormonio"].lower()
 
 
+class TestAdicionarAnimaisExistente:
+    def test_lista_lancamentos_e_adiciona_animais(self, client):
+        c, engine = client
+        _lancar(c, ["700", "701"], data_d0="2026-07-08", protocolo="IATF 08/07/26 A 19/07/26")
+
+        lancs = c.get("/reproducao/protocolo-iatf/lancamentos").json()
+        assert len(lancs) == 1
+        lanc = lancs[0]
+        assert lanc["qtd_animais"] == 2
+        lid = lanc["lancamento_id"]
+
+        # Esqueci de incluir 4 novilhas — adiciona ao mesmo protocolo.
+        r = c.post(f"/reproducao/protocolo-iatf/{lid}/animais", json={"animais": ["800", "801", "700"]})
+        assert r.status_code == 200
+        # 700 já estava → só 800 e 801 entram.
+        assert r.json()["adicionados"] == 2
+
+        with Session(engine) as s:
+            todos = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lid)).all()
+            assert {a.numero_matriz for a in todos} == {"700", "701", "800", "801"}
+            # Cada animal novo herdou os 4 passos com a MESMA data de D0.
+            d0_800 = [a for a in todos if a.numero_matriz == "800" and a.dia == 0]
+            assert len(d0_800) == 1 and d0_800[0].data_prevista.isoformat() == "2026-07-08"
+
+    def test_adicionar_em_lancamento_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/reproducao/protocolo-iatf/999/animais", json={"animais": ["800"]})
+        assert r.status_code == 404
+
+
 class TestRetroativoSoMostraFuturos:
     def test_lancamento_retroativo_esconde_etapas_ja_passadas(self, client):
         c, engine = client
