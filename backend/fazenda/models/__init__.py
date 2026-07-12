@@ -177,6 +177,10 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     data_d0: date
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
+    # Lançado retroativamente (D0 no passado, a partir de uma inseminação IATF
+    # sem protocolo). As etapas vencidas destes aparecem como PENDÊNCIA na
+    # agenda; nos protocolos normais, etapas já passadas ficam escondidas.
+    retroativo: bool = Field(default=False)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
