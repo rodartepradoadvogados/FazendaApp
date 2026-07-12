@@ -23,6 +23,7 @@ import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
+import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
@@ -1779,6 +1780,7 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
 
   return (
     <>
+      <div className="flex justify-end mb-2"><TabelaNutricionalBotao /></div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Lote">
           <select style={inputStyle} value={loteNovo} onChange={(e) => setLoteNovo(e.target.value)}>
