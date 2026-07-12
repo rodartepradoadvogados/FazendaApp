@@ -166,3 +166,34 @@ class TestBenchmark:
                                           "top5": 3.6, "top25": 25, "top75": 68.4, "valor_fazenda": 10, "ordem": 4})
         linhas = [b for b in c.get("/recria/benchmark").json() if b["indicador"] == "Ocorrência de diarreia"]
         assert len(linhas) == 1 and linhas[0]["valor_fazenda"] == 10
+
+
+class TestReproducao:
+    def test_idade_ao_primeiro_parto(self, client):
+        from fazenda.models import Animal, Parto
+        c, engine = client
+        with Session(engine) as s:
+            # 3 novilhas nascidas 2024-01-01, 1º parto em idades ~23,24,31 meses.
+            for num, meses in [("201", 23), ("202", 24), ("203", 31)]:
+                s.add(Animal(numero=num, data_nasc=date(2024, 1, 1), ativo=True))
+                s.add(Parto(numero_matriz=num, data_parto=date(2024, 1, 1) + timedelta(days=round(meses * 30.44)), ordem_parto=1))
+            s.commit()
+        j = c.get("/recria/reproducao/idade-parto").json()
+        assert j["estatisticas"]["n"] == 3
+        assert 25.5 <= j["estatisticas"]["media"] <= 26.5
+        assert j["custo_excedente"]["custo_total"] > 0  # há novilha acima de 24 meses
+        assert any(d["mes"] == 24 for d in j["distribuicao"])
+
+    def test_taxa_prenhez_ciclos(self, client):
+        from fazenda.models import Servico
+        c, engine = client
+        with Session(engine) as s:
+            # 2 serviços no 1º ciclo: um prenhe, um vazio.
+            s.add(Servico(numero_matriz="301", data_servico=date(2026, 3, 1), diagnostico="POSITIVO"))
+            s.add(Servico(numero_matriz="302", data_servico=date(2026, 3, 5), diagnostico="NEGATIVO"))
+            s.commit()
+        j = c.get("/recria/reproducao/taxa-prenhez", params={"ini": "2026-03-01", "fim": "2026-03-21"}).json()
+        assert len(j["ciclos"]) >= 1
+        c1 = j["ciclos"][0]
+        assert c1["servidos"] == 2 and c1["prenhes"] == 1
+        assert c1["taxa_concepcao"] == 50.0

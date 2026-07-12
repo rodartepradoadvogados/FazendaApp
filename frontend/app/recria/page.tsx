@@ -5,18 +5,20 @@
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
 import { useEffect, useState } from "react";
-import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle } from "lucide-react";
+import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart } from "lucide-react";
 import { TabBar } from "@/components/ui";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
-  type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark,
+  fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez,
+  type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto,
 } from "@/lib/api";
 
-type Aba = "saude" | "crescimento" | "registrar";
+type Aba = "saude" | "crescimento" | "reproducao" | "registrar";
 const ABAS = [
   { id: "saude" as const, label: "Saúde por idade", icon: Activity, title: "Curva de casos de doença por idade (dias), com o ponto crítico e a incidência por fase" },
-  { id: "crescimento" as const, label: "Crescimento", icon: TrendingUp, title: "Peso real médio por mês de idade comparado à faixa de peso-alvo" },
+  { id: "crescimento" as const, label: "Crescimento", icon: TrendingUp, title: "Peso real médio por mês de idade comparado à faixa de peso-alvo, e benchmark Alta CRIA" },
+  { id: "reproducao" as const, label: "Reprodução", icon: Heart, title: "Idade ao 1º parto (Wisconsin), custo de recria excedente e taxa de prenhez por ciclo de 21 dias" },
   { id: "registrar" as const, label: "Registrar caso", icon: PlusCircle, title: "Lançar um caso de doença (animal, doença e data) — alimenta a Saúde por idade" },
 ];
 
@@ -39,6 +41,7 @@ export default function RecriaPage() {
       <div style={{ marginTop: "1rem" }}>
         {aba === "saude" && <AbaSaude />}
         {aba === "crescimento" && <AbaCrescimento />}
+        {aba === "reproducao" && <AbaReproducao />}
         {aba === "registrar" && <AbaRegistrar />}
       </div>
     </div>
@@ -266,6 +269,120 @@ function BenchmarkAltaCria() {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────── REPRODUÇÃO ───────────────────────────
+function AbaReproducao() {
+  const [d, setD] = useState<RecriaIdadeParto | null>(null);
+  const anoAtras = () => { const x = new Date(); x.setFullYear(x.getFullYear() - 1); return x.toISOString().slice(0, 10); };
+  const [ini, setIni] = useState(anoAtras());
+  const [fim, setFim] = useState(hoje());
+  const [ciclos, setCiclos] = useState<any | null>(null);
+  useEffect(() => { fetchRecriaIdadeParto().then(setD).catch(() => setD(null)); }, []);
+  const calcularPrenhez = () => fetchRecriaTaxaPrenhez(ini, fim).then(setCiclos).catch(() => setCiclos(null));
+  useEffect(() => { calcularPrenhez(); }, []);
+
+  const st = d?.estatisticas;
+  const fmtR$ = (v: number) => v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  const metaOk = (v: number, alvo: number, tol = 1) => Math.abs(v - alvo) <= tol;
+  return (
+    <div style={{ display: "grid", gap: "1rem" }}>
+      {/* Wisconsin — idade ao 1º parto */}
+      <div style={card}>
+        <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.6rem" }}>Idade ao 1º parto (método Wisconsin)</div>
+        {!st ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Ainda não há partos suficientes para calcular. Lance partos em <strong>Lançamentos › Reprodutivo › Parto/nascimento</strong>.</p> : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: "0.7rem" }}>
+            {[
+              { rot: "Novilhas", v: st.n, sub: "" },
+              { rot: "Idade média ao parto", v: `${st.media} m`, cor: metaOk(st.media, d!.meta_idade_parto, 1) ? "var(--green-light)" : "var(--amber)", sub: `meta ${d!.meta_idade_parto}m` },
+              { rot: "Desvio-padrão", v: `${st.desvio_padrao} m`, cor: st.desvio_padrao <= 1.7 ? "var(--green-light)" : "var(--red)", sub: "meta < 1,7" },
+              { rot: "Assimetria", v: st.assimetria, sub: "cauda de tardias" },
+              { rot: "Mais nova / mais velha", v: `${st.idade_tipica_min}–${st.idade_tipica_max}`, sub: "meses (típico)" },
+              { rot: "Amplitude típica", v: `${st.amplitude_tipica} m`, cor: st.amplitude_tipica < 6 ? "var(--green-light)" : "var(--amber)", sub: "meta < 6" },
+            ].map((k) => (
+              <div key={k.rot} style={{ background: "var(--surface-2)", borderRadius: 10, padding: "0.6rem 0.7rem" }}>
+                <div style={{ fontSize: "0.68rem", color: "var(--text-muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>{k.rot}</div>
+                <div style={{ fontSize: "1.25rem", fontWeight: 800, color: (k as any).cor || "var(--text)" }}>{k.v}</div>
+                {k.sub && <div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{k.sub}</div>}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Distribuição idade ao parto */}
+      {d && d.distribuicao.some((x) => x.n > 0) && (
+        <div style={card}>
+          <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.7rem" }}>Distribuição da idade ao 1º parto</div>
+          <div style={{ display: "flex", alignItems: "flex-end", gap: 3, height: 150, borderLeft: "1px solid var(--border)", borderBottom: "1px solid var(--border)", padding: "0 2px" }}>
+            {d.distribuicao.map((x) => {
+              const max = Math.max(...d.distribuicao.map((y) => y.pct), 1);
+              const naMeta = Math.round(d.meta_idade_parto) === x.mes;
+              return (
+                <div key={x.mes} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }} title={`${x.mes} meses: ${x.n} (${x.pct}%)`}>
+                  <div style={{ width: "100%", height: `${(100 * x.pct) / max}%`, background: naMeta ? "var(--green-light)" : "var(--dourado)", borderRadius: "2px 2px 0 0", opacity: 0.85 }} />
+                  <span style={{ fontSize: "0.6rem", color: "var(--text-muted)", marginTop: 2 }}>{x.mes}</span>
+                </div>
+              );
+            })}
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>Eixo: idade ao parto (meses). Verde = mês da meta ({d.meta_idade_parto}m).</p>
+        </div>
+      )}
+
+      {/* Custo de recria excedente */}
+      {d && d.custo_excedente.n > 0 && (
+        <div style={{ ...card, borderColor: "var(--amber)", background: "rgba(180,124,30,0.06)" }}>
+          <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.5rem" }}>Custo de recria excedente</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px,1fr))", gap: "0.7rem" }}>
+            <div><div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Total do rebanho</div><div style={{ fontSize: "1.4rem", fontWeight: 800, color: "var(--red)" }}>{fmtR$(d.custo_excedente.custo_total)}</div></div>
+            <div><div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Por novilha</div><div style={{ fontSize: "1.2rem", fontWeight: 700 }}>{fmtR$(d.custo_excedente.custo_por_novilha)}</div></div>
+            <div><div style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Dias extras / novilha</div><div style={{ fontSize: "1.2rem", fontWeight: 700 }}>{d.custo_excedente.dias_por_novilha} d</div></div>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Dias de recria além da meta de {d.meta_idade_parto} meses × custo diário (Configurações › Recria).</p>
+        </div>
+      )}
+
+      {/* Taxa de prenhez 21 dias */}
+      <div style={card}>
+        <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginBottom: "0.7rem" }}>
+          <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>Taxa de prenhez (ciclos de 21 dias)</div>
+          <div className="flex items-center gap-2">
+            <input type="date" style={{ ...input, width: 150 }} value={ini} onChange={(e) => setIni(e.target.value)} />
+            <span style={{ color: "var(--text-muted)" }}>até</span>
+            <input type="date" style={{ ...input, width: 150 }} value={fim} onChange={(e) => setFim(e.target.value)} />
+            <button className="btn-primary" onClick={calcularPrenhez} style={{ fontSize: "0.82rem" }}>Calcular</button>
+          </div>
+        </div>
+        {!ciclos ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Escolha o período e clique em Calcular.</p> : !ciclos.ciclos?.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem serviços no período.</p>
+        ) : (
+          <>
+            {ciclos.taxa_prenhez_media != null && (
+              <p style={{ fontSize: "0.9rem", marginBottom: "0.6rem" }}>Taxa de prenhez média do período: <strong style={{ fontSize: "1.1rem", color: ciclos.taxa_prenhez_media >= 42.5 ? "var(--green-light)" : "var(--amber)" }}>{ciclos.taxa_prenhez_media}%</strong> <span style={{ color: "var(--text-muted)" }}>(meta &gt; 42,5%)</span></p>
+            )}
+            <div style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr><th>Ciclo</th><th>Período</th><th>Elegíveis</th><th>Servidos</th><th>Prenhes</th><th>Tx. Serviço</th><th>Tx. Concepção</th><th>Tx. Prenhez</th></tr></thead>
+                <tbody>
+                  {ciclos.ciclos.map((c: any) => (
+                    <tr key={c.ciclo}>
+                      <td style={{ fontWeight: 600 }}>{c.ciclo}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{c.inicio.split("-").reverse().join("/")}–{c.fim.split("-").reverse().join("/")}</td>
+                      <td>{c.elegiveis}</td><td>{c.servidos}</td><td>{c.prenhes}</td>
+                      <td>{c.taxa_servico != null ? `${c.taxa_servico}%` : "—"}</td>
+                      <td>{c.taxa_concepcao != null ? `${c.taxa_concepcao}%` : "—"}</td>
+                      <td><strong>{c.taxa_prenhez != null ? `${c.taxa_prenhez}%` : "—"}</strong></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
