@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, MovimentoLote, Parto,
+    Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen, MovimentoLote, Parto,
     PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
     Sanidade, Secagem, Servico,
 )
@@ -172,6 +172,17 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
             d["ordem_parto"] = idx + 1
         partos_dump.append(d)
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero).order_by(Servico.data_servico)).all()
+    # Código NAAB do pai (touro/sêmen usado no serviço), buscado no catálogo de
+    # sêmen pelo nome do reprodutor — anexado a cada serviço para exibir na ficha.
+    naab_por_touro = {
+        s.touro_nome.strip().lower(): s.naab
+        for s in session.exec(select(EstoqueSemen)).all() if s.naab
+    }
+    servicos_dump = []
+    for s in servicos:
+        d = s.model_dump()
+        d["reprodutor_naab"] = naab_por_touro.get((s.reprodutor or "").strip().lower())
+        servicos_dump.append(d)
 
     protocolos_iatf = session.exec(
         select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == numero).order_by(ProtocoloIatfAplicacao.data_prevista)
@@ -220,7 +231,7 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
     return {
         "animal": animal.model_dump(),
         "partos": partos_dump,
-        "servicos": _dump(servicos),
+        "servicos": servicos_dump,
         "protocolos_iatf": _dump(protocolos_iatf),
         "movimentos_lote": _dump(movimentos_lote),
         "colostragem": colostragem.model_dump() if colostragem else None,

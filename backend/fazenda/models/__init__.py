@@ -235,6 +235,9 @@ class Parto(SQLModel, table=True):
     tipo_parto: Optional[str] = None
     sexo_cria_1: Optional[str] = None
     sexo_cria_2: Optional[str] = None
+    # Números das crias nascidas (para abrir a ficha da cria a partir do parto).
+    numero_cria_1: Optional[str] = None
+    numero_cria_2: Optional[str] = None
     gemelar: Optional[bool] = None
     retencao_placenta: Optional[bool] = None
 
@@ -1075,6 +1078,7 @@ class EstoqueSemen(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     touro_nome: str = Field(index=True)
     codigo: Optional[str] = None
+    naab: Optional[str] = None  # código NAAB do touro (ex.: 7HO12345)
     central: Optional[str] = None  # central de genética (ex.: ABS, Alta, Semex)
     tipo: str = "convencional"  # convencional | sexado | fazenda
     doses: int = 0
