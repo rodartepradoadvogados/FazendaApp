@@ -7,6 +7,7 @@
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, today } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
@@ -32,6 +33,9 @@ type Evento = {
   dose?: number | null;
   unidade?: string | null;
   via?: string | null;
+  dia?: number | null;
+  hormonio?: string | null;
+  protocolo?: string | null;
 };
 
 type Agenda = { eventos?: Evento[] };
@@ -84,6 +88,35 @@ export default function AgendaMovel() {
   // para permitir desfazer, já que o backend some com ele no próximo reload.
   const [feitos, setFeitos] = useState<Set<string>>(new Set());
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
+  // Protocolo IATF: cartões expansíveis com seleção individual das vacas.
+  const [iatfAberto, setIatfAberto] = useState<Set<string>>(new Set());
+  const [iatfChecks, setIatfChecks] = useState<Record<string, Set<string>>>({});
+
+  const abrirIatf = (id: string, animais: string[]) => {
+    setIatfAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+    setIatfChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+  };
+  const toggleVaca = (id: string, numero: string) => setIatfChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
+
+  async function confirmarIatf(e: Evento, animaisSel: string[]) {
+    if (!animaisSel.length) return;
+    setAviso(null);
+    setFeitos((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados",
+        { evento_id: e.id, animais: animaisSel },
+        `IATF ${e.descricao} — ${animaisSel.length} vaca(s)`, "POST");
+      if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+      else setAviso({ tipo: "ok", msg: `Confirmado em ${animaisSel.length} vaca(s).` });
+    } catch (err) {
+      setFeitos((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    }
+  }
 
   const carregar = useCallback(async () => {
     setCarregando(true);
@@ -152,9 +185,52 @@ export default function AgendaMovel() {
 
   function renderCartao(e: Evento) {
     const { chave, rotulo } = catInfo(e.categoria);
-    const { principal, detalhe } = linhas(e);
     const feito = feitos.has(e.id);
     const atrasada = e.data < hoje;
+
+    // Protocolo IATF: cartão expansível com as vacas e aplicação individual.
+    if (e.tipo === "protocolo_iatf" && e.animais?.length) {
+      const aberto = iatfAberto.has(e.id);
+      const sel = iatfChecks[e.id] || new Set(e.animais);
+      return (
+        <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                {e.animais!.length} animal{e.animais!.length !== 1 ? "is" : ""}{e.hormonio ? ` · ${e.hormonio}` : ""}
+              </div>
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+
+          {aberto && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {e.hormonio && (
+                <div style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>
+                  <strong>Aplicar:</strong> {e.hormonio}
+                </div>
+              )}
+              <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginBottom: "0.5rem" }}>Marque as vacas que receberam:</p>
+              {e.animais!.map((numero) => (
+                <label key={numero} style={{ display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.2rem", borderBottom: "1px solid var(--mob-border)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={sel.has(numero)} onChange={() => toggleVaca(e.id, numero)} style={{ width: 20, height: 20 }} />
+                  <span style={{ fontWeight: 800, fontSize: "1.05rem" }}>{numero}</span>
+                </label>
+              ))}
+              <button type="button" className="mob-btn" style={{ marginTop: "0.7rem" }}
+                disabled={feito || !sel.size} onClick={() => confirmarIatf(e, Array.from(sel))}>
+                Confirmar aplicação ({sel.size}/{e.animais!.length})
+              </button>
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    const { principal, detalhe } = linhas(e);
     return (
       <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
