@@ -686,12 +686,43 @@ export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório
 
 // Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um
 // protocolo cadastrado por princípio ativo ou classificação.
-export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string }) {
+export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string; doenca?: string }) {
   const params = new URLSearchParams();
   if (filtro.principio_ativo) params.set("principio_ativo", filtro.principio_ativo);
   if (filtro.classificacao) params.set("classificacao", filtro.classificacao);
+  if (filtro.doenca) params.set("doenca", filtro.doenca);
   const res = await authFetch(`${API}/estoque/medicamentos?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
+  return res.json();
+}
+
+// ── Agendamento de pesagem do rebanho (Configurações) ──
+export type AgendamentoPesagem = {
+  id: number; nome: string; ativo: boolean; idade_min_dias: number | null; idade_max_dias: number | null;
+  categoria_alvo: string | null; frequencia_valor: number; frequencia_unidade: string; dia_semana: number; data_referencia: string;
+};
+export async function fetchAgendamentosPesagem() {
+  const res = await authFetch(`${API}/cadastro/agendamentos-pesagem`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Agendamentos de pesagem error: ${res.status}`);
+  return res.json() as Promise<AgendamentoPesagem[]>;
+}
+export async function criarAgendamentoPesagem(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/cadastro/agendamentos-pesagem`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar agendamento"); }
+  return res.json();
+}
+export async function atualizarAgendamentoPesagem(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar agendamento"); }
+  return res.json();
+}
+export async function excluirAgendamentoPesagem(id: number) {
+  const res = await authFetch(`${API}/cadastro/agendamentos-pesagem/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir"); }
   return res.json();
 }
 

@@ -306,6 +306,30 @@ class PesagemCorporal(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class AgendamentoPesagem(SQLModel, table=True):
+    """
+    Acompanhamento da evolução de peso do rebanho: define a periodicidade de
+    pesagem de uma fase (ex.: bezerras até desmama, de 15 em 15 dias, às terças).
+    Alimenta a Agenda dos funcionários com o lembrete de pesagem no dia certo.
+    """
+
+    __tablename__ = "agendamento_pesagem"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True)  # ex.: "Bezerras até desmama"
+    ativo: bool = True
+    # Alvo por idade (dias) — animais dentro da faixa entram na pesagem.
+    idade_min_dias: Optional[int] = None
+    idade_max_dias: Optional[int] = None
+    categoria_alvo: Optional[str] = None  # opcional: casa também pela categoria_abrev
+    # Periodicidade + dia da semana fixo (0=segunda … 6=domingo; terça=1).
+    frequencia_valor: int = 15
+    frequencia_unidade: str = "dias"  # "dias" | "meses"
+    dia_semana: int = 1
+    data_referencia: date  # 1ª pesagem (âncora da cadência)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class QualidadeLeite(SQLModel, table=True):
     """
     Uma coleta de qualidade do leite — do tanque (todo o rebanho em lactação,

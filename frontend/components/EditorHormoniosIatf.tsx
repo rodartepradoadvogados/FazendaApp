@@ -7,7 +7,7 @@
 // o backend dá baixa no estoque e registra a aplicação em Sanidade por vaca.
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { fetchEstoque, fetchMedicamentos, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, type HormonioIatf } from "@/lib/api";
+import { fetchEstoque, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, CLASSIFICACOES_MEDICAMENTO, type HormonioIatf } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
 const DIAS = [
@@ -23,7 +23,7 @@ const unidadesCompat = (u?: string | null): string[] =>
 
 type EstItem = { nome: string; quantidade?: number | null; unidade?: string | null };
 type Linha = {
-  key: string; dia: number; definirPor: "medicamento" | "principio_ativo" | "classificacao";
+  key: string; dia: number; definirPor: "medicamento" | "principio_ativo" | "classificacao" | "doenca";
   criterio: string; produto: string; dose: string; unidade: string; via: string;
 };
 
@@ -39,13 +39,15 @@ const novaChave = () => `h${++_seq}`;
 export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]) => void }) {
   const [estoque, setEstoque] = useState<EstItem[]>([]);
   const [principios, setPrincipios] = useState<string[]>([]);
+  const [doencas, setDoencas] = useState<string[]>([]);
   const [linhas, setLinhas] = useState<Linha[]>([]);
-  // Medicamentos que cumprem o critério, por linha (para princípio/classificação).
+  // Medicamentos que cumprem o critério, por linha (para princípio/classificação/doença).
   const [opcoes, setOpcoes] = useState<Record<string, EstItem[]>>({});
 
   useEffect(() => {
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchPrincipiosAtivos().then((d: any[]) => setPrincipios(d.map((p) => p.nome))).catch(() => {});
+    fetchDoencas().then((d: any[]) => setDoencas(d.map((x) => x.nome))).catch(() => {});
   }, []);
 
   // Emite a lista pronta para a API sempre que muda.
@@ -79,7 +81,8 @@ export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]
   function escolherCriterio(l: Linha, criterio: string) {
     atualizar(l.key, { criterio, produto: "", unidade: "" });
     if (!criterio) { setOpcoes((o) => ({ ...o, [l.key]: [] })); return; }
-    const filtro = l.definirPor === "principio_ativo" ? { principio_ativo: criterio } : { classificacao: criterio };
+    const filtro = l.definirPor === "principio_ativo" ? { principio_ativo: criterio }
+      : l.definirPor === "doenca" ? { doenca: criterio } : { classificacao: criterio };
     fetchMedicamentos(filtro)
       .then((m: EstItem[]) => setOpcoes((o) => ({ ...o, [l.key]: m })))
       .catch(() => setOpcoes((o) => ({ ...o, [l.key]: [] })));
@@ -119,16 +122,17 @@ export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]
                       <select style={inputStyle} value={l.definirPor} onChange={(e) => escolherDefinirPor(l, e.target.value as Linha["definirPor"])}>
                         <option value="medicamento">Medicamento</option>
                         <option value="principio_ativo">Princípio ativo</option>
+                        <option value="doenca">Doença</option>
                         <option value="classificacao">Classificação</option>
                       </select>
                     </div>
 
                     {l.definirPor !== "medicamento" && (
                       <div>
-                        <label style={lblMin}>{l.definirPor === "principio_ativo" ? "Princípio ativo" : "Classificação"}</label>
+                        <label style={lblMin}>{l.definirPor === "principio_ativo" ? "Princípio ativo" : l.definirPor === "doenca" ? "Doença" : "Classificação"}</label>
                         <select style={inputStyle} value={l.criterio} onChange={(e) => escolherCriterio(l, e.target.value)}>
                           <option value="">Selecione…</option>
-                          {(l.definirPor === "principio_ativo" ? principios : CLASSIFICACOES_MEDICAMENTO).map((c) => <option key={c} value={c}>{c}</option>)}
+                          {(l.definirPor === "principio_ativo" ? principios : l.definirPor === "doenca" ? doencas : CLASSIFICACOES_MEDICAMENTO).map((c) => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </div>
                     )}
