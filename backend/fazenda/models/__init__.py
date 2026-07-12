@@ -10,6 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import TYPE_CHECKING, List, Optional
 
+from sqlalchemy import BigInteger
 from sqlmodel import Field, Relationship, SQLModel
 
 
@@ -653,7 +654,8 @@ class TelegramPendente(SQLModel, table=True):
     __tablename__ = "telegram_pendente"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True)     # de quem recebeu (para responder)
+    # BigInteger: ids de chat do Telegram passam de 2,1 bi (não cabem em INTEGER).
+    chat_id: int = Field(sa_type=BigInteger, index=True)  # de quem recebeu (para responder)
     file_id: str                         # id do arquivo no Telegram (para baixar)
     file_name: Optional[str] = None
     mime: Optional[str] = None
@@ -668,7 +670,7 @@ class TelegramSessao(SQLModel, table=True):
     __tablename__ = "telegram_sessao"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    chat_id: int = Field(index=True, unique=True)
+    chat_id: int = Field(sa_type=BigInteger, index=True, unique=True)
     fluxo: Optional[str] = None          # tipo de lançamento em andamento
     etapa: int = 0                       # índice da pergunta atual
     dados: str = "{}"                    # JSON acumulado dos campos respondidos
@@ -686,7 +688,7 @@ class LancamentoPendente(SQLModel, table=True):
     tipo: str = Field(index=True)        # controle_leiteiro | parto | secagem | ...
     payload: str = "{}"                  # JSON dos campos coletados
     resumo: str = ""                     # texto legível para a tela de aprovação
-    solicitante_chat_id: Optional[int] = None
+    solicitante_chat_id: Optional[int] = Field(default=None, sa_type=BigInteger)
     solicitante_nome: Optional[str] = None
     status: str = Field(default="pendente", index=True)  # pendente | aprovado | rejeitado
     erro: Optional[str] = None           # mensagem se a materialização falhar

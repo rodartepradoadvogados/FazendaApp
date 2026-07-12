@@ -136,10 +136,36 @@ def _migrar_colunas() -> None:
                     conn.execute(text(f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}'))
 
 
+# Colunas que precisam virar BIGINT no Postgres: ids de chat do Telegram
+# passam de 2,1 bilhões e estouram o INTEGER (32 bits). No SQLite não é preciso
+# (o INTEGER já é de 64 bits).
+_COLUNAS_BIGINT: list[tuple[str, str]] = [
+    ("telegram_pendente", "chat_id"),
+    ("telegram_sessao", "chat_id"),
+    ("lancamento_pendente", "solicitante_chat_id"),
+]
+
+
+def _migrar_tipos_bigint() -> None:
+    if is_sqlite:
+        return
+    insp = inspect(engine)
+    tabelas = set(insp.get_table_names())
+    with engine.begin() as conn:
+        for tabela, coluna in _COLUNAS_BIGINT:
+            if tabela not in tabelas:
+                continue
+            try:
+                conn.execute(text(f"ALTER TABLE {tabela} ALTER COLUMN {coluna} TYPE BIGINT"))
+            except Exception:
+                pass  # já é BIGINT, ou o banco não deixou — segue o jogo
+
+
 def create_db_and_tables() -> None:
     """Cria as tabelas (idempotente) e aplica migrações leves de colunas."""
     SQLModel.metadata.create_all(engine)
     _migrar_colunas()
+    _migrar_tipos_bigint()
 
 
 def get_session():
