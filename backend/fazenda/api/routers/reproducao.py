@@ -586,7 +586,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero)
             if alvo is None and dados.auto_lancar_iatf:
                 d0 = dados.data_servico - timedelta(days=11)
-                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0)
+                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True)
                 session.add(alvo)
                 session.flush()
                 for dias, descricao in PASSOS_PROTOCOLO_IATF:

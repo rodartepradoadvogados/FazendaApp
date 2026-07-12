@@ -37,6 +37,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("raca", "VARCHAR"), ("ordenha1_kg", "FLOAT"), ("ordenha2_kg", "FLOAT"), ("ordenha3_kg", "FLOAT"),
     ],
     "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR")],
+    "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN")],
     "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],
     "animal": [
         ("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN"),

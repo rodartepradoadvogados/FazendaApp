@@ -190,15 +190,17 @@ def calcular_agenda(
 
     # Protocolo IATF — agrupa por (lançamento, dia): uma linha por etapa do
     # protocolo, não uma por animal, mostrando todos os animais daquele passo
-    # de uma vez. Só entram etapas de hoje em diante (retroativo não spam de
-    # passos já vencidos) e ainda não realizadas.
-    aplicacoes_iatf = session.exec(
-        select(ProtocoloIatfAplicacao).where(
-            ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
-            ProtocoloIatfAplicacao.data_prevista >= data,
-        )
-    ).all()
+    # de uma vez. Em protocolos normais só entram etapas de hoje em diante
+    # (retroativo não spamma passos já vencidos); em protocolos lançados
+    # RETROATIVAMENTE (IATF sem protocolo, D0 no passado), as etapas vencidas
+    # aparecem como pendência.
     lancamentos_iatf_por_id = {l.id: l for l in session.exec(select(ProtocoloIatfLancamento)).all()}
+    aplicacoes_iatf = [
+        a for a in session.exec(
+            select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
+        ).all()
+        if a.data_prevista >= data or getattr(lancamentos_iatf_por_id.get(a.lancamento_id), "retroativo", False)
+    ]
     grupos_iatf: dict[tuple[int, int], list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes_iatf:
         grupos_iatf.setdefault((ap.lancamento_id, ap.dia), []).append(ap)

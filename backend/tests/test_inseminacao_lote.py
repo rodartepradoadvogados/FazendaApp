@@ -93,11 +93,25 @@ class TestServicoLote:
         assert r.json()["criados"] == 1 and r.json()["incompativeis"] == []
         with Session(engine) as s:
             lanc = s.exec(select(ProtocoloIatfLancamento)).first()
-            # D0 = serviço − 11 dias.
+            # D0 = serviço − 11 dias, marcado como retroativo.
             assert lanc.data_d0 == date(2026, 7, 12) - timedelta(days=11)
+            assert lanc.retroativo is True
             # D11 resolvido pela inseminação (data = serviço).
             d11 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 11)).first()
             assert d11.realizada is True
+
+    def test_etapas_retroativas_aparecem_como_pendencia_na_agenda(self, client):
+        c, engine = client
+        c.post("/reproducao/servico-lote", json={
+            "animais": ["700"], "data_servico": "2026-07-12", "tipo": "iatf",
+            "reprodutor": "Coors", "auto_lancar_iatf": True,
+        })
+        # Consulta a agenda numa data DEPOIS de todas as etapas retroativas —
+        # num protocolo normal elas ficariam escondidas; retroativo mostra.
+        eventos = c.get("/agenda/", params={"data": "2026-07-13", "dias": 30}).json()["eventos"]
+        iatf = [e for e in eventos if e.get("tipo") == "protocolo_iatf"]
+        dias = sorted(e["dia"] for e in iatf)
+        assert dias == [0, 7, 9]  # D0/D7/D9 vencidos aparecem; D11 já foi resolvido
 
 
 class TestSemenDisponivel:
