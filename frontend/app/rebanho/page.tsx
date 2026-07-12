@@ -1,11 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, History, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
-import HistoricoMovimentacoes from "@/components/HistoricoMovimentacoes";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
@@ -214,13 +213,12 @@ function RebanhoVisaoGeral() {
   );
 }
 
-type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "historico" | "ficha";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "historico", "ficha"];
+type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "ficha";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "ficha"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
-  { id: "historico", label: "Histórico", icon: History, title: "Histórico de movimentações" },
   { id: "mover", label: "Movimentar animais", icon: ArrowRightLeft, title: "Transferir animais entre lotes" },
   { id: "comprar", label: "Comprar animal", icon: ShoppingCart, title: "Registrar compra de animal" },
   { id: "baixar", label: "Baixar animal", icon: Skull, title: "Registrar morte/descarte/venda" },
@@ -247,7 +245,6 @@ export default function RebanhoPage() {
         {aba === "mover" && <MovimentarAnimais />}
         {aba === "baixar" && <BaixarAnimal />}
         {aba === "comprar" && <ComprarAnimal />}
-        {aba === "historico" && <HistoricoMovimentacoes />}
         {aba === "ficha" && <FichaAnimal />}
       </div>
     </div>
