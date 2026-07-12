@@ -897,6 +897,9 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // "Já foi aplicado?" — quando Não (ou data futura), nada baixa do estoque:
+  // fica programado na Agenda até você dar baixa.
+  const [aplicado, setAplicado] = useState(true);
   // Vindo da Agenda ("Dar baixa" de um evento sanitário): ao salvar, marca o
   // evento como realizado para sumir da Agenda.
   const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
@@ -945,12 +948,17 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
 
     setSalvando(true);
     try {
+      const hojeStr = new Date().toISOString().slice(0, 10);
+      const aplicadoEfetivo = aplicado && dataAplicacao <= hojeStr;
       const r = await criarAplicacaoSanidade({
         data_aplicacao: dataAplicacao, animais: animaisAlvo, responsavel: responsavel || undefined, observacao: observacao || undefined,
         itens: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+        aplicado: aplicadoEfetivo,
       });
-      if (eventoAgenda) { await marcarEventoRealizado(eventoAgenda).catch(() => {}); setEventoAgenda(null); }
-      setSucesso(`${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}${eventoAgenda ? " Baixado da Agenda." : ""}`);
+      if (aplicadoEfetivo && eventoAgenda) { await marcarEventoRealizado(eventoAgenda).catch(() => {}); setEventoAgenda(null); }
+      setSucesso(r.programado
+        ? `Aplicação PROGRAMADA na Agenda (não baixou estoque). Dê baixa quando aplicar.`
+        : `${r.criados} aplicação(ões) lançada(s) com sucesso.${r.avisos?.length ? " " + r.avisos.join(" ") : ""}${eventoAgenda ? " Baixado da Agenda." : ""}`);
       setItens([itemSanidadeVazio()]); setObservacao("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar aplicação de sanidade");
@@ -975,6 +983,16 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
             </Campo>}
         <Campo label="Responsável"><select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="" disabled>Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select></Campo>
         <Campo label="Observação"><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+        <Campo label="Já foi aplicado?" full>
+          {dataAplicacao > new Date().toISOString().slice(0, 10) ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--amber)" }}>Data futura — será <strong>programado na Agenda</strong> (não baixa estoque até você dar baixa).</p>
+          ) : (
+            <div className="flex items-center gap-4">
+              <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={aplicado} onChange={() => setAplicado(true)} /> Sim — aplicar e baixar o estoque agora</label>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={!aplicado} onChange={() => setAplicado(false)} /> Não — só programar na Agenda</label>
+            </div>
+          )}
+        </Campo>
       </div>
 
       <Secao>Produtos aplicados</Secao>

@@ -188,3 +188,50 @@ class TestEditarExcluirAplicacao:
     def test_excluir_inexistente_da_404(self, client):
         r = client.delete("/sanidade/aplicacoes/99999")
         assert r.status_code == 404
+
+
+class TestAplicadoSimNao:
+    """'Aplicado? não' ou data futura → não baixa estoque, fica programado na
+    Agenda; dar baixa depois materializa a aplicação e baixa o estoque."""
+
+    def test_futuro_nao_baixa_estoque_e_fica_programado(self, client):
+        from datetime import date, timedelta
+        futuro = (date.today() + timedelta(days=5)).isoformat()
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": futuro, "animais": ["101"],
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        assert r.status_code == 200
+        assert r.json()["programado"] is True
+        # Estoque intacto.
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 1000
+        # Não entrou na lista de aplicações (só materializa quando aplicado).
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
+
+    def test_aplicado_nao_hoje_fica_programado_e_baixa_ao_confirmar(self, client):
+        from datetime import date
+        hoje = date.today().isoformat()
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": hoje, "animais": ["101"], "aplicado": False,
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        assert r.json()["programado"] is True
+        eventos = client.get("/agenda/", params={"data": hoje}).json()["eventos"]
+        alvo = next(e for e in eventos if e["id"].startswith("aplic_agendada_"))
+        assert alvo["produto"] == "Borgal 50ml"
+        # Dar baixa → materializa + baixa estoque.
+        client.post("/agenda/realizados", json={"evento_id": alvo["id"]})
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 990  # baixou 10
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 1
+
+    def test_aplicado_hoje_baixa_na_hora(self, client):
+        from datetime import date
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": date.today().isoformat(), "animais": ["101"], "aplicado": True,
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        assert r.json()["programado"] is False
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 990

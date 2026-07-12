@@ -29,6 +29,7 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
   const [unidade, setUnidade] = useState("");
   const [via, setVia] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  const [aplicado, setAplicado] = useState(true);
   // Protocolo sanitário
   const [protocoloId, setProtocoloId] = useState("");
   const [classifMastite, setClassifMastite] = useState("");
@@ -79,10 +80,11 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     if (!produto) return erroValidacao("Selecione o produto.");
     if (!(Number(quantidade) > 0)) return erroValidacao("Informe a quantidade.");
     if (!unidade) return erroValidacao("Selecione a unidade.");
+    const aplicadoEfetivo = aplicado && data <= hoje();
     enviar(
       "/sanidade/aplicacoes",
       {
-        data_aplicacao: data, animais: alvo, responsavel: responsavel || undefined,
+        data_aplicacao: data, animais: alvo, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
         itens: [{ produto, quantidade: Number(quantidade), unidade, via: via || undefined }],
       },
       `Aplicação ${produto} — ${modo === "animal" ? `animal ${animal}` : `lote ${lote}`}`,
@@ -176,6 +178,18 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
           {RESPONSAVEIS.map((r) => <option key={r} value={r}>{r}</option>)}
         </select>
       </MobCampo>
+      {tipo === "aplicacao" && (
+        <MobCampo label="Já foi aplicado?">
+          {data > hoje() ? (
+            <p style={{ fontSize: "0.82rem", color: "var(--mob-ambar)" }}>Data futura — será <strong>programado na Agenda</strong> (não baixa estoque).</p>
+          ) : (
+            <div style={{ display: "flex", gap: "0.5rem" }}>
+              <MobPill ativa={aplicado} onClick={() => setAplicado(true)}>Sim (aplicar agora)</MobPill>
+              <MobPill ativa={!aplicado} onClick={() => setAplicado(false)}>Não (programar)</MobPill>
+            </div>
+          )}
+        </MobCampo>
+      )}
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>

@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
     PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, Sanidade,
 )
@@ -73,6 +73,9 @@ class AplicacaoIn(BaseModel):
     itens: list[ItemAplicacaoIn]
     responsavel: str | None = None
     observacao: str | None = None
+    # "Já foi aplicado?" — quando False (ou a data é futura) NADA é baixado do
+    # estoque: a aplicação fica programada na Agenda até ser confirmada.
+    aplicado: bool = True
 
 
 @router.post("/aplicacoes")
@@ -81,6 +84,23 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Adicione ao menos um produto")
+
+    # Regra de data: aplicação no futuro NUNCA baixa estoque (não aconteceu
+    # ainda). Só materializa quando marcada como aplicada E a data não é futura.
+    materializar = dados.aplicado and dados.data_aplicacao <= date.today()
+
+    if not materializar:
+        agendadas = 0
+        for item in dados.itens:
+            for numero in dados.animais:
+                session.add(AplicacaoAgendada(
+                    numero_matriz=numero, data=dados.data_aplicacao, produto=item.produto,
+                    dose=item.quantidade, unidade=item.unidade, via=item.via,
+                    responsavel=dados.responsavel, observacao=dados.observacao,
+                ))
+                agendadas += 1
+        session.commit()
+        return {"criados": 0, "agendadas": agendadas, "avisos": [], "programado": True}
 
     criados = 0
     avisos: list[str] = []
@@ -129,7 +149,7 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
             )
 
     session.commit()
-    return {"criados": criados, "avisos": avisos}
+    return {"criados": criados, "agendadas": 0, "avisos": avisos, "programado": False}
 
 
 class EditarAplicacaoIn(BaseModel):

@@ -747,6 +747,30 @@ class Sanidade(SQLModel, table=True):
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class AplicacaoAgendada(SQLModel, table=True):
+    """
+    Aplicação de medicamento lançada mas ainda NÃO aplicada (programada para o
+    futuro ou marcada "aplicado? não"). Fica pendente na Agenda — nada é baixado
+    do estoque até ser confirmada ("dar baixa"), quando vira um registro de
+    Sanidade de verdade e dá a saída de estoque. Espelha "contas a pagar".
+    """
+
+    __tablename__ = "aplicacao_agendada"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    data: date = Field(index=True)  # data prevista da aplicação
+    produto: str
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    aplicado: bool = Field(default=False, index=True)
+    data_aplicacao: Optional[date] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Cadastros de apoio ao Calendário sanitário (Configurações > Cadastro).
 # ---------------------------------------------------------------------------
