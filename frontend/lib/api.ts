@@ -569,6 +569,7 @@ export async function fetchUnidadesCompativeis(produto: string) {
 export async function criarAplicacaoSanidade(dados: {
   data_aplicacao: string; animais: string[]; responsavel?: string; observacao?: string;
   itens: { produto: string; via?: string; quantidade: number; unidade: string }[];
+  aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

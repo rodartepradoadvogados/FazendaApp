@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, Animal, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
+    AgendaManual, Animal, AplicacaoAgendada, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
@@ -224,6 +224,21 @@ def calcular_agenda(
     # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
     eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados)
 
+    # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
+    # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
+    aplic_agendadas = session.exec(
+        select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False)  # noqa: E712
+    ).all()
+    eventos_aplic_agendada = [{
+        "id": f"aplic_agendada_{a.id}", "data": a.data.isoformat(), "categoria": "sanidade",
+        "descricao": f"Aplicar {a.produto}"
+        + (f" — {a.dose} {a.unidade or ''}" if a.dose is not None else "")
+        + f" — matriz {a.numero_matriz}",
+        "numero_animal": a.numero_matriz, "observacao": "Programada — dê baixa para aplicar e baixar o estoque.",
+        "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "aplicacao_agendada",
+        "produto": a.produto, "dose": a.dose, "unidade": a.unidade, "via": a.via,
+    } for a in aplic_agendadas if f"aplic_agendada_{a.id}" not in realizados]
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -244,7 +259,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos
@@ -325,6 +340,38 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     session.commit()
 
 
+def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
+    """Confirma uma aplicação programada: cria o registro de Sanidade e dá a
+    baixa de estoque (quando a unidade bate com a do estoque)."""
+    aid = int(evento_id.removeprefix("aplic_agendada_"))
+    ag = session.get(AplicacaoAgendada, aid)
+    if not ag or ag.aplicado:
+        return
+    hoje = date.today()
+    ag.aplicado = True
+    ag.data_aplicacao = hoje
+    session.add(ag)
+
+    session.add(Sanidade(
+        numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
+        dose=ag.dose, unidade=ag.unidade, via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+    ))
+
+    estoque_item = session.exec(select(Estoque).where(Estoque.nome == ag.produto)).first()
+    if ag.dose and estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(ag.unidade, estoque_item.unidade):
+        estoque_item.quantidade = (estoque_item.quantidade or 0) - ag.dose
+        if estoque_item.estoque_minimo is not None:
+            estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+        estoque_item.atualizado_em = datetime.utcnow()
+        session.add(estoque_item)
+        session.add(MovimentoEstoque(
+            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=ag.dose,
+            unidade=estoque_item.unidade, data_movimento=hoje,
+            observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
+        ))
+    session.commit()
+
+
 def _marcar_protocolo_iatf_realizado(session: Session, evento_id: str, animais: list[str] | None) -> None:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) do protocolo IATF
@@ -367,6 +414,8 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
         session.commit()
         if dados.evento_id.startswith("protocolo_sanitario_"):
             _baixar_protocolo_sanitario(session, dados.evento_id)
+        elif dados.evento_id.startswith("aplic_agendada_"):
+            _baixar_aplicacao_agendada(session, dados.evento_id)
     return {"marcado": True}
 
 
