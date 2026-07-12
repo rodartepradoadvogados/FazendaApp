@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen } from "@/lib/api";
+import { NAAB_CENTRAIS, centralPorCodigoNaab } from "@/lib/constants";
 
 type Semen = {
   id: number; touro_nome: string; codigo: string | null; naab: string | null; central: string | null;
@@ -126,9 +127,17 @@ export default function CadastroEstoqueSemen() {
       <div className="card-header mb-3 flex items-center gap-2">
         <Dna size={16} /> Estoque de sêmen
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.4rem" }}>
         Cadastre aqui os touros e as doses disponíveis. Alimenta o relatório de manejo → Estoque de sêmen.
       </p>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.74rem", marginBottom: "0.8rem" }}>
+        A <strong>central</strong> segue os códigos oficiais da NAAB (o número inicial do código NAAB — ex.: <em>7</em>HO12345 = Select Sires).
+        Ao digitar o código NAAB, a central é preenchida sozinha. Consulte a lista oficial em{" "}
+        <a href="https://www.naab-css.org/naab-icar-stud-codes" target="_blank" rel="noopener noreferrer" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>naab-css.org</a>.
+        Os dados são digitados manualmente — não há integração automática com o banco da NAAB.
+      </p>
+      {/* Lista oficial de centrais NAAB para o seletor dos campos "Central". */}
+      <datalist id="naab-centrais">{NAAB_CENTRAIS.map((c) => <option key={c} value={c} />)}</datalist>
 
       {/* Formulário de inclusão */}
       <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
@@ -140,10 +149,13 @@ export default function CadastroEstoqueSemen() {
             <input style={inputStyle} value={novo.codigo} title="Código de registro do touro"
               onChange={(e) => setNovo({ ...novo, codigo: e.target.value })} /></div>
           <div><label style={labelStyle}>NAAB</label>
-            <input style={inputStyle} value={novo.naab} title="Código NAAB do touro (ex.: 7HO12345)" placeholder="Ex.: 7HO12345"
-              onChange={(e) => setNovo({ ...novo, naab: e.target.value })} /></div>
-          <div><label style={labelStyle}>Central</label>
-            <input style={inputStyle} value={novo.central} title="Central de genética — ex.: ABS, Alta, Semex" placeholder="Ex.: ABS, Alta, Semex"
+            <input style={inputStyle} value={novo.naab} title="Código NAAB do touro (ex.: 7HO12345). A central é detectada pelo número inicial do código." placeholder="Ex.: 7HO12345"
+              onChange={(e) => {
+                const central = centralPorCodigoNaab(e.target.value);
+                setNovo((n) => ({ ...n, naab: e.target.value, central: central && !n.central ? central : n.central }));
+              }} /></div>
+          <div><label style={labelStyle}>Central (NAAB)</label>
+            <input style={inputStyle} value={novo.central} list="naab-centrais" title="Central de genética oficial da NAAB — preenchida automaticamente pelo código NAAB, ou escolha na lista" placeholder="Central oficial NAAB"
               onChange={(e) => setNovo({ ...novo, central: e.target.value })} /></div>
           <div><label style={labelStyle}>Tipo</label>
             <select style={inputStyle} value={novo.tipo} title="Tipo de sêmen" onChange={(e) => setNovo({ ...novo, tipo: e.target.value })}>
@@ -189,9 +201,12 @@ export default function CadastroEstoqueSemen() {
                           onChange={(e) => setEditForm({ ...editForm, touro_nome: e.target.value })} /></td>
                         <td><input style={cellInputStyle} value={editForm.codigo} title="Código do touro"
                           onChange={(e) => setEditForm({ ...editForm, codigo: e.target.value })} /></td>
-                        <td><input style={cellInputStyle} value={editForm.naab} title="Código NAAB do touro"
-                          onChange={(e) => setEditForm({ ...editForm, naab: e.target.value })} /></td>
-                        <td><input style={cellInputStyle} value={editForm.central} title="Central de genética"
+                        <td><input style={cellInputStyle} value={editForm.naab} title="Código NAAB do touro — a central é detectada pelo número inicial"
+                          onChange={(e) => {
+                            const central = centralPorCodigoNaab(e.target.value);
+                            setEditForm((f) => ({ ...f, naab: e.target.value, central: central && !f.central ? central : f.central }));
+                          }} /></td>
+                        <td><input style={cellInputStyle} value={editForm.central} list="naab-centrais" title="Central oficial NAAB"
                           onChange={(e) => setEditForm({ ...editForm, central: e.target.value })} /></td>
                         <td><select style={cellInputStyle} value={editForm.tipo} title="Tipo de sêmen"
                           onChange={(e) => setEditForm({ ...editForm, tipo: e.target.value })}>
