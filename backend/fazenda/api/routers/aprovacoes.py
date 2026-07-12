@@ -11,6 +11,7 @@ import json
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, get_current_user
@@ -56,6 +57,27 @@ def contar_pendentes(session: Session = Depends(get_session)) -> dict:
     """Quantidade de pendências (para o sininho de notificações)."""
     total = len(session.exec(select(LancamentoPendente).where(LancamentoPendente.status == "pendente")).all())
     return {"pendentes": total}
+
+
+class EditarPendenteIn(BaseModel):
+    dados: dict
+
+
+@router.put("/{pendente_id}")
+def editar(pendente_id: int, entrada: EditarPendenteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+    """Corrige os dados de um lançamento pendente antes de aprovar (ex.: trocar
+    uma unidade digitada errada). Só enquanto está pendente."""
+    p = session.get(LancamentoPendente, pendente_id)
+    if not p:
+        raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    if p.status != "pendente":
+        raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
+    p.payload = json.dumps(entrada.dados)
+    p.resumo = fx.montar_resumo(p.tipo, entrada.dados)
+    p.erro = None
+    session.add(p)
+    session.commit()
+    return _dto(p)
 
 
 @router.post("/{pendente_id}/aprovar")

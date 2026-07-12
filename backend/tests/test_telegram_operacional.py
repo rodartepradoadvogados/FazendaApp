@@ -133,6 +133,30 @@ def test_contagem_pendentes(ctx):
     assert c.get("/aprovacoes/contagem").json()["pendentes"] == 1
 
 
+def test_sanidade_unidade_por_botao_e_editar_pendente(ctx):
+    c, engine, _ = ctx
+    _cb(c, "flow:sanidade")
+    _msg(c, "403")            # animais
+    _msg(c, "11/07/2026")     # data
+    _msg(c, "Borgal")         # produto
+    _msg(c, "40")             # quantidade
+    _cb(c, "ans:0")           # unidade por botão (índice 0 = "ml") → finaliza
+
+    with Session(engine) as s:
+        pend = s.exec(select(LancamentoPendente)).first()
+        assert pend and pend.tipo == "sanidade"
+        dados = json.loads(pend.payload)
+        assert dados["unidade"] == "ml"      # veio da lista, não texto livre
+        pid = pend.id
+
+    # Editar a pendência (corrigir o produto) antes de aprovar.
+    novos = {**dados, "produto": "Borgal SC"}
+    r = c.put(f"/aprovacoes/{pid}", json={"dados": novos})
+    assert r.status_code == 200, r.text
+    with Session(engine) as s:
+        assert json.loads(s.get(LancamentoPendente, pid).payload)["produto"] == "Borgal SC"
+
+
 def test_erro_ao_processar_nao_trava_webhook(ctx, monkeypatch):
     """Um erro ao tratar a mensagem deve responder 200 (para não travar a fila
     do Telegram) e avisar o usuário com o detalhe técnico."""

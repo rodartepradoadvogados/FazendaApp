@@ -1230,6 +1230,14 @@ export async function fetchAprovacoesContagem(): Promise<{ pendentes: number }> 
   return res.json();
 }
 
+export async function editarLancamentoPendente(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/aprovacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dados }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar"); }
+  return res.json();
+}
+
 export async function aprovarLancamento(id: number) {
   const res = await authFetch(`${API}/aprovacoes/${id}/aprovar`, { method: "POST" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar"); }
