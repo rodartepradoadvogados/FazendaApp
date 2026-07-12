@@ -250,3 +250,58 @@ class TestAgendaEBaixaAutomatica:
             assert item.quantidade == 50.0  # sem baixa — unidade incompatível
             sanidade = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "700")).first()
             assert sanidade is not None  # aplicação ainda é registrada em Sanidade
+
+
+class TestCadastroPorCriterio:
+    """Cadastro por princípio ativo/classificação → escolher o medicamento no
+    lançamento → baixa usa o medicamento escolhido."""
+
+    def test_medicamentos_filtra_por_classificacao(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Terramicina", quantidade=100, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.add(Estoque(nome="Banamine", quantidade=100, unidade="ml", classificacao_medicamento="Anti-inflamatório"))
+            s.commit()
+        r = c.get("/estoque/medicamentos", params={"classificacao": "Antibiótico"})
+        assert r.status_code == 200
+        nomes = [m["nome"] for m in r.json()]
+        assert nomes == ["Terramicina"]
+
+    def test_lancar_por_classificacao_exige_escolha_e_baixa_o_escolhido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Terramicina", quantidade=100, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.commit()
+        # Protocolo cuja etapa é definida por classificação (não um medicamento fixo).
+        r = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Antibioticoterapia", "etapas": [
+                {"dia": 1, "criterio_tipo": "classificacao", "produto": "Antibiótico", "dosagem": 5.0, "unidade": "ml", "via": "Intramuscular"},
+            ],
+        })
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        etapa_id = r.json()["etapas"][0]["id"]
+
+        # Sem escolher o medicamento → 400.
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2025-12-01",
+        })
+        assert r.status_code == 400
+
+        # Escolhendo o medicamento da classificação → ok.
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2025-12-01",
+            "escolhas_medicamento": {str(etapa_id): "Terramicina"},
+        })
+        assert r.status_code == 201, r.text
+
+        eventos = c.get("/agenda/", params={"data": "2025-12-01", "dias": 60}).json()["eventos"]
+        alvo = next(e for e in eventos if e["id"].startswith("protocolo_sanitario_"))
+        assert "Terramicina" in alvo["descricao"]
+        c.post("/agenda/realizados", json={"evento_id": alvo["id"]})
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Terramicina")).first()
+            assert item.quantidade == 95.0  # baixou 5 ml do medicamento escolhido
+            san = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "700")).first()
+            assert san.produto == "Terramicina"

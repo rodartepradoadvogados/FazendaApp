@@ -659,6 +659,8 @@ class EstoqueMetaIn(BaseModel):
     fornecedor_id: int | None = None
     estocavel: bool | None = None
     considerar_rmca: bool | None = None
+    principio_ativo: str | None = None
+    classificacao_medicamento: str | None = None
 
 
 @router.get("/estoque-itens")
@@ -684,6 +686,8 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
     item.considerar_rmca = dados.considerar_rmca
+    item.principio_ativo = dados.principio_ativo
+    item.classificacao_medicamento = dados.classificacao_medicamento
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -932,11 +936,14 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
 # ---------------------------------------------------------------------------
 VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]
+CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao"]
+CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
 
 
 class ProtocoloEtapaIn(BaseModel):
     dia: int
-    produto: str
+    criterio_tipo: str = "medicamento"  # medicamento | principio_ativo | classificacao
+    produto: str  # medicamento OU o valor do critério (princípio ativo / classificação)
     dosagem: float
     unidade: str
     via: str | None = None
@@ -963,6 +970,10 @@ def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
             raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
         if e.via and e.via not in VIAS_APLICACAO:
             raise HTTPException(status_code=400, detail=f"Via inválida — use uma de: {', '.join(VIAS_APLICACAO)}")
+        if e.criterio_tipo not in CRITERIOS_MEDICAMENTO:
+            raise HTTPException(status_code=400, detail=f"Critério inválido — use um de: {', '.join(CRITERIOS_MEDICAMENTO)}")
+        if not (e.produto or "").strip():
+            raise HTTPException(status_code=400, detail="Informe o medicamento, princípio ativo ou classificação de cada etapa")
 
 
 def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict[int, str]) -> dict:

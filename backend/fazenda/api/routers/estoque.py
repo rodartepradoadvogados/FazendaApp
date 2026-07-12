@@ -59,6 +59,8 @@ class EstoqueIn(BaseModel):
     exibir_necessidade_compra_agenda: bool = False
     estocavel: bool = True
     data_inicio_controle: date | None = None
+    principio_ativo: str | None = None
+    classificacao_medicamento: str | None = None
 
 
 def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
@@ -101,11 +103,34 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
         estocavel=dados.estocavel,
         data_inicio_controle=dados.data_inicio_controle if dados.estocavel else None,
+        principio_ativo=dados.principio_ativo,
+        classificacao_medicamento=dados.classificacao_medicamento,
     )
     session.add(item)
     session.commit()
     session.refresh(item)
     return item.model_dump()
+
+
+@router.get("/medicamentos")
+def listar_medicamentos(
+    principio_ativo: str = "", classificacao: str = "",
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Medicamentos (itens de estoque) que cumprem um critério — usado ao
+    lançar um protocolo cadastrado por princípio ativo ou por classificação."""
+    itens = session.exec(select(Estoque)).all()
+    saida = []
+    for e in itens:
+        if principio_ativo and (e.principio_ativo or "").strip().lower() != principio_ativo.strip().lower():
+            continue
+        if classificacao and (e.classificacao_medicamento or "").strip().lower() != classificacao.strip().lower():
+            continue
+        saida.append({
+            "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
+            "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
+        })
+    return sorted(saida, key=lambda x: x["nome"])
 
 
 @router.get("/movimentos")
