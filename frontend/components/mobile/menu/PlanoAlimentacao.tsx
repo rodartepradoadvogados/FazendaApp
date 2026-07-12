@@ -10,6 +10,9 @@ type Item = { ingrediente?: string | null; por_cabeca?: number | null; unidade?:
 type Lote = { lote: number; categoria?: string | null; efetivo: number; itens: Item[] };
 type Resposta = { por_lote: Lote[]; consumo_total: unknown[] };
 
+// Nº de tratos por dia (fornecimentos) — hoje são 2.
+const NUM_TRATOS = 2;
+
 function num(v?: number | null): string {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { maximumFractionDigits: 2 });
@@ -23,6 +26,9 @@ export default function PlanoAlimentacao({ onVoltar }: { onVoltar: () => void })
     <div>
       <MobVoltar titulo="Plano por Lote" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_plano_alimentacao" mostrar={doCache} />
+      <p style={{ fontSize: "0.75rem", color: "var(--mob-muted)", margin: "0 0 0.6rem" }}>
+        <strong style={{ color: "var(--mob-verde)" }}>/trato</strong> = quantidade por fornecimento ({NUM_TRATOS} tratos/dia).
+      </p>
 
       {carregando && !dados ? (
         <Carregando />
@@ -48,7 +54,10 @@ export default function PlanoAlimentacao({ onVoltar }: { onVoltar: () => void })
                 <div key={i} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", padding: "0.45rem 0", borderTop: "1px solid var(--mob-border)" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.92rem", flex: 1, minWidth: 0 }}>{it.ingrediente || "—"}</span>
                   <span style={{ textAlign: "right", flexShrink: 0 }}>
-                    <span style={{ display: "block", fontWeight: 800, fontSize: "0.95rem", color: "var(--mob-ambar)" }}>
+                    <span style={{ display: "block", fontWeight: 800, fontSize: "1rem", color: "var(--mob-verde)" }}>
+                      {num(it.consumo_dia != null ? it.consumo_dia / NUM_TRATOS : null)} {it.unidade || ""}/trato
+                    </span>
+                    <span style={{ display: "block", fontWeight: 700, fontSize: "0.85rem", color: "var(--mob-ambar)" }}>
                       {num(it.consumo_dia)} {it.unidade || ""}/dia
                     </span>
                     <span style={{ display: "block", fontSize: "0.74rem", color: "var(--mob-muted)" }}>

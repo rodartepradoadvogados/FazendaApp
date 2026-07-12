@@ -137,6 +137,14 @@ def alimentos_padrao() -> list[str]:
     return ALIMENTOS_PADRAO
 
 
+@router.get("/tabela-nutricional")
+def obter_tabela_nutricional() -> dict:
+    """Tabela nutricional de referência (nutriente × alimento) — para o veterinário
+    consultar num modal, com calculadora ao lado."""
+    from fazenda.rules.tabela_nutricional import tabela_nutricional
+    return tabela_nutricional()
+
+
 class ItemProgramadoIn(BaseModel):
     alimento: str
     quantidade: float

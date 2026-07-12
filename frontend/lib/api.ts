@@ -805,6 +805,11 @@ export async function fetchAlimentosPadrao() {
   if (!res.ok) throw new Error(`Alimentos padrão error: ${res.status}`);
   return res.json();
 }
+export async function fetchTabelaNutricional() {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tabela nutricional error: ${res.status}`);
+  return res.json() as Promise<{ alimentos: string[]; linhas: string[][] }>;
+}
 
 export async function fetchDietas(filtros?: { lote?: number; ativo?: boolean }) {
   const params = new URLSearchParams();
