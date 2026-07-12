@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import CompraAnimal, ContaGerencial
+from fazenda.models import Animal, CompraAnimal, ContaGerencial
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
@@ -102,6 +102,16 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session)) -
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,
         ))
+        # Vincula o valor da compra à ficha do animal (para o relatório de
+        # payback quando ele produzir). Preenche data de entrada e vendedor.
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if animal:
+            animal.valor = valor_unitario
+            if not animal.data_entrada:
+                animal.data_entrada = dados.data_compra
+            if not animal.proprietario:
+                animal.proprietario = dados.vendedor
+            session.add(animal)
         comprados.append(numero)
 
     session.commit()

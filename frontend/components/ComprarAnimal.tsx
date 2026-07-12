@@ -39,6 +39,8 @@ export default function ComprarAnimal() {
   const [valorComissao, setValorComissao] = useState("");
   const [formaComissao, setFormaComissao] = useState("redirecionado");
   const corretores = useMemo(() => fornecedores.filter((f) => f.tipo === "corretor" && f.ativo).map((f) => f.nome), [fornecedores]);
+  // Vendedor = fornecedor (exceto corretores). Ativos, ordenados por nome.
+  const vendedores = useMemo(() => fornecedores.filter((f) => f.tipo !== "corretor" && f.ativo).map((f) => f.nome).sort((a, b) => a.localeCompare(b)), [fornecedores]);
 
   const [historico, setHistorico] = useState<Compra[] | null>(null);
 
@@ -101,8 +103,12 @@ export default function ComprarAnimal() {
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-          <div><label style={labelStyle}>Vendedor</label>
-            <input style={selStyle} value={vendedor} onChange={(e) => setVendedor(e.target.value)} placeholder="ex.: Fazenda Y" /></div>
+          <div><label style={labelStyle}>Vendedor (fornecedor)</label>
+            <select style={selStyle} value={vendedor} onChange={(e) => setVendedor(e.target.value)}>
+              <option value="">Selecione o fornecedor…</option>
+              {vendedores.map((v) => <option key={v} value={v}>{v}</option>)}
+            </select>
+            {!vendedores.length && <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.2rem" }}>Cadastre fornecedores em Configurações → Cadastro → Pessoas/Fornecedores.</p>}</div>
           <div><label style={labelStyle}>Data da compra</label>
             <input type="date" style={selStyle} value={dataCompra} onChange={(e) => setDataCompra(e.target.value)} /></div>
         </div>
