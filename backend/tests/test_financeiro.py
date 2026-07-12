@@ -565,3 +565,43 @@ class TestRmca:
         fisico = r.json()["fisico"]
         assert fisico["custo_alimentacao"] == 1000.0  # só a Ração — o Medicamento X ficou de fora
         assert [i["ingrediente"] for i in fisico["itens"]] == ["Ração concentrada"]
+
+
+class TestBaixaLoteDetalhada:
+    """Baixa em lote com pagamento diferente por nota (data/valor/conta/forma
+    por linha)."""
+
+    def _criar(self, c, valor):
+        return c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Ração", "quantidade": 1, "valor_unitario": valor, "valor_total": valor}],
+        }).json()["ids"][0]
+
+    def test_cada_nota_com_seu_proprio_pagamento(self, client):
+        c, engine = client
+        id1 = self._criar(c, 500.0)
+        id2 = self._criar(c, 800.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {"lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 500.0, "conta_bancaria": "Banco A", "forma_pagamento": "pix"},
+            {"lancamento_id": id2, "data_pagamento": "2026-07-10", "valor_pago": 780.0, "conta_bancaria": "Banco B", "forma_pagamento": "dinheiro"},
+        ]})
+        assert r.status_code == 200 and r.json()["baixados"] == 2
+        lancs = {l["id"]: l for l in c.get("/financeiro/lancamentos").json()["lancamentos"]}
+        assert lancs[id1]["data_pagamento"] == "2026-07-08" and lancs[id1]["conta_bancaria"] == "Banco A"
+        assert lancs[id2]["data_pagamento"] == "2026-07-10" and lancs[id2]["conta_bancaria"] == "Banco B"
+        assert lancs[id2]["valor_pago"] == 780.0
+        # Valor pago menor que o total vira desconto (−20).
+        assert lancs[id2]["desconto_acrescimo"] == -20.0
+
+    def test_credito_por_linha_exige_vencimento(self, client):
+        c, engine = client
+        id1 = self._criar(c, 300.0)
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": [
+            {"lancamento_id": id1, "data_pagamento": "2026-07-08", "valor_pago": 300.0, "forma_pagamento": "credito"},
+        ]})
+        assert r.status_code == 400
+
+    def test_sem_itens_da_erro(self, client):
+        c, engine = client
+        r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": []})
+        assert r.status_code == 400
