@@ -21,10 +21,13 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
-    PesagemCorporal, PesoAlvoIdade,
+    Parto, PesagemCorporal, PesoAlvoIdade, Servico,
 )
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
+)
+from fazenda.rules.reproducao_dossie import (
+    DIAS_MES, custo_recria_excedente, distribuicao_idade_parto, estatisticas_idade_parto, taxa_prenhez_ciclos,
 )
 
 router = APIRouter(prefix="/recria", tags=["recria"])
@@ -132,6 +135,66 @@ def crescimento_peso_alvo(session: Session = Depends(get_session)) -> dict:
             "dentro_do_alvo": dentro,
         })
     return {"linhas": linhas}
+
+
+# --- Pilar Reprodução ------------------------------------------------------
+@router.get("/reproducao/idade-parto")
+def reproducao_idade_parto(session: Session = Depends(get_session)) -> dict:
+    """Relatório Wisconsin: estatística da idade ao 1º parto + distribuição +
+    custo de recria excedente (usa a meta e o custo diário cadastrados)."""
+    nasc = _nascimentos(session)
+    # 1º parto de cada animal = parto de ordem 1, ou o mais antigo se não houver ordem.
+    primeiro: dict[str, date] = {}
+    for p in session.exec(select(Parto)).all():
+        if not p.data_parto or not p.numero_matriz:
+            continue
+        num = p.numero_matriz
+        if p.ordem_parto == 1:
+            primeiro[num] = p.data_parto
+        elif num not in primeiro or p.data_parto < primeiro[num]:
+            primeiro.setdefault(num, p.data_parto)
+            if p.data_parto < primeiro[num]:
+                primeiro[num] = p.data_parto
+
+    idades = []
+    for num, dparto in primeiro.items():
+        dn = nasc.get(num)
+        if dn:
+            idades.append((dparto - dn).days / DIAS_MES)
+
+    meta = session.get(MetaRecria, 1) or MetaRecria(id=1)
+    return {
+        "meta_idade_parto": meta.idade_parto_meses,
+        "estatisticas": estatisticas_idade_parto(idades),
+        "distribuicao": distribuicao_idade_parto(idades),
+        "custo_excedente": custo_recria_excedente(idades, meta.idade_parto_meses, meta.custo_diario_recria),
+    }
+
+
+@router.get("/reproducao/taxa-prenhez")
+def reproducao_taxa_prenhez(
+    ini: date, fim: date, vwp_dias: int = 0, session: Session = Depends(get_session),
+) -> dict:
+    """Taxa de Prenhez em ciclos de 21 dias (Taxa de Serviço × Concepção)."""
+    servicos = []
+    for s in session.exec(select(Servico)).all():
+        if not s.data_servico:
+            continue
+        servicos.append({
+            "numero": s.numero_matriz,
+            "data_servico": s.data_servico,
+            "prenhe": (s.diagnostico or "").strip().upper() == "POSITIVO",
+            "elegivel_desde": s.data_ult_parto,
+        })
+    ciclos = taxa_prenhez_ciclos(servicos, ini, fim, vwp_dias)
+    # Resumo do período: PR média ponderada pelos elegíveis.
+    tot_el = sum(c["elegiveis"] for c in ciclos)
+    tot_pr = sum((c["taxa_prenhez"] or 0) * c["elegiveis"] for c in ciclos)
+    return {
+        "ciclos": ciclos,
+        "taxa_prenhez_media": round(tot_pr / tot_el, 1) if tot_el else None,
+        "total_servicos": len(servicos),
+    }
 
 
 # --- Ocorrências clínicas (lançamento) -------------------------------------
