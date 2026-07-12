@@ -163,15 +163,18 @@ def compatibilizar_estoque(session: Session) -> dict:
 
 
 def bootstrap_farmacia(session: Session) -> None:
-    """Roda o seed do catálogo e a compatibilização do estoque uma única vez
-    (guardado por SeedFlag). Seguro para rodar em todo start — não repete."""
-    chave = "farmacia_principios_v1"
-    if session.get(SeedFlag, chave):
-        return
+    """Garante o catálogo de princípios ativos/marcas e compatibiliza o estoque.
+
+    O SEED DO CATÁLOGO roda em TODO start: é add-missing e idempotente (só cria o
+    que falta, preenche apenas campos vazios), então novos princípios do documento
+    base entram sem depender de flag de versão — corrige bancos que semearam antes
+    do catálogo estar completo. A compatibilização do estoque legado roda uma vez."""
     seed_farmacia(session)
-    compatibilizar_estoque(session)
-    session.add(SeedFlag(chave=chave))
-    session.commit()
+    chave = "farmacia_compat_v2"
+    if not session.get(SeedFlag, chave):
+        compatibilizar_estoque(session)
+        session.add(SeedFlag(chave=chave))
+        session.commit()
 
 
 # ── Gatilho de comunicação ──────────────────────────────────────────────────

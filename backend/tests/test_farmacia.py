@@ -200,3 +200,22 @@ class TestGatilhoQualFrasco:
         with Session(engine) as s:
             assert s.get(Estoque, item_id).quantidade == 90.0
             assert s.exec(select(MovimentoEstoque).where(MovimentoEstoque.movimento == "Estoque inicial")).first() is not None
+
+
+def test_bootstrap_popula_catalogo_completo_idempotente():
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine, select
+    from fazenda.models import PrincipioAtivo, MedicamentoComercial
+    from fazenda.rules.farmacia import bootstrap_farmacia
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as s:
+        bootstrap_farmacia(s)
+        bootstrap_farmacia(s)  # roda de novo: não pode duplicar
+        pas = s.exec(select(PrincipioAtivo)).all()
+        marcas = s.exec(select(MedicamentoComercial)).all()
+        assert len(pas) == 38
+        assert all(p.categoria_software for p in pas)   # todas com característica
+        assert len(marcas) == 111
+        mel = next(p for p in pas if p.nome == "Meloxicam")
+        assert mel.categoria_software == "AINE" and mel.uso_principal
