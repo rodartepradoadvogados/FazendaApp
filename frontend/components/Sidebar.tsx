@@ -83,9 +83,11 @@ export function Sidebar() {
 
   return (
     <>
-      {/* Barra superior — só no mobile */}
-      <div className="md:hidden flex items-center gap-3 px-4 py-3 sticky top-0 z-30"
-        style={{ background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)" }}>
+      {/* Barra superior — só no mobile. FIXA no topo (position: fixed) para não
+          sumir ao rolar a página; sticky não segura aqui porque os ancestrais
+          têm overflow-x: hidden (que vira scroll-container e quebra o sticky). */}
+      <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
+        style={{ height: "3.25rem", background: "var(--sidebar-bg)", borderBottom: "1px solid var(--sidebar-border)" }}>
         <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu de navegação"
           style={{ background: "none", border: "none", color: "var(--sidebar-fg)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
@@ -94,6 +96,8 @@ export function Sidebar() {
         <span style={{ color: "var(--sidebar-logo-fg)", fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.05em" }}>FAZENDA</span>
         <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· Jairo Nasser</span>
       </div>
+      {/* Espaçador: reserva a altura da barra fixa para o conteúdo não ficar por baixo dela. */}
+      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
 
       {/* Fundo escuro atrás do drawer aberto (mobile) */}
       {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}

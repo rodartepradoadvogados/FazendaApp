@@ -577,6 +577,23 @@ export async function criarAplicacaoSanidade(dados: {
   return res.json();
 }
 
+export async function editarAplicacaoSanidade(id: number, dados: {
+  data_aplicacao?: string; produto?: string; dose?: number | null; unidade?: string | null;
+  via?: string | null; responsavel?: string | null; obs?: string | null;
+}) {
+  const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar aplicação"); }
+  return res.json();
+}
+
+export async function excluirAplicacaoSanidade(id: number) {
+  const res = await authFetch(`${API}/sanidade/aplicacoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir aplicação"); }
+  return res.json();
+}
+
 // ── Princípio ativo / Doença / Evento sanitário (Configurações > Cadastro) ──
 function _crudNomeAtivo(caminho: string, rotulo: string) {
   return {

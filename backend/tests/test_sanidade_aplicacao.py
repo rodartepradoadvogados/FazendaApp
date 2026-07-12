@@ -126,6 +126,15 @@ class TestRegistrarAplicacao:
         item = next(i for i in estoque if i["nome"] == "Serviço veterinário")
         assert item["quantidade"] == 0
 
+    def test_lista_traz_id_para_editar_excluir(self, client):
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Vacina X", "quantidade": 1, "unidade": "unidade"}],
+        })
+        aplic = client.get("/sanidade/aplicacoes").json()["aplicacoes"]
+        assert len(aplic) == 1
+        assert isinstance(aplic[0]["id"], int)
+
     def test_baixa_direta_gera_movimento_de_estoque(self, client):
         # Antes, a baixa direta mexia em Estoque.quantidade sem deixar rastro
         # em MovimentoEstoque — ficava invisível no histórico/RMCA físico.
@@ -138,3 +147,44 @@ class TestRegistrarAplicacao:
         assert len(movimentos) == 1
         assert movimentos[0]["movimento"] == "Aplicação"
         assert movimentos[0]["quantidade"] == 20  # 10ml * 2 animais
+
+
+class TestEditarExcluirAplicacao:
+    def _criar(self, client):
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Vacina X", "quantidade": 1, "unidade": "unidade"}],
+        })
+        return client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]["id"]
+
+    def test_editar_produto_e_dose(self, client):
+        aid = self._criar(client)
+        r = client.put(f"/sanidade/aplicacoes/{aid}", json={"produto": "Vacina Y", "dose": 2})
+        assert r.status_code == 200, r.text
+        aplic = client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]
+        assert aplic["produto"] == "Vacina Y"
+        assert aplic["dose"] == 2
+
+    def test_editar_unidade_incompativel_da_400(self, client):
+        # Cria com Borgal (estoque em ml) para haver checagem de compatibilidade.
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        aid = client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]["id"]
+        r = client.put(f"/sanidade/aplicacoes/{aid}", json={"unidade": "L"})
+        assert r.status_code == 400
+
+    def test_editar_inexistente_da_404(self, client):
+        r = client.put("/sanidade/aplicacoes/99999", json={"produto": "X"})
+        assert r.status_code == 404
+
+    def test_excluir_aplicacao(self, client):
+        aid = self._criar(client)
+        r = client.delete(f"/sanidade/aplicacoes/{aid}")
+        assert r.status_code == 200
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
+
+    def test_excluir_inexistente_da_404(self, client):
+        r = client.delete("/sanidade/aplicacoes/99999")
+        assert r.status_code == 404

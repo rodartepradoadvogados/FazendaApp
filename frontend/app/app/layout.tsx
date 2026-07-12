@@ -5,7 +5,7 @@
 // internet) e liga a sincronização automática da fila offline.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { CalendarCheck, PlusCircle, Beef, Menu as MenuIcon, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
@@ -23,6 +23,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const online = useOnline();
   const fila = usePendentes();
   const [escuro, setEscuro] = useState(false);
+  // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
+  // faixa de segurança do topo (notch) — para reservar o mesmo espaço abaixo.
+  const headerRef = useRef<HTMLElement | null>(null);
+  const [alturaHeader, setAlturaHeader] = useState(64);
 
   // Tema: no app só existe claro (alto contraste) e escuro (OLED); o "misto"
   // do site é tratado como claro aqui.
@@ -35,6 +39,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     aplicarTema(novo as "claro" | "escuro");
   }
 
+  // Mede a altura do cabeçalho fixo e mantém o espaçador sincronizado.
+  useEffect(() => {
+    const medir = () => { if (headerRef.current) setAlturaHeader(headerRef.current.offsetHeight); };
+    medir();
+    window.addEventListener("resize", medir);
+    return () => window.removeEventListener("resize", medir);
+  }, [fila.length]);
+
   // Service worker (abrir offline) + sincronização automática da fila.
   useEffect(() => {
     if ("serviceWorker" in navigator) {
@@ -45,8 +57,8 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mob">
-      {/* Cabeçalho vinho */}
-      <header style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "0 0 18px 18px", position: "sticky", top: 0, zIndex: 40 }}>
+      {/* Cabeçalho vinho — FIXO no topo (não some ao rolar no celular). */}
+      <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "0 0 18px 18px", position: "fixed", top: 0, left: 0, right: 0, zIndex: 40 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ fontWeight: 800, letterSpacing: "0.06em", fontSize: "1rem", color: "var(--mob-dourado-2)", display: "flex", alignItems: "center", gap: "0.45rem" }}>
@@ -77,6 +89,9 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      {/* Espaçador da altura do cabeçalho fixo — evita que o conteúdo comece por baixo dele. */}
+      <div aria-hidden="true" style={{ height: alturaHeader }} />
 
       {/* Conteúdo da aba */}
       <main className="mob-conteudo">

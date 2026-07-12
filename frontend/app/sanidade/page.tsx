@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, formatDate } from "@/lib/api";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -100,12 +100,14 @@ function CalendarioSanitarioView() {
 }
 
 type Aplic = {
-  numero: string; raca: string; produto: string; categoria: string;
-  dose: number | null; atividade: string | null; obs: string | null;
+  id: number; numero: string; raca: string; produto: string; categoria: string;
+  dose: number | null; unidade: string | null; via: string | null; responsavel: string | null;
+  atividade: string | null; obs: string | null;
   data: string | null; ano: number | null; mes: string | null;
 };
 
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
+const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
 function AplicacoesView() {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
@@ -115,8 +117,50 @@ function AplicacoesView() {
   const [fim, setFim] = useState("");
   const [buscaProd, setBuscaProd] = useState("");
   const [buscaAnimal, setBuscaAnimal] = useState("");
+  const [editId, setEditId] = useState<number | null>(null);
+  const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
+  const [ocupado, setOcupado] = useState<number | null>(null);
+  const admin = ehAdmin();
 
-  useEffect(() => { fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch((e) => setError(e.message)); }, []);
+  const carregar = () => fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const iniciarEdicao = (a: Aplic) => {
+    setEditId(a.id);
+    setEditVals({
+      data: a.data ?? "", produto: a.produto ?? "", dose: a.dose == null ? "" : String(a.dose),
+      unidade: a.unidade ?? "", via: a.via ?? "", responsavel: a.responsavel ?? "", obs: a.obs ?? "",
+    });
+    setError(null);
+  };
+
+  const salvarEdicao = async (a: Aplic) => {
+    setOcupado(a.id); setError(null);
+    try {
+      await editarAplicacaoSanidade(a.id, {
+        data_aplicacao: editVals.data || undefined,
+        produto: editVals.produto.trim() || undefined,
+        dose: editVals.dose.trim() === "" ? null : Number(editVals.dose),
+        unidade: editVals.unidade || null,
+        via: editVals.via.trim() || null,
+        responsavel: editVals.responsavel.trim() || null,
+        obs: editVals.obs.trim() || null,
+      });
+      setEditId(null);
+      await carregar();
+    } catch (e: any) { setError(e.message); }
+    finally { setOcupado(null); }
+  };
+
+  const excluir = async (a: Aplic) => {
+    if (!window.confirm(`Excluir a aplicação de "${a.produto}" no animal ${a.numero}? Isso não pode ser desfeito.`)) return;
+    setOcupado(a.id); setError(null);
+    try {
+      await excluirAplicacaoSanidade(a.id);
+      await carregar();
+    } catch (e: any) { setError(e.message); }
+    finally { setOcupado(null); }
+  };
 
   const opc = (f: (a: Aplic) => string | null) => {
     const s = new Set<string>(); (regs ?? []).forEach((a) => { const v = f(a); if (v) s.add(v); });
@@ -250,17 +294,63 @@ function AplicacoesView() {
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th></tr></thead>
+                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
                 <tbody>
-                  {filtrados.slice(0, 300).map((a, i) => (
-                    <tr key={i}>
-                      <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                      <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
-                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
-                      <td style={{ textAlign: "right" }}>{a.dose ?? "—"}</td>
-                    </tr>
-                  ))}
+                  {filtrados.slice(0, 300).map((a) => {
+                    const editando = editId === a.id;
+                    const inp: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "5px", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
+                    return (
+                    <Fragment key={a.id}>
+                      <tr>
+                        <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{a.data ? new Date(a.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                        <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
+                        <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
+                        <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
+                        {admin && (
+                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                            {!editando && (
+                              <span style={{ display: "inline-flex", gap: "0.3rem" }}>
+                                <button title="Editar" onClick={() => iniciarEdicao(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>
+                                <button title="Excluir" disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                              </span>
+                            )}
+                          </td>
+                        )}
+                      </tr>
+                      {editando && (
+                        <tr>
+                          <td colSpan={admin ? 6 : 5} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
+                                <input type="date" style={inp} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Produto</label>
+                                <input style={inp} value={editVals.produto} onChange={(e) => setEditVals((s) => ({ ...s, produto: e.target.value }))} /></div>
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Dose</label>
+                                <input type="number" step="any" style={inp} value={editVals.dose} onChange={(e) => setEditVals((s) => ({ ...s, dose: e.target.value }))} /></div>
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Unidade</label>
+                                <select style={inp} value={editVals.unidade} onChange={(e) => setEditVals((s) => ({ ...s, unidade: e.target.value }))}>
+                                  <option value="">—</option>
+                                  {!UNIDADES_APLIC.includes(editVals.unidade) && editVals.unidade && <option value={editVals.unidade}>{editVals.unidade}</option>}
+                                  {UNIDADES_APLIC.map((u) => <option key={u} value={u}>{u}</option>)}
+                                </select></div>
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Via</label>
+                                <input style={inp} value={editVals.via} onChange={(e) => setEditVals((s) => ({ ...s, via: e.target.value }))} /></div>
+                              <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Responsável</label>
+                                <input style={inp} value={editVals.responsavel} onChange={(e) => setEditVals((s) => ({ ...s, responsavel: e.target.value }))} /></div>
+                              <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Observação</label>
+                                <input style={inp} value={editVals.obs} onChange={(e) => setEditVals((s) => ({ ...s, obs: e.target.value }))} /></div>
+                            </div>
+                            <div className="flex gap-2 mt-2">
+                              <button className="btn-primary" disabled={ocupado === a.id} onClick={() => salvarEdicao(a)} style={{ fontSize: "0.78rem" }}><Check size={13} /> {ocupado === a.id ? "…" : "Salvar"}</button>
+                              <button className="btn-ghost" disabled={ocupado === a.id} onClick={() => setEditId(null)} style={{ fontSize: "0.78rem" }}><X size={13} /> Cancelar</button>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </Fragment>
+                    );
+                  })}
                 </tbody>
               </table>
               {filtrados.length > 300 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 300 de {filtrados.length} — refine os filtros.</p>}

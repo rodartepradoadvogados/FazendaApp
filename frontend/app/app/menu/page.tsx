@@ -14,12 +14,13 @@ import { MobTitulo } from "@/components/mobile/ui";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
+import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
 import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "plano" | "manejo" | "indicadores" | "aprovacoes";
+type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "manejo" | "indicadores" | "aprovacoes";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
 type Grupo = { secao: string; itens: Item[] };
 
@@ -30,6 +31,7 @@ const GRUPOS: Grupo[] = [
   ] },
   { secao: "Sanidade", itens: [
     { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={18} /> },
+    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={18} />, soAdmin: true },
   ] },
   { secao: "Alimentação", itens: [
     { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={18} /> },
@@ -45,6 +47,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   agendaVet: AgendaVet,
   iatf: ProtocolosIatf,
   calendario: CalendarioSanitario,
+  aplicacoes: AplicacoesSanidade,
   plano: PlanoAlimentacao,
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
