@@ -490,3 +490,134 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session))
     session.commit()
     session.refresh(servico)
     return servico.model_dump()
+
+
+def _nome_auto_iatf(d0: date) -> str:
+    """Nome padrão do protocolo IATF: 'IATF <D0> A <D11>' (datas dd/mm/aa)."""
+    d11 = d0 + timedelta(days=11)
+    return f"IATF {d0.strftime('%d/%m/%y')} A {d11.strftime('%d/%m/%y')}"
+
+
+def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
+                          tipo_servico: str, protocolo: str | None, reprodutor: str | None) -> Servico | None:
+    """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
+    commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
+    animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
+    if not animal:
+        return None
+    anteriores = session.exec(select(Servico).where(Servico.numero_matriz == numero_matriz)).all()
+    for s in anteriores:
+        if s.ult_ocorrencia == 1:
+            s.ult_ocorrencia = 0
+            session.add(s)
+    ultimo = max(anteriores, key=lambda s: s.data_servico or date.min, default=None)
+    ordem_tentativa = (ultimo.ordem_tentativa or 0) + 1 if ultimo else 1
+    intervalo = (data_servico - ultimo.data_servico).days if ultimo and ultimo.data_servico else None
+    servico = Servico(
+        animal_id=animal.id, numero_matriz=numero_matriz, raca_matriz=animal.raca,
+        data_nasc_matriz=animal.data_nasc, data_servico=data_servico, tipo_servico=tipo_servico,
+        protocolo=protocolo, reprodutor=reprodutor, ordem_tentativa=ordem_tentativa,
+        intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1,
+    )
+    session.add(servico)
+    if protocolo:
+        ap_d11 = session.exec(
+            select(ProtocoloIatfAplicacao)
+            .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
+            .where(
+                ProtocoloIatfAplicacao.numero_matriz == numero_matriz,
+                ProtocoloIatfAplicacao.dia == 11,
+                ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
+                ProtocoloIatfLancamento.nome_protocolo == protocolo,
+            )
+        ).first()
+        if ap_d11:
+            ap_d11.realizada = True
+            ap_d11.data_realizacao = data_servico
+            session.add(ap_d11)
+    return servico
+
+
+def _animal_tem_protocolo_pendente(session: Session, numero_matriz: str) -> ProtocoloIatfLancamento | None:
+    """Retorna o lançamento IATF com etapa pendente do animal (o mais recente)."""
+    ap = session.exec(
+        select(ProtocoloIatfAplicacao)
+        .where(ProtocoloIatfAplicacao.numero_matriz == numero_matriz, ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
+    ).all()
+    if not ap:
+        return None
+    lanc_ids = {a.lancamento_id for a in ap}
+    lancs = [l for l in (session.get(ProtocoloIatfLancamento, lid) for lid in lanc_ids) if l]
+    return max(lancs, key=lambda l: l.data_d0, default=None) if lancs else None
+
+
+class ServicoLoteIn(BaseModel):
+    animais: list[str]
+    data_servico: date
+    tipo: str  # "cio_natural" | "iatf" | "monta_natural"
+    reprodutor: str | None = None
+    responsavel: str | None = None
+    protocolo_lancamento_id: int | None = None  # IATF: vincular a este lançamento
+    auto_lancar_iatf: bool = False  # IATF: se não há protocolo, cria um retroativo (D0 = serviço − 11)
+
+
+@router.post("/servico-lote")
+def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Inseminação de vários animais de uma vez. `tipo` = cio_natural (IA sem
+    protocolo), iatf (IA vinculada a protocolo) ou monta_natural. No IATF, se o
+    animal não estiver em protocolo e `auto_lancar_iatf`, cria um protocolo
+    retroativo (D0 = data do serviço − 11) só para registrar/vincular — sem
+    hormônio. Animais IATF sem protocolo e sem auto-lançar entram em
+    `incompativeis` (a UI pergunta o que fazer).
+    """
+    if not dados.animais:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    if dados.tipo not in ("cio_natural", "iatf", "monta_natural"):
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+
+    tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
+    lanc_escolhido = session.get(ProtocoloIatfLancamento, dados.protocolo_lancamento_id) if dados.protocolo_lancamento_id else None
+
+    criados, incompativeis = 0, []
+    for numero in dados.animais:
+        protocolo_name: str | None = None
+        if dados.tipo == "iatf":
+            alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero)
+            if alvo is None and dados.auto_lancar_iatf:
+                d0 = dados.data_servico - timedelta(days=11)
+                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0)
+                session.add(alvo)
+                session.flush()
+                for dias, descricao in PASSOS_PROTOCOLO_IATF:
+                    session.add(ProtocoloIatfAplicacao(
+                        lancamento_id=alvo.id, numero_matriz=numero, dia=dias,
+                        descricao=descricao, data_prevista=d0 + timedelta(days=dias),
+                    ))
+            elif alvo is not None:
+                ja = session.exec(
+                    select(ProtocoloIatfAplicacao).where(
+                        ProtocoloIatfAplicacao.lancamento_id == alvo.id,
+                        ProtocoloIatfAplicacao.numero_matriz == numero,
+                    )
+                ).first()
+                if not ja:
+                    for dias, descricao in PASSOS_PROTOCOLO_IATF:
+                        session.add(ProtocoloIatfAplicacao(
+                            lancamento_id=alvo.id, numero_matriz=numero, dia=dias,
+                            descricao=descricao, data_prevista=alvo.data_d0 + timedelta(days=dias),
+                        ))
+            if alvo is None:
+                incompativeis.append(numero)
+                continue
+            session.flush()
+            protocolo_name = alvo.nome_protocolo
+
+        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor)
+        if s is None:
+            incompativeis.append(numero)
+        else:
+            criados += 1
+
+    session.commit()
+    return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}

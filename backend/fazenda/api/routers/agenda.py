@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, Animal, AplicacaoAgendada, ContaGerencial, DietaLancamento, Estoque, EventoRealizado, MovimentoEstoque, Parto,
+    AgendaManual, Animal, AplicacaoAgendada, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     Servico,
@@ -247,6 +247,29 @@ def calcular_agenda(
         "produto": a.produto, "dose": a.dose, "unidade": a.unidade, "via": a.via,
     } for a in aplic_agendadas if f"aplic_agendada_{a.id}" not in realizados]
 
+    # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
+    # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
+    # repor). Mínimos: convencional 20, sexado 5 (ver cadastro.MINIMO_SEMEN).
+    MINIMO_SEMEN = {"convencional": 20, "sexado": 5}
+    totais_semen = {"convencional": 0, "sexado": 0}
+    for s in session.exec(select(EstoqueSemen)).all():
+        if s.ativo and s.tipo in totais_semen:
+            totais_semen[s.tipo] += s.doses or 0
+    eventos_semen = []
+    hoje_iso = data.isoformat()
+    for cat, minimo in MINIMO_SEMEN.items():
+        total = totais_semen[cat]
+        if total < minimo:
+            chave = f"semen_minimo_{cat}_{hoje_iso}"
+            if chave in realizados:
+                continue
+            eventos_semen.append({
+                "id": chave, "data": hoje_iso, "categoria": "Reprodutivo",
+                "descricao": f"Estoque de sêmen {cat} abaixo do mínimo: {total} de {minimo} doses",
+                "numero_animal": None, "observacao": f"Comprar sêmen {cat} — falta(m) {minimo - total} dose(s). Alerta diário até a NF repor.",
+                "fonte": "auto", "cor": "var(--red)", "ref": None, "tipo": "semen_minimo",
+            })
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -267,7 +290,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos

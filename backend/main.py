@@ -39,7 +39,7 @@ from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
 from fazenda.api.routers.reproducao import deduplicar_partos
-from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos
+from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias
 
 
 @asynccontextmanager
@@ -57,6 +57,7 @@ async def lifespan(app: FastAPI):
         seed_cadastro_sanitario(session)
         seed_motivos_baixa(session)
         seed_servicos(session)
+        seed_semen_categorias(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield

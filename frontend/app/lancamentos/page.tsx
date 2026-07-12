@@ -8,7 +8,7 @@ import {
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
-  criarProtocoloIatf, criarServico, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
+  criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote, fetchMedicamentos,
@@ -23,7 +23,7 @@ import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
-import type { HormonioIatf } from "@/lib/api";
+import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
 
@@ -42,11 +42,6 @@ const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : "");
 const LACT = ["01", "02", "03"];
 const IDADE_MIN_SERVICO = 13; // meses — abaixo disso a fêmea não é apta a serviço
-// Sêmen (touros) atualmente em estoque — usados na seleção do touro em Serviço/IA.
-const TOUROS_ESTOQUE = [
-  "ABS LABEL", "CAMPEAO FI", "COORS", "DESCONHECIDO", "GUINESS", "HAGEN", "HILLUX", "JAG", "LUZIO",
-  "MESSI", "METEORO", "MOSAIC", "NABIL", "PRAFESS", "ROBO", "STORMY", "SUCESSOR", "VALENTE", "VICTINHO",
-];
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 const MOVIMENTOS_ESTOQUE = ["Aplicação", "Saída de ajuste", "Entrada de ajuste", "Entrada de cortesia", "Doação"];
 // Movimentos que reduzem o estoque (baixa).
@@ -338,40 +333,73 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
   );
 }
 
+const CAT_TOURO = [
+  { id: "convencional" as const, label: "Convencional" },
+  { id: "sexado" as const, label: "Sexado" },
+  { id: "fazenda" as const, label: "Touro da fazenda" },
+];
+
 function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
-  const [matriz, setMatriz] = useState("");
-  const [veioDeProtocolo, setVeioDeProtocolo] = useState(false);
-  const [nomeProtocolo, setNomeProtocolo] = useState("Protocolo padrão");
+  const [sel, setSel] = useState<Set<string>>(new Set());
   const [dataServico, setDataServico] = useState("");
+  const [tipo, setTipo] = useState<"cio_natural" | "iatf" | "monta_natural">("cio_natural");
+  const [categoria, setCategoria] = useState<"convencional" | "sexado" | "fazenda">("convencional");
   const [touro, setTouro] = useState("");
   const [responsavel, setResponsavel] = useState("");
+  // IATF: vincular a um lançamento já existente + auto-lançar retroativo.
+  const [protocoloId, setProtocoloId] = useState("");
+  const [autoLancar, setAutoLancar] = useState(false);
+  const [lancamentos, setLancamentos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string }[]>([]);
+  const [semen, setSemen] = useState<SemenDisponivel | null>(null);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
-  // Vindo da Agenda (link "Ir para Inseminação" do D11 de um protocolo IATF) —
-  // pré-seleciona a matriz e o nome do protocolo.
+  const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
+
+  useEffect(() => {
+    fetchSemenDisponivel().then(setSemen).catch(() => setSemen(null));
+    fetchLancamentosIatf().then(setLancamentos).catch(() => setLancamentos([]));
+  }, []);
+
+  // Vindo da Agenda (link "Ir para Inseminação" do D11): pré-seleciona matriz + IATF.
   useEffect(() => {
     const qs = new URLSearchParams(window.location.search);
     const numeroMatriz = qs.get("numero_matriz");
-    const protocolo = qs.get("protocolo");
-    if (numeroMatriz) setMatriz(numeroMatriz);
-    if (protocolo) { setVeioDeProtocolo(true); setNomeProtocolo(protocolo); }
+    if (numeroMatriz) setSel(new Set([numeroMatriz]));
+    if (qs.get("protocolo")) setTipo("iatf");
   }, []);
+
+  // Touro da fazenda ⇒ sempre monta natural.
+  useEffect(() => { if (categoria === "fazenda") setTipo("monta_natural"); }, [categoria]);
+
+  const tourosDaCategoria = useMemo(
+    () => (semen?.touros || []).filter((t) => t.tipo === categoria),
+    [semen, categoria]
+  );
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!matriz) { setErro("Selecione a matriz."); return; }
+    const alvo = Array.from(sel);
+    if (!alvo.length) { setErro("Selecione ao menos uma matriz."); return; }
     if (!dataServico) { setErro("Informe a data da inseminação."); return; }
     setSalvando(true);
     try {
-      const r = await criarServico({
-        numero_matriz: matriz, data_servico: dataServico,
-        tipo_servico: "IA", protocolo: veioDeProtocolo ? nomeProtocolo : undefined,
+      const r = await criarServicoLote({
+        animais: alvo, data_servico: dataServico, tipo,
         reprodutor: touro || undefined, responsavel: responsavel || undefined,
+        protocolo_lancamento_id: tipo === "iatf" && protocoloId ? Number(protocoloId) : null,
+        auto_lancar_iatf: tipo === "iatf" ? autoLancar : false,
       });
-      setSucesso(`Inseminação registrada (tentativa ${r.ordem_tentativa}${r.protocolo ? `, protocolo ${r.protocolo}` : " — cio natural"}).`);
-      setMatriz(""); setTouro(""); setVeioDeProtocolo(false);
+      if (r.incompativeis.length) {
+        setSel(new Set(r.incompativeis));
+        setErro(`${r.incompativeis.join(", ")} não estão em nenhum protocolo IATF. Vincule a um protocolo existente ou marque "lançar protocolo automaticamente (D0 retroativo)" e salve de novo.`);
+        if (r.criados) setSucesso(`${r.criados} inseminação(ões) registrada(s).`);
+      } else {
+        setSucesso(`${r.criados} inseminação(ões) registrada(s)${tipo === "iatf" ? " (IATF)" : tipo === "monta_natural" ? " (monta natural)" : " (cio natural)"}.`);
+        setSel(new Set()); setTouro("");
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar inseminação");
     } finally {
@@ -381,26 +409,82 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz…" /></Campo>
+      {semen && (semen.abaixo_minimo.convencional || semen.abaixo_minimo.sexado) && (
+        <div className="mb-3" style={{ display: "flex", gap: "0.5rem", alignItems: "flex-start", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)", borderRadius: 8, padding: "0.6rem 0.8rem" }}>
+          <AlertTriangle size={16} style={{ color: "var(--red)", marginTop: "0.1rem" }} />
+          <span style={{ fontSize: "0.8rem" }}>
+            Estoque de sêmen abaixo do mínimo:{" "}
+            {semen.abaixo_minimo.convencional && `convencional ${semen.totais.convencional}/${semen.minimos.convencional}`}
+            {semen.abaixo_minimo.convencional && semen.abaixo_minimo.sexado && " · "}
+            {semen.abaixo_minimo.sexado && `sexado ${semen.totais.sexado}/${semen.minimos.sexado}`}. Registre a compra na NF.
+          </span>
+        </div>
+      )}
+
+      <Campo label="Matriz / novilha (aptas) — pode selecionar várias" full>
+        <SelecaoAnimaisTabela
+          animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
+          colunas={[
+            { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+            { header: "Lote", render: (a) => a.grupo_primario || "—" },
+            { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+          ]}
+        />
+      </Campo>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
-        <Campo label="Veio de um protocolo IATF já agendado?">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
-            <input type="checkbox" checked={veioDeProtocolo} onChange={(e) => setVeioDeProtocolo(e.target.checked)} /> Sim
-          </label>
+        <Campo label="Categoria do touro / sêmen">
+          <select style={inputStyle} value={categoria} onChange={(e) => { setCategoria(e.target.value as typeof categoria); setTouro(""); }}>
+            {CAT_TOURO.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
         </Campo>
-        {veioDeProtocolo && <Campo label="Nome do protocolo"><input style={inputStyle} value={nomeProtocolo} onChange={(e) => setNomeProtocolo(e.target.value)} /></Campo>}
-        <Campo label="Touro / sêmen (em estoque)">
-          <select style={inputStyle} value={touro} onChange={(e) => setTouro(e.target.value)}><option value="">Selecione o sêmen…</option>{TOUROS_ESTOQUE.map((t) => <option key={t}>{t}</option>)}</select>
+        <Campo label={`Touro (${categoria === "fazenda" ? "monta natural" : "em estoque"})`}>
+          <select style={inputStyle} value={touro} onChange={(e) => setTouro(e.target.value)}>
+            <option value="">Selecione…</option>
+            {tourosDaCategoria.map((t) => <option key={t.nome} value={t.nome}>{t.nome}{t.tipo !== "fazenda" ? ` (${t.doses} doses)` : ""}</option>)}
+          </select>
+          {!tourosDaCategoria.length && <p style={{ fontSize: "0.72rem", color: "var(--amber)", marginTop: 2 }}>Nenhum touro {categoria} em estoque.</p>}
         </Campo>
         <Campo label="Responsável / inseminador">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>
         </Campo>
       </div>
-      <p style={nota}>
-        Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses).{" "}
-        {veioDeProtocolo ? "Marca esta inseminação como a etapa D11 do protocolo informado." : "Sem protocolo marcado: registra como cio natural, sem cronograma hormonal."}
-      </p>
+
+      <div className="mt-3">
+        <label style={lbl}>Tipo de cobertura</label>
+        <TabBar<"cio_natural" | "iatf" | "monta_natural">
+          abas={[
+            { id: "cio_natural", label: "Cio natural", title: "Inseminação de cio natural (sem protocolo)" },
+            { id: "iatf", label: "IATF", title: "Inseminação de um protocolo IATF" },
+            { id: "monta_natural", label: "Monta natural", title: "Cobertura por touro (monta natural)" },
+          ]}
+          ativa={tipo}
+          onChange={(t) => { if (categoria !== "fazenda") setTipo(t); }}
+        />
+        {categoria === "fazenda" && <p style={nota}>Touro da fazenda selecionado — registrado como <strong>monta natural</strong>.</p>}
+      </div>
+
+      {tipo === "iatf" && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Campo label="Vincular ao protocolo IATF">
+              <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
+                <option value="">Automático (o protocolo pendente do animal)</option>
+                {lancamentos.map((l) => <option key={l.lancamento_id} value={l.lancamento_id}>{l.nome_protocolo}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Se o animal não estiver em protocolo">
+              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", padding: "0.45rem 0" }}>
+                <input type="checkbox" checked={autoLancar} onChange={(e) => setAutoLancar(e.target.checked)} /> Lançar protocolo automaticamente (D0 retroativo)
+              </label>
+            </Campo>
+          </div>
+          <p style={nota}>O protocolo automático conta o D0 para trás (data do serviço − 11 dias) e só registra o protocolo — não gera aplicação de hormônio.</p>
+        </div>
+      )}
+
+      <p style={nota}>Matriz lista apenas fêmeas aptas (≥ {IDADE_MIN_SERVICO} meses).</p>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
