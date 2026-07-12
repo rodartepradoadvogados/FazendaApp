@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
-import { fetchAnimais } from "@/lib/api";
+import { fetchAnimais, fetchEstratificacaoRebanho, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
@@ -31,6 +31,54 @@ const SIT_CORES: Record<string, string> = {
 };
 const LACTACAO = ["01", "02", "03"];
 const cod = (g: string | null) => (g && g.length >= 2 && /\d\d/.test(g.slice(0, 2)) ? g.slice(0, 2) : null);
+
+// Estratificação do rebanho por faixa etária + composição das vacas adultas,
+// com o indicador de % de vacas em lactação sobre o total.
+const ESTRATOS_ROTULO: [string, string, string][] = [
+  ["aleitamento_0_3m", "Aleitamento (0–3 m)", "#C6A24A"],
+  ["recria_4_11m", "Recria (4–11 m)", "#A9791F"],
+  ["recria_12_24m", "Recria (12–24 m)", "#8A6a3a"],
+  ["novilhas_acima_24m", "Novilhas (>24 m)", "#7C2740"],
+  ["vacas_lactacao", "Vacas em lactação", "#4C7A3C"],
+  ["vacas_secas", "Vacas secas", "#B47C1E"],
+  ["vacas_pre_parto", "Vacas pré-parto", "#2E5A7C"],
+];
+
+function EstratificacaoRebanho() {
+  const [d, setD] = useState<Estratificacao | null>(null);
+  useEffect(() => { fetchEstratificacaoRebanho().then(setD).catch(() => setD(null)); }, []);
+  if (!d || !d.total) return null;
+  const dados = ESTRATOS_ROTULO
+    .map(([k, label, cor]) => ({ label, cor, n: d.estratos[k] || 0, pct: d.percentuais[k] || 0 }))
+    .filter((x) => x.n > 0);
+  return (
+    <div className="card mb-4">
+      <div className="card-header mb-3 flex items-center gap-2"><Beef size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+        <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{d.pct_lactacao_sobre_total}%</p><p className="kpi-label">Vacas em lactação / total</p></div>
+        <div className="kpi-card"><p className="kpi-value">{d.pct_lactacao_sobre_vacas}%</p><p className="kpi-label">Em lactação / vacas</p></div>
+        <div className="kpi-card"><p className="kpi-value">{d.estratos.vacas_lactacao}</p><p className="kpi-label">Vacas em lactação</p></div>
+        <div className="kpi-card"><p className="kpi-value">{d.vacas_total}</p><p className="kpi-label">Vacas (adultas)</p></div>
+      </div>
+      {/* Barra empilhada 100% */}
+      <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
+        {dados.map((x) => (
+          <div key={x.label} title={`${x.label}: ${x.n} (${x.pct}%)`} style={{ width: `${x.pct}%`, background: x.cor, minWidth: x.pct > 0 ? 2 : 0 }} />
+        ))}
+      </div>
+      <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2" style={{ fontSize: "0.74rem" }}>
+        {dados.map((x) => (
+          <span key={x.label} className="flex items-center gap-1">
+            <span style={{ width: 10, height: 10, borderRadius: 2, background: x.cor, display: "inline-block" }} /> {x.label}: <strong>{x.n}</strong> ({x.pct}%)
+          </span>
+        ))}
+      </div>
+      {(d.estratos as any).sem_data_nasc > 0 && (
+        <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>{(d.estratos as any).sem_data_nasc} animal(is) sem data de nascimento não entraram nas faixas etárias.</p>
+      )}
+    </div>
+  );
+}
 
 function RebanhoVisaoGeral() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
@@ -99,6 +147,7 @@ function RebanhoVisaoGeral() {
 
       {regs && (
         <>
+          <EstratificacaoRebanho />
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
