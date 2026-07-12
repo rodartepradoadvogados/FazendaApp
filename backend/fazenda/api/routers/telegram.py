@@ -327,8 +327,22 @@ def _perguntar_campo(session: Session, sess: TelegramSessao) -> None:
         return
     campo = campos[sess.etapa]
     if campo["tipo"] == "opcoes":
-        opcoes = campo["opcoes"](session) if callable(campo["opcoes"]) else campo["opcoes"]
         dados = json.loads(sess.dados)
+        # A lista de opções pode depender das respostas já dadas (ex.: touros por
+        # natureza do serviço) — se a função aceitar 2 args, passamos os dados.
+        if callable(campo["opcoes"]):
+            import inspect
+            n_args = len(inspect.signature(campo["opcoes"]).parameters)
+            opcoes = campo["opcoes"](session, dados) if n_args >= 2 else campo["opcoes"](session)
+        else:
+            opcoes = campo["opcoes"]
+        # Sem opções aplicáveis (ex.: nenhum touro em estoque) → segue sem perguntar.
+        if not opcoes:
+            sess.etapa += 1
+            session.add(sess)
+            session.commit()
+            _perguntar_campo(session, sess)
+            return
         dados["_ops"] = opcoes
         sess.dados = json.dumps(dados)
         session.add(sess)
