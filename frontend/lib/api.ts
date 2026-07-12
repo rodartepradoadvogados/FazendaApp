@@ -19,7 +19,7 @@ export function logout() {
 export const ROTA_MODULO: Record<string, string> = {
   "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
-  "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade",
+  "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/parametros": "parametros", "/upload": "upload",
 };
 
@@ -1500,3 +1500,53 @@ export function firstDayOfMonth(): string {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-01`;
 }
+
+// ── Módulo RECRIA (Dossiê de Desempenho Zootécnico) ──
+const _rHead = () => ({ "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) });
+async function _rGet(path: string) {
+  const res = await fetch(`${API}${path}`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
+  if (!res.ok) throw new Error(`Recria ${path}: ${res.status}`);
+  return res.json();
+}
+async function _rSend(path: string, method: string, body?: any) {
+  const res = await fetch(`${API}${path}`, { method, headers: _rHead(), ...(body ? { body: JSON.stringify(body) } : {}) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  return res.json();
+}
+
+export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string };
+export type RecriaPontoCritico = { dia_pico: number; dia_min: number; dia_max: number; casos_na_janela: number; total_casos: number; pct_na_janela: number };
+export type RecriaCurva = {
+  doenca: string; total_casos: number;
+  curva: { dia: number; casos: number }[];
+  ponto_critico: RecriaPontoCritico | null;
+  incidencia_por_fase: { fase: string; dia_min: number; dia_max: number; casos: number; animais_afetados: number; animais_em_risco: number; incidencia_pct: number | null }[];
+};
+export type RecriaMetas = { idade_parto_meses: number; idade_prenhez_meses: number; idade_1a_cobertura_meses: number; taxa_prenhez_meta: number; desvio_padrao_meta: number; custo_diario_recria: number };
+export type RecriaPesoAlvo = { id?: number; mes: number; peso_min_kg: number; peso_max_kg: number };
+export type RecriaFase = { id?: number; nome: string; dia_min: number; dia_max: number; ordem: number; ativo: boolean };
+export type RecriaJanela = { id?: number; doenca: string; dia_min: number; dia_max: number; dias_antecedencia: number; ativo: boolean };
+
+export const fetchRecriaDoencas = (): Promise<{ doenca: string; casos: number }[]> => _rGet(`/recria/doencas`);
+export const fetchRecriaCurva = (doenca: string, ini?: string, fim?: string): Promise<RecriaCurva> => {
+  const p = new URLSearchParams({ doenca }); if (ini) p.set("ini", ini); if (fim) p.set("fim", fim);
+  return _rGet(`/recria/saude/curva?${p.toString()}`);
+};
+export const fetchRecriaPesoAlvoResumo = (): Promise<{ linhas: any[] }> => _rGet(`/recria/crescimento/peso-alvo`);
+export const fetchRecriaOcorrencias = (doenca = "", numero = ""): Promise<RecriaOcorrencia[]> => {
+  const p = new URLSearchParams(); if (doenca) p.set("doenca", doenca); if (numero) p.set("numero_matriz", numero);
+  return _rGet(`/recria/ocorrencias${p.toString() ? "?" + p.toString() : ""}`);
+};
+export const criarRecriaOcorrencia = (d: { numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string }) => _rSend(`/recria/ocorrencias`, "POST", d);
+export const excluirRecriaOcorrencia = (id: number) => _rSend(`/recria/ocorrencias/${id}`, "DELETE");
+export const fetchRecriaMetas = (): Promise<RecriaMetas> => _rGet(`/recria/metas`);
+export const salvarRecriaMetas = (d: RecriaMetas) => _rSend(`/recria/metas`, "PUT", d);
+export const fetchRecriaPesoAlvo = (): Promise<RecriaPesoAlvo[]> => _rGet(`/recria/peso-alvo`);
+export const salvarRecriaPesoAlvo = (d: RecriaPesoAlvo) => _rSend(`/recria/peso-alvo`, "POST", d);
+export const excluirRecriaPesoAlvo = (mes: number) => _rSend(`/recria/peso-alvo/${mes}`, "DELETE");
+export const fetchRecriaFases = (): Promise<RecriaFase[]> => _rGet(`/recria/fases`);
+export const criarRecriaFase = (d: RecriaFase) => _rSend(`/recria/fases`, "POST", d);
+export const excluirRecriaFase = (id: number) => _rSend(`/recria/fases/${id}`, "DELETE");
+export const fetchRecriaJanelas = (): Promise<RecriaJanela[]> => _rGet(`/recria/janelas`);
+export const criarRecriaJanela = (d: RecriaJanela) => _rSend(`/recria/janelas`, "POST", d);
+export const excluirRecriaJanela = (id: number) => _rSend(`/recria/janelas/${id}`, "DELETE");

@@ -18,6 +18,7 @@ import {
   ClipboardList,
   FileBarChart,
   CheckCheck,
+  Baby,
   Menu,
   X,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const links = [
   { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite" },
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote" },
+  { href: "/recria",      label: "Recria",       icon: Baby,          title: "Recria — Dossiê Zootécnico de bezerras e novilhas: saúde por idade, ponto crítico e crescimento" },
   // ── Análise e administração ──
   { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro" },
   { href: "/relatorios",  label: "Relatórios",   icon: FileBarChart,  title: "Relatórios gerenciais — listas de manejo do dia e gráficos gerenciais do rebanho" },

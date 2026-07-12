@@ -1,0 +1,149 @@
+"""
+Módulo Recria — Dossiê Zootécnico.
+
+Cobre o motor de coorte (curva por idade, ponto crítico, incidência por fase)
+e os endpoints do router: curva de saúde, peso-alvo, ocorrências e cadastros.
+"""
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+import pytest
+from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import Session, SQLModel, create_engine
+
+import fazenda.database as database
+from fazenda.models import Animal, PesagemCorporal, PesoAlvoIdade
+from fazenda.rules.coorte import curva_casos_por_idade, incidencia_por_fase, ponto_critico
+
+
+# --- Unidade: motor de coorte ----------------------------------------------
+class TestCoorte:
+    def test_ponto_critico_encontra_janela_do_pico(self):
+        idades = [2, 7, 8, 9, 9, 9, 10, 10, 11, 25, 40]
+        pc = ponto_critico(curva_casos_por_idade(idades))
+        assert pc["dia_pico"] == 9
+        assert pc["dia_min"] <= 9 <= pc["dia_max"]
+        assert pc["pct_na_janela"] >= 50
+
+    def test_curva_ignora_fora_do_limite(self):
+        curva = curva_casos_por_idade([5, 5, 400, -3], limite_dias=300)
+        assert curva == [{"dia": 5, "casos": 2}]
+
+    def test_incidencia_denominador_por_fase(self):
+        pares = [("1", 9), ("2", 9), ("3", 200)]
+        idade_atual = {"1": 300, "2": 300, "3": 300, "4": 300, "5": 20}
+        fases = [{"nome": "0–30", "dia_min": 0, "dia_max": 30}]
+        r = incidencia_por_fase(pares, idade_atual, fases)[0]
+        # 2 animais afetados (1 e 2), denominador = 4 (todos com idade>=0 exceto... todos>=0);
+        # aqui todos têm idade>=0, então 5 em risco; 2 afetados → 40%.
+        assert r["animais_afetados"] == 2
+        assert r["animais_em_risco"] == 5
+        assert r["incidencia_pct"] == 40.0
+
+
+# --- Integração: endpoints -------------------------------------------------
+@pytest.fixture
+def client():
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+
+    class _FakeUser:
+        id = 1; papel = "admin"; ativo = True; username = "teste"
+
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    from fazenda.api.routers.recria import seed_recria
+
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            seed_recria(s)  # metas, curva de peso-alvo e janelas padrão no engine de teste
+            # Bezerras nascidas em datas diferentes.
+            s.add(Animal(numero="101", data_nasc=date(2026, 1, 1), ativo=True))
+            s.add(Animal(numero="102", data_nasc=date(2026, 1, 1), ativo=True))
+            s.add(Animal(numero="103", data_nasc=date(2026, 1, 1), ativo=True))
+            s.commit()
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+class TestOcorrenciasECurva:
+    def test_lanca_ocorrencia_e_curva(self, client):
+        c, _ = client
+        # 101 e 102 com diarreia aos ~9 dias; 103 aos 40.
+        for num, dia in [("101", 9), ("102", 9), ("103", 40)]:
+            r = c.post("/recria/ocorrencias", json={
+                "numero_matriz": num, "doenca": "Diarreia",
+                "data_ocorrencia": (date(2026, 1, 1) + timedelta(days=dia)).isoformat(),
+            })
+            assert r.status_code == 201
+        # Doenças com casos
+        assert any(d["doenca"] == "Diarreia" and d["casos"] == 3 for d in c.get("/recria/doencas").json())
+        # Curva + ponto crítico
+        r = c.get("/recria/saude/curva", params={"doenca": "Diarreia"})
+        j = r.json()
+        assert j["total_casos"] == 3
+        assert j["ponto_critico"]["dia_pico"] == 9
+        assert any(p["dia"] == 9 and p["casos"] == 2 for p in j["curva"])
+        # incidência por fase existe
+        assert any(f["casos"] > 0 for f in j["incidencia_por_fase"])
+
+    def test_excluir_ocorrencia(self, client):
+        c, _ = client
+        rid = c.post("/recria/ocorrencias", json={"numero_matriz": "101", "doenca": "Pneumonia", "data_ocorrencia": "2026-02-01"}).json()["id"]
+        assert c.delete(f"/recria/ocorrencias/{rid}").json()["ok"] is True
+        assert c.get("/recria/ocorrencias", params={"doenca": "Pneumonia"}).json() == []
+
+
+class TestPesoAlvo:
+    def test_peso_alvo_semeado_e_comparacao(self, client):
+        c, engine = client
+        # Seed padrão existe (lifespan rodou). Adiciona pesagem real no mês 2.
+        with Session(engine) as s:
+            s.add(PesagemCorporal(numero_matriz="101", data_pesagem=date(2026, 3, 1), peso_kg=60.0))  # ~59 dias → mês 2
+            s.commit()
+        linhas = c.get("/recria/crescimento/peso-alvo").json()["linhas"]
+        m2 = next((l for l in linhas if l["mes"] == 2), None)
+        assert m2 is not None
+        assert m2["peso_medio_real"] == 60.0
+        assert m2["peso_min_alvo"] is not None  # veio do seed
+
+    def test_upsert_peso_alvo(self, client):
+        c, _ = client
+        c.post("/recria/peso-alvo", json={"mes": 3, "peso_min_kg": 80, "peso_max_kg": 110})
+        c.post("/recria/peso-alvo", json={"mes": 3, "peso_min_kg": 85, "peso_max_kg": 115})
+        linhas = [l for l in c.get("/recria/peso-alvo").json() if l["mes"] == 3]
+        assert len(linhas) == 1 and linhas[0]["peso_min_kg"] == 85
+
+
+class TestCadastros:
+    def test_metas_padrao_e_edicao(self, client):
+        c, _ = client
+        m = c.get("/recria/metas").json()
+        assert m["idade_parto_meses"] == 24.0
+        c.put("/recria/metas", json={**{k: v for k, v in m.items() if k in (
+            "idade_parto_meses", "idade_prenhez_meses", "idade_1a_cobertura_meses",
+            "taxa_prenhez_meta", "desvio_padrao_meta", "custo_diario_recria")}, "custo_diario_recria": 15.0})
+        assert c.get("/recria/metas").json()["custo_diario_recria"] == 15.0
+
+    def test_janelas_semeadas(self, client):
+        c, _ = client
+        janelas = c.get("/recria/janelas").json()
+        assert any(j["doenca"] == "Diarreia" for j in janelas)
+
+    def test_fase_crud(self, client):
+        c, _ = client
+        fid = c.post("/recria/fases", json={"nome": "Teste", "dia_min": 0, "dia_max": 30, "ordem": 1}).json()["id"]
+        assert any(f["nome"] == "Teste" for f in c.get("/recria/fases").json())
+        c.delete(f"/recria/fases/{fid}")
+        assert not any(f["nome"] == "Teste" for f in c.get("/recria/fases").json())
