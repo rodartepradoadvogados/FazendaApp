@@ -50,6 +50,36 @@ def listar_opcoes(session: Session = Depends(get_session)) -> dict:
     return {"tipos_baixa": TIPOS_BAIXA, "motivos": MOTIVOS, "motivos_doenca": motivos_doenca}
 
 
+class ADescartarIn(BaseModel):
+    animais: list[str]
+    descartar: bool = True  # True marca; False desfaz a marcação
+    observacao: str | None = None
+
+
+@router.post("/a-descartar")
+def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Marca (ou desmarca) animais como "A descartar": seguem ATIVOS no rebanho
+    — continuam na ordenha, sanidade e movimentação — mas saem de todas as
+    ações reprodutivas (IATF, inseminação, candidatas). Não é baixa definitiva.
+    """
+    if not dados.animais:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+    afetados = 0
+    for numero in dados.animais:
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if not animal:
+            continue
+        animal.a_descartar = dados.descartar
+        if dados.observacao:
+            animal.observacoes = dados.observacao
+        animal.atualizado_em = datetime.utcnow()
+        session.add(animal)
+        afetados += 1
+    session.commit()
+    return {"afetados": afetados, "descartar": dados.descartar}
+
+
 @router.get("/")
 def listar_baixas(session: Session = Depends(get_session)) -> list[dict]:
     baixas = session.exec(select(BaixaAnimal).order_by(BaixaAnimal.data_baixa.desc(), BaixaAnimal.id.desc())).all()

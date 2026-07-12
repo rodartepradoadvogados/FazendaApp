@@ -53,6 +53,8 @@ def classificar_rebanho(
     for animal in animais:
         if animal.get("eh_semen") or animal.get("sexo") == "M":
             continue
+        if animal.get("a_descartar"):
+            continue  # marcada "A descartar" — fora de todas as ações reprodutivas
         categoria = _categoria(animal)
         if categoria == "bezerra":
             continue

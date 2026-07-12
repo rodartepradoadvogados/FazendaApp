@@ -536,6 +536,14 @@ export async function criarBaixaAnimal(dados: {
   return res.json();
 }
 
+export async function marcarADescartar(dados: { animais: string[]; descartar?: boolean; observacao?: string }) {
+  const res = await authFetch(`${API}/baixas/a-descartar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar A descartar"); }
+  return res.json();
+}
+
 // ── Compra de animal (Rebanho > Comprar animal) ──
 export async function fetchComprasAnimais() {
   const res = await authFetch(`${API}/compras-animais/`, { cache: "no-store" });

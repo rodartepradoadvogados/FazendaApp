@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
-import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores } from "@/lib/api";
+import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 
@@ -27,6 +27,9 @@ export default function BaixarAnimal() {
 
   const [busca, setBusca] = useState("");
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  // "definitiva" = saída do rebanho (morte/descarte/venda); "a_descartar" =
+  // vaca segue ativa, mas sai das ações reprodutivas.
+  const [modo, setModo] = useState<"definitiva" | "a_descartar">("definitiva");
 
   const [tipoBaixa, setTipoBaixa] = useState("");
   const [motivo, setMotivo] = useState("");
@@ -75,6 +78,18 @@ export default function BaixarAnimal() {
   const salvar = async () => {
     setMsg(null);
     if (!selecionados.size) { setMsg({ tipo: "erro", texto: "Selecione ao menos um animal." }); return; }
+    if (modo === "a_descartar") {
+      setSalvando(true);
+      try {
+        const r = await marcarADescartar({ animais: Array.from(selecionados), descartar: true, observacao: observacao || undefined });
+        setMsg({ tipo: "sucesso", texto: `${r.afetados} animal(is) marcado(s) como "A descartar" — seguem ativos, fora das ações reprodutivas.` });
+        limpar();
+        carregar();
+      } catch (e: any) {
+        setMsg({ tipo: "erro", texto: e.message || "Erro ao marcar A descartar" });
+      } finally { setSalvando(false); }
+      return;
+    }
     if (!tipoBaixa) { setMsg({ tipo: "erro", texto: "Selecione o tipo de baixa." }); return; }
     if (!motivo) { setMsg({ tipo: "erro", texto: "Selecione o motivo." }); return; }
     if (motivo === "doenca" && !motivoDoenca) { setMsg({ tipo: "erro", texto: "Selecione a doença/causa." }); return; }
@@ -122,6 +137,19 @@ export default function BaixarAnimal() {
       {animais && opcoes && (
         <div className="card">
           <div className="mb-3">
+            <label style={labelStyle}>O que fazer</label>
+            <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                <input type="radio" name="modo_baixa" checked={modo === "definitiva"} onChange={() => setModo("definitiva")} />
+                Baixa definitiva (morte/descarte/venda)
+              </label>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                <input type="radio" name="modo_baixa" checked={modo === "a_descartar"} onChange={() => setModo("a_descartar")} />
+                Marcar "A descartar" (segue ativa, sem reprodução)
+              </label>
+            </div>
+          </div>
+          <div className="mb-3">
             <label style={labelStyle}>Buscar animal (nº)</label>
             <div style={{ position: "relative", maxWidth: "260px" }}>
               <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
@@ -154,6 +182,15 @@ export default function BaixarAnimal() {
             </div>
           </div>
 
+          {modo === "a_descartar" && (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              A(s) vaca(s) marcada(s) continua(m) no rebanho (ordenha, sanidade, movimentação), mas some(m) das candidatas a IATF,
+              inseminação e demais ações reprodutivas. Use quando decidir descartar mais adiante, sem dar baixa agora.
+            </p>
+          )}
+
+          {modo === "definitiva" && (
+          <>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
             <div><label style={labelStyle}>Tipo de baixa</label>
               <select style={selStyle} value={tipoBaixa} onChange={(e) => setTipoBaixa(e.target.value)}>
@@ -215,6 +252,8 @@ export default function BaixarAnimal() {
               />
             </>
           )}
+          </>
+          )}
 
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
             <div><label style={labelStyle}>Responsável</label>
@@ -230,7 +269,7 @@ export default function BaixarAnimal() {
             <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
           )}
           <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
-            <Check size={14} /> {salvando ? "Salvando…" : `Baixar ${selecionados.size || ""} animal(is)`}
+            <Check size={14} /> {salvando ? "Salvando…" : modo === "a_descartar" ? `Marcar ${selecionados.size || ""} como "A descartar"` : `Baixar ${selecionados.size || ""} animal(is)`}
           </button>
         </div>
       )}

@@ -57,6 +57,10 @@ class Animal(SQLModel, table=True):
     motivo_baixa: Optional[str] = None
     data_baixa: Optional[date] = None
     observacoes: Optional[str] = None
+    # "A descartar": a vaca segue ativa no rebanho (ordenha, sanidade), mas sai
+    # de todas as ações reprodutivas (IATF, inseminação, candidatas) — marcada
+    # para descarte futuro sem dar baixa definitiva.
+    a_descartar: bool = False
 
 
 # ---------------------------------------------------------------------------

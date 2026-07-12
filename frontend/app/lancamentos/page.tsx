@@ -3,7 +3,7 @@ import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
-  ChevronDown, ChevronRight,
+  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
@@ -24,6 +24,9 @@ import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
+import MovimentarAnimais from "@/components/MovimentarAnimais";
+import ComprarAnimal from "@/components/ComprarAnimal";
+import BaixarAnimal from "@/components/BaixarAnimal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
@@ -2412,6 +2415,15 @@ const TIPOS_GRUPOS = [
       { id: "financeiro_receita", label: "Contas a receber (receita)", icon: Wallet, desc: "Lançamento de receita/conta a receber." },
     ],
   },
+  {
+    id: "animais", label: "Animais", icon: ArrowRightLeft,
+    desc: "Movimentar animais entre lotes, comprar ou dar baixa (venda/morte/descarte).",
+    subs: [
+      { id: "mover_animais", label: "Movimentar animais", icon: ArrowRightLeft, desc: "Transferir um ou vários animais de lote." },
+      { id: "comprar_animal", label: "Compra / venda", icon: ShoppingCart, desc: "Registrar a compra de um animal (vendedor via fornecedor, com valor)." },
+      { id: "baixar_animal", label: "Baixa", icon: Skull, desc: "Registrar saída do rebanho: venda, morte, descarte ou marcar 'A descartar'." },
+    ],
+  },
   { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
   { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque.", leaf: "estoque" },
   { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto.", leaf: "exclusao" },
@@ -2580,6 +2592,9 @@ export default function LancamentosPage() {
           {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "estoque" && <FormEstoque estoque={estoque} />}
+          {sel === "mover_animais" && <MovimentarAnimais />}
+          {sel === "comprar_animal" && <ComprarAnimal />}
+          {sel === "baixar_animal" && <BaixarAnimal />}
           {sel === "alimentacao_dieta" && <FormAlimentacaoDieta lotes={lotes} />}
           {sel === "exclusao" && <FormExclusao />}
         </div>
