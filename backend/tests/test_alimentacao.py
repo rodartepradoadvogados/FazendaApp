@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import AlimentacaoEstado, Animal, Dieta, Estoque, MovimentoEstoque
+from fazenda.models import AlimentacaoEstado, Animal, Dieta, Estoque, Lote, MovimentoEstoque
 
 HOJE = date(2026, 7, 8)
 
@@ -337,3 +337,117 @@ class TestAgendaDieta:
         r = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30})
         eventos = [e for e in r.json()["eventos"] if e["id"] == f"dieta_analise_{dieta_id}"]
         assert len(eventos) == 0
+
+
+class TestDietaContextoApresentacao:
+    """Contexto do lote para o veterinário, apresentação para o funcionário e o
+    fluxo de encerrar a dieta anterior ao salvar a nova (D3/D4)."""
+
+    def _seed_lote(self, engine):
+        # Lote 1 cadastrado (nome) + 2 vacas ativas com CL e DEL.
+        with Session(engine) as s:
+            s.add(Lote(codigo="01", nome="Alta Produção"))
+            s.add(Animal(numero="10", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta",
+                         ativo=True, del_dias=100, ult_cl_kg=32.0, data_ult_leite=date(2026, 7, 1)))
+            s.add(Animal(numero="11", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta",
+                         ativo=True, del_dias=200, ult_cl_kg=24.0, data_ult_leite=date(2026, 7, 1)))
+            s.commit()
+
+    def test_encerrar_anterior_encerra_na_data_da_nova(self, client):
+        c, engine = client
+        primeira = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-01-10",
+            "itens": [{"alimento": "Silagem", "quantidade": 300.0, "unidade": "kg"}],
+        }).json()
+        # Sem a flag → 409.
+        r = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-02-01",
+            "itens": [{"alimento": "Silagem", "quantidade": 320.0, "unidade": "kg"}],
+        })
+        assert r.status_code == 409
+        # Com a flag → 201 e encerra a anterior na data de início da nova.
+        r = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-02-01", "encerrar_anterior": True,
+            "itens": [{"alimento": "Silagem", "quantidade": 320.0, "unidade": "kg"}],
+        })
+        assert r.status_code == 201
+        dietas = c.get("/alimentacao/dietas", params={"lote": 1}).json()
+        antiga = next(d for d in dietas if d["id"] == primeira["id"])
+        assert antiga["ativa"] is False
+        assert antiga["data_efetivo_encerramento"] == "2026-02-01"
+
+    def test_contexto_do_lote(self, client):
+        c, engine = client
+        self._seed_lote(engine)
+        c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-05",
+            "itens": [{"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"}],
+        })
+        r = c.get("/alimentacao/dietas/contexto/1")
+        assert r.status_code == 200
+        ctx = r.json()
+        assert ctx["nome"] == "Alta Produção"
+        assert ctx["qtd_animais"] == 2
+        assert ctx["del_medio"] == 150
+        assert ctx["media_cl"] == 28.0
+        assert ctx["data_ult_cl"] == "2026-07-01"
+        # Ordenado por último CL desc: 32 antes de 24.
+        assert [a["numero"] for a in ctx["animais"]] == ["10", "11"]
+        # Última dieta: total/dia 400 → por cabeça 200.
+        assert ctx["ultima_dieta"]["itens"][0]["total_dia"] == 400.0
+        assert ctx["ultima_dieta"]["itens"][0]["por_cabeca"] == 200.0
+
+    def test_apresentacao_para_o_funcionario(self, client):
+        c, engine = client
+        self._seed_lote(engine)
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-05",
+            "itens": [{"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"}],
+        }).json()["id"]
+        r = c.get(f"/alimentacao/dietas/{dieta_id}/apresentacao")
+        assert r.status_code == 200
+        ap = r.json()
+        assert ap["num_tratos"] == 2
+        assert ap["qtd_animais"] == 2
+        item = ap["itens"][0]
+        assert item["total_dia"] == 400.0
+        assert item["total_trato"] == 200.0
+        assert item["por_cabeca"] == 200.0
+        # Somatório de kg no vagão (só itens em kg).
+        assert ap["vagao_kg_dia"] == 400.0
+        assert ap["vagao_kg_trato"] == 200.0
+
+    def test_nova_dieta_gera_alerta_vespera_e_dia(self, client):
+        c, engine = client
+        self._seed_lote(engine)
+        # Dieta que começa em 2026-07-09 → na agenda de 08 sai "para AMANHÃ",
+        # na de 09 sai "HOJE".
+        dieta_id = c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-09",
+            "itens": [{"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"}],
+        }).json()["id"]
+
+        r = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30})
+        vespera = [e for e in r.json()["eventos"] if e.get("tipo") == "nova_dieta"]
+        assert len(vespera) == 1
+        assert "AMANHÃ" in vespera[0]["descricao"]
+        assert vespera[0]["ref"] == str(dieta_id)
+
+        r = c.get("/agenda/", params={"data": "2026-07-09", "dias": 30})
+        hoje_alerta = [e for e in r.json()["eventos"] if e.get("tipo") == "nova_dieta"]
+        assert len(hoje_alerta) == 1
+        assert "HOJE" in hoje_alerta[0]["descricao"]
+
+    def test_marcar_realizado_remove_alerta_de_nova_dieta(self, client):
+        c, engine = client
+        self._seed_lote(engine)
+        c.post("/alimentacao/dietas", json={
+            "lote": 1, "data_abertura": "2026-07-09",
+            "itens": [{"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"}],
+        })
+        chave = [e for e in c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
+                 if e.get("tipo") == "nova_dieta"][0]["id"]
+        c.post("/agenda/realizados", json={"evento_id": chave})
+        depois = [e for e in c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
+                  if e["id"] == chave]
+        assert len(depois) == 0

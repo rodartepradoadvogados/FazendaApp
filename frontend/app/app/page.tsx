@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
-import { fetchAgenda, today } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 
 /** Soma `n` dias a uma data ISO ("YYYY-MM-DD") e devolve outra ISO. */
@@ -38,6 +38,7 @@ type Evento = {
   protocolo?: string | null;
   grupo?: string | null;
   grupo_titulo?: string | null;
+  ref?: string | null;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -99,6 +100,11 @@ function fmtData(iso: string, opts: Intl.DateTimeFormatOptions): string {
   return new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", opts);
 }
 
+function num(v?: number | null, casas = 2): string {
+  if (v == null) return "—";
+  return v.toLocaleString("pt-BR", { maximumFractionDigits: casas });
+}
+
 function fmtCacheEm(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
@@ -127,6 +133,18 @@ export default function AgendaMovel() {
   // Grupos de protocolo sanitário (aplicação em lote): mesma pergunta lote/individual.
   const [sanAberto, setSanAberto] = useState<Set<string>>(new Set());
   const [sanModo, setSanModo] = useState<Record<string, "lote" | "individual">>({});
+
+  // Alerta de nova dieta: cartão expansível que mostra a apresentação da dieta
+  // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
+  const [dietaAberta, setDietaAberta] = useState<Set<string>>(new Set());
+  const [dietaApres, setDietaApres] = useState<Record<string, ApresentacaoDieta | null>>({});
+  function abrirDieta(e: Evento) {
+    setDietaAberta((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; });
+    if (e.ref && !(e.id in dietaApres)) {
+      setDietaApres((d) => ({ ...d, [e.id]: null }));
+      fetchApresentacaoDieta(Number(e.ref)).then((a) => setDietaApres((d) => ({ ...d, [e.id]: a }))).catch(() => setDietaApres((d) => ({ ...d, [e.id]: null })));
+    }
+  }
 
   const abrirSan = (grupo: string) => setSanAberto((p) => { const n = new Set(p); n.has(grupo) ? n.delete(grupo) : n.add(grupo); return n; });
 
@@ -407,6 +425,57 @@ export default function AgendaMovel() {
               </div>
             );
           })()}
+        </MobCard>
+      );
+    }
+
+    // Alerta de nova dieta: cartão expansível que abre a apresentação para o
+    // funcionário conferir o vagão (produtos, por cabeça, total/dia e /trato).
+    if (e.tipo === "nova_dieta") {
+      const aberto = dietaAberta.has(e.id);
+      const a = dietaApres[e.id];
+      return (
+        <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirDieta(e)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para ver os produtos e o vagão</div>
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+          {aberto && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {a === null ? (
+                <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)" }}>Carregando dieta…</p>
+              ) : a ? (
+                <>
+                  <div style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.5rem" }}>
+                    Lote {a.lote}{a.nome ? ` · ${a.nome}` : ""} — {a.qtd_animais} {a.qtd_animais === 1 ? "animal" : "animais"} · {a.num_tratos} tratos
+                  </div>
+                  {a.itens.map((it, i) => (
+                    <div key={i} style={{ padding: "0.5rem 0", borderTop: i ? "1px solid var(--mob-border)" : "none" }}>
+                      <div style={{ fontWeight: 800, fontSize: "0.98rem" }}>{it.alimento}</div>
+                      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.9rem", marginTop: "0.2rem", fontSize: "0.82rem" }}>
+                        <span style={{ color: "var(--mob-verde)", fontWeight: 800 }}>{num(it.total_trato)} {it.unidade}/trato</span>
+                        <span style={{ color: "var(--mob-ambar)", fontWeight: 700 }}>{num(it.total_dia)} {it.unidade}/dia</span>
+                        <span style={{ color: "var(--mob-muted)" }}>{it.por_cabeca != null ? `${num(it.por_cabeca, 3)} ${it.unidade}/cab` : "—/cab"}</span>
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ marginTop: "0.6rem", padding: "0.55rem 0.7rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 10, fontSize: "0.85rem", fontWeight: 800 }}>
+                    Vagão do lote: <span style={{ color: "var(--mob-verde)" }}>{num(a.vagao_kg_trato)} kg/trato</span> · {num(a.vagao_kg_dia)} kg/dia
+                  </div>
+                </>
+              ) : (
+                <p style={{ fontSize: "0.82rem", color: "var(--mob-muted)" }}>Não foi possível carregar a dieta.</p>
+              )}
+              <div style={{ marginTop: "0.7rem", display: "flex", justifyContent: "flex-end" }}>
+                <MobCheck feito={feito} onClick={() => alternar(e)} />
+              </div>
+            </div>
+          )}
         </MobCard>
       );
     }

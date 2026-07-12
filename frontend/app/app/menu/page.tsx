@@ -16,11 +16,13 @@ import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
 import AplicacoesSanidade from "@/components/mobile/menu/AplicacoesSanidade";
 import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
+import LancarDieta from "@/components/mobile/menu/LancarDieta";
+import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
 import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "manejo" | "indicadores" | "aprovacoes";
+type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
 type Grupo = { secao: string; itens: Item[] };
 
@@ -35,6 +37,8 @@ const GRUPOS: Grupo[] = [
   ] },
   { secao: "Alimentação", itens: [
     { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={18} /> },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <Wheat size={18} /> },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <Wheat size={18} /> },
   ] },
   { secao: "Gestão", itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={18} /> },
@@ -49,6 +53,8 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   calendario: CalendarioSanitario,
   aplicacoes: AplicacoesSanidade,
   plano: PlanoAlimentacao,
+  lancarDieta: LancarDieta,
+  consultarDietas: ConsultarDietas,
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
   aprovacoes: Aprovacoes,
