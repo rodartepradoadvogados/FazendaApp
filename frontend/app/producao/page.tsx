@@ -108,15 +108,16 @@ export default function ProducaoPage() {
   const [fOrdemParto, setFOrdemParto] = useState<string[]>([]);
 
   const [ucModo, setUcModo] = useState<"animal" | "lote" | "rebanho">("rebanho");
-  const [ucN, setUcN] = useState<1 | 2 | 3>(1);
+  const [ucN, setUcN] = useState<1 | 2 | 3 | "todos">(1);
   const [ucAnimal, setUcAnimal] = useState("");
-  const [ucLote, setUcLote] = useState("");
+  const [ucLotes, setUcLotes] = useState<string[]>([]);
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
   const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
   const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
   const [qlDe, setQlDe] = useState("");
   const [qlAte, setQlAte] = useState("");
+  const [qlOrigem, setQlOrigem] = useState<"todos" | "individual" | "tanque">("todos");
 
   useEffect(() => {
     fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch((e) => setQualidadeErro(e.message));
@@ -124,8 +125,11 @@ export default function ProducaoPage() {
 
   const qlFiltrados = useMemo(() => {
     if (!qualidade) return [];
-    return qualidade.filter((r) => (!qlDe || r.data_coleta >= qlDe) && (!qlAte || r.data_coleta <= qlAte));
-  }, [qualidade, qlDe, qlAte]);
+    return qualidade.filter((r) =>
+      (!qlDe || r.data_coleta >= qlDe) && (!qlAte || r.data_coleta <= qlAte) &&
+      (qlOrigem === "todos" || (qlOrigem === "individual" ? !!r.numero_matriz : !r.numero_matriz))
+    );
+  }, [qualidade, qlDe, qlAte, qlOrigem]);
 
   const qlIndicadorInfo = INDICADORES_QUALIDADE.find((i) => i.key === qlIndicador)!;
   const qlSerie = useMemo(() => {
@@ -234,11 +238,11 @@ export default function ProducaoPage() {
   const ucNumerosEscopo = useMemo(() => {
     if (!regs) return new Set<string>();
     if (ucModo === "animal") return new Set(ucAnimal ? [ucAnimal] : []);
-    if (ucModo === "lote") return new Set(ucLote ? regs.filter((r) => r.grupo_primario === ucLote).map((r) => r.numero) : []);
+    if (ucModo === "lote") return new Set(ucLotes.length ? regs.filter((r) => r.grupo_primario && ucLotes.includes(r.grupo_primario)).map((r) => r.numero) : []);
     return new Set(regs.filter((r) => LOTES_LACTACAO.includes(codigoLote(r.grupo_primario) || "")).map((r) => r.numero));
-  }, [regs, ucModo, ucAnimal, ucLote]);
+  }, [regs, ucModo, ucAnimal, ucLotes]);
 
-  // Últimos N controles por animal do escopo, ordenados mais recente primeiro.
+  // Últimos N controles por animal do escopo (ou todos), ordenados mais recente primeiro.
   const ucRegistros = useMemo(() => {
     if (!regs || !ucNumerosEscopo.size) return [];
     const porAnimal = new Map<string, Ctrl[]>();
@@ -246,7 +250,7 @@ export default function ProducaoPage() {
     const linhas: Ctrl[] = [];
     porAnimal.forEach((arr) => {
       const ord = [...arr].sort((a, b) => (a.data! > b.data! ? -1 : 1));
-      linhas.push(...ord.slice(0, ucN));
+      linhas.push(...(ucN === "todos" ? ord : ord.slice(0, ucN)));
     });
     return linhas.sort((a, b) => (a.numero === b.numero ? (a.data! < b.data! ? 1 : -1) : a.numero.localeCompare(b.numero)));
   }, [regs, ucNumerosEscopo, ucN]);
@@ -310,10 +314,11 @@ export default function ProducaoPage() {
             <div className="card-header mb-3 flex items-center gap-2"><Milk size={14} /> Últimos controles leiteiros</div>
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ver</label>
-                <select style={selStyle} value={ucN} onChange={(e) => setUcN(Number(e.target.value) as 1 | 2 | 3)}>
+                <select style={selStyle} value={String(ucN)} onChange={(e) => setUcN(e.target.value === "todos" ? "todos" : (Number(e.target.value) as 1 | 2 | 3))}>
                   <option value={1}>Último controle</option>
                   <option value={2}>2 últimos controles</option>
                   <option value={3}>3 últimos controles</option>
+                  <option value="todos">Todos os controles</option>
                 </select></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Por</label>
                 <select style={selStyle} value={ucModo} onChange={(e) => setUcModo(e.target.value as any)}>
@@ -328,10 +333,7 @@ export default function ProducaoPage() {
                   </select></div>
               )}
               {ucModo === "lote" && (
-                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote/grupo</label>
-                  <select style={selStyle} value={ucLote} onChange={(e) => setUcLote(e.target.value)}>
-                    <option value="">Selecione…</option>{lotesDisponiveis.map((l) => <option key={l}>{l}</option>)}
-                  </select></div>
+                <MultiFiltro label="Lote(s)/grupo(s)" opcoes={lotesDisponiveis} selecionados={ucLotes} onChange={setUcLotes} />
               )}
             </div>
 
@@ -370,7 +372,7 @@ export default function ProducaoPage() {
                   ))}
                   {!ucRegistros.length && (
                     <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
-                      {ucModo === "animal" && !ucAnimal ? "Selecione um animal." : ucModo === "lote" && !ucLote ? "Selecione um lote." : "Nenhum controle encontrado."}
+                      {ucModo === "animal" && !ucAnimal ? "Selecione um animal." : ucModo === "lote" && !ucLotes.length ? "Selecione um ou mais lotes." : "Nenhum controle encontrado."}
                     </td></tr>
                   )}
                 </tbody>
@@ -397,6 +399,12 @@ export default function ProducaoPage() {
                   <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Indicador</label>
                     <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
                       {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
+                    </select></div>
+                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Origem</label>
+                    <select style={selStyle} value={qlOrigem} onChange={(e) => setQlOrigem(e.target.value as any)} title="Amostra do tanque (rebanho todo) ou individual (uma vaca)">
+                      <option value="todos">Todas</option>
+                      <option value="tanque">Tanque (rebanho)</option>
+                      <option value="individual">Individual (vaca)</option>
                     </select></div>
                 </div>
                 <div className="grid grid-cols-2 gap-4 mb-3">
