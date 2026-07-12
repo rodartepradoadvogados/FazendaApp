@@ -46,6 +46,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("nome", "VARCHAR"), ("sisbov", "VARCHAR"), ("mae_numero", "VARCHAR"), ("mae_nome", "VARCHAR"),
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
+        ("a_descartar", "BOOLEAN DEFAULT 0"),
     ],
     "estoque": [
         ("unidade_embalagem", "VARCHAR"), ("medida_embalagem", "VARCHAR"), ("quantidade_embalagem", "FLOAT"),
