@@ -289,6 +289,25 @@ def calcular_agenda(
                             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "igg_pendente",
                         })
 
+    # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com
+    # link para abrir a dieta. A chave inclui a data de referência → o alerta
+    # de véspera e o do dia são eventos distintos (marcar um não some o outro).
+    eventos_nova_dieta = []
+    for d in session.exec(
+        select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)  # noqa: E711
+    ).all():
+        if d.data_abertura in (data, data + timedelta(days=1)):
+            hoje_alerta = d.data_abertura == data
+            chave = f"nova_dieta_{d.id}_{data.isoformat()}"
+            if chave in realizados:
+                continue
+            eventos_nova_dieta.append({
+                "id": chave, "data": d.data_abertura.isoformat(), "categoria": "alimentacao",
+                "descricao": f"Atenção — nova dieta {'HOJE' if hoje_alerta else 'para AMANHÃ'} — lote {d.lote}",
+                "numero_animal": None, "observacao": "Toque para ver a nova dieta (produtos, por trato e kg no vagão).",
+                "fonte": "auto", "cor": "var(--dourado)", "ref": str(d.id), "tipo": "nova_dieta", "lote": d.lote,
+            })
+
     # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
     # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
     # repor). Mínimos: convencional 20, sexado 5 (ver cadastro.MINIMO_SEMEN).
@@ -332,7 +351,7 @@ def calcular_agenda(
             "tipo_evento": e.tipo_evento,
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_nova_dieta
     eventos_visiveis = [
         e for e in eventos_visiveis
         if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos

@@ -822,13 +822,33 @@ export async function fetchDietas(filtros?: { lote?: number; ativo?: boolean }) 
 
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
-  itens: { alimento: string; quantidade: number; unidade: string }[];
+  itens: { alimento: string; quantidade: number; unidade: string }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar dieta"); }
   return res.json();
+}
+export type ContextoDieta = {
+  lote: number; nome: string | null; qtd_animais: number; del_medio: number | null; media_cl: number | null; data_ult_cl: string | null;
+  animais: { numero: string; del_dias: number | null; ult_cl_kg: number | null; data_ult_leite: string | null }[];
+  ultima_dieta: { data_abertura: string; responsavel: string | null; itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null }[] } | null;
+};
+export async function fetchContextoDieta(lote: number) {
+  const res = await authFetch(`${API}/alimentacao/dietas/contexto/${lote}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contexto dieta error: ${res.status}`);
+  return res.json() as Promise<ContextoDieta>;
+}
+export type ApresentacaoDieta = {
+  lote: number; nome: string | null; qtd_animais: number; data_abertura: string; data_prevista_encerramento: string | null;
+  num_tratos: number; vagao_kg_dia: number; vagao_kg_trato: number;
+  itens: { alimento: string; unidade: string; total_dia: number; por_cabeca: number | null; total_trato: number }[];
+};
+export async function fetchApresentacaoDieta(id: number) {
+  const res = await authFetch(`${API}/alimentacao/dietas/${id}/apresentacao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Apresentação dieta error: ${res.status}`);
+  return res.json() as Promise<ApresentacaoDieta>;
 }
 
 export async function encerrarDieta(id: number, dataEfetivoEncerramento: string) {
