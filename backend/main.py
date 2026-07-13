@@ -45,6 +45,7 @@ from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_b
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.rules.farmacia import bootstrap_farmacia
+from fazenda.rules.touros import bootstrap_touros_naab
 
 
 @asynccontextmanager
@@ -69,6 +70,9 @@ async def lifespan(app: FastAPI):
         bootstrap_farmacia(session)
         # Recria: metas, curva de peso-alvo e janelas de ponto crítico padrão.
         seed_recria(session)
+        # Catálogo NAAB completo (Alta Genetics) empacotado no repo — carrega
+        # uma única vez, sem depender de upload manual do usuário.
+        bootstrap_touros_naab(session)
         # Lembrete admin (a cada 3 meses) para importar o catálogo de touros NAAB.
         seed_lembrete_touros(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).

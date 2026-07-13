@@ -1118,6 +1118,7 @@ class Touro(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     naab: str = Field(index=True, unique=True)  # código NAAB (ex.: 7HO12345)
     nome: Optional[str] = None
+    nome_completo: Optional[str] = None
     raca: Optional[str] = None
     central: Optional[str] = None
     # Produção (PTAs)
@@ -1140,6 +1141,11 @@ class Touro(SQLModel, table=True):
     fonte: Optional[str] = None       # ABS, Alta, Select Sires, CRV, manual...
     rodada_prova: Optional[str] = None  # ex.: "Abr/2026"
     observacao: Optional[str] = None
+    # Dados brutos da planilha do fornecedor além dos campos curados acima —
+    # JSON com lista [[rótulo original, valor], ...], na ordem da planilha.
+    # Garante que nenhuma coluna do catálogo se perca mesmo quando o fornecedor
+    # usa nomes de campo que não têm um equivalente curado no modelo.
+    dados_extra: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

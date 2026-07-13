@@ -12,6 +12,7 @@ listamos seus modelos para aparecerem lado a lado na mesma tela.
 """
 from __future__ import annotations
 
+import io
 from datetime import date
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
@@ -677,13 +678,26 @@ async def importar_touros_naab(
     """
     Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Aceita o
     Excel (.xlsx) ou CSV exportado do ABS BullSearch, Alta, Select Sires etc.
-    Casa as colunas por apelidos (PT/EN), faz upsert por código NAAB e nunca
-    apaga touros existentes.
+
+    Catálogos completos (dezenas de colunas de provas, ex.: exportação da
+    Alta Genetics) são lidos por posição de coluna, preservando TODOS os
+    dados por touro; CSVs simples continuam usando o casamento por apelidos.
+    Upsert por código NAAB; nunca apaga touros existentes.
     """
-    from fazenda.rules.touros import importar_touros, ler_planilha
+    from fazenda.rules.touros import eh_planilha_rica, importar_touros, importar_touros_planilha_rica, ler_planilha
     content = await file.read()
+    nome = (file.filename or "").lower()
     try:
+        if nome.endswith((".xlsx", ".xlsm")):
+            import openpyxl
+            wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            cabecalhos = next(wb.active.iter_rows(values_only=True), [])
+            if eh_planilha_rica(list(cabecalhos)):
+                resultado = importar_touros_planilha_rica(session, content, fonte.strip() or None, rodada.strip() or None)
+                return {"categoria": "touros_naab", **resultado}
         linhas = ler_planilha(content, file.filename)
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001 — arquivo ilegível vira erro amigável
         raise HTTPException(status_code=400, detail=f"Não consegui ler o arquivo: {e}")
     resultado = importar_touros(session, linhas, fonte.strip() or None, rodada.strip() or None)

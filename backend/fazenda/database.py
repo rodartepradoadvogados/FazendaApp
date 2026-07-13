@@ -82,6 +82,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("naab", "VARCHAR"),
         ("valor_unitario", "FLOAT"), ("local_armazenamento", "VARCHAR"),
     ],
+    "touro": [("nome_completo", "VARCHAR"), ("dados_extra", "TEXT")],
     "evento_sanitario": [
         ("tipo_agendamento", "VARCHAR DEFAULT 'nenhum'"), ("categoria_alvo", "VARCHAR"), ("doenca_id", "INTEGER"),
         ("data_primeiro", "DATE"), ("frequencia_valor", "INTEGER"), ("frequencia_unidade", "VARCHAR"),
