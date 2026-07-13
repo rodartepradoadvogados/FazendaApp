@@ -801,8 +801,8 @@ export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; 
 
 type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
-  principio_ativo_id?: number; dosagem?: string; frequencia_valor: number; frequencia_unidade: string;
-  data_evento: string; observacao?: string; ativo?: boolean;
+  principio_ativo_id?: number; dosagem?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
+  data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
   const res = await authFetch(`${API}/sanidade/calendario`, {
@@ -818,11 +818,16 @@ export async function atualizarCalendarioSanitario(id: number, dados: Calendario
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar regra do calendário sanitário"); }
   return res.json();
 }
+export async function excluirCalendarioSanitario(id: number) {
+  const res = await authFetch(`${API}/sanidade/calendario/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir regra do calendário sanitário"); }
+  return res.json();
+}
 
 export type CadastrarPreventivoPayload = {
   evento_sanitario_id: number; categoria_alvo?: string | null; data_evento: string;
   frequencia_valor: number; frequencia_unidade: string; animais: string[]; aplicar?: boolean;
-  responsavel?: string | null; observacao?: string | null;
+  veterinario?: string | null; responsavel?: string | null; observacao?: string | null;
 };
 export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {

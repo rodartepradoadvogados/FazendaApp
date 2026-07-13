@@ -93,6 +93,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
 
   const [itens, setItens] = useState<Item[]>([itemVazio()]);
+  // Pré-preenchimento via query string (ex.: botão "Lançar financeiro" do
+  // calendário sanitário → /lancamentos?ir=financeiro_despesa&servico=Exame%20de%20brucelose).
+  useEffect(() => {
+    const servico = new URLSearchParams(window.location.search).get("servico");
+    if (servico) setItens([{ ...itemVazio(), tipo_item: "servico", produto: servico }]);
+  }, []);
   const [centroCusto, setCentroCusto] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [responsavel, setResponsavel] = useState("");

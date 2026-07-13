@@ -379,6 +379,7 @@ class CadastrarPreventivoIn(BaseModel):
     frequencia_unidade: str = "meses"
     animais: list[str] = []                  # animais marcados (individual ou todos)
     aplicar: bool = False                    # também registrar a aplicação do produto padrão
+    veterinario: str | None = None           # p/ exames
     responsavel: str | None = None
     observacao: str | None = None
 
@@ -399,7 +400,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
         dosagem = f"{ev.dose_padrao:g} {ev.unidade_padrao}".strip() if ev.unidade_padrao else f"{ev.dose_padrao:g}"
     regra = CalendarioSanitario(
         evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
-        produto=ev.produto_padrao, dosagem=dosagem,
+        produto=ev.produto_padrao, dosagem=dosagem, veterinario=dados.veterinario,
         frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
         data_evento=dados.data_evento, observacao=dados.observacao,
     )

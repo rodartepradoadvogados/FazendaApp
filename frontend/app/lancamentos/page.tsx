@@ -3,13 +3,13 @@ import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
-  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull,
+  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
-  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
+  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -1387,13 +1387,18 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [produto, setProduto] = useState("");
   const [principioId, setPrincipioId] = useState("");
   const [dosagem, setDosagem] = useState("");
+  const [veterinario, setVeterinario] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
   const [dataEvento, setDataEvento] = useState("");
   const [observacao, setObservacao] = useState("");
+  const [realizado, setRealizado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  const eventoSel = eventos.find((e) => String(e.id) === eventoId) as any;
+  const ehExame = eventoSel?.categoria_preventiva === "exame";
 
   const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
   useEffect(() => {
@@ -1405,15 +1410,23 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
 
   const limpar = () => {
     setEditando(null); setEventoId(""); setCategoriaAlvo(""); setDoencaId(""); setProduto("");
-    setPrincipioId(""); setDosagem(""); setFreqValor("1"); setFreqUnidade("meses"); setDataEvento(""); setObservacao("");
+    setPrincipioId(""); setDosagem(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
+    setDataEvento(""); setObservacao(""); setRealizado(false);
   };
 
   const abrirEdicao = (r: RegraCalendario) => {
     setEditando(r.id); setEventoId(String(r.evento_sanitario_id)); setCategoriaAlvo(r.categoria_alvo || "");
     setDoencaId(r.doenca_id ? String(r.doenca_id) : ""); setProduto(r.produto || "");
     setPrincipioId(r.principio_ativo_id ? String(r.principio_ativo_id) : ""); setDosagem(r.dosagem || "");
+    setVeterinario((r as any).veterinario || "");
     setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
-    setDataEvento(r.data_evento); setObservacao(r.observacao || "");
+    setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
+  };
+
+  const excluir = async (r: RegraCalendario) => {
+    if (!window.confirm(`Excluir a regra do calendário "${r.evento_sanitario_nome}" de ${formatDate(r.data_evento)}?`)) return;
+    try { await excluirCalendarioSanitario(r.id); carregarRegras(); }
+    catch (e: any) { setErro(e.message); }
   };
 
   async function salvar() {
@@ -1423,10 +1436,13 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     try {
       const dados = {
         evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvo || undefined,
-        doenca_id: doencaId ? Number(doencaId) : undefined, produto: produto || undefined,
-        principio_ativo_id: principioId ? Number(principioId) : undefined, dosagem: dosagem || undefined,
+        doenca_id: doencaId ? Number(doencaId) : undefined,
+        produto: ehExame ? undefined : (produto || undefined),
+        principio_ativo_id: ehExame ? undefined : (principioId ? Number(principioId) : undefined),
+        dosagem: ehExame ? undefined : (dosagem || undefined),
+        veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
-        observacao: observacao || undefined,
+        observacao: observacao || undefined, realizado,
       };
       if (editando) await atualizarCalendarioSanitario(editando, dados);
       else await criarCalendarioSanitario(dados);
@@ -1452,26 +1468,35 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             <option value="">Selecione…</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
           </select>
         </Campo>
-        <Campo label="Categoria alvo">
-          <input style={inputStyle} value={categoriaAlvo} onChange={(e) => setCategoriaAlvo(e.target.value)} placeholder="ex.: Bezerras (até 4 a 8 meses)" />
+        <Campo label="Categoria alvo (período de vida)">
+          <input style={inputStyle} list="categorias-alvo-calendario" value={categoriaAlvo} onChange={(e) => setCategoriaAlvo(e.target.value)} placeholder="ex.: Vacas em lactação" />
+          <datalist id="categorias-alvo-calendario">{CATEGORIAS_ANIMAIS.map((c) => <option key={c.id} value={c.label} />)}</datalist>
         </Campo>
         <Campo label="Doença combatida">
           <select style={inputStyle} value={doencaId} onChange={(e) => setDoencaId(e.target.value)}>
             <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
           </select>
         </Campo>
-        <Campo label="Princípio ativo">
-          <select style={inputStyle} value={principioId} onChange={(e) => setPrincipioId(e.target.value)}>
-            <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Produto (item de estoque)">
-          <input style={inputStyle} list="produtos-calendario-sanitario" value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="ex.: VACINA RB 51 - FR 25 DS" />
-          <datalist id="produtos-calendario-sanitario">{estoque.map((e) => <option key={e.nome} value={e.nome} />)}</datalist>
-        </Campo>
-        <Campo label="Dosagem recomendada">
-          <input style={inputStyle} value={dosagem} onChange={(e) => setDosagem(e.target.value)} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
-        </Campo>
+        {ehExame ? (
+          <Campo label="Veterinário (exame)">
+            <input style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" />
+          </Campo>
+        ) : (
+          <>
+            <Campo label="Princípio ativo">
+              <select style={inputStyle} value={principioId} onChange={(e) => setPrincipioId(e.target.value)}>
+                <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Produto (item de estoque)">
+              <input style={inputStyle} list="produtos-calendario-sanitario" value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="ex.: VACINA RB 51 - FR 25 DS" />
+              <datalist id="produtos-calendario-sanitario">{estoque.map((e) => <option key={e.nome} value={e.nome} />)}</datalist>
+            </Campo>
+            <Campo label="Dosagem recomendada">
+              <input style={inputStyle} value={dosagem} onChange={(e) => setDosagem(e.target.value)} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
+            </Campo>
+          </>
+        )}
         <Campo label="Frequência">
           <div className="flex items-center gap-2">
             <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
@@ -1483,6 +1508,15 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
         <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
         <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
+
+      {ehExame && (
+        <p style={{ fontSize: "0.75rem", color: "var(--blue)", marginTop: "0.5rem" }}>
+          Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
+        </p>
+      )}
+      <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
+        <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
+      </label>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -1509,8 +1543,9 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}</td>
                     <td style={{ fontSize: "0.78rem" }}>{formatDate(r.proxima_ocorrencia)}</td>
-                    <td style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirEdicao(r)}>Editar</button>
+                      <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(r)}>Excluir</button>
                     </td>
                   </tr>
                 ))}
@@ -1548,6 +1583,192 @@ function codigoGrupo(grupo: string | null | undefined): string | null {
   if (!grupo) return null;
   const g = grupo.trim();
   return g.length >= 2 && /^\d\d/.test(g) ? g.slice(0, 2) : null;
+}
+
+// ─────────────────────── Preventivo — aplicação (vacina/exame) ───────────────────────
+type EventoPrev = {
+  id: number; nome: string; categoria_preventiva: string | null; doenca_nome: string | null;
+  produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null;
+};
+const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", outros: "Outros" };
+
+function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
+  const [eventos, setEventos] = useState<EventoPrev[]>([]);
+  const [eventoId, setEventoId] = useState("");
+  const [dataEvento, setDataEvento] = useState("");
+  const [freqValor, setFreqValor] = useState("1");
+  const [freqUnidade, setFreqUnidade] = useState("meses");
+  const [veterinario, setVeterinario] = useState("");
+  const [vinculo, setVinculo] = useState<"animal" | "lote" | "categoria">("animal");
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [loteSel, setLoteSel] = useState("");
+  const [categoria, setCategoria] = useState("");
+  const [animaisCategoria, setAnimaisCategoria] = useState<string[] | null>(null);
+  const [realizado, setRealizado] = useState(false);
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+
+  useEffect(() => { fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {}); }, []);
+
+  const evento = eventos.find((e) => String(e.id) === eventoId);
+  const ehExame = evento?.categoria_preventiva === "exame";
+
+  useEffect(() => {
+    if (vinculo !== "categoria" || !categoria) { setAnimaisCategoria(null); return; }
+    const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === categoria);
+    if (!cat) return;
+    previewCriteriosLote(cat.criterios).then((r: any) => setAnimaisCategoria(r.animais || [])).catch(() => setAnimaisCategoria([]));
+  }, [vinculo, categoria]);
+
+  const animaisDoLote = useMemo(() => {
+    if (vinculo !== "lote" || !loteSel) return [];
+    const cod = codigoGrupo(loteSel);
+    return animais.filter((a) => codigoGrupo(a.grupo_primario) === cod).map((a) => a.numero);
+  }, [vinculo, loteSel, animais]);
+
+  const numeros = useMemo(() => {
+    if (vinculo === "animal") return Array.from(animaisSel);
+    if (vinculo === "lote") return animaisDoLote;
+    return animaisCategoria || [];
+  }, [vinculo, animaisSel, animaisDoLote, animaisCategoria]);
+
+  const alvoLabel = vinculo === "lote" ? loteSel
+    : vinculo === "categoria" ? (CATEGORIAS_ANIMAIS.find((c) => c.id === categoria)?.label || "")
+    : "";
+
+  const toggle = (n: string) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleTodos = () => setAnimaisSel((p) => p.size === animais.length ? new Set() : new Set(animais.map((a) => a.numero)));
+
+  async function salvar() {
+    setMsg(null);
+    if (!eventoId) { setMsg({ tipo: "erro", txt: "Escolha o evento preventivo." }); return; }
+    if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
+    setSalvando(true);
+    try {
+      const r = await cadastrarPreventivo({
+        evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
+        frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
+        animais: numeros, aplicar: !ehExame, veterinario: veterinario || null,
+      });
+      // "Já foi realizado?" — marca a ocorrência como feita (some da agenda de pendências).
+      if (realizado && r?.regra?.id) {
+        await marcarEventoRealizado(`calendario_sanitario_${r.regra.id}__${dataEvento}`).catch(() => {});
+      }
+      const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
+      setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
+      setAnimaisSel(new Set());
+    } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <>
+      <p style={nota}>Registra um preventivo (vacina/exame/tratamento) mirando animais, categoria ou lote — grava a regra no calendário e, para vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque; permite vincular o veterinário.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
+        <Campo label="Evento preventivo">
+          <select style={inputStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
+            <option value="">Selecione…</option>
+            {eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}{ev.categoria_preventiva ? ` — ${LABEL_CAT_PREV[ev.categoria_preventiva] || ev.categoria_preventiva}` : ""}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Data de referência"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
+        <Campo label="Repetir a cada">
+          <div className="flex items-center gap-2">
+            <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+            <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+              {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+            </select>
+          </div>
+        </Campo>
+        {ehExame && (
+          <Campo label="Veterinário (exame)"><input style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" /></Campo>
+        )}
+      </div>
+
+      {evento && (evento.doenca_nome || evento.produto_padrao) && (
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+          {evento.doenca_nome && <>Previne: <strong>{evento.doenca_nome}</strong>. </>}
+          {!ehExame && evento.produto_padrao && <>Produto padrão: <strong>{evento.produto_padrao}</strong>{evento.dose_padrao != null ? ` (${evento.dose_padrao}${evento.unidade_padrao ? " " + evento.unidade_padrao : ""})` : ""}.</>}
+          {ehExame && <span style={{ color: "var(--blue)" }}> Exame — sem baixa de estoque, só agendamento.</span>}
+        </p>
+      )}
+
+      <div style={{ marginTop: "0.85rem" }}>
+        <TabBar<"animal" | "lote" | "categoria">
+          abas={[{ id: "animal", label: "Animais" }, { id: "lote", label: "Lote" }, { id: "categoria", label: "Categoria" }]}
+          ativa={vinculo} onChange={setVinculo}
+        />
+      </div>
+
+      {vinculo === "lote" && (
+        <div className="mt-2"><Campo label="Lote">
+          <select style={inputStyle} value={loteSel} onChange={(e) => setLoteSel(e.target.value)}>
+            <option value="">Selecione…</option>
+            {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+          </select>
+        </Campo>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>{animaisDoLote.length} animal(is) no lote.</p></div>
+      )}
+      {vinculo === "categoria" && (
+        <div className="mt-2"><Campo label="Categoria de animais (período de vida)">
+          <select style={inputStyle} value={categoria} onChange={(e) => setCategoria(e.target.value)}>
+            <option value="">Selecione…</option>
+            {CATEGORIAS_ANIMAIS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+          </select>
+        </Campo>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>{animaisCategoria ? `${animaisCategoria.length} animal(is) na categoria.` : ""}</p></div>
+      )}
+      {vinculo === "animal" && (
+        <div className="mt-2">
+          <SelecaoAnimaisTabela animais={animais} selecionados={animaisSel} toggle={toggle} toggleTodos={toggleTodos}
+            colunas={[{ header: "Lote", render: (a) => a.grupo_primario || "—" }, { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" }]} />
+        </div>
+      )}
+
+      <label className="flex items-center gap-2 mt-3" style={{ fontSize: "0.8rem" }}>
+        <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
+      </label>
+
+      {msg && <p style={{ fontSize: "0.8rem", marginTop: "0.6rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</p>}
+      <div className="flex items-center gap-3 mt-3">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>
+          <Check size={14} /> {salvando ? "Salvando…" : `Registrar preventivo${numeros.length ? ` (${numeros.length} animais)` : ""}`}
+        </button>
+      </div>
+    </>
+  );
+}
+
+// ─────────────────────── BST — aptas / excluídas ───────────────────────
+function BstLancamentoView() {
+  const [dados, setDados] = useState<any | null>(null);
+  useEffect(() => { fetchAgenda().then(setDados).catch(() => setDados(null)); }, []);
+  const aptos = dados?.bst_elegiveis || [];
+  const excl = dados?.bst_excluidos || [];
+  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
+    <div className="card">
+      <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
+      {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca.</p> : (
+        <div style={{ overflowX: "auto" }}>
+          <table className="fazenda-table" style={{ margin: 0 }}>
+            <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+            <tbody>{lista.map((b: any) => (
+              <tr key={b.numero_matriz}><td style={{ fontWeight: 700 }}>{b.numero_matriz}</td><td>{b.grupo || "—"}</td><td style={{ textAlign: "right" }}>{b.del_dias ?? "—"}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <>
+      <p style={nota}>BST (somatotropina bovina) — vacas aptas e excluídas do dia. Próxima visita BST: <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+        <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
+        <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
+      </div>
+    </>
+  );
 }
 
 function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
@@ -2551,12 +2772,20 @@ const TIPOS_GRUPOS = [
     ],
   },
   {
-    id: "sanidade", label: "Sanidade", icon: Syringe,
-    desc: "Aplicação de medicamento ou regra do calendário sanitário.",
+    id: "sanidade_curativa", label: "Sanitário — Curativa", icon: HeartPulse,
+    desc: "Tratamento curativo: aplicações de medicamento e protocolos sanitários.",
     subs: [
-      { id: "sanidade_aplicacao", label: "Aplicação", icon: Syringe, desc: "Aplicação de medicamento/vacina — por animal ou por lote." },
-      { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+      { id: "sanidade_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicação de medicamento curativo — por animal, categoria, vários animais ou lote." },
       { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
+    ],
+  },
+  {
+    id: "sanidade_preventiva", label: "Sanitário — Preventiva", icon: Shield,
+    desc: "Manejo preventivo: aplicações preventivas, calendário sanitário e BST.",
+    subs: [
+      { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
+      { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — vacas aptas e excluídas do dia." },
     ],
   },
   {
@@ -2670,8 +2899,12 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
           ) : sel === "sanidade_aplicacao" ? (
             <><strong style={{ color: "var(--text)" }}>Sanidade já grava de verdade.</strong> Aceita vários produtos por lançamento; a baixa de estoque só acontece quando a unidade escolhida bate com a do estoque.</>
+          ) : sel === "preventivo_aplicacao" ? (
+            <><strong style={{ color: "var(--text)" }}>Preventivo já grava de verdade.</strong> Escolha o evento preventivo (vacina/exame), o lote/categoria e marque os animais — registra o calendário e, se for vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque.</>
           ) : sel === "calendario_sanitario" ? (
-            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Cada regra recorrente aparece na aba Sanidade &gt; Calendário sanitário, com filtro por data e por evento.</>
+            <><strong style={{ color: "var(--text)" }}>Calendário sanitário já grava de verdade.</strong> Cada regra recorrente vira pendência na Agenda (dá baixa) e aparece na aba Sanidade &gt; Preventivo, com filtro por data e por evento.</>
+          ) : sel === "bst" ? (
+            <><strong style={{ color: "var(--text)" }}>BST — somatotropina bovina.</strong> Vacas aptas e excluídas do dia, com a próxima visita de BST.</>
           ) : sel === "protocolo_sanitario" ? (
             <><strong style={{ color: "var(--text)" }}>Protocolo sanitário já grava de verdade.</strong> Cria um evento na Agenda por etapa (D1, D2...) — ao marcar "realizado", dá baixa automática do produto no Estoque.</>
           ) : sel === "secagem" ? (
@@ -2739,7 +2972,9 @@ export default function LancamentosPage() {
           {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
           {sel === "entrega_leite" && <FormEntregaLeite />}
           {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
+          {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} />}
           {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
+          {sel === "bst" && <BstLancamentoView />}
           {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}
           {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
           {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
