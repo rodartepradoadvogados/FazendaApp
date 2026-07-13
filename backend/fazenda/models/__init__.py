@@ -1072,6 +1072,42 @@ class Secagem(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Touro(SQLModel, table=True):
+    """Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Guarda o
+    código NAAB, nome e as provas (produção, índices econômicos, tipo/saúde) —
+    importado do catálogo Excel/CSV do fornecedor a cada rodada de prova. Usado
+    para mostrar o pai com nome + provas na ficha do animal."""
+
+    __tablename__ = "touro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    naab: str = Field(index=True, unique=True)  # código NAAB (ex.: 7HO12345)
+    nome: Optional[str] = None
+    raca: Optional[str] = None
+    central: Optional[str] = None
+    # Produção (PTAs)
+    leite_kg: Optional[float] = None
+    gordura_kg: Optional[float] = None
+    gordura_pct: Optional[float] = None
+    proteina_kg: Optional[float] = None
+    proteina_pct: Optional[float] = None
+    # Índices econômicos
+    tpi: Optional[float] = None
+    nm_dolar: Optional[float] = None  # Net Merit $ (ou índice econômico equivalente)
+    # Tipo e saúde
+    tipo_composto: Optional[float] = None      # PTAT / composto de conformação
+    ubere_composto: Optional[float] = None     # UDC — composto de úbere
+    pernas_composto: Optional[float] = None    # FLC — pernas e pés
+    ccs_score: Optional[float] = None          # SCS — células somáticas
+    fertilidade_filhas: Optional[float] = None # DPR / fertilidade
+    facilidade_parto: Optional[float] = None   # SCE/DCE — facilidade de parto
+    # Metadados
+    fonte: Optional[str] = None       # ABS, Alta, Select Sires, CRV, manual...
+    rodada_prova: Optional[str] = None  # ex.: "Abr/2026"
+    observacao: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class EstoqueSemen(SQLModel, table=True):
     """Estoque de doses de sêmen por touro — usado no relatório de manejo
     'Estoque de sêmen'. Distinto de Estoque (insumos) e de Animal(eh_semen),
@@ -1197,6 +1233,8 @@ class AgendaManual(SQLModel, table=True):
     intervalo_dias: Optional[int] = None
     intervalo_meses: Optional[int] = None
     origem_recorrencia_id: Optional[int] = None  # id da linha-modelo que gerou esta ocorrência
+    apenas_admin: bool = False  # evento visível somente para o administrador
+    link: Optional[str] = None  # rota interna de instruções/ação (ex.: "/configuracoes?aba=importar")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

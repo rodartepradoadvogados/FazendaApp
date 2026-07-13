@@ -1595,3 +1595,14 @@ export const criarCategoriaManejo = (d: CategoriaManejo) => _rSend(`/recria/cate
 export const atualizarCategoriaManejo = (id: number, d: CategoriaManejo) => _rSend(`/recria/categorias/${id}`, "PUT", d);
 export const excluirCategoriaManejo = (id: number) => _rSend(`/recria/categorias/${id}`, "DELETE");
 export const fetchComposicaoCategorias = (): Promise<{ composicao: { categoria: string; n: number }[]; total: number }> => _rGet(`/recria/categorias/composicao`);
+
+export type Touro = {
+  id?: number; naab: string; nome?: string | null; raca?: string | null; central?: string | null;
+  leite_kg?: number | null; gordura_kg?: number | null; gordura_pct?: number | null;
+  proteina_kg?: number | null; proteina_pct?: number | null; tpi?: number | null; nm_dolar?: number | null;
+  tipo_composto?: number | null; ubere_composto?: number | null; pernas_composto?: number | null;
+  ccs_score?: number | null; fertilidade_filhas?: number | null; facilidade_parto?: number | null;
+  fonte?: string | null; rodada_prova?: string | null; observacao?: string | null; atualizado_em?: string | null;
+};
+export const fetchTouros = (): Promise<Touro[]> => _rGet(`/cadastro/touros`);
+export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");

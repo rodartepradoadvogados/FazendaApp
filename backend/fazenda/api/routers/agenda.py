@@ -16,7 +16,7 @@ from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
-    Servico,
+    SeedFlag, Servico,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
@@ -91,9 +91,54 @@ def _gerar_agenda_recorrente(session: Session) -> None:
                 data_evento=proxima, descricao=modelo.descricao, categoria=modelo.categoria,
                 numero_animal=modelo.numero_animal, lotes=modelo.lotes, tipo_evento=modelo.tipo_evento,
                 observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
+                apenas_admin=modelo.apenas_admin, link=modelo.link,
             ))
             session.commit()
             proxima = _proxima_ocorrencia(proxima, modelo.intervalo_dias, modelo.intervalo_meses)
+
+
+_INSTRUCOES_TOUROS = (
+    "Passo a passo para atualizar o banco de touros (provas NAAB):\n"
+    "1) Entre no site do seu fornecedor de sêmen (ABS BullSearch, Alta, Select Sires, CRV...) "
+    "e filtre/selecione os touros que você usa.\n"
+    "2) Exporte a lista em Excel (.xlsx) ou CSV — geralmente há um botão 'Exportar'.\n"
+    "3) Aqui no sistema: Configurações › Importar dados › 'Touros — catálogo NAAB'.\n"
+    "4) Escolha o arquivo, informe a Central (ex.: Select Sires) e a Rodada da prova "
+    "(ex.: Abr/2026) e clique em Enviar.\n"
+    "5) Pronto: o banco de touros atualiza (nome, produção, TPI/NM$, tipo e saúde) e passa a "
+    "aparecer na ficha do pai de cada animal.\n"
+    "Obs.: as provas oficiais (CDCB) saem em abril, agosto e dezembro — são essas as importações "
+    "que trazem números novos."
+)
+
+
+def seed_lembrete_touros(session: Session) -> None:
+    """Cria (uma vez) o lembrete recorrente, só para o administrador, de importar
+    o catálogo de touros a cada 3 meses — com o passo a passo e o link da tela de
+    importação. Idempotente: guardado por flag."""
+    chave = "lembrete_touros_v1"
+    if session.get(SeedFlag, chave):
+        return
+    hoje = date.today()
+    # Primeira ocorrência: dia 1º do próximo mês de trimestre (jan/abr/jul/out).
+    mes = hoje.month
+    prox_mes = next((m for m in (1, 4, 7, 10, 13) if m > mes), 13)
+    ano = hoje.year + (1 if prox_mes == 13 else 0)
+    prox_mes = 1 if prox_mes == 13 else prox_mes
+    primeira = date(ano, prox_mes, 1)
+    session.add(AgendaManual(
+        data_evento=primeira,
+        descricao="Atualizar banco de touros (provas NAAB) — importar catálogo do fornecedor",
+        categoria="Atividades",
+        tipo_evento="Outro",
+        observacao=_INSTRUCOES_TOUROS,
+        recorrente=True,
+        intervalo_meses=3,
+        apenas_admin=True,
+        link="/configuracoes?aba=importar",
+    ))
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 @router.get("/")
@@ -434,12 +479,16 @@ def calcular_agenda(
             "ref": e.ref,
             "lote": e.lote,
             "tipo_evento": e.tipo_evento,
+            "apenas_admin": getattr(e, "apenas_admin", False),
+            "link": getattr(e, "link", None),
         }
         for e in eventos
     ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
+    eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
-        if MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos
+        if (MODULO_POR_CATEGORIA.get(e["categoria"], None) is None or MODULO_POR_CATEGORIA[e["categoria"]] in modulos)
+        and (eh_admin or not e.get("apenas_admin"))  # eventos só-admin ocultos para os demais
     ]
     tem_financeiro = "financeiro" in modulos
     tem_reproducao = "reproducao" in modulos

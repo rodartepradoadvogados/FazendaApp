@@ -47,7 +47,9 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   ] },
   { chave: "servicos", titulo: "Reprodução — Serviço/IA e diagnóstico", colunas: [
     { header: "Data serviço", key: "data_servicoFmt" }, { header: "Tipo", key: "tipo_servico" }, { header: "Protocolo", key: "protocolo" },
-    { header: "Pai (touro/sêmen)", key: "reprodutor" }, { header: "NAAB do pai", key: "reprodutor_naab" }, { header: "Tentativa", key: "ordem_tentativa" },
+    { header: "Pai (touro/sêmen)", key: "reprodutor" }, { header: "NAAB do pai", key: "reprodutor_naab" },
+    { header: "Central do pai", key: "touro_central" }, { header: "TPI do pai", key: "touro_tpi" }, { header: "NM$ do pai", key: "touro_nm" },
+    { header: "Tentativa", key: "ordem_tentativa" },
     { header: "Data diagnóstico", key: "data_diagnosticoFmt" }, { header: "Diagnóstico", key: "diagnostico" },
   ] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF (D0/D7/D9/D11)", colunas: [

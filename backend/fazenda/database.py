@@ -145,6 +145,8 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("intervalo_dias", "INTEGER"),
         ("intervalo_meses", "INTEGER"),
         ("origem_recorrencia_id", "INTEGER"),
+        ("apenas_admin", "BOOLEAN DEFAULT 0"),
+        ("link", "VARCHAR"),
     ],
 }
 

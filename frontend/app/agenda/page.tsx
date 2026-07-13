@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink } from "lucide-react";
 import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
@@ -262,10 +262,17 @@ export default function AgendaPage() {
                           <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
                           <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                           <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
+                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                           <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                           <td>
-                            {e.categoria === "alimentacao" ? (
+                            {(e as any).link ? (
+                              <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
+                                  <ExternalLink size={12} /> Importar agora
+                                </a>
+                                <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                              </div>
+                            ) : e.categoria === "alimentacao" ? (
                               <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                                 <Wheat size={12} /> Ir para Dieta
                               </a>
