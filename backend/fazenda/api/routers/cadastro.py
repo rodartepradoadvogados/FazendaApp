@@ -19,8 +19,9 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendamentoPesagem, Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
-    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, Touro, Usuario, ValeFuncionario, ValeParcela,
+    AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
+    Lote, MotivoBaixa, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa,
+    SeedFlag, ServicoCadastro, Touro, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -736,6 +737,182 @@ def seed_cadastro_sanitario(session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Calendário sanitário padrão da fazenda — carregado das planilhas enviadas
+# (calendário fixo anual + protocolo por fase fisiológica). Roda em todo
+# start, idempotente: só cria o que ainda não existe (não sobrescreve
+# edição do usuário — dosagem/frequência/produto continuam 100% editáveis
+# nas telas de Cadastro > Sanitário e Lançamentos > Sanitário > Calendário).
+# Valores de dose/idade/gatilho vindos das planilhas em faixa (ex.: "2 mL a
+# 5 mL", "4 a 8 meses") foram fixados num ponto do meio — ajuste à vontade.
+# ---------------------------------------------------------------------------
+SEED_PRINCIPIOS_CALENDARIO = [
+    # (nome, categoria, doença vinculada)
+    ("Botulismo (Toxoide)", "Biológicos (Vacinas e Diagnósticos)", "Botulismo"),
+    ("Tifopasteurina", "Biológicos (Vacinas e Diagnósticos)", "Pasteurelose"),
+    ("Febre Aftosa (Vacina)", "Biológicos (Vacinas e Diagnósticos)", "Febre Aftosa"),
+    ("Raiva (Vacina)", "Biológicos (Vacinas e Diagnósticos)", "Raiva"),
+]
+
+# Eventos "por fase fisiológica" (protocolo por estágio) — configura o
+# EventoSanitario para gerar a pendência sozinho, disparado pelo gatilho
+# (nascimento, novilha apta, entrada no pré-parto), sem depender de uma
+# regra do calendário. Só aplica se o evento ainda estiver no padrão
+# "nenhum" (nunca configurado manualmente).
+SEED_EVENTOS_POR_ESTAGIO = [
+    # nome, doença, gatilho, idade/offset, dose, unidade, via
+    {"nome": "Brucelose B19", "doenca": "Brucelose", "gatilho": "nascimento", "offset_dias": 150,
+     "dose": 2, "unidade": "ml", "via": "Subcutânea"},
+    {"nome": "Brucelose RB51", "doenca": "Brucelose", "gatilho": "novilha_apta", "idade_meses": 13,
+     "dose": 2, "unidade": "ml", "via": "Subcutânea"},
+    {"nome": "Reprodutiva (Primovacinação)", "doenca": None, "gatilho": "novilha_apta", "idade_meses": 13,
+     "dose": 5, "unidade": "ml", "via": "Intramuscular"},
+    {"nome": "Clostridiose", "doenca": "Clostridiose", "gatilho": "entrada_lote",
+     "dose": 3, "unidade": "ml", "via": "Subcutânea"},
+    {"nome": "Diarreia Neonatal", "doenca": "Diarreia Neonatal", "gatilho": "entrada_lote",
+     "dose": 2, "unidade": "ml", "via": "Subcutânea"},
+    {"nome": "Botulismo", "doenca": "Botulismo", "gatilho": "entrada_lote",
+     "dose": 3, "unidade": "ml", "via": "Subcutânea"},
+    {"nome": "Tifopasteurina", "doenca": "Pasteurelose", "gatilho": "entrada_lote",
+     "dose": 3, "unidade": "ml", "via": "Subcutânea"},
+]
+
+# Regras do calendário fixo anual — época/rebanho (não por animal). Datas
+# ancoradas em 2026 (ano corrente); a recorrência projeta as próximas
+# ocorrências sozinha (não precisa estar no futuro).
+SEED_CALENDARIO_FIXO = [
+    {"evento": "Vermífugo", "categoria_alvo": "Bezerras até Novilhas", "freq_valor": 4, "freq_unidade": "meses",
+     "data": date(2026, 1, 15), "dosagem": "Conforme o peso (ex.: 1 mL/50 kg)", "categoria_preventiva": "tratamento"},
+    {"evento": "Reprodutiva (Reforço)", "categoria_alvo": "Novilhas IA até Vacas", "freq_valor": 12, "freq_unidade": "meses",
+     "data": date(2026, 1, 15), "dosagem": "5 mL (depende do fabricante)", "categoria_preventiva": "vacina"},
+    {"evento": "Reprodutiva (Reforço)", "categoria_alvo": "Novilhas IA até Vacas", "freq_valor": 12, "freq_unidade": "meses",
+     "data": date(2026, 6, 15), "dosagem": "5 mL (depende do fabricante)", "categoria_preventiva": "vacina"},
+    {"evento": "Reprodutiva (Reforço)", "categoria_alvo": "Novilhas IA até Vacas", "freq_valor": 12, "freq_unidade": "meses",
+     "data": date(2026, 12, 15), "dosagem": "5 mL (depende do fabricante)", "categoria_preventiva": "vacina"},
+    {"evento": "Leptospirose", "categoria_alvo": "Novilhas IA até Vacas", "freq_valor": 12, "freq_unidade": "meses",
+     "data": date(2026, 3, 15), "dosagem": "2 mL a 5 mL (conforme bula)", "categoria_preventiva": "vacina"},
+    {"evento": "Leptospirose", "categoria_alvo": "Bezerras até Novilhas", "freq_valor": 12, "freq_unidade": "meses",
+     "data": date(2026, 9, 15), "dosagem": "Conforme o peso", "categoria_preventiva": "vacina"},
+    {"evento": "Exames de Tuberculose e Brucelose", "categoria_alvo": "Rebanho Geral", "freq_valor": 1, "freq_unidade": "anos",
+     "data": date(2027, 4, 15), "dosagem": "Coleta de sangue / Aplicação PPD", "categoria_preventiva": "exame",
+     "observacao": "Retomado em 2027 — já foi feito recentemente."},
+    {"evento": "Febre Aftosa", "categoria_alvo": "Vacas", "freq_valor": 1, "freq_unidade": "anos",
+     "data": date(2026, 5, 15), "dosagem": "2 mL", "categoria_preventiva": "vacina",
+     "observacao": "Calendário do Governo."},
+    {"evento": "Brucelose RB51", "categoria_alvo": "Vacas Adultas", "freq_valor": 4, "freq_unidade": "anos",
+     "data": date(2026, 7, 15), "dosagem": "2 mL", "categoria_preventiva": "vacina",
+     "observacao": "Reforço a cada 4 anos — estratégia: fazer em anos de Copa do Mundo, para não esquecer."},
+    {"evento": "Raiva", "categoria_alvo": "Vacas", "freq_valor": 1, "freq_unidade": "anos",
+     "data": date(2026, 11, 15), "dosagem": "2 mL", "categoria_preventiva": "vacina",
+     "observacao": "Calendário do Governo."},
+]
+
+# Princípio ativo a vincular por evento (quando existe correspondência clara
+# no catálogo da farmácia) — só informativo/rastreio, dosagem real continua
+# sendo escolhida no lançamento.
+PRINCIPIO_POR_EVENTO_CALENDARIO = {
+    "Reprodutiva (Reforço)": "Reprodutiva (IBR, BVD, Leptospirose)",
+    "Leptospirose": "Reprodutiva (IBR, BVD, Leptospirose)",
+    "Brucelose RB51": "Brucelose Bovina (Cepa 19 ou RB51)",
+    "Vermífugo": "Albendazol",
+    "Febre Aftosa": "Febre Aftosa (Vacina)",
+    "Raiva": "Raiva (Vacina)",
+}
+
+
+def configurar_calendario_sanitario_padrao(session: Session) -> None:
+    """Compatibiliza e cadastra o calendário sanitário padrão da fazenda
+    (planilhas "calendário por mês" e "protocolo por estágio"). Roda em todo
+    start, idempotente:
+      - só cria princípio ativo/regra do calendário que ainda não existir;
+      - só configura um EventoSanitario "por estágio" se ele ainda estiver
+        no padrão "nenhum" (nunca foi configurado manualmente).
+    Os 13 eventos e as 10 doenças usados aqui já vêm do seed_cadastro_sanitario
+    — nenhum evento/doença novo precisou ser criado, só compatibilizado.
+    """
+    doencas = {d.nome: d for d in session.exec(select(Doenca)).all()}
+    eventos = {e.nome: e for e in session.exec(select(EventoSanitario)).all()}
+    principios = {p.nome: p for p in session.exec(select(PrincipioAtivo)).all()}
+
+    # 1) Princípios ativos que faltam no catálogo (Botulismo, Tifopasteurina,
+    # Febre Aftosa e Raiva não têm biológico próprio hoje — a farmácia só
+    # tinha os combos de Clostridiose/Brucelose/Reprodutiva/Tuberculina).
+    for nome, categoria, doenca_nome in SEED_PRINCIPIOS_CALENDARIO:
+        if nome in principios:
+            continue
+        novo = PrincipioAtivo(nome=nome, categoria=categoria, categoria_software="Biológico (Vacina)")
+        session.add(novo)
+        principios[nome] = novo
+    session.commit()
+    for nome in principios:
+        session.refresh(principios[nome])
+
+    # 2) Eventos "por fase fisiológica" — configura gatilho automático.
+    # Entrada em lote (pré-parto) exige um lote já marcado pre_parto=True;
+    # sem isso, não dá pra saber qual lote dispara o evento — fica pendente
+    # de configuração manual (Configurações > Cadastro > Sanitário > Eventos).
+    lote_pre_parto = session.exec(select(Lote).where(Lote.pre_parto == True)).first()  # noqa: E712
+    for cfg in SEED_EVENTOS_POR_ESTAGIO:
+        ev = eventos.get(cfg["nome"])
+        if not ev or ev.tipo_agendamento != "nenhum":
+            continue  # não existe, ou já foi configurado manualmente — não mexe
+        if cfg["gatilho"] == "entrada_lote" and not lote_pre_parto:
+            continue  # falta um lote pré-parto cadastrado — configurar depois
+        ev.tipo_agendamento = "evento"
+        ev.gatilho = cfg["gatilho"]
+        if cfg["gatilho"] == "entrada_lote":
+            ev.gatilho_lote = lote_pre_parto.codigo
+            ev.categoria_alvo = ev.categoria_alvo or "Novilhas e vacas prenhes (pré-parto)"
+        if cfg["gatilho"] == "novilha_apta":
+            ev.gatilho_idade_meses = cfg.get("idade_meses")
+        if cfg["gatilho"] == "nascimento":
+            ev.offset_dias = cfg.get("offset_dias")
+        if cfg.get("doenca") and doencas.get(cfg["doenca"]):
+            ev.doenca_id = ev.doenca_id or doencas[cfg["doenca"]].id
+        ev.categoria_preventiva = ev.categoria_preventiva or "vacina"
+        ev.dose_padrao = ev.dose_padrao if ev.dose_padrao is not None else cfg["dose"]
+        ev.unidade_padrao = ev.unidade_padrao or cfg["unidade"]
+        ev.via_padrao = ev.via_padrao or cfg["via"]
+        session.add(ev)
+    session.commit()
+
+    # 3) Regras do calendário fixo anual — época/rebanho. Evita duplicar se já
+    # existir uma regra igual (mesmo evento + mesma categoria-alvo + mesmo mês
+    # de âncora — "Reprodutiva (Reforço)" tem 3 aplicações/ano na mesma
+    # categoria, diferenciadas só pelo mês; sem o mês na chave, a 2ª e a 3ª
+    # seriam descartadas como "duplicata" da 1ª).
+    existentes = {
+        (c.evento_sanitario_id, (c.categoria_alvo or "").strip().lower(), c.data_evento.month)
+        for c in session.exec(select(CalendarioSanitario)).all()
+    }
+    for cfg in SEED_CALENDARIO_FIXO:
+        ev = eventos.get(cfg["evento"])
+        if not ev:
+            continue
+        chave = (ev.id, cfg["categoria_alvo"].strip().lower(), cfg["data"].month)
+        if chave in existentes:
+            continue
+        # Mantém a categoria_preventiva do evento se já foi definida manualmente.
+        if not ev.categoria_preventiva:
+            ev.categoria_preventiva = cfg["categoria_preventiva"]
+            session.add(ev)
+        principio_nome = PRINCIPIO_POR_EVENTO_CALENDARIO.get(cfg["evento"])
+        principio = principios.get(principio_nome) if principio_nome else None
+        session.add(CalendarioSanitario(
+            evento_sanitario_id=ev.id,
+            categoria_alvo=cfg["categoria_alvo"],
+            doenca_id=ev.doenca_id,
+            principio_ativo_id=principio.id if principio else None,
+            dosagem=cfg["dosagem"],
+            frequencia_valor=cfg["freq_valor"],
+            frequencia_unidade=cfg["freq_unidade"],
+            data_evento=cfg["data"],
+            observacao=cfg.get("observacao"),
+        ))
+        existentes.add(chave)
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
 # Motivo de baixa (Rebanho > Baixar animal) — causa específica da baixa (usada
 # quando o motivo geral é "doença", mas também cobre outras causas comuns:
 # acidente, roubo, idade avançada etc.). Cadastrável em Configurações, para
@@ -1220,6 +1397,65 @@ def seed_estoque_semen_inicial(session: Session) -> None:
     session.commit()
 
 
+# Atualização do estoque de sêmen a partir do print enviado (contagem mais
+# recente, por touro). Roda UMA vez (SeedFlag próprio, distinto do inicial —
+# esse já foi consumido em produção): casa pelo nome curto já cadastrado
+# (upsert, renomeando para o nome completo do pedigree) e cria os touros
+# ainda não lançados. A linha "TOURO" (sem pedigree, código genérico) foi
+# excluída a pedido — nunca cadastrada. Frederico, Sevaverde e ABS Newman-ET
+# entram com a quantidade do print DESCONSIDERADA (mantém/zera), conforme
+# instrução — os dois primeiros já são touros de monta natural sempre
+# disponíveis (tipo "fazenda", doses irrelevantes).
+SEED_ESTOQUE_SEMEN_202607 = [
+    # (nome curto já cadastrado OU None se for novo, nome completo, código/naab, central, tipo, doses, local)
+    ("hagen", "DENOVO 22094 HAGEN-ET", "29HO21643", "ABS", "sexado", 6, "Caneca 1"),
+    ("stormy", "STORMY", "029HO19829", "ABS", "convencional", 1, "Caneca 1"),
+    ("prafess", "SIEMERS OUT PRAFESS-ET", "3272850936", "ABS", "convencional", 1, "Caneca 1"),
+    ("mosaic", "MOSAIC", "029HO18803", "ABS", "convencional", 1, "Caneca 1"),
+    ("jag", "T-SPRUCE DENOVO JAG-ET", "29HO21688", "ABS", "convencional", 0, "Caneca 1"),
+    ("guiness", "A.R.KK. MYTYME GUINESS 763", "29HO22747", "ABS", "convencional", 6, "Caneca 1"),
+    ("coors", "A.R.K. ESQUIRE COORS 758", "29HO22744", "ABS", "convencional", 0, "Caneca 1"),
+    (None, "A.R.K. MYTYME HILLUX 70", "29HO21898", "ABS", "convencional", 0, "Caneca 1"),
+    (None, "A.R.K. STARGAZER MESSI", "29HO21627", "ABS", "convencional", 0, "Caneca 1"),
+    (None, "DELEGADO HOMESTEAD FIV GRF", "1800D", "ABS", "convencional", 1, "Caneca 2"),
+    (None, "WV-OAKWOOD SHOTTLE ALDO-ET", "001HO09218", "ABS", "convencional", 0, "Caneca 1"),
+    (None, "ABS NEWMAN-ET", "029HO18586", "ABS", "convencional", 0, "Caneca 1"),  # quantidade do print (2) desconsiderada
+    (None, "SUCESSOR", "6000BD", "ABS", "sexado", 0, "Caneca 1"),
+    (None, "ROBO", "9300AN", "ABS", "convencional", 0, "Caneca 1"),
+    (None, "METEORO", "5890BJ", "ABS", "sexado", 0, "Caneca 1"),
+    (None, "NABIL", "1956AO", "ABS", "sexado", 0, "Caneca 1"),
+    (None, "CAMPEAO FIV RIO DO LEITE", "6555AK", "ABS", "convencional", 0, "Caneca 1"),
+]
+
+
+def atualizar_estoque_semen_202607(session: Session) -> None:
+    """Aplica a contagem de estoque de sêmen do print enviado em jul/2026
+    (upsert por touro). Roda uma vez (SeedFlag)."""
+    chave = "estoque_semen_202607_v1"
+    if session.get(SeedFlag, chave):
+        return
+    existentes = {i.touro_nome.strip().lower(): i for i in session.exec(select(EstoqueSemen)).all()}
+    for nome_curto, nome_completo, codigo, central, tipo, doses, local in SEED_ESTOQUE_SEMEN_202607:
+        atual = existentes.get(nome_curto) if nome_curto else None
+        if atual:
+            atual.touro_nome = nome_completo
+            atual.codigo = codigo
+            atual.naab = codigo
+            atual.central = central
+            atual.tipo = tipo
+            atual.doses = doses
+            atual.local_armazenamento = local
+            atual.atualizado_em = datetime.utcnow()
+            session.add(atual)
+        elif nome_completo.strip().lower() not in existentes:
+            session.add(EstoqueSemen(
+                touro_nome=nome_completo, codigo=codigo, naab=codigo, central=central,
+                tipo=tipo, doses=doses, local_armazenamento=local,
+            ))
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
 class EstoqueSemenIn(BaseModel):
     touro_nome: str
     codigo: str | None = None
@@ -1420,3 +1656,228 @@ def excluir_touro(touro_id: int, session: Session = Depends(get_session)) -> dic
     session.delete(t)
     session.commit()
     return {"excluido": True}
+
+
+# ---------------------------------------------------------------------------
+# Protocolo de indução de lactação — cadastro do cronograma-molde (dias,
+# medicamentos por princípio ativo, implante de progesterona, manejo de
+# adaptação à ordenha). O lançamento em animais vive em /producao (ver
+# fazenda.api.routers.producao).
+# ---------------------------------------------------------------------------
+TIPOS_ETAPA_INDUCAO = ["medicamento", "dispositivo", "manejo"]
+ACOES_DISPOSITIVO_INDUCAO = ["colocar", "retirar"]
+
+
+class EtapaInducaoIn(BaseModel):
+    dia: int
+    tipo: str = "medicamento"  # medicamento | dispositivo | manejo
+    principio_ativo_id: int | None = None
+    produto: str
+    acao_dispositivo: str | None = None  # colocar | retirar (só tipo=dispositivo)
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+
+
+class ProtocoloInducaoIn(BaseModel):
+    nome: str
+    dia_inicial: int = 0
+    observacao: str | None = None
+    ativo: bool = True
+    etapas: list[EtapaInducaoIn]
+
+
+def _validar_etapas_inducao(etapas: list[EtapaInducaoIn]) -> None:
+    if not etapas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo")
+    for e in etapas:
+        if e.tipo not in TIPOS_ETAPA_INDUCAO:
+            raise HTTPException(status_code=400, detail=f"Tipo de etapa inválido — use um de: {', '.join(TIPOS_ETAPA_INDUCAO)}")
+        if not (e.produto or "").strip():
+            raise HTTPException(status_code=400, detail="Informe o produto/princípio ativo ou a ação de cada etapa")
+        if e.tipo == "dispositivo" and e.acao_dispositivo not in ACOES_DISPOSITIVO_INDUCAO:
+            raise HTTPException(status_code=400, detail="Etapa de dispositivo precisa de acao_dispositivo: colocar | retirar")
+        if e.tipo == "medicamento" and (e.dose is not None and e.dose <= 0):
+            raise HTTPException(status_code=400, detail="A dose de uma etapa de medicamento deve ser positiva")
+
+
+def _serializar_protocolo_inducao(session: Session, p: ProtocoloInducaoLactacao) -> dict:
+    etapas = session.exec(
+        select(ProtocoloInducaoLactacaoEtapa)
+        .where(ProtocoloInducaoLactacaoEtapa.protocolo_id == p.id)
+        .order_by(ProtocoloInducaoLactacaoEtapa.dia)
+    ).all()
+    return {**p.model_dump(), "etapas": [e.model_dump() for e in etapas]}
+
+
+@router.get("/protocolos-inducao-lactacao")
+def listar_protocolos_inducao(session: Session = Depends(get_session)) -> list[dict]:
+    protocolos = session.exec(select(ProtocoloInducaoLactacao).order_by(ProtocoloInducaoLactacao.nome)).all()
+    return [_serializar_protocolo_inducao(session, p) for p in protocolos]
+
+
+@router.post("/protocolos-inducao-lactacao")
+def criar_protocolo_inducao(dados: ProtocoloInducaoIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um protocolo com o nome '{nome}'")
+    _validar_etapas_inducao(dados.etapas)
+
+    protocolo = ProtocoloInducaoLactacao(
+        nome=nome, dia_inicial=dados.dia_inicial, observacao=dados.observacao, ativo=dados.ativo,
+    )
+    session.add(protocolo)
+    session.commit()
+    session.refresh(protocolo)
+    for etapa in dados.etapas:
+        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+    session.commit()
+    return _serializar_protocolo_inducao(session, protocolo)
+
+
+@router.put("/protocolos-inducao-lactacao/{protocolo_id}")
+def atualizar_protocolo_inducao(protocolo_id: int, dados: ProtocoloInducaoIn, session: Session = Depends(get_session)) -> dict:
+    protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
+    if not protocolo:
+        raise HTTPException(status_code=404, detail="Protocolo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_etapas_inducao(dados.etapas)
+
+    protocolo.nome = nome
+    protocolo.dia_inicial = dados.dia_inicial
+    protocolo.observacao = dados.observacao
+    protocolo.ativo = dados.ativo
+    session.add(protocolo)
+
+    etapas_antigas = session.exec(
+        select(ProtocoloInducaoLactacaoEtapa).where(ProtocoloInducaoLactacaoEtapa.protocolo_id == protocolo_id)
+    ).all()
+    for e in etapas_antigas:
+        session.delete(e)
+    session.commit()
+    for etapa in dados.etapas:
+        session.add(ProtocoloInducaoLactacaoEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+    session.commit()
+    return _serializar_protocolo_inducao(session, protocolo)
+
+
+# Cronograma das duas planilhas do produtor ("Protocolo Ativos 1" — 28 dias,
+# D1 a D28, e manutenção da bST depois disso — e "Protocolo Ativos 2" — 18
+# dias, D0 a D18). Doses/unidades e dias vêm literalmente das planilhas
+# anexadas; "Somatotropina Bovina (bST)" não tinha princípio ativo cadastrado
+# — foi criado aqui para compatibilizar com o restante do sistema (mesmo
+# grupo/categoria dos demais hormônios reprodutivos).
+SEED_PRINCIPIOS_INDUCAO = ["Somatotropina Bovina (bST)"]
+
+# (dia, tipo, produto/principio, acao_dispositivo, dose, unidade, via)
+SEED_ETAPAS_INDUCAO_1 = [
+    (1, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (1, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (1, "dispositivo", "Implante de Progesterona", "colocar", None, None, None),
+    (2, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (3, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (4, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (5, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (6, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (7, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (8, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (8, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (8, "dispositivo", "Implante de Progesterona", "retirar", None, None, None),
+    (9, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (10, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (11, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (12, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (13, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (14, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (15, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (15, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (16, "medicamento", "Cloprostenol Sódico / D-Cloprostenol", None, 3, "ml", None),
+    (17, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (18, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (19, "medicamento", "Dexametasona", None, 20, "ml", None),
+    (19, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (20, "medicamento", "Dexametasona", None, 20, "ml", None),
+    (20, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (21, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (21, "medicamento", "Dexametasona", None, 20, "ml", None),
+    (21, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (22, "manejo", "COMEÇAR A ORDENHA", None, None, None, None),
+    (28, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+]
+
+SEED_ETAPAS_INDUCAO_2 = [
+    (0, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (0, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (0, "dispositivo", "Implante de Progesterona", "colocar", None, None, None),
+    (2, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (4, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (6, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (8, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (8, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (10, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (12, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (14, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (14, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (15, "medicamento", "Cloprostenol Sódico / D-Cloprostenol", None, None, "dose", None),
+    (15, "medicamento", "Dexametasona", None, 10, "ml", None),
+    (15, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (15, "dispositivo", "Implante de Progesterona", "retirar", None, None, None),
+    (16, "medicamento", "Dexametasona", None, 10, "ml", None),
+    (16, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (17, "medicamento", "Dexametasona", None, 10, "ml", None),
+    (17, "medicamento", "Benzoato de Estradiol", None, 2, "ml", None),
+    (18, "manejo", "INICIAR A ORDENHA", None, None, None, None),
+]
+
+
+def seed_protocolos_inducao_lactacao(session: Session) -> None:
+    """
+    Cadastra os dois protocolos de indução de lactação (18 e 28 dias) a partir
+    das planilhas do produtor, por princípio ativo. Roda UMA vez (SeedFlag) —
+    depois disso os dois protocolos ficam livres para o usuário editar/excluir
+    em Configurações > Cadastro, sem que reinicializações apaguem as edições.
+    """
+    chave = "protocolos_inducao_lactacao_v1"
+    if session.get(SeedFlag, chave):
+        return
+
+    for nome_pa in SEED_PRINCIPIOS_INDUCAO:
+        if not session.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == nome_pa)).first():
+            session.add(PrincipioAtivo(nome=nome_pa, categoria="Fármacos Reprodutivos e Hormônios"))
+    session.commit()
+
+    principios_por_nome = {p.nome: p.id for p in session.exec(select(PrincipioAtivo)).all()}
+
+    def _criar(nome: str, dia_inicial: int, observacao: str, etapas: list[tuple]) -> None:
+        if session.exec(select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.nome == nome)).first():
+            return
+        protocolo = ProtocoloInducaoLactacao(nome=nome, dia_inicial=dia_inicial, observacao=observacao)
+        session.add(protocolo)
+        session.commit()
+        session.refresh(protocolo)
+        for dia, tipo, produto, acao, dose, unidade, via in etapas:
+            session.add(ProtocoloInducaoLactacaoEtapa(
+                protocolo_id=protocolo.id, dia=dia, tipo=tipo, produto=produto,
+                principio_ativo_id=principios_por_nome.get(produto) if tipo == "medicamento" else None,
+                acao_dispositivo=acao, dose=dose, unidade=unidade, via=via,
+            ))
+        session.commit()
+
+    _criar(
+        "Protocolo de Indução de Lactação — 28 dias (Ativos 1)", 1,
+        "Manter a bST (Somatotropina Bovina) a cada 12 dias até o final da lactação — "
+        "a partir do D28 a vaca entra no ciclo normal de aplicação de bST do rebanho (Sanidade > Preventiva > BST).",
+        SEED_ETAPAS_INDUCAO_1,
+    )
+    _criar(
+        "Protocolo de Indução de Lactação — 18 dias (Ativos 2)", 0,
+        "Protocolo intensivo (63 animais) — aplicações em dias alternados; nos dias de INTERVALO não há nenhuma etapa.",
+        SEED_ETAPAS_INDUCAO_2,
+    )
+
+    session.add(SeedFlag(chave=chave))
+    session.commit()

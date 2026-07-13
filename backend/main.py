@@ -41,7 +41,11 @@ from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
 from fazenda.api.routers.reproducao import deduplicar_partos
-from fazenda.api.routers.cadastro import seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias, seed_estoque_semen_inicial
+from fazenda.api.routers.cadastro import (
+    seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias,
+    seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
+    seed_protocolos_inducao_lactacao,
+)
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.rules.farmacia import bootstrap_farmacia
@@ -61,10 +65,17 @@ async def lifespan(app: FastAPI):
         deduplicar_partos(session)
         seed_pessoas(session)
         seed_cadastro_sanitario(session)
+        # Calendário sanitário padrão (vacinas/exames sazonais e por fase
+        # fisiológica) — idempotente, só cria/compatibiliza o que falta.
+        configurar_calendario_sanitario_padrao(session)
         seed_motivos_baixa(session)
         seed_servicos(session)
         seed_semen_categorias(session)
         seed_estoque_semen_inicial(session)
+        atualizar_estoque_semen_202607(session)
+        # Protocolo de indução de lactação (18 e 28 dias) — cronograma por
+        # princípio ativo, editável depois em Configurações > Cadastro.
+        seed_protocolos_inducao_lactacao(session)
         # Farmácia: catálogo de princípios ativos/marcas + compatibilização do
         # estoque já existente (idempotente, sem perda de dados).
         bootstrap_farmacia(session)

@@ -139,6 +139,33 @@ export async function fetchProtocoloIatfConcluidos() {
   return res.json();
 }
 
+export async function fetchProtocoloInducaoConcluidos() {
+  const res = await authFetch(`${API}/agenda/protocolo-inducao-lactacao/concluidos`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar induções de lactação concluídas");
+  return res.json();
+}
+
+// ── Protocolo de indução de lactação (Lançamentos > Produção) ──
+export async function fetchProtocolosInducaoLactacao() {
+  const res = await authFetch(`${API}/producao/protocolos-inducao-lactacao`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar protocolos de indução de lactação");
+  return res.json();
+}
+export async function lancarInducaoLactacao(dados: {
+  protocolo_id: number; animais: string[]; data_d0: string; responsavel?: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/producao/inducao-lactacao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar indução de lactação"); }
+  return res.json();
+}
+export async function fetchInducaoLactacaoAtivos() {
+  const res = await authFetch(`${API}/producao/inducao-lactacao/ativos`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao buscar induções de lactação em andamento");
+  return res.json();
+}
+
 export async function fetchAnimais(params?: { grupo?: string; sit_rep?: string; incluirMachos?: boolean }) {
   const qs = new URLSearchParams();
   if (params?.grupo) qs.set("grupo", params.grupo);
@@ -1111,6 +1138,13 @@ export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim
   if (dataFim) params.set("data_fim", dataFim);
   const res = await authFetch(`${API}/producao/relatorio-controle-entrega?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Relatório controle × entregue error: ${res.status}`);
+  return res.json();
+}
+
+// ── Relatório de BST (Produção) ──
+export async function fetchRelatorioBst() {
+  const res = await authFetch(`${API}/producao/relatorio-bst`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de BST error: ${res.status}`);
   return res.json();
 }
 

@@ -14,6 +14,7 @@ import {
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
   fetchApresentacoesFarmacia, fetchTouros,
+  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -334,6 +335,170 @@ function FormProtocoloIatf({ animais }: { animais: AnimalRow[] }) {
         </>
       )}
       <ProtocolosIatfAtivos recarregarRef={recarregarAtivosRef} />
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+      <div className="flex items-center gap-3 mt-4">
+        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </>
+  );
+}
+
+function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.MutableRefObject<() => void> }) {
+  const [ativos, setAtivos] = useState<any[] | null>(null);
+  const [abertos, setAbertos] = useState<Set<number>>(new Set());
+  const toggle = (id: number) => setAbertos((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const carregar = () => fetchInducaoLactacaoAtivos().then(setAtivos).catch(() => setAtivos([]));
+  useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (!ativos || !ativos.length) return null;
+  return (
+    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+      <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
+        Induções de lactação em andamento ({ativos.length})
+      </div>
+      <div className="space-y-2">
+        {ativos.map((p) => {
+          const aberto = abertos.has(p.lancamento_id);
+          return (
+            <div key={p.lancamento_id} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+              <button onClick={() => toggle(p.lancamento_id)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.8rem", background: "var(--surface)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                {aberto ? <ChevronDown size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} /> : <ChevronRight size={15} style={{ color: "var(--dourado-light)", flexShrink: 0 }} />}
+                <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{p.nome_protocolo}</span>
+                <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Início {formatDate(p.data_d0)} — {p.animais.length} animal(is)</span>
+              </button>
+              {aberto && (
+                <table className="fazenda-table" style={{ margin: 0 }}>
+                  <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                  <tbody>
+                    {p.animais.map((a: any) => (
+                      <tr key={a.numero_matriz}>
+                        <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                        <td>{a.etapa_atual}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
+  const [protocolos, setProtocolos] = useState<any[]>([]);
+  const [protocoloId, setProtocoloId] = useState("");
+  const [emLote, setEmLote] = useState(false);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [um, setUm] = useState("");
+  const [dataD0, setDataD0] = useState("");
+  const [responsavel, setResponsavel] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const recarregarAtivosRef = useRef(() => {});
+  const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
+
+  useEffect(() => { fetchProtocolosInducaoLactacao().then(setProtocolos).catch(() => setProtocolos([])); }, []);
+  const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
+    if (!protocoloId) { setErro("Selecione o protocolo de indução."); return; }
+    if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
+    if (!dataD0) { setErro(`Informe a data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"}.`); return; }
+    setSalvando(true);
+    try {
+      const r = await lancarInducaoLactacao({
+        protocolo_id: Number(protocoloId), animais: animaisAlvo, data_d0: dataD0,
+        responsavel: responsavel || undefined, observacao: observacao || undefined,
+      });
+      setSucesso(`Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
+      setSel(new Set()); setUm("");
+      recarregarAtivosRef.current();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao lançar indução de lactação");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <Campo label="Protocolo" full>
+          <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
+            <option value="">Selecione o protocolo…</option>
+            {protocolos.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.duracao_dias} dias)</option>)}
+          </select>
+        </Campo>
+        <Campo label="Seleção">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
+            <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
+          </label>
+        </Campo>
+        <Campo label={`Data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"} (1º dia do cronograma)`}>
+          <input type="date" style={inputStyle} value={dataD0} onChange={(e) => setDataD0(e.target.value)} />
+        </Campo>
+        <Campo label="Responsável">
+          <input style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)} placeholder="Opcional" />
+        </Campo>
+        <Campo label="Observação" full>
+          <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Opcional" />
+        </Campo>
+      </div>
+
+      <div className="mt-3">
+        <label style={lbl}>Matriz (nº)</label>
+        {emLote
+          ? <SelecaoAnimaisTabela
+              animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
+              colunas={[
+                { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              ]}
+            />
+          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
+      </div>
+
+      {protocolo && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <div className="card-header mb-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
+            Cronograma — vai para a Agenda
+          </div>
+          {protocolo.observacao && <p style={nota}>{protocolo.observacao}</p>}
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Dia</th><th>Medicamento(s)</th><th>Manejo</th></tr></thead>
+              <tbody>
+                {Array.from(new Set((protocolo.etapas || []).map((e: any) => e.dia))).sort((a: any, b: any) => a - b).map((dia: any) => {
+                  const doDia = (protocolo.etapas || []).filter((e: any) => e.dia === dia);
+                  const meds = doDia.filter((e: any) => e.tipo === "medicamento")
+                    .map((e: any) => `${e.dose ? `${e.dose}${e.unidade ? ` ${e.unidade}` : ""} ` : ""}${e.produto}`).join(" + ") || "—";
+                  const manejo = doDia.filter((e: any) => e.tipo !== "medicamento")
+                    .map((e: any) => e.tipo === "dispositivo" ? (e.acao_dispositivo === "colocar" ? "Colocar Implante de Progesterona" : "Retirar o Implante de Progesterona") : e.produto)
+                    .join(" + ") || "—";
+                  return (
+                    <tr key={dia}>
+                      <td style={{ fontWeight: 700 }}>D{dia}</td>
+                      <td>{meds}</td>
+                      <td style={{ color: manejo !== "—" ? "var(--amber)" : undefined }}>{manejo}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      <InducaoLactacaoAtivos recarregarRef={recarregarAtivosRef} />
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
@@ -1673,8 +1838,25 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
   const [realizado, setRealizado] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+  // Vindo da Agenda ("Dar baixa" de um evento/regra sanitária preventiva): ao
+  // salvar, marca a pendência original como realizada para sumir da Agenda.
+  const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
 
   useEffect(() => { fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {}); }, []);
+
+  // Pré-preenche a partir da Agenda — evento, data e (se for por animal) o
+  // número da matriz já vêm prontos; o restante (categoria/lote, se for um
+  // lembrete de rebanho) o usuário escolhe na hora.
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("ir") !== "preventivo_aplicacao") return;
+    const evId = qs.get("evento_sanitario_id");
+    if (evId) setEventoId(evId);
+    const data = qs.get("data"); if (data) setDataEvento(data);
+    const numero = qs.get("numero_matriz");
+    if (numero) { setVinculo("animal"); setAnimaisSel(new Set([numero])); }
+    setEventoAgenda(qs.get("evento_agenda"));
+  }, []);
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
@@ -1719,6 +1901,12 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
       // "Já foi realizado?" — marca a ocorrência como feita (some da agenda de pendências).
       if (realizado && r?.regra?.id) {
         await marcarEventoRealizado(`calendario_sanitario_${r.regra.id}__${dataEvento}`).catch(() => {});
+      }
+      // Veio da Agenda (link "Dar baixa") — marca a pendência de origem como
+      // realizada, senão ela continuaria aparecendo mesmo já resolvida.
+      if (eventoAgenda) {
+        await marcarEventoRealizado(eventoAgenda).catch(() => {});
+        setEventoAgenda(null);
       }
       const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
       setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
@@ -2862,6 +3050,7 @@ const TIPOS_GRUPOS = [
       { id: "controle", label: "Controle leiteiro", icon: Milk, desc: "Pesagem de leite por vaca ou por lote." },
       { id: "pesagem", label: "Pesagem corporal", icon: Scale, desc: "Peso vivo por animal ou por lote — acompanha o crescimento do rebanho." },
       { id: "secagem", label: "Secagem", icon: Droplet, desc: "Registro de secagem, motivo, ECC e produto(s) — sugere a mudança para o lote de secas." },
+      { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Entrega mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
     ],
@@ -3021,6 +3210,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Protocolo sanitário já grava de verdade.</strong> Cria um evento na Agenda por etapa (D1, D2...) — ao marcar "realizado", dá baixa automática do produto no Estoque.</>
           ) : sel === "secagem" ? (
             <><strong style={{ color: "var(--text)" }}>Secagem já grava de verdade.</strong> Ao salvar, sugere mover a vaca para o lote das secas — você confirma antes da mudança.</>
+          ) : sel === "inducao_lactacao" ? (
+            <><strong style={{ color: "var(--text)" }}>Indução de lactação já grava de verdade.</strong> Gera um evento por dia do cronograma na Agenda — medicamentos com baixa automática de estoque, e uma observação de manejo (implante, adaptação na ordenha, iniciar a ordenha) visível para o funcionário.</>
           ) : sel === "qualidade_leite" ? (
             <><strong style={{ color: "var(--text)" }}>Qualidade do leite já grava de verdade.</strong> Lance por uma vaca ou pelo tanque (todas as vacas em lactação) — alimenta o relatório e o gráfico de qualidade em Produção.</>
           ) : sel === "entrega_leite" ? (
@@ -3045,6 +3236,7 @@ export default function LancamentosPage() {
         {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
         {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
         {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+        {sel === "inducao_lactacao" && <FormInducaoLactacao animais={animais} />}
         {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
         {sel === "entrega_leite" && <FormEntregaLeite />}
         {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}

@@ -82,6 +82,10 @@ class AgendaResult:
     hormonios_check: list[CheckHormonio] = field(default_factory=list)
     bst_elegiveis: list[ResultadoBST] = field(default_factory=list)
     bst_excluidos: list[ResultadoBST] = field(default_factory=list)
+    # Excluídas manualmente (Animal.excluir_bst) — não contam como aptas nem
+    # como "excluídas por critério automático"; ficam à parte para reanálise
+    # na próxima aplicação (indicador amarelo no front).
+    bst_reanalise: list[ResultadoBST] = field(default_factory=list)
     contas_a_pagar: list[dict] = field(default_factory=list)
     eventos: list[AgendaItem] = field(default_factory=list)
     # Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
@@ -106,6 +110,7 @@ class AgendaEngine:
         contas: list[dict],
         eventos_manuais: list[dict],
         dias_contas_a_pagar: int = DIAS_CONTAS_A_PAGAR,
+        proxima_visita_bst_real: date | None = None,
     ) -> AgendaResult:
         """
         Calcula toda a agenda para uma data de referência.
@@ -118,6 +123,12 @@ class AgendaEngine:
             estoque: Lista de dicts com campos do modelo Estoque.
             contas: Lista de dicts com campos do modelo ContaGerencial.
             eventos_manuais: Lista de dicts com campos do modelo AgendaManual.
+            proxima_visita_bst_real: Data da próxima aplicação de BST calculada
+                a partir da ÚLTIMA APLICAÇÃO REAL lançada (Sanidade), já com o
+                ciclo de 12 em 12 dias avançado até cair no futuro. Quando
+                informada, substitui a estimativa por analogia ao serviço
+                reprodutivo — o motor usa essa data para projetar o DEL de
+                cada animal na próxima aplicação (bst_elegiveis/nunca aplicadas).
 
         Returns:
             AgendaResult com todos os blocos da agenda calculados.
@@ -160,6 +171,12 @@ class AgendaEngine:
             ultimo_servico = max(datas_servico)
             result.proxima_visita_iatf = ultimo_servico + timedelta(days=INTERVALO_VISITA_REPRODUTIVA)
             result.proxima_visita_bst = ultimo_servico + timedelta(days=INTERVALO_BST)
+        # A data real (última aplicação de BST + 12 dias, avançada até cair no
+        # futuro) sempre tem prioridade sobre a estimativa acima — que é só um
+        # chute por analogia ao serviço reprodutivo, usado apenas quando a
+        # fazenda nunca lançou nenhuma aplicação de BST ainda.
+        if proxima_visita_bst_real is not None:
+            result.proxima_visita_bst = proxima_visita_bst_real
 
         # 1b. RETOQUE — diagnóstico positivo marcado para reconfirmar entra na
         # agenda no dia do próximo serviço (data do diagnóstico + meta de
@@ -234,6 +251,7 @@ class AgendaEngine:
         # 3. EVENTOS POR ANIMAL (gestação, secagem, scratch, PEV, BST, desmama)
         bst_elegiveis: list[ResultadoBST] = []
         bst_excluidos: list[ResultadoBST] = []
+        bst_reanalise: list[ResultadoBST] = []
 
         for animal in animais:
             if not animal.get("ativo", True):
@@ -332,9 +350,22 @@ class AgendaEngine:
                             observacao=obs,
                         ))
 
-            # ── BST — marcada para excluir manualmente: nem elegível, nem excluída
-            # (some das duas listas, não é um "quase apta" a mostrar).
-            if not animal.get("excluir_bst"):
+            # ── BST — marcada para excluir manualmente: não é "apta" nem
+            # "excluída por critério automático" — vai para uma lista à parte,
+            # de reanálise na próxima aplicação (indicador amarelo no front).
+            if animal.get("excluir_bst"):
+                cod = (grupo or "").strip()[:2]
+                if cod in ("01", "02", "03"):
+                    res_bst = avaliar_bst(
+                        numero_matriz=numero,
+                        grupo_primario=grupo,
+                        del_dias=del_dias,
+                        data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
+                        data_referencia=data_referencia,
+                    )
+                    res_bst.motivo_exclusao = "Excluída manualmente do BST — revisar na próxima aplicação"
+                    bst_reanalise.append(res_bst)
+            else:
                 # DEL projetado para a data da PRÓXIMA aplicação de BST (não o DEL de
                 # hoje) — uma vaca com DEL 55 hoje mas cuja próxima aplicação é daqui
                 # a 6 dias já entra como candidata (chegará aos 60 dias na hora certa).
@@ -360,6 +391,7 @@ class AgendaEngine:
 
         result.bst_elegiveis = bst_elegiveis
         result.bst_excluidos = bst_excluidos
+        result.bst_reanalise = bst_reanalise
 
         # 4. PESAGENS RECORRENTES
         # Terça mais próxima (bezerros, a cada 15 dias)

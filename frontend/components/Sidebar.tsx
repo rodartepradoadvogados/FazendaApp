@@ -166,7 +166,7 @@ export function Sidebar() {
                 key={href}
                 href={href}
                 title={title || label}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
                 style={{
                   background: active ? "var(--sidebar-active-bg)" : "transparent",
                   color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",

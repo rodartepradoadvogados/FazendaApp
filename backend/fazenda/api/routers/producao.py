@@ -5,6 +5,7 @@ lançamento de pesagens (por vaca ou por lote inteiro, de uma vez).
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -17,7 +18,8 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
     LancamentoItem, Lote,
-    Parto, PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
+    Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
+    ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.alimentacao import calcular_consumo
@@ -654,4 +656,180 @@ def sugestao_lote_evento(dados: SugestaoLoteEventoIn, session: Session = Depends
     for lote in lotes:
         if animal_atende_criterios(lote, animal_dict, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal):
             return {"lote_sugerido": {"codigo": lote.codigo, "nome": lote.nome, "rotulo": _rotulo_lote(lote.codigo, lote.nome)}}
+    return {"lote_sugerido": None}
+
+
+# ---------------------------------------------------------------------------
+# Protocolo de indução de lactação — lançamento em lote (protocolo cadastrado
+# em Configurações > Cadastro, ver fazenda.api.routers.cadastro) para um ou
+# vários animais de uma vez. Cada dia de cada animal vira uma aplicação
+# rastreável (aparece agrupada na Agenda, marcada como realizada
+# individualmente) — mesmo padrão do protocolo IATF (reproducao.py).
+# ---------------------------------------------------------------------------
+def _descricao_medicamentos_dia(etapas: list[ProtocoloInducaoLactacaoEtapa]) -> str:
+    partes = []
+    for e in etapas:
+        if e.dose:
+            dose_txt = f"{e.dose:g}".rstrip("0").rstrip(".") if isinstance(e.dose, float) else str(e.dose)
+            partes.append(f"{dose_txt} {e.unidade or ''} {e.produto}".strip())
+        else:
+            partes.append(e.produto)
+    return " + ".join(partes) if partes else "-"
+
+
+def _observacao_manejo_dia(etapas: list[ProtocoloInducaoLactacaoEtapa]) -> str | None:
+    textos = []
+    for e in etapas:
+        if e.tipo == "dispositivo":
+            textos.append("Colocar Implante de Progesterona" if e.acao_dispositivo == "colocar" else "Retirar o Implante de Progesterona")
+        elif e.tipo == "manejo":
+            textos.append(e.produto)
+    return " + ".join(textos) if textos else None
+
+
+@router.get("/protocolos-inducao-lactacao")
+def listar_protocolos_inducao_producao(session: Session = Depends(get_session)) -> list[dict]:
+    """Protocolos ativos disponíveis para lançamento (o cadastro/edição vive em
+    Configurações > Cadastro > Protocolo de indução de lactação)."""
+    protocolos = session.exec(
+        select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.ativo == True).order_by(ProtocoloInducaoLactacao.nome)  # noqa: E712
+    ).all()
+    out = []
+    for p in protocolos:
+        etapas = session.exec(
+            select(ProtocoloInducaoLactacaoEtapa)
+            .where(ProtocoloInducaoLactacaoEtapa.protocolo_id == p.id)
+            .order_by(ProtocoloInducaoLactacaoEtapa.dia)
+        ).all()
+        ultimo_dia = max((e.dia for e in etapas), default=p.dia_inicial)
+        out.append({**p.model_dump(), "etapas": [e.model_dump() for e in etapas], "duracao_dias": ultimo_dia - p.dia_inicial})
+    return out
+
+
+class LancarInducaoLactacaoIn(BaseModel):
+    protocolo_id: int
+    animais: list[str]
+    data_d0: date  # data do dia_inicial do protocolo (D0 ou D1)
+    responsavel: str | None = None
+    observacao: str | None = None
+
+
+@router.post("/inducao-lactacao", status_code=201)
+def lancar_inducao_lactacao(
+    dados: LancarInducaoLactacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    protocolo = session.get(ProtocoloInducaoLactacao, dados.protocolo_id)
+    if not protocolo:
+        raise HTTPException(status_code=404, detail="Protocolo de indução de lactação não encontrado")
+    etapas = session.exec(
+        select(ProtocoloInducaoLactacaoEtapa)
+        .where(ProtocoloInducaoLactacaoEtapa.protocolo_id == dados.protocolo_id)
+        .order_by(ProtocoloInducaoLactacaoEtapa.dia)
+    ).all()
+    if not etapas:
+        raise HTTPException(status_code=400, detail="Este protocolo não tem etapas cadastradas")
+    animais = [n.strip() for n in dados.animais if n.strip()]
+    if not animais:
+        raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
+
+    etapas_por_dia: dict[int, list[ProtocoloInducaoLactacaoEtapa]] = {}
+    for e in etapas:
+        etapas_por_dia.setdefault(e.dia, []).append(e)
+
+    lancamento = ProtocoloInducaoLancamento(
+        protocolo_id=protocolo.id, nome_protocolo=protocolo.nome, data_d0=dados.data_d0,
+        responsavel=dados.responsavel, observacao=dados.observacao, usuario_id=_usuario_id_seguro(user),
+    )
+    session.add(lancamento)
+    session.commit()
+    session.refresh(lancamento)
+
+    for dia, etapas_dia in etapas_por_dia.items():
+        for e in etapas_dia:
+            if e.tipo == "medicamento":
+                session.add(ProtocoloInducaoMedicamento(
+                    lancamento_id=lancamento.id, dia=dia, produto=e.produto, dose=e.dose, unidade=e.unidade, via=e.via,
+                ))
+
+    eventos_criados = 0
+    for numero in animais:
+        for dia, etapas_dia in etapas_por_dia.items():
+            data_prevista = dados.data_d0 + timedelta(days=dia - protocolo.dia_inicial)
+            session.add(ProtocoloInducaoAplicacao(
+                lancamento_id=lancamento.id, numero_matriz=numero, dia=dia,
+                descricao=_descricao_medicamentos_dia([e for e in etapas_dia if e.tipo == "medicamento"]),
+                observacao_manejo=_observacao_manejo_dia(etapas_dia),
+                data_prevista=data_prevista,
+            ))
+            eventos_criados += 1
+
+    session.commit()
+    return {"criado": True, "lancamento_id": lancamento.id, "eventos_criados": eventos_criados, "animais": len(animais)}
+
+
+@router.get("/inducao-lactacao/ativos")
+def listar_inducao_lactacao_ativos(session: Session = Depends(get_session)) -> list[dict]:
+    """Lançamentos com pelo menos uma etapa ainda não realizada — para ver de
+    relance em qual dia está cada animal em indução."""
+    lancamentos = session.exec(select(ProtocoloInducaoLancamento).order_by(ProtocoloInducaoLancamento.data_d0.desc())).all()
+    aplicacoes = session.exec(select(ProtocoloInducaoAplicacao)).all()
+    por_lancamento: dict[int, list[ProtocoloInducaoAplicacao]] = {}
+    for ap in aplicacoes:
+        por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+
+    ativos = []
+    for lanc in lancamentos:
+        aps = por_lancamento.get(lanc.id, [])
+        pendentes = [a for a in aps if not a.realizada]
+        if not pendentes:
+            continue
+        por_animal: dict[str, list[ProtocoloInducaoAplicacao]] = {}
+        for ap in aps:
+            por_animal.setdefault(ap.numero_matriz, []).append(ap)
+        animais_status = []
+        for numero, aps_animal in sorted(por_animal.items(), key=lambda item: chave_numero(item[0])):
+            proxima = min((a for a in aps_animal if not a.realizada), key=lambda a: a.dia, default=None)
+            animais_status.append({
+                "numero_matriz": numero,
+                "etapa_atual": f"D{proxima.dia}" if proxima else "Concluído",
+                "data_etapa_atual": proxima.data_prevista.isoformat() if proxima else None,
+            })
+        ativos.append({
+            "lancamento_id": lanc.id,
+            "nome_protocolo": lanc.nome_protocolo,
+            "data_d0": lanc.data_d0.isoformat(),
+            "animais": animais_status,
+        })
+    return ativos
+
+
+# ---------------------------------------------------------------------------
+# Relatório de BST (Produção) — histórico de aplicações (Sanidade) achatado
+# para os filtros/gestão. A elegibilidade do dia (aptas/excluídas/nunca
+# aplicadas) já é calculada pela Agenda (GET /agenda/) — este endpoint cobre
+# só o lado histórico/gerencial que falta: quem recebeu, quando e quanto.
+# ---------------------------------------------------------------------------
+MARCADORES_BST_PRODUCAO = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+
+
+@router.get("/relatorio-bst")
+def relatorio_bst(session: Session = Depends(get_session)) -> dict:
+    """Histórico de aplicações de BST, achatado com lote/categoria do animal na hora."""
+    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    aplicacoes = [
+        s for s in session.exec(select(Sanidade)).all()
+        if MARCADORES_BST_PRODUCAO.search(s.produto or "")
+    ]
+    registros = []
+    for s in aplicacoes:
+        a = animais_por_numero.get(s.numero_matriz)
+        registros.append({
+            "numero_matriz": s.numero_matriz,
+            "data_aplicacao": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
+            "produto": s.produto, "dose": s.dose, "unidade": s.unidade, "responsavel": s.responsavel,
+            "lote": a.grupo_primario if a else None,
+            "categoria": (a.categoria_abrev or a.categoria_completa) if a else None,
+        })
+    registros.sort(key=lambda r: r["data_aplicacao"] or "", reverse=True)
+    return {"aplicacoes": registros, "total": len(registros)}
     return {"lote_sugerido": None}

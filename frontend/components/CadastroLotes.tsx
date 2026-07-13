@@ -36,6 +36,9 @@ const inputStyle: React.CSSProperties = {
 };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
 
+const rotuloSituacaoProdutiva = (v: string | null) => (v === "lactacao" ? "Em lactação" : v === "seca" ? "Seca" : "Ambas");
+const rotuloCategorias = (v: string | null) => (v ? v.split(",").map((c) => c.trim()).filter(Boolean).map((c) => c[0].toUpperCase() + c.slice(1)).join(", ") : "—");
+
 // Monta o payload que a API espera a partir do form (strings vazias -> null).
 function paraPayload(form: Form) {
   const n = (v: string) => (v === "" ? null : Number(v));
@@ -137,6 +140,9 @@ export default function CadastroLotes() {
                   <th>Código</th><th>Nome</th><th style={{ textAlign: "right" }}>Animais</th>
                   <th style={{ textAlign: "right" }}>DEL mín.</th><th style={{ textAlign: "right" }}>DEL máx.</th>
                   <th style={{ textAlign: "right" }}>Produção mín. (L)</th><th style={{ textAlign: "right" }}>Produção máx. (L)</th>
+                  <th>Situação produtiva</th><th>Categoria</th>
+                  <th style={{ textAlign: "right" }}>Falt. parto de</th><th style={{ textAlign: "right" }}>Falt. parto até</th>
+                  <th style={{ textAlign: "right" }}>Peso de (kg)</th><th style={{ textAlign: "right" }}>Peso até (kg)</th>
                   <th></th>
                 </tr>
               </thead>
@@ -151,6 +157,12 @@ export default function CadastroLotes() {
                       <td style={{ textAlign: "right" }}>{l.del_max ?? "—"}</td>
                       <td style={{ textAlign: "right" }}>{l.producao_min ?? "—"}</td>
                       <td style={{ textAlign: "right" }}>{l.producao_max ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{rotuloSituacaoProdutiva(l.status_lactacao)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{rotuloCategorias(l.categorias)}</td>
+                      <td style={{ textAlign: "right" }}>{l.dias_para_parto_min ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.dias_para_parto_max ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.peso_min ?? "—"}</td>
+                      <td style={{ textAlign: "right" }}>{l.peso_max ?? "—"}</td>
                       <td style={{ textAlign: "right" }}>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(l)}>
                           <Pencil size={13} /> Editar
@@ -159,7 +171,7 @@ export default function CadastroLotes() {
                     </tr>
                     {editando === l.id && (
                       <tr>
-                        <td colSpan={8} style={{ padding: 0 }}>
+                        <td colSpan={14} style={{ padding: 0 }}>
                           <FormLote form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />
                         </td>
                       </tr>
@@ -167,7 +179,7 @@ export default function CadastroLotes() {
                   </Fragment>
                 ))}
                 {!lotes.length && !editando && (
-                  <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lote cadastrado ainda.</td></tr>
+                  <tr><td colSpan={14} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lote cadastrado ainda.</td></tr>
                 )}
               </tbody>
             </table>
