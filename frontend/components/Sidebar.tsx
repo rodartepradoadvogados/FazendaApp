@@ -21,7 +21,6 @@ import {
   Baby,
   Menu,
   X,
-  ArrowLeft,
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
@@ -59,12 +58,11 @@ export function Sidebar() {
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
 
-  // Piloto do drill-down (Lançamentos): quando a página registra sua árvore de
-  // sub-abas, a barra substitui a lista de módulos por ela — a seta "Voltar"
-  // só alterna a exibição da barra, sem navegar (a página de conteúdo é a mesma).
+  // Drill-down: quando a página registra sua árvore de sub-abas, a barra
+  // mostra essa árvore ACIMA da lista de módulos (nunca no lugar dela) — assim
+  // dá pra navegar dentro da página atual sem nunca perder acesso direto às
+  // outras abas do menu principal.
   const subNav = useSubNav();
-  const [mostrarSubNav, setMostrarSubNav] = useState(true);
-  useEffect(() => { setMostrarSubNav(true); }, [path]);
 
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado.
@@ -144,45 +142,40 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Nav links — ou, se a página atual registrou sub-navegação e ela está em
-          exibição, a árvore de sub-abas dela (piloto: Lançamentos) no lugar da
-          lista de módulos, com uma seta para voltar. */}
-      {subNav && mostrarSubNav ? (
-        <nav className="flex-1 p-3" style={{ overflowY: "auto" }}>
-          <button onClick={() => setMostrarSubNav(false)}
-            className="flex items-center gap-2 mb-3"
-            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--sidebar-muted)", fontSize: "0.78rem", fontWeight: 600, padding: "0.3rem 0.2rem" }}>
-            <ArrowLeft size={15} /> Voltar ao menu
-          </button>
-          <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
-        </nav>
-      ) : (
-        <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
-          {[...visiveis,
-            ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
-            ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
-          ].map(({ href, label, icon: Icon, title }) => {
-            const active = path === href || (href !== "/" && path.startsWith(href));
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={title || label}
-                onClick={() => { if (active && subNav) setMostrarSubNav(true); }}
-                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-                style={{
-                  background: active ? "var(--sidebar-active-bg)" : "transparent",
-                  color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                  borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-                }}
-              >
-                <Icon size={16} />
-                {label}
-              </Link>
-            );
-          })}
-        </nav>
-      )}
+      {/* Nav: se a página atual registrou sub-navegação, a árvore de sub-abas
+          dela aparece aqui em cima — sempre seguida da lista de módulos
+          completa logo abaixo, nunca no lugar dela, para nunca "prender" a
+          navegação dentro de uma página. */}
+      <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
+        {subNav && (
+          <>
+            <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
+            <div style={{ borderTop: "1px solid var(--sidebar-border)", margin: "0.6rem 0" }} />
+          </>
+        )}
+        {[...visiveis,
+          ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
+          ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
+        ].map(({ href, label, icon: Icon, title }) => {
+          const active = path === href || (href !== "/" && path.startsWith(href));
+          return (
+            <Link
+              key={href}
+              href={href}
+              title={title || label}
+              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+              style={{
+                background: active ? "var(--sidebar-active-bg)" : "transparent",
+                color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+              }}
+            >
+              <Icon size={16} />
+              {label}
+            </Link>
+          );
+        })}
+      </nav>
 
       {/* Footer */}
       <div

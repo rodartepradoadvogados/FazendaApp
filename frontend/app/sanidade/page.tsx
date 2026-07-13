@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X, Shield, Droplets, HeartPulse, Activity } from "lucide-react";
 import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchAgenda } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -698,11 +698,11 @@ export default function SanidadePage() {
     id: a.id, label: a.label, icon: a.icon,
     children: a.id === "curativa" ? ABAS_CURATIVA.map((c) => ({ id: c.id, label: c.label, icon: c.icon })) : undefined,
   })), []);
-  const onSelectSubNav = (id: string) => {
+  const onSelectSubNav = useCallback((id: string) => {
     if (ABAS_CURATIVA.some((c) => c.id === id)) { setAba("curativa"); setAbaCur(id as AbaCurativa); }
     else setAba(id as AbaSanidade);
-  };
-  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba === "curativa" ? abaCur : aba, onSelect: onSelectSubNav }), [subNavTree, aba, abaCur]));
+  }, []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba === "curativa" ? abaCur : aba, onSelect: onSelectSubNav }), [subNavTree, aba, abaCur, onSelectSubNav]));
 
   return (
     <div className="p-6 animate-in">

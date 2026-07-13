@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
 import { fetchAnimais, fetchEstratificacaoRebanho, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -283,9 +283,9 @@ export default function RebanhoPage() {
     if (abaParam && ABAS_VALIDAS.includes(abaParam)) setAba(abaParam);
   }, []);
 
-  const trocarAba = (k: Aba) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); };
+  const trocarAba = useCallback((k: Aba) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); }, []);
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_REBANHO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
-  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: trocarAba as (id: string) => void }), [subNavTree, aba]));
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: trocarAba as (id: string) => void }), [subNavTree, aba, trocarAba]));
 
   return (
     <div className="px-6 pt-6">
