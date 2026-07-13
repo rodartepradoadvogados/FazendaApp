@@ -13,12 +13,13 @@ import {
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
-  fetchApresentacoesFarmacia,
+  fetchApresentacoesFarmacia, fetchTouros,
 } from "@/lib/api";
-import type { ApresentacaoFarmacia } from "@/lib/api";
+import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
+import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
@@ -361,6 +362,17 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // "Incluir touros sem estoque": troca a fonte da seleção de touro pelo
+  // catálogo NAAB completo, em vez de restringir aos que têm dose no estoque.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
+  const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
+  useEffect(() => {
+    if (incluirSemEstoque && !catalogoTouros.length) fetchTouros().then(setCatalogoTouros).catch(() => {});
+  }, [incluirSemEstoque, catalogoTouros.length]);
+  const itensCatalogoTouros: TouroPickerItem[] = useMemo(
+    () => catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi })),
+    [catalogoTouros]
+  );
 
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
@@ -446,12 +458,23 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
             {CAT_TOURO.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
           </select>
         </Campo>
-        <Campo label={`Touro (${categoria === "fazenda" ? "monta natural" : "em estoque"})`}>
-          <select style={inputStyle} value={touro} onChange={(e) => setTouro(e.target.value)}>
-            <option value="">Selecione…</option>
-            {tourosDaCategoria.map((t) => <option key={t.nome} value={t.nome}>{t.nome}{t.tipo !== "fazenda" ? ` (${t.doses} doses)` : ""}</option>)}
-          </select>
-          {!tourosDaCategoria.length && <p style={{ fontSize: "0.72rem", color: "var(--amber)", marginTop: 2 }}>Nenhum touro {categoria} em estoque.</p>}
+        <Campo label={`Touro (${categoria === "fazenda" ? "monta natural" : incluirSemEstoque ? "catálogo NAAB completo" : "em estoque"})`}>
+          {!incluirSemEstoque ? (
+            <select style={inputStyle} value={touro} onChange={(e) => setTouro(e.target.value)}>
+              <option value="">Selecione…</option>
+              {tourosDaCategoria.map((t) => <option key={t.nome} value={t.nome}>{t.nome}{t.tipo !== "fazenda" ? ` (${t.doses} doses)` : ""}</option>)}
+            </select>
+          ) : (
+            <TouroPicker style={inputStyle} itens={itensCatalogoTouros} value={touro} placeholder="Buscar touro no catálogo NAAB..."
+              onChangeTexto={setTouro} onSelecionar={(t) => setTouro(t.nome)} />
+          )}
+          {!incluirSemEstoque && !tourosDaCategoria.length && <p style={{ fontSize: "0.72rem", color: "var(--amber)", marginTop: 2 }}>Nenhum touro {categoria} em estoque.</p>}
+          {categoria !== "fazenda" && (
+            <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--text-muted)", cursor: "pointer" }}>
+              <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => { setIncluirSemEstoque(e.target.checked); setTouro(""); }} />
+              Incluir touros sem estoque (catálogo completo NAAB)
+            </label>
+          )}
         </Campo>
         <Campo label="Responsável / inseminador">
           <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}><option value="">Selecione…</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}</select>

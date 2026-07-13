@@ -1664,3 +1664,4 @@ export const fetchCamposPlanilhaTouros = (): Promise<string[]> => _rGet(`/cadast
 export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros`, "POST", d);
 export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
+export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");

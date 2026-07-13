@@ -237,9 +237,12 @@ function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
         const Icon = n.icon;
         const temFilhos = !!n.children?.length;
         const ativo = temFilhos ? caminho.has(n.id) : n.id === activeId;
-        // Grupo raiz atualmente aberto (tem filhos expandidos) — destaca com
-        // uma moldura para deixar claro qual sub-menu está aberto.
-        const grupoAberto = depth === 0 && temFilhos && ativo;
+        // Item raiz atualmente aberto/ativo — destaca com uma moldura para
+        // deixar claro qual sub-menu está aberto. Vale tanto para grupos com
+        // filhos expandidos (ex.: Sanidade > Curativa) quanto para árvores
+        // sem aninhamento (ex.: Alimentação), onde a folha ativa é o próprio
+        // item raiz.
+        const grupoAberto = depth === 0 && ativo;
         return (
           <div key={n.id}
             style={grupoAberto ? {

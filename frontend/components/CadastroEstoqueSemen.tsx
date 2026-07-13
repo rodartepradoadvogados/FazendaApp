@@ -1,8 +1,9 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { Dna, Plus, Pencil, Trash2, AlertTriangle, Check, X, Search } from "lucide-react";
-import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen } from "@/lib/api";
+import { fetchEstoqueSemen, criarEstoqueSemen, atualizarEstoqueSemen, excluirEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
 import { NAAB_CENTRAIS, centralPorCodigoNaab } from "@/lib/constants";
+import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 
 type Semen = {
   id: number; touro_nome: string; codigo: string | null; naab: string | null; central: string | null;
@@ -67,6 +68,12 @@ export default function CadastroEstoqueSemen() {
 
   const carregar = () => fetchEstoqueSemen().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+
+  // Catálogo NAAB importado — usado pelo TouroPicker para abrir a lista de
+  // touros ao clicar no campo, em vez de exigir digitação livre.
+  const [catalogo, setCatalogo] = useState<Touro[]>([]);
+  useEffect(() => { fetchTouros().then(setCatalogo).catch(() => setCatalogo([])); }, []);
+  const itensCatalogo: TouroPickerItem[] = catalogo.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
 
   const adicionar = async () => {
     if (!novo.touro_nome.trim()) { setMsgNovo({ texto: "Nome do touro é obrigatório.", ok: false }); return; }
@@ -143,8 +150,9 @@ export default function CadastroEstoqueSemen() {
       <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div><label style={labelStyle}>Touro</label>
-            <input style={inputStyle} value={novo.touro_nome} title="Nome do touro" placeholder="Nome do touro"
-              onChange={(e) => setNovo({ ...novo, touro_nome: e.target.value })} /></div>
+            <TouroPicker style={inputStyle} itens={itensCatalogo} value={novo.touro_nome} placeholder="Buscar no catálogo NAAB ou digitar..."
+              onChangeTexto={(v) => setNovo((n) => ({ ...n, touro_nome: v }))}
+              onSelecionar={(t) => setNovo((n) => ({ ...n, touro_nome: t.nome, naab: t.naab || n.naab, central: t.central || n.central }))} /></div>
           <div><label style={labelStyle}>Código</label>
             <input style={inputStyle} value={novo.codigo} title="Código de registro do touro"
               onChange={(e) => setNovo({ ...novo, codigo: e.target.value })} /></div>
@@ -197,8 +205,9 @@ export default function CadastroEstoqueSemen() {
                   <Fragment key={s.id}>
                     {emEdicao ? (
                       <tr>
-                        <td><input style={cellInputStyle} value={editForm.touro_nome} title="Nome do touro"
-                          onChange={(e) => setEditForm({ ...editForm, touro_nome: e.target.value })} /></td>
+                        <td><TouroPicker style={cellInputStyle} itens={itensCatalogo} value={editForm.touro_nome} placeholder="Buscar touro..."
+                          onChangeTexto={(v) => setEditForm((f) => ({ ...f, touro_nome: v }))}
+                          onSelecionar={(t) => setEditForm((f) => ({ ...f, touro_nome: t.nome, naab: t.naab || f.naab, central: t.central || f.central }))} /></td>
                         <td><input style={cellInputStyle} value={editForm.codigo} title="Código do touro"
                           onChange={(e) => setEditForm({ ...editForm, codigo: e.target.value })} /></td>
                         <td><input style={cellInputStyle} value={editForm.naab} title="Código NAAB do touro — a central é detectada pelo número inicial"
