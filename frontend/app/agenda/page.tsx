@@ -2,7 +2,7 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink } from "lucide-react";
-import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
+import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
@@ -94,6 +94,20 @@ export default function AgendaPage() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
+  // Indução de lactação: mesmo padrão do protocolo IATF (grupo lançamento+dia
+  // expandido mostra os animais + medicamentos/observação de manejo do dia).
+  const [inducaoAbertos, setInducaoAbertos] = useState<Set<string>>(new Set());
+  const toggleInducao = (id: string) => setInducaoAbertos(p => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const [inducaoChecks, setInducaoChecks] = useState<Record<string, Set<string>>>({});
+  const abrirInducao = (id: string, animais: string[]) => {
+    setInducaoChecks((p) => (p[id] ? p : { ...p, [id]: new Set(animais) }));
+    toggleInducao(id);
+  };
+  const toggleAnimalInducao = (id: string, numero: string) => setInducaoChecks((p) => {
+    const atual = new Set(p[id] || []);
+    atual.has(numero) ? atual.delete(numero) : atual.add(numero);
+    return { ...p, [id]: atual };
+  });
   // "Deseja cumprir essa atividade?" — confirmação antes de marcar realizado,
   // em vez de agir no primeiro clique.
   const [confirmando, setConfirmando] = useState<Set<string>>(new Set());
@@ -120,10 +134,16 @@ export default function AgendaPage() {
     try { setIatfConcluidos(await fetchProtocoloIatfConcluidos()); } catch { setIatfConcluidos([]); }
   }, []);
   useEffect(() => { carregarConcluidos(); }, [carregarConcluidos]);
+  // Indução de lactação concluídas — mesma ideia (desfazer se marcado por engano).
+  const [inducaoConcluidos, setInducaoConcluidos] = useState<any[]>([]);
+  const carregarConcluidosInducao = useCallback(async () => {
+    try { setInducaoConcluidos(await fetchProtocoloInducaoConcluidos()); } catch { setInducaoConcluidos([]); }
+  }, []);
+  useEffect(() => { carregarConcluidosInducao(); }, [carregarConcluidosInducao]);
   const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
   const desfazerIatf = async (id: string) => {
     setDesfazendo((p) => new Set(p).add(id));
-    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos()]); mostrarFeedback("Desfeito."); }
+    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos(), carregarConcluidosInducao()]); mostrarFeedback("Desfeito."); }
     catch (e: any) { mostrarFeedback(e.message, true); }
     finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
   };
@@ -164,6 +184,7 @@ export default function AgendaPage() {
       cancelarConfirmacao(eventoId);
       await carregar();
       if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
+      if (eventoId.startsWith("protocolo_inducao_")) await carregarConcluidosInducao();
       mostrarFeedback("Atividade marcada como realizada.");
     }
     catch (e: any) { mostrarFeedback(e.message, true); }
@@ -233,6 +254,8 @@ export default function AgendaPage() {
       evs.forEach((e: any) => {
         if (e.tipo === "protocolo_iatf") {
           linhas.push({ tipo: "iatf", e });
+        } else if (e.tipo === "protocolo_inducao") {
+          linhas.push({ tipo: "inducao", e });
         } else if (e.categoria === "Gestão/Financeiro" && e.ref) {
           const arr = financeiroPorRef.get(e.ref) ?? [];
           arr.push(e); financeiroPorRef.set(e.ref, arr);
@@ -276,18 +299,18 @@ export default function AgendaPage() {
                               <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
                                 <Wheat size={12} /> Ir para Dieta
                               </a>
-                            ) : (e as any).tipo === "evento_sanitario" ? (
+                            ) : (e as any).tipo === "evento_sanitario" || (e as any).tipo === "calendario_sanitario" ? (
                               (() => {
+                                // Sempre vai para a tela de Preventiva (não a de Curativa) — é o
+                                // único formulário que já sabe tratar exame (sem produto/dose) e
+                                // vacina/tratamento (com baixa de estoque) da forma certa.
                                 const ev = e as any;
-                                const p = new URLSearchParams({ ir: "sanidade_aplicacao", evento_agenda: e.id });
+                                const p = new URLSearchParams({ ir: "preventivo_aplicacao", evento_agenda: e.id });
+                                if (ev.evento_sanitario_id) p.set("evento_sanitario_id", String(ev.evento_sanitario_id));
                                 if (e.numero_animal) p.set("numero_matriz", e.numero_animal);
-                                if (ev.produto) p.set("produto", ev.produto);
-                                if (ev.dose != null) p.set("dose", String(ev.dose));
-                                if (ev.unidade) p.set("unidade", ev.unidade);
-                                if (ev.via) p.set("via", ev.via);
                                 if (e.data) p.set("data", e.data);
                                 return (
-                                  <a href={`/lancamentos?${p.toString()}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar (gera a aplicação e a saída de estoque)">
+                                  <a href={`/lancamentos?${p.toString()}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (gera a aplicação, a saída de estoque, ou só marca o exame como feito)">
                                     <Syringe size={12} /> Dar baixa (aplicar)
                                   </a>
                                 );
@@ -391,6 +414,63 @@ export default function AgendaPage() {
                                       </button>
                                     </div>
                                   )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    }
+                    if (linha.tipo === "inducao") {
+                      const e = linha.e;
+                      const abertoInducao = inducaoAbertos.has(e.id);
+                      const checks = inducaoChecks[e.id] || new Set(e.animais);
+                      return (
+                        <React.Fragment key={`inducao-${i}`}>
+                          <tr style={{ cursor: "pointer" }} onClick={() => abrirInducao(e.id, e.animais)}>
+                            <td><span className={BADGE_CLASS["Produção"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Produção</span></td>
+                            <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
+                            <td style={{ fontSize: "0.83rem" }}>
+                              {abertoInducao ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
+                              {e.descricao}
+                            </td>
+                            <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
+                            <td onClick={(ev) => ev.stopPropagation()}>
+                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                            </td>
+                          </tr>
+                          {abertoInducao && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <div style={{ padding: "0.5rem 0" }}>
+                                  <p style={{ fontSize: "0.78rem", marginBottom: "0.2rem" }}>
+                                    <Syringe size={12} style={{ display: "inline", marginRight: "0.3rem" }} />
+                                    <strong>Medicamento(s) do dia:</strong> {e.medicamentos}
+                                  </p>
+                                  {e.observacao && (
+                                    <p style={{ fontSize: "0.78rem", marginBottom: "0.4rem", color: "var(--amber)" }}>
+                                      <strong>Observação para o funcionário:</strong> {e.observacao}
+                                    </p>
+                                  )}
+                                  <table className="fazenda-table" style={{ margin: 0 }}>
+                                    <thead><tr><th></th><th>Nº</th></tr></thead>
+                                    <tbody>
+                                      {e.animais.map((numero: string) => (
+                                        <tr key={numero}>
+                                          <td><input type="checkbox" checked={checks.has(numero)} onChange={() => toggleAnimalInducao(e.id, numero)} /></td>
+                                          <td style={{ fontWeight: 700 }}>{numero}</td>
+                                        </tr>
+                                      ))}
+                                    </tbody>
+                                  </table>
+                                  <div className="flex items-center gap-2 mt-2">
+                                    <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={marcando.has(e.id) || !checks.size}
+                                      onClick={() => marcarRealizado(e.id, Array.from(checks))}>
+                                      <Check size={12} /> Confirmar realizado ({checks.size}/{e.animais.length})
+                                    </button>
+                                  </div>
                                 </div>
                               </td>
                             </tr>
@@ -675,17 +755,25 @@ export default function AgendaPage() {
             <div className="card mb-2" style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
                 <thead><tr>
+                  <th></th>
                   <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
                   <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
+                  <th>Motivo</th>
                   <th></th>
                 </tr></thead>
                 <tbody>
                   {ordBstNunca.linhasOrdenadas.map((b: any, i: number) => (
                     <tr key={i}>
+                      <td>
+                        {b.requer_reanalise && (
+                          <span title="Excluída manualmente do BST — revisar" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
+                        )}
+                      </td>
                       <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.requer_reanalise ? (b.motivo_exclusao || "Revisar") : "Nunca aplicada — apta na próxima"}</td>
                       <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin) — nunca aplicada" categoria="Sanidade" /></td>
                     </tr>
                   ))}
@@ -709,6 +797,38 @@ export default function AgendaPage() {
                 <thead><tr><th>Protocolo</th><th>Etapa</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
                 <tbody>
                   {iatfConcluidos.map((g: any) => (
+                    <tr key={g.id}>
+                      <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
+                      <td>D{g.dia}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{g.animais.join(", ")}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      <td>
+                        <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
+                          <RotateCcw size={12} /> Desfazer
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Indução de lactação — concluídas recentemente, com opção de desfazer */}
+      {inducaoConcluidos.length > 0 && (
+        <div className="card mb-4">
+          <button onClick={() => togglePainel("inducaoConcluidos")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", padding: 0 }}>
+            {paineis.has("inducaoConcluidos") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+            <span className="card-header" style={{ margin: 0 }}>Indução de lactação — concluídas ({inducaoConcluidos.length})</span>
+          </button>
+          {paineis.has("inducaoConcluidos") && (
+            <div className="overflow-x-auto mt-3">
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Protocolo</th><th>Dia</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
+                <tbody>
+                  {inducaoConcluidos.map((g: any) => (
                     <tr key={g.id}>
                       <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
                       <td>D{g.dia}</td>

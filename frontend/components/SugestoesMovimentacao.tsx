@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
-import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
+import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 
 type LoteSugerido = { codigo: string; nome: string; rotulo: string };
@@ -63,15 +63,32 @@ export default function SugestoesMovimentacao() {
   const [motivos, setMotivos] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [movendo, setMovendo] = useState<string | null>(null);
+  const [categoriaPorAnimal, setCategoriaPorAnimal] = useState<Record<string, string>>({});
+  const [fAnimal, setFAnimal] = useState("");
+  const [fLote, setFLote] = useState("");
+  const [fCategoria, setFCategoria] = useState("");
 
   function carregar() {
     fetchSugestoesMovimentacao().then(setDados).catch((e) => setError(e.message));
     fetchMotivosMovimentacao().then(setMotivos).catch(() => {});
+    fetchAnimais().then((animais: any[]) => {
+      const mapa: Record<string, string> = {};
+      animais.forEach((a) => { mapa[a.numero] = a.categoria_abrev || a.categoria_completa || ""; });
+      setCategoriaPorAnimal(mapa);
+    }).catch(() => {});
   }
   useEffect(carregar, []);
 
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
+
+  const opcoesLote = Array.from(new Set(dados.sugestoes.map((s) => s.lote_atual).filter(Boolean))) as string[];
+  const opcoesCategoria = Array.from(new Set(dados.sugestoes.map((s) => categoriaPorAnimal[s.numero_matriz]).filter(Boolean)));
+  const sugestoesFiltradas = dados.sugestoes.filter((s) =>
+    (!fAnimal || s.numero_matriz.toLowerCase().includes(fAnimal.toLowerCase())) &&
+    (!fLote || s.lote_atual === fLote) &&
+    (!fCategoria || categoriaPorAnimal[s.numero_matriz] === fCategoria)
+  );
 
   return (
     <div className="card">
@@ -88,10 +105,26 @@ export default function SugestoesMovimentacao() {
       )}
 
       {dados.sugestoes.length > 0 && (
+        <>
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <input style={{ ...selStyle, width: "140px" }} value={fAnimal} onChange={(e) => setFAnimal(e.target.value)} placeholder="Buscar animal…" />
+            <select style={selStyle} value={fLote} onChange={(e) => setFLote(e.target.value)}>
+              <option value="">Todos os lotes</option>
+              {opcoesLote.map((l) => <option key={l} value={l}>{l}</option>)}
+            </select>
+            <select style={selStyle} value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}>
+              <option value="">Todas as categorias</option>
+              {opcoesCategoria.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          {sugestoesFiltradas.length === 0 && (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma sugestão para esse filtro.</p>
+          )}
+          {sugestoesFiltradas.length > 0 && (
         <table className="fazenda-table">
           <thead><tr><th>Matriz</th><th>Lote atual</th><th>Lote(s) sugerido(s)</th><th></th></tr></thead>
           <tbody>
-            {dados.sugestoes.map((s) => (
+            {sugestoesFiltradas.map((s) => (
               <tr key={s.numero_matriz}>
                 <td style={{ fontWeight: 700 }}>{s.numero_matriz}</td>
                 <td style={{ fontSize: "0.8rem" }}>{s.lote_atual || "—"}</td>
@@ -110,6 +143,8 @@ export default function SugestoesMovimentacao() {
             ))}
           </tbody>
         </table>
+          )}
+        </>
       )}
     </div>
   );

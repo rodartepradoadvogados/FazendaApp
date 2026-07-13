@@ -4,6 +4,7 @@ Router da Agenda — calcula e retorna eventos do dia ou de um período.
 from __future__ import annotations
 
 import calendar
+import re
 from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -15,6 +16,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
     ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
 )
@@ -166,6 +168,27 @@ def calcular_agenda(
     contas = [_model_to_dict(c) for c in session.exec(select(ContaGerencial)).all()]
     manuais = [_model_to_dict(m) for m in session.exec(select(AgendaManual)).all()]
 
+    # BST a cada 12 dias ancorado na ÚLTIMA APLICAÇÃO REAL lançada (não no
+    # último serviço reprodutivo, que é só uma estimativa de reserva usada
+    # quando a fazenda nunca lançou nenhuma aplicação de BST ainda). Calculado
+    # ANTES do motor rodar, para que a projeção de DEL de cada animal na
+    # próxima aplicação (bst_elegiveis/bst_nunca_aplicados) já use a data
+    # certa — antes essa correção só acontecia depois, e nunca realimentava
+    # o cálculo de elegibilidade, deixando animais entrarem cedo demais.
+    # Casamento por palavra inteira (\b) — não por substring — para não achar
+    # falso positivo em produtos como "carboidrato" ou "substância".
+    MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+    sanidades_bst = [s for s in session.exec(select(Sanidade)).all() if MARCADORES_BST.search(s.produto or "")]
+    datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
+    proxima_visita_bst_real: date | None = None
+    if datas_bst:
+        proxima_visita_bst_real = max(datas_bst) + timedelta(days=12)
+        # A aplicação é sempre em ciclo fixo de 12 em 12 dias — se a última
+        # dose+12 já ficou no passado (várias janelas puladas), avança até a
+        # próxima ocorrência futura, em vez de mostrar uma data já vencida.
+        while proxima_visita_bst_real <= data:
+            proxima_visita_bst_real += timedelta(days=12)
+
     engine = AgendaEngine()
     result = engine.calcular(
         data_referencia=data,
@@ -176,24 +199,18 @@ def calcular_agenda(
         contas=contas,
         eventos_manuais=manuais,
         dias_contas_a_pagar=dias,
+        proxima_visita_bst_real=proxima_visita_bst_real,
     )
 
-    # BST a cada 12 dias ancorado na ÚLTIMA APLICAÇÃO lançada (não no último
-    # serviço): a próxima dose é 12 dias após a aplicação de BST mais recente.
-    MARCADORES_BST = ("lactotropin", "boostin", "bst", "somatotrop")
-    sanidades_bst = [
-        s for s in session.exec(select(Sanidade)).all()
-        if any(m in (s.produto or "").lower() for m in MARCADORES_BST)
-    ]
-    datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
-    if datas_bst:
-        result.proxima_visita_bst = max(datas_bst) + timedelta(days=12)
-
     # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
-    # acabou de atingir DEL 60 e ainda não entrou no ciclo de doses. Sem esse
-    # destaque, ficavam perdidas dentro da lista geral de "Aptas".
+    # acabou de atingir DEL 60 e ainda não entrou no ciclo de doses — mais as
+    # excluídas manualmente (Animal.excluir_bst), que voltam para reanálise a
+    # cada aplicação (bolinha amarela no front, ver requer_reanalise).
     animais_com_bst = {s.numero_matriz for s in sanidades_bst}
-    bst_nunca_aplicados = [b for b in result.bst_elegiveis if b.numero_matriz not in animais_com_bst]
+    bst_nunca_aplicados = (
+        [{**b.__dict__, "requer_reanalise": False} for b in result.bst_elegiveis if b.numero_matriz not in animais_com_bst]
+        + [{**b.__dict__, "requer_reanalise": True} for b in result.bst_reanalise]
+    )
 
     # Remove da lista os eventos já marcados como "realizado" (workflow da agenda).
     realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
@@ -329,6 +346,39 @@ def calcular_agenda(
             "tipo": "protocolo_iatf", "dia": dia, "animais": animais_grupo, "hormonio": aps[0].descricao,
             "hormonios": hormonios_por_grupo.get((lancamento_id, dia), []),
             "protocolo": lancamento.nome_protocolo,
+        })
+
+    # Protocolo de indução de lactação — agrupa por (lançamento, dia), igual
+    # ao protocolo IATF: uma linha por dia mostrando todos os animais daquele
+    # passo, com a observação de manejo (implante, adaptação na ordenha,
+    # iniciar a ordenha) bem visível para o funcionário.
+    lancamentos_inducao_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
+    aplicacoes_inducao = [
+        a for a in session.exec(
+            select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == False)  # noqa: E712
+        ).all()
+        if a.data_prevista >= data
+    ]
+    grupos_inducao: dict[tuple[int, int], list[ProtocoloInducaoAplicacao]] = {}
+    for ap in aplicacoes_inducao:
+        grupos_inducao.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    eventos_inducao = []
+    for (lancamento_id, dia), aps in grupos_inducao.items():
+        chave = f"protocolo_inducao_{lancamento_id}_{dia}"
+        if chave in realizados:
+            continue
+        lancamento = lancamentos_inducao_por_id.get(lancamento_id)
+        if not lancamento:
+            continue
+        animais_grupo = sorted((a.numero_matriz for a in aps), key=chave_numero)
+        eventos_inducao.append({
+            "id": chave, "data": aps[0].data_prevista.isoformat(), "categoria": "Produção",
+            "descricao": f"{lancamento.nome_protocolo} — D{dia}",
+            "numero_animal": None, "observacao": aps[0].observacao_manejo,
+            "fonte": "manual", "cor": "var(--dourado)", "ref": None,
+            "tipo": "protocolo_inducao", "dia": dia, "animais": animais_grupo,
+            "medicamentos": aps[0].descricao, "protocolo": lancamento.nome_protocolo,
         })
 
     # Eventos sanitários agendados (por época ou por evento de vida) — cada um
@@ -514,7 +564,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -536,7 +586,7 @@ def calcular_agenda(
         "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
         "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis] if tem_reproducao else [],
         "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
-        "bst_nunca_aplicados": [b.__dict__ for b in bst_nunca_aplicados] if tem_reproducao else [],
+        "bst_nunca_aplicados": bst_nunca_aplicados if tem_reproducao else [],
         "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
         "eventos": eventos_visiveis,
         "totais": {
@@ -766,11 +816,107 @@ def _marcar_protocolo_iatf_realizado(
     session.commit()
 
 
+def _marcar_protocolo_inducao_realizado(session: Session, evento_id: str, animais: list[str] | None) -> None:
+    """
+    Marca a(s) aplicação(ões) de um grupo (lançamento, dia) da indução de
+    lactação como realizadas. Sem `animais`, marca o grupo inteiro; com
+    `animais`, confirma só esse subconjunto. Etapas de manejo/dispositivo
+    (sem medicamento) só marcam a aplicação — não geram Sanidade nem baixa.
+    """
+    resto = evento_id.removeprefix("protocolo_inducao_")
+    lancamento_id_str, dia_str = resto.rsplit("_", 1)
+    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+
+    aplicacoes = session.exec(
+        select(ProtocoloInducaoAplicacao).where(
+            ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
+            ProtocoloInducaoAplicacao.dia == dia,
+            ProtocoloInducaoAplicacao.realizada == False,  # noqa: E712
+        )
+    ).all()
+    if animais is not None:
+        alvo = set(animais)
+        aplicacoes = [a for a in aplicacoes if a.numero_matriz in alvo]
+
+    hoje = date.today()
+    lancamento = session.get(ProtocoloInducaoLancamento, lancamento_id)
+    responsavel = getattr(lancamento, "responsavel", None)
+
+    medicamentos = session.exec(
+        select(ProtocoloInducaoMedicamento).where(
+            ProtocoloInducaoMedicamento.lancamento_id == lancamento_id,
+            ProtocoloInducaoMedicamento.dia == dia,
+        )
+    ).all()
+
+    for ap in aplicacoes:
+        ap.realizada = True
+        ap.data_realizacao = hoje
+        session.add(ap)
+        for m in medicamentos:
+            session.add(Sanidade(
+                numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m.produto,
+                dose=m.dose, unidade=m.unidade, via=m.via, responsavel=responsavel,
+                obs=f"Indução de lactação — D{dia}",
+            ))
+
+    # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas
+    # (item cadastrado por nome exato — combina automaticamente quando o
+    # princípio do protocolo já é um item de estoque real).
+    n_vacas = len(aplicacoes)
+    if n_vacas:
+        for m in medicamentos:
+            if not m.dose:
+                continue
+            estoque_item = session.exec(select(Estoque).where(Estoque.nome == m.produto)).first()
+            if not estoque_item or estoque_item.estocavel is False:
+                continue
+            if not pode_baixar_estoque(estoque_item):
+                continue
+            if not pode_dar_baixa_direta(m.unidade, estoque_item.unidade):
+                continue
+            total = m.dose * n_vacas
+            estoque_item.quantidade = (estoque_item.quantidade or 0) - total
+            if estoque_item.estoque_minimo is not None:
+                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+            estoque_item.atualizado_em = datetime.utcnow()
+            session.add(estoque_item)
+            session.add(MovimentoEstoque(
+                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
+                unidade=estoque_item.unidade, data_movimento=hoje,
+                observacao=f"Indução de lactação — D{dia} — {n_vacas} vaca(s)",
+            ))
+    session.commit()
+
+
+def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> None:
+    """Reverte um grupo (lançamento, dia) da indução de lactação marcado por engano."""
+    resto = evento_id.removeprefix("protocolo_inducao_")
+    lancamento_id_str, dia_str = resto.rsplit("_", 1)
+    lancamento_id, dia = int(lancamento_id_str), int(dia_str)
+
+    aplicacoes = session.exec(
+        select(ProtocoloInducaoAplicacao).where(
+            ProtocoloInducaoAplicacao.lancamento_id == lancamento_id,
+            ProtocoloInducaoAplicacao.dia == dia,
+            ProtocoloInducaoAplicacao.realizada == True,  # noqa: E712
+        )
+    ).all()
+    for ap in aplicacoes:
+        ap.realizada = False
+        ap.data_realizacao = None
+        session.add(ap)
+    session.commit()
+
+
 @router.post("/realizados")
 def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
     if dados.evento_id.startswith("protocolo_iatf_"):
         _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
+        return {"marcado": True}
+    if dados.evento_id.startswith("protocolo_inducao_"):
+        _marcar_protocolo_inducao_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
 
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)).first()
@@ -838,11 +984,41 @@ def listar_protocolo_iatf_concluidos(session: Session = Depends(get_session)) ->
     return resultado
 
 
+@router.get("/protocolo-inducao-lactacao/concluidos")
+def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session)) -> list[dict]:
+    """Grupos (lançamento, dia) da indução de lactação já confirmados — para desfazer, se marcado por engano."""
+    aplicacoes = session.exec(
+        select(ProtocoloInducaoAplicacao).where(ProtocoloInducaoAplicacao.realizada == True)  # noqa: E712
+    ).all()
+    lancamentos_por_id = {l.id: l for l in session.exec(select(ProtocoloInducaoLancamento)).all()}
+    grupos: dict[tuple[int, int], list[ProtocoloInducaoAplicacao]] = {}
+    for ap in aplicacoes:
+        grupos.setdefault((ap.lancamento_id, ap.dia), []).append(ap)
+
+    resultado = []
+    for (lancamento_id, dia), aps in grupos.items():
+        lancamento = lancamentos_por_id.get(lancamento_id)
+        if not lancamento:
+            continue
+        datas_realizacao = [a.data_realizacao for a in aps if a.data_realizacao]
+        resultado.append({
+            "id": f"protocolo_inducao_{lancamento_id}_{dia}",
+            "nome_protocolo": lancamento.nome_protocolo, "dia": dia,
+            "animais": sorted((a.numero_matriz for a in aps), key=chave_numero),
+            "data_realizacao": max(datas_realizacao).isoformat() if datas_realizacao else None,
+        })
+    resultado.sort(key=lambda r: r["data_realizacao"] or "", reverse=True)
+    return resultado
+
+
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session)) -> dict:
     """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
     if evento_id.startswith("protocolo_iatf_"):
         _desmarcar_protocolo_iatf_realizado(session, evento_id)
+        return {"desmarcado": True}
+    if evento_id.startswith("protocolo_inducao_"):
+        _desmarcar_protocolo_inducao_realizado(session, evento_id)
         return {"desmarcado": True}
 
     existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)).first()

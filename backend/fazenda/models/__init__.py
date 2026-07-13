@@ -1117,6 +1117,106 @@ class ProtocoloSanitarioAplicacao(SQLModel, table=True):
     data_realizacao: Optional[date] = None
 
 
+# ---------------------------------------------------------------------------
+# Protocolo de indução de lactação — cronograma multi-dia (hormônios +
+# implante de progesterona + manejo de adaptação à ordenha) para induzir
+# lactação em vacas que não vão parir (ex.: doadoras, vacas de descarte com
+# valor de produção). Estrutura em 3 camadas, no mesmo espírito do protocolo
+# IATF e do protocolo sanitário genérico:
+#   catálogo (editável em Configurações > Cadastro) → lançamento (aplica o
+#   catálogo a um grupo de animais numa data) → aplicação (uma linha por
+#   animal/dia, confirmável na Agenda, com baixa de estoque automática).
+# Dias podem começar em D0 ou D1 conforme o protocolo cadastrado.
+# ---------------------------------------------------------------------------
+class ProtocoloInducaoLactacao(SQLModel, table=True):
+    """Um protocolo de indução de lactação cadastrado (o "molde" do cronograma)."""
+
+    __tablename__ = "protocolo_inducao_lactacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ProtocoloInducaoLactacaoEtapa(SQLModel, table=True):
+    """
+    Uma linha do cronograma-molde: um medicamento, o implante de progesterona
+    (colocar/retirar) ou uma ação de manejo (ex.: "Adaptação na ordenha") num
+    dia do protocolo. Vários itens podem coexistir no mesmo dia.
+    """
+
+    __tablename__ = "protocolo_inducao_lactacao_etapa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_inducao_lactacao.id", index=True)
+    dia: int  # 0, 1, 2... conforme dia_inicial do protocolo
+    tipo: str = Field(default="medicamento")  # "medicamento" | "dispositivo" | "manejo"
+    principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
+    produto: str  # nome do princípio (medicamento) OU "Implante de Progesterona" OU a ação de manejo
+    acao_dispositivo: Optional[str] = None  # "colocar" | "retirar" — só para tipo="dispositivo"
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+
+
+class ProtocoloInducaoLancamento(SQLModel, table=True):
+    """Um lançamento do protocolo em lote — o "cabeçalho" (protocolo + data do 1º dia)."""
+
+    __tablename__ = "protocolo_inducao_lancamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    protocolo_id: int = Field(foreign_key="protocolo_inducao_lactacao.id")
+    nome_protocolo: str
+    data_d0: date  # data do dia_inicial do protocolo (D0 ou D1)
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+class ProtocoloInducaoMedicamento(SQLModel, table=True):
+    """
+    Medicamento(s) do dia, congelados no momento do lançamento (a partir da
+    etapa-molde) — igual ao hormônio do protocolo IATF. Editar o catálogo
+    depois não altera lançamentos já feitos.
+    """
+
+    __tablename__ = "protocolo_inducao_medicamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lancamento_id: int = Field(foreign_key="protocolo_inducao_lancamento.id", index=True)
+    dia: int
+    produto: str
+    dose: Optional[float] = None
+    unidade: Optional[str] = None
+    via: Optional[str] = None
+
+
+class ProtocoloInducaoAplicacao(SQLModel, table=True):
+    """
+    Uma etapa (dia) de um animal dentro de um lançamento — vira evento na
+    Agenda; ao marcar "realizado", dá baixa automática do(s) produto(s) do
+    dia. `observacao_manejo` é o texto que o funcionário vê na Agenda para as
+    ações sem medicamento (colocar/retirar implante, adaptação na ordenha,
+    iniciar a ordenha).
+    """
+
+    __tablename__ = "protocolo_inducao_aplicacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    lancamento_id: int = Field(foreign_key="protocolo_inducao_lancamento.id")
+    numero_matriz: str = Field(index=True)
+    dia: int
+    descricao: str  # medicamentos do dia (auto), ex.: "20 ml Benzoato de Estradiol"
+    observacao_manejo: Optional[str] = None
+    data_prevista: date
+    realizada: bool = False
+    data_realizacao: Optional[date] = None
+
+
 class Secagem(SQLModel, table=True):
     """Registro de secagem de uma vaca — produto(s) usado(s) entram como Sanidade (atividade='Secagem')."""
 

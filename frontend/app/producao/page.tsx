@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, ehAdmin } from "@/lib/api";
+import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets, Syringe } from "lucide-react";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -103,7 +104,7 @@ type RelatorioControleEntrega = {
   nao_entregue_kg: number | null; leite_bezerros_kg_dia: number; bezerros_kg: number; bezerros_fonte: string; equipe_kg: number | null;
 };
 
-export default function ProducaoPage() {
+function ProducaoLeiteira() {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -645,4 +646,128 @@ export default function ProducaoPage() {
       )}
     </div>
   );
+}
+
+type AplicacaoBst = {
+  numero_matriz: string; data_aplicacao: string | null; produto: string; dose: number | null;
+  unidade: string | null; responsavel: string | null; lote: string | null; categoria: string | null;
+};
+
+function RelatoriosBstView() {
+  const [historico, setHistorico] = useState<AplicacaoBst[] | null>(null);
+  const [agenda, setAgenda] = useState<any | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [fLote, setFLote] = useState<string[]>([]);
+  const [fAnimal, setFAnimal] = useState("");
+  const [fDe, setFDe] = useState("");
+  const [fAte, setFAte] = useState("");
+
+  useEffect(() => {
+    fetchRelatorioBst().then((d) => setHistorico(d.aplicacoes)).catch((e) => setErro(e.message));
+    fetchAgenda().then(setAgenda).catch(() => setAgenda(null));
+  }, []);
+
+  const opcoesLote = useMemo(
+    () => Array.from(new Set((historico ?? []).map((r) => r.lote).filter(Boolean))).sort() as string[],
+    [historico]
+  );
+
+  const filtrado = useMemo(() => (historico ?? []).filter((r) => {
+    if (fLote.length && !(r.lote && fLote.includes(r.lote))) return false;
+    if (fAnimal && !r.numero_matriz.toLowerCase().includes(fAnimal.toLowerCase())) return false;
+    if (fDe && (!r.data_aplicacao || r.data_aplicacao < fDe)) return false;
+    if (fAte && (!r.data_aplicacao || r.data_aplicacao > fAte)) return false;
+    return true;
+  }), [historico, fLote, fAnimal, fDe, fAte]);
+
+  const vacasDistintas = useMemo(() => new Set(filtrado.map((r) => r.numero_matriz)).size, [filtrado]);
+  const nuncaAplicadas: any[] = agenda?.bst_nunca_aplicados ?? [];
+
+  const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
+  const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
+
+  if (erro) return <p style={{ color: "var(--red)" }}>{erro}</p>;
+
+  return (
+    <div className="px-6 space-y-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Próxima aplicação BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{agenda?.proxima_visita_bst ? new Date(agenda.proxima_visita_bst + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</div></div>
+        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Aplicações no filtro</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{filtrado.length}</div></div>
+        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Vacas distintas aplicadas</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{vacasDistintas}</div></div>
+        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Nunca aplicadas / reanálise</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-2 flex items-center gap-2"><Filter size={14} /> Filtrar histórico</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Nº do animal</label>
+            <input value={fAnimal} onChange={(e) => setFAnimal(e.target.value)} placeholder="Buscar…" style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+          <MultiFiltro label="Lote" opcoes={opcoesLote} selecionados={fLote} onChange={setFLote} />
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+            <input type="date" value={fDe} onChange={(e) => setFDe(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+            <input type="date" value={fAte} onChange={(e) => setFAte(e.target.value)} style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 6, padding: "0.35rem 0.5rem", color: "var(--text)", fontSize: "0.8rem" }} /></div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-2 flex items-center gap-2"><Syringe size={14} /> Histórico de aplicações ({filtrado.length})</div>
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead><tr><th style={th}>Data</th><th style={th}>Nº</th><th style={th}>Lote</th><th style={th}>Categoria</th><th style={th}>Produto</th><th style={{ ...th, textAlign: "right" }}>Dose</th><th style={th}>Responsável</th></tr></thead>
+            <tbody>
+              {filtrado.map((r, i) => (
+                <tr key={`${r.numero_matriz}-${r.data_aplicacao}-${i}`}>
+                  <td style={td}>{r.data_aplicacao ? new Date(r.data_aplicacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                  <td style={{ ...td, fontWeight: 700 }}>{r.numero_matriz}</td>
+                  <td style={td}>{r.lote || "—"}</td>
+                  <td style={td}>{r.categoria || "—"}</td>
+                  <td style={td}>{r.produto}</td>
+                  <td style={{ ...td, textAlign: "right" }}>{r.dose != null ? `${r.dose} ${r.unidade || ""}` : "—"}</td>
+                  <td style={td}>{r.responsavel || "—"}</td>
+                </tr>
+              ))}
+              {!filtrado.length && <tr><td colSpan={7} style={{ ...td, textAlign: "center", color: "var(--text-muted)" }}>Nenhuma aplicação no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-2 flex items-center gap-2" style={{ color: "var(--amber)" }}><Droplets size={14} /> BST nunca aplicadas / para reanálise ({nuncaAplicadas.length})</div>
+        {!nuncaAplicadas.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca nesta condição.</p> : (
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ borderCollapse: "collapse", width: "100%" }}>
+              <thead><tr><th style={th}></th><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th><th style={th}>Motivo</th></tr></thead>
+              <tbody>
+                {nuncaAplicadas.map((b: any) => (
+                  <tr key={b.numero_matriz}>
+                    <td style={td}>{b.requer_reanalise && <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--amber)" }} title="Excluída manualmente — revisar" />}</td>
+                    <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
+                    <td style={td}>{b.grupo || "—"}</td>
+                    <td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td>
+                    <td style={{ ...td, color: "var(--text-muted)" }}>{b.motivo_exclusao || "Nunca aplicada — apta na próxima"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+type AbaProducao = "leiteira" | "bst";
+const ABAS_PRODUCAO = [
+  { id: "leiteira" as const, label: "Produção leiteira", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
+  { id: "bst" as const, label: "Relatórios de BST", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
+];
+
+export default function ProducaoPage() {
+  const [aba, setAba] = useState<AbaProducao>("leiteira");
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS_PRODUCAO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as AbaProducao) }), [subNavTree, aba]));
+
+  return aba === "bst" ? <RelatoriosBstView /> : <ProducaoLeiteira />;
 }
