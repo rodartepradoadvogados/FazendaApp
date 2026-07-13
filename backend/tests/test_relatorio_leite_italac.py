@@ -1,7 +1,7 @@
 """
-Testes do relatório que compara controle leiteiro × entrega mensal × receita
-da ITALAC (contas gerenciais) e projeta o consumo de leite pelas bezerras/
-bezerros a partir da dieta atual.
+Testes do relatório Controle leiteiro × Entregue no período: média diária do
+controle projetada, entrega/receita rateadas por dias do mês, consumo de leite
+dos bezerros pela dieta lançada e residual da equipe/família.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, LancamentoItem
+from fazenda.models import ContaGerencial, ControleLeiteiro, DietaLancamento, EntregaLeiteMensal
 
 
 @pytest.fixture
@@ -43,50 +43,50 @@ def client():
     main.app.dependency_overrides.clear()
 
 
-class TestRelatorioLeiteItalac:
-    def test_relatorio_cruza_fontes_e_projeta_consumo_bezerros(self, client):
+class TestRelatorioControleEntrega:
+    def test_projeta_controle_entrega_bezerros_e_equipe(self, client):
         c, engine = client
         with Session(engine) as s:
-            s.add(ControleLeiteiro(numero_matriz="801", data_controle=date(2026, 6, 10), producao_kg=30))
-            s.add(ControleLeiteiro(numero_matriz="802", data_controle=date(2026, 6, 15), producao_kg=25))
-            s.add(EntregaLeiteMensal(competencia="2026-06", quantidade_litros=1000))
-            s.add(ContaGerencial(
-                tipo="receita", fornecedor_cliente="Italac Laticínios",
-                data_competencia=date(2026, 6, 20), quantidade=1000, valor_total=2000,
-            ))
-            s.add(Animal(numero="B1", categoria_abrev="BEZ", categoria_completa="Bezerra", grupo_primario="06 - BEZERRAS", ativo=True, sexo="F"))
-            s.add(Animal(numero="B2", categoria_abrev="BEZ", categoria_completa="Bezerro", grupo_primario="06 - BEZERRAS", ativo=True, sexo="M"))
-            s.add(Dieta(lote=6, categoria="Bezerra", ingrediente="Leite", quantidade=4, unidade="L"))
+            # 2 dias com controle no período: 600 kg e 620 kg (média 610/dia).
+            s.add(ControleLeiteiro(numero_matriz="1", data_controle=date(2026, 7, 5), producao_kg=600))
+            s.add(ControleLeiteiro(numero_matriz="1", data_controle=date(2026, 7, 15), producao_kg=620))
+            # Entrega mensal de julho: 15500 kg → 15500/31 = 500 kg/dia.
+            s.add(EntregaLeiteMensal(competencia="2026-07", quantidade_litros=15500))
+            # Receita do laticínio em julho.
+            s.add(ContaGerencial(tipo="receita", fornecedor_cliente="ITALAC", data_competencia=date(2026, 7, 31), valor_total=31000))
+            # Dieta ativa com 100 kg/dia de leite para bezerros.
+            s.add(DietaLancamento(lote=6, data_abertura=date(2026, 6, 1), leite_bezerros_kg_dia=100))
             s.commit()
 
-        r = c.get("/producao/relatorio-leite-italac")
-        assert r.status_code == 200
+        r = c.get("/producao/relatorio-controle-entrega", params={"data_inicio": "2026-07-01", "data_fim": "2026-07-31"})
+        assert r.status_code == 200, r.text
         d = r.json()
-        assert d["efetivo_bezerros"] == 2
-        assert d["consumo_bezerros_dia_litros"] == 8.0
-        assert d["consumo_bezerros_mes_litros"] == 240.0
+        assert d["dias_periodo"] == 31
+        assert d["dias_com_controle"] == 2
+        assert d["media_diaria_controle_kg"] == 610.0
+        assert d["controle_projetado_kg"] == 610.0 * 31       # 18910
+        assert d["entrega_projetada_kg"] == 15500.0           # 500/dia × 31 dias
+        assert d["receita_projetada"] == 31000.0
+        assert d["nao_entregue_kg"] == round(18910.0 - 15500.0, 1)   # 3410
+        assert d["leite_bezerros_kg_dia"] == 100.0
+        assert d["bezerros_kg"] == 100.0 * 31                 # 3100
+        assert d["bezerros_fonte"] == "dieta_lancada"
+        assert d["equipe_kg"] == round(3410.0 - 3100.0, 1)    # 310
+        # Desvio padrão % (CV) baixo — produção estável (600 e 620).
+        assert d["desvio_padrao_pct"] is not None and d["desvio_padrao_pct"] < 5
 
-        linhas = {l["competencia"]: l for l in d["linhas"]}
-        junho = linhas["2026-06"]
-        assert junho["controle_leiteiro_kg"] == 55
-        assert junho["entrega_litros"] == 1000
-        assert junho["italac_litros"] == 1000
-        assert junho["italac_receita"] == 2000
-        assert junho["preco_medio_litro"] == 2.0
-
-    def test_lancamento_manual_usa_quantidade_do_item(self, client):
-        """Lançamento manual não preenche quantidade na conta — cai para a soma dos itens da nota."""
+    def test_entrega_parcial_do_mes_e_rateio_por_dias(self, client):
+        """Período de meio mês: entrega rateada por dias do mês × dias do período."""
         c, engine = client
         with Session(engine) as s:
-            s.add(ContaGerencial(
-                numero_lancamento="LC-2026-00099", tipo="receita", fornecedor_cliente="Italac Laticínios",
-                data_competencia=date(2026, 7, 1), quantidade=None, valor_total=240,
-            ))
-            s.add(LancamentoItem(numero_lancamento="LC-2026-00099", tipo="receita", produto="Leite", quantidade=100, valor_total=240))
+            s.add(ControleLeiteiro(numero_matriz="1", data_controle=date(2026, 2, 10), producao_kg=500))
+            # Fevereiro de 2026 tem 28 dias; 2800 kg → 100 kg/dia.
+            s.add(EntregaLeiteMensal(competencia="2026-02", quantidade_litros=2800))
             s.commit()
 
-        r = c.get("/producao/relatorio-leite-italac")
-        assert r.status_code == 200
-        linhas = {l["competencia"]: l for l in r.json()["linhas"]}
-        assert linhas["2026-07"]["italac_litros"] == 100
-        assert linhas["2026-07"]["italac_receita"] == 240
+        # Período de 10 dias dentro de fevereiro.
+        r = c.get("/producao/relatorio-controle-entrega", params={"data_inicio": "2026-02-01", "data_fim": "2026-02-10"})
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["dias_periodo"] == 10
+        assert d["entrega_projetada_kg"] == 1000.0    # 100 kg/dia × 10 dias

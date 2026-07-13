@@ -27,6 +27,7 @@ function ReproducaoVisaoGeral() {
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [ordemParto, setOrdemParto] = useState("");
+  const [ordemTentativa, setOrdemTentativa] = useState("");
   const [tipo, setTipo] = useState("");
   const [diag, setDiag] = useState("");
   // Filtro por DATA (de/até) OU por CICLO reprodutivo (janelas de 21 dias).
@@ -75,10 +76,11 @@ function ReproducaoVisaoGeral() {
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
       (!ordemParto || String(s.ordem_parto) === ordemParto) &&
+      (!ordemTentativa || String(s.ordem_tentativa) === ordemTentativa) &&
       (!tipo || s.tipo_servico === tipo) &&
       (!diag || (s.diagnostico || "ABERTO") === diag)
     ).sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1));
-  }, [regs, animal, ini, fim, ordemParto, tipo, diag, modo, janelas]);
+  }, [regs, animal, ini, fim, ordemParto, ordemTentativa, tipo, diag, modo, janelas]);
 
   const diagnosticados = filtrados.filter((s) => s.diagnosticado).length;
   const positivos = filtrados.filter((s) => s.positivo).length;
@@ -136,6 +138,8 @@ function ReproducaoVisaoGeral() {
             )}
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ordem de parto</label>
               <select style={selStyle} value={ordemParto} onChange={(e) => setOrdemParto(e.target.value)}><option value="">Todas</option>{opc((s) => s.ordem_parto === null ? null : String(s.ordem_parto)).map((o) => <option key={o}>{o}</option>)}</select></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ordem de tentativa</label>
+              <select style={selStyle} value={ordemTentativa} onChange={(e) => setOrdemTentativa(e.target.value)}><option value="">Todas</option>{opc((s) => s.ordem_tentativa === null ? null : String(s.ordem_tentativa)).map((o) => <option key={o}>{o}</option>)}</select></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Tipo</label>
               <select style={selStyle} value={tipo} onChange={(e) => setTipo(e.target.value)}><option value="">Todos</option>{opc((s) => s.tipo_servico).map((o) => <option key={o}>{o}</option>)}</select></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Diagnóstico</label>

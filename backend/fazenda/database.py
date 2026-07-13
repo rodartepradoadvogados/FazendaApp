@@ -44,7 +44,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "qualidade_leite": [("nul", "FLOAT")],
     "pesagem_corporal": [("fase", "VARCHAR")],
-    "dieta_lancamento": [("base_quantidade", "VARCHAR")],
+    "dieta_lancamento": [("base_quantidade", "VARCHAR"), ("leite_bezerros_kg_dia", "FLOAT")],
     "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT")],
     "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN")],
     "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],

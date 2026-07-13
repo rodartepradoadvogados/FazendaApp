@@ -26,11 +26,11 @@ const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
 type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string };
-type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; itens: ItemForm[] };
+type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN" });
-const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", itens: [itemVazio()] });
+const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", itens: [itemVazio()] });
 
 function num(v?: number | null, casas = 2): string {
   if (v == null) return "—";
@@ -178,6 +178,7 @@ function CadastrarNovaDieta() {
         try {
           await criarDieta({
             lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura, base_quantidade: f.baseQuantidade,
+            leite_bezerros_kg_dia: f.leiteBezerros ? Number(f.leiteBezerros) : null,
             data_prevista_encerramento: f.dataPrevista || undefined,
             itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base })),
             encerrar_anterior: encerrar,
@@ -263,6 +264,11 @@ function CadastrarNovaDieta() {
                         <option value="total">Total do lote/dia</option>
                         <option value="animal">Por animal/dia</option>
                       </select>
+                    </div>
+                    <div>
+                      <label style={lbl}>Leite para bezerros (kg/dia)</label>
+                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leiteBezerros || ""} onChange={(e) => patchForm(ln, { leiteBezerros: e.target.value })} placeholder="ex.: 120" />
+                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>Total do lote/dia — alimenta o relatório Controle × Entregue.</span>
                     </div>
                   </div>
 

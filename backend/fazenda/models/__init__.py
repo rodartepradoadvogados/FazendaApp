@@ -1202,6 +1202,10 @@ class DietaLancamento(SQLModel, table=True):
     # Como as quantidades dos itens foram informadas: "total" do lote/dia (padrão)
     # ou "animal" (por cabeça/dia — o total é multiplicado pelo nº de animais).
     base_quantidade: Optional[str] = None
+    # Leite destinado aos bezerros nesta dieta (kg/dia do lote) — alimenta o
+    # relatório Controle × Entregue (consumo de bezerros). Preenchido pelo
+    # veterinário/nutricionista ao lançar a dieta de um lote de bezerras.
+    leite_bezerros_kg_dia: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

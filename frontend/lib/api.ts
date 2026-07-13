@@ -906,7 +906,7 @@ export async function salvarMateriaSeca(dados: { nome: string; ms_pct: number | 
 }
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
-  base_quantidade?: string;
+  base_quantidade?: string; leite_bezerros_kg_dia?: number | null;
   itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
@@ -1089,9 +1089,12 @@ export async function criarEntregaLeiteMensal(dados: { competencia: string; quan
 }
 
 // ── Relatório controle leiteiro × ITALAC × entrega ──
-export async function fetchRelatorioLeiteItalac() {
-  const res = await authFetch(`${API}/producao/relatorio-leite-italac`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Relatório leite/ITALAC error: ${res.status}`);
+export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim?: string) {
+  const params = new URLSearchParams();
+  if (dataInicio) params.set("data_inicio", dataInicio);
+  if (dataFim) params.set("data_fim", dataFim);
+  const res = await authFetch(`${API}/producao/relatorio-controle-entrega?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório controle × entregue error: ${res.status}`);
   return res.json();
 }
 
