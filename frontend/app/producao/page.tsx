@@ -689,7 +689,7 @@ function RelatoriosBstView() {
   if (erro) return <p style={{ color: "var(--red)" }}>{erro}</p>;
 
   return (
-    <div className="px-6 space-y-4">
+    <div className="px-6 pt-6 space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Próxima aplicação BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{agenda?.proxima_visita_bst ? new Date(agenda.proxima_visita_bst + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Aplicações no filtro</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{filtrado.length}</div></div>

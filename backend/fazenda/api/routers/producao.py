@@ -702,7 +702,7 @@ def listar_protocolos_inducao_producao(session: Session = Depends(get_session)) 
             .order_by(ProtocoloInducaoLactacaoEtapa.dia)
         ).all()
         ultimo_dia = max((e.dia for e in etapas), default=p.dia_inicial)
-        out.append({**p.model_dump(), "etapas": [e.model_dump() for e in etapas], "duracao_dias": ultimo_dia - p.dia_inicial + 1})
+        out.append({**p.model_dump(), "etapas": [e.model_dump() for e in etapas], "duracao_dias": ultimo_dia - p.dia_inicial})
     return out
 
 
