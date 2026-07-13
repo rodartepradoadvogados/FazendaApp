@@ -1,7 +1,7 @@
 "use client";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { FileBarChart, ClipboardCheck, LineChart } from "lucide-react";
-import { TabBar } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import RelatoriosManejo from "@/components/RelatoriosManejo";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 
@@ -13,6 +13,8 @@ const ABAS = [
 
 export default function RelatoriosPage() {
   const [aba, setAba] = useState<Aba>("manejo");
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -21,7 +23,6 @@ export default function RelatoriosPage() {
           Manejo do dia a dia e análise gerencial do desempenho reprodutivo — inspirado nas melhores práticas de programas zootécnicos.
         </p>
       </div>
-      <TabBar abas={ABAS} ativa={aba} onChange={setAba} />
       {aba === "manejo" && <RelatoriosManejo />}
       {aba === "gerencial" && <RelatoriosGerenciais />}
     </div>

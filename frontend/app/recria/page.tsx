@@ -4,9 +4,9 @@
 // idade com o "ponto crítico" pintado, e a incidência por fase. A aba
 // Crescimento compara o peso real com a faixa-alvo. "Registrar caso" é o
 // lançamento rápido que alimenta tudo.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download } from "lucide-react";
-import { TabBar } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
@@ -44,6 +44,9 @@ export default function RecriaPage() {
   const [aba, setAba] = useState<Aba>("saude");
   const [gerando, setGerando] = useState(false);
   const [erroDossie, setErroDossie] = useState<string | null>(null);
+
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
 
   async function exportarDossie() {
     setGerando(true); setErroDossie(null);
@@ -84,7 +87,6 @@ export default function RecriaPage() {
         </button>
       </div>
       {erroDossie && <div className="alert-critico mb-3" style={{ fontSize: "0.82rem" }}><AlertTriangle size={16} /><span>{erroDossie}</span></div>}
-      <TabBar abas={ABAS} ativa={aba} onChange={setAba} />
       <div style={{ marginTop: "1rem" }}>
         {aba === "saude" && <AbaSaude />}
         {aba === "crescimento" && <AbaCrescimento />}

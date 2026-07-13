@@ -1,20 +1,26 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
-import Cadastro from "@/components/Cadastro";
+import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
+import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
-import { TabBar } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 type Aba = "cadastro" | "parametros" | "financeiro" | "upload" | "importar" | "usuarios";
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
   const [abasVisiveis, setAbasVisiveis] = useState<{ id: Aba; label: string; icon: any; title: string }[]>([]);
+  // Um nível abaixo de "cadastro", e mais um abaixo de "sanitario" — vivem
+  // aqui (não dentro de Cadastro/CadastroSanitario) para que só exista UM
+  // registro de sub-navegação (evita a Sidebar ficar disputada entre pai e filho).
+  const [cadastroAba, setCadastroAba] = useState<AbaCadastro>("lotes");
+  const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("principios");
 
   useEffect(() => {
     const abas: { id: Aba; label: string; icon: any; title: string }[] = [];
@@ -31,6 +37,26 @@ export default function ConfiguracoesPage() {
     setAba(alvo && abas.some((a) => a.id === alvo) ? alvo : (abas[0]?.id ?? null));
   }, []);
 
+  // Árvore completa (3 níveis: Configurações › Cadastro › Sanitário) — um único
+  // registro, dono de tudo, evita a corrida de dois componentes escrevendo no
+  // mesmo contexto na mesma renderização.
+  const subNavTree: SubNavNode[] = useMemo(() => abasVisiveis.map((a) => (
+    a.id !== "cadastro" ? { id: a.id, label: a.label, icon: a.icon } : {
+      id: a.id, label: a.label, icon: a.icon,
+      children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
+        id: cid, label: clabel, icon: cIcon,
+        children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon })) : undefined,
+      })),
+    }
+  )), [abasVisiveis]);
+  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba) : (aba ?? "");
+  const onSelect = (id: string) => {
+    if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
+    if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
+    setAba("cadastro"); setCadastroAba(id as AbaCadastro);
+  };
+  useSubNavRegister(useMemo(() => (aba ? { tree: subNavTree, activeId, onSelect } : null), [subNavTree, activeId, aba])); // eslint-disable-line react-hooks/exhaustive-deps
+
   if (!aba) {
     return (
       <div className="p-6 animate-in">
@@ -44,9 +70,8 @@ export default function ConfiguracoesPage() {
       <div className="mb-2">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Settings size={22} style={{ color: "var(--dourado)" }} /> Configurações</h1>
       </div>
-      <TabBar<Aba> abas={abasVisiveis} ativa={aba} onChange={setAba} />
       <div style={{ margin: "0 -1.5rem" }}>
-        {aba === "cadastro" && <Cadastro />}
+        {aba === "cadastro" && <Cadastro aba={cadastroAba} onAbaChange={setCadastroAba} abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba} />}
         {aba === "parametros" && <ParametrosPage />}
         {aba === "financeiro" && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}

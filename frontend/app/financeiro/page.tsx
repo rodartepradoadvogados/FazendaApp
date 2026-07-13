@@ -18,6 +18,7 @@ import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { RESPONSAVEIS } from "@/lib/constants";
 
 const COLUNAS_LANCAMENTOS = [
@@ -210,6 +211,22 @@ export default function FinanceiroPage() {
     const ref = qs.get("ref");
     if (ref) setNotaAlvoRef(ref);
   }, []);
+
+  // Árvore de sub-navegação — a Sidebar desenha isto no lugar da lista de
+  // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
+  const subNavTree: SubNavNode[] = useMemo(() => [
+    { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "indicadores-grupo", label: "Indicadores", icon: BarChart3, children: INDICADORES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "patrimonio-grupo", label: "Patrimônio e ações", icon: Building2, children: [
+      { id: "patrimonio", label: "Patrimônio", icon: Building2 },
+      { id: "pagamento", label: "Pagamento", icon: Wallet },
+      { id: "recebimento", label: "Recebimento", icon: Wallet },
+      { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers },
+      { id: "folha", label: "Folha de pagamento", icon: Users },
+    ] },
+  ], []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
 
   // Nome real de cada código do plano de contas — usado para dar nome à
   // hierarquia no DRE e no detalhamento por conta do Fluxo de Caixa, em vez
@@ -415,80 +432,6 @@ export default function FinanceiroPage() {
       )}
 
       {regs && regs.length > 0 && <>
-        {/* Seletor de contas */}
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Contas</p>
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-4">
-          {CONTAS.map((r) => {
-            const ativo = rel === r.id; const Icon = r.icon;
-            const n = regs ? (
-              r.id === "a_pagar" ? regs.filter((x) => x.tipo === "despesa" && !x.data_pagamento).length :
-              r.id === "a_receber" ? regs.filter((x) => x.tipo === "receita" && !x.data_pagamento).length :
-              r.id === "pagas" ? regs.filter((x) => x.tipo === "despesa" && x.data_pagamento).length :
-              r.id === "recebidas" ? regs.filter((x) => x.tipo === "receita" && x.data_pagamento).length :
-              regs.length
-            ) : 0;
-            return (
-              <button key={r.id} onClick={() => setRel(r.id)} className="card" style={{ textAlign: "left", cursor: "pointer", border: ativo ? "1px solid var(--dourado)" : "1px solid var(--border)", background: ativo ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-                <div className="flex items-center gap-2" style={{ color: ativo ? "var(--dourado-light)" : "var(--text)" }}><Icon size={16} /><span style={{ fontWeight: 700, fontSize: "0.85rem" }}>{r.label}</span></div>
-                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>{n} lançamento{n === 1 ? "" : "s"}</p>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Seletor de relatório */}
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Relatórios</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          {RELATORIOS.map((r) => {
-            const ativo = rel === r.id; const Icon = r.icon;
-            return (
-              <button key={r.id} onClick={() => setRel(r.id)} className="card" style={{ textAlign: "left", cursor: "pointer", border: ativo ? "1px solid var(--dourado)" : "1px solid var(--border)", background: ativo ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-                <div className="flex items-center gap-2" style={{ color: ativo ? "var(--dourado-light)" : "var(--text)" }}><Icon size={18} /><span style={{ fontWeight: 700 }}>{r.label}</span></div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>{r.desc}</p>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Indicadores */}
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Indicadores</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          {INDICADORES.map((r) => {
-            const ativo = rel === r.id; const Icon = r.icon;
-            return (
-              <button key={r.id} onClick={() => setRel(r.id)} className="card" style={{ textAlign: "left", cursor: "pointer", border: ativo ? "1px solid var(--dourado)" : "1px solid var(--border)", background: ativo ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-                <div className="flex items-center gap-2" style={{ color: ativo ? "var(--dourado-light)" : "var(--text)" }}><Icon size={18} /><span style={{ fontWeight: 700 }}>{r.label}</span></div>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>{r.desc}</p>
-              </button>
-            );
-          })}
-        </div>
-
-        {/* Patrimônio e ações em lote */}
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.4rem", textTransform: "uppercase", letterSpacing: "0.04em" }}>Patrimônio e ações</p>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
-          <button onClick={() => setRel("patrimonio")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "patrimonio" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "patrimonio" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-            <div className="flex items-center gap-2" style={{ color: rel === "patrimonio" ? "var(--dourado-light)" : "var(--text)" }}><Building2 size={18} /><span style={{ fontWeight: 700 }}>Patrimônio</span></div>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Máquinas, veículos, implementos e terras</p>
-          </button>
-          <button onClick={() => setRel("pagamento")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "pagamento" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "pagamento" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-            <div className="flex items-center gap-2" style={{ color: rel === "pagamento" ? "var(--dourado-light)" : "var(--text)" }}><Wallet size={18} /><span style={{ fontWeight: 700 }}>Pagamento</span></div>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Escolha uma despesa em aberto e trate a baixa: data, conta corrente, forma e comprovante</p>
-          </button>
-          <button onClick={() => setRel("recebimento")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "recebimento" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "recebimento" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-            <div className="flex items-center gap-2" style={{ color: rel === "recebimento" ? "var(--dourado-light)" : "var(--text)" }}><Wallet size={18} /><span style={{ fontWeight: 700 }}>Recebimento</span></div>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Escolha uma receita em aberto e trate a baixa: data, conta corrente, forma e comprovante</p>
-          </button>
-          <button onClick={() => setRel("lote")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "lote" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "lote" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-            <div className="flex items-center gap-2" style={{ color: rel === "lote" ? "var(--dourado-light)" : "var(--text)" }}><Layers size={18} /><span style={{ fontWeight: 700 }}>Pagamento/recebimento em lote</span></div>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Filtre notas em aberto e dê baixa em várias de uma vez, com um comprovante único</p>
-          </button>
-          <button onClick={() => setRel("folha")} className="card" style={{ textAlign: "left", cursor: "pointer", border: rel === "folha" ? "1px solid var(--dourado)" : "1px solid var(--border)", background: rel === "folha" ? "rgba(94,26,46,0.35)" : "var(--surface)" }}>
-            <div className="flex items-center gap-2" style={{ color: rel === "folha" ? "var(--dourado-light)" : "var(--text)" }}><Users size={18} /><span style={{ fontWeight: 700 }}>Folha de pagamento</span></div>
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>Lance e acompanhe os pagamentos por pessoa e por mês de competência</p>
-          </button>
-        </div>
-
         {rel === "patrimonio" ? <PatrimonioView />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />

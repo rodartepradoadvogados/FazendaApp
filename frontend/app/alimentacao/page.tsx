@@ -1,7 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package } from "lucide-react";
 import { fetchAlimentacao, fetchNecessidadeMensal, fetchEstadoBaixaAlimentacao } from "@/lib/api";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const TRATOS = 2; // 2 tratos por dia
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
@@ -141,6 +142,9 @@ export default function AlimentacaoPage() {
 
   useEffect(() => { fetchAlimentacao().then(setA).catch((e) => setError(e.message)); }, []);
 
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS.map(([id, label, Icon]) => ({ id, label, icon: Icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as (typeof ABAS)[number][0]) }), [subNavTree, aba]));
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -151,18 +155,6 @@ export default function AlimentacaoPage() {
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Faça o upload do DIETA.csv</a>.</span></div>}
 
       <StatusBaixa />
-
-      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {ABAS.map(([id, label, Icon]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
 
       {!a && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
       {a && aba === "consumo" && <ConsumoDiario a={a} error={error} />}

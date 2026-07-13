@@ -10,7 +10,8 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { TabBar, MultiFiltro } from "@/components/ui";
+import { MultiFiltro } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -282,9 +283,12 @@ export default function RebanhoPage() {
     if (abaParam && ABAS_VALIDAS.includes(abaParam)) setAba(abaParam);
   }, []);
 
+  const trocarAba = (k: Aba) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); };
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS_REBANHO.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: trocarAba as (id: string) => void }), [subNavTree, aba]));
+
   return (
     <div className="px-6 pt-6">
-      <TabBar<Aba> abas={ABAS_REBANHO} ativa={aba} onChange={(k) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); }} />
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
