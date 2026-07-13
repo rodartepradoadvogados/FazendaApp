@@ -1,8 +1,8 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
+import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight } from "lucide-react";
 import {
-  fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo,
+  fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo, restaurarCatalogoPrincipios,
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario,
@@ -62,9 +62,11 @@ export default function CadastroSanitario() {
       {aba === "principios" && (
         <ListaNomeAtivo
           titulo="Princípios ativos" icone={Syringe}
-          descricao='Usado para classificar produtos no calendário sanitário — ex.: "Ivermectina", "Cepa RB51".'
+          descricao="Hierarquia do estoque de medicamentos, hormônios e vacinas — agrupados por categoria, com uso principal e justificativa de estoque do documento base. Nomes comerciais/laboratórios ficam vinculados a cada princípio."
           fetchFn={fetchPrincipiosAtivos} criarFn={criarPrincipioAtivo} atualizarFn={atualizarPrincipioAtivo}
           semRegistros="Nenhum princípio ativo cadastrado ainda."
+          restaurarCatalogo={restaurarCatalogoPrincipios}
+          mostrarDetalhes
         />
       )}
       {aba === "doencas" && (
@@ -567,26 +569,54 @@ function CadastroEventosSanitarios() {
   );
 }
 
-type Item = { id: number; nome: string; ativo: boolean };
+type Item = {
+  id: number; nome: string; ativo: boolean;
+  // Enriquecimento (documento base de princípios ativos) — ausente em Doenças.
+  categoria?: string | null; categoria_software?: string | null;
+  uso_principal?: string | null; justificativa?: string | null;
+};
 type Form = { nome: string; ativo: boolean };
 const formVazio: Form = { nome: "", ativo: true };
 
-function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atualizarFn, semRegistros }: {
+// Ordem canônica dos grupos do documento base — mantém a mesma sequência do
+// texto original em vez de ordenar alfabeticamente.
+const ORDEM_CATEGORIAS = [
+  "Antimicrobianos e Antibióticos",
+  "Anti-inflamatórios e Analgésicos",
+  "Fármacos Reprodutivos e Hormônios",
+  "Antiparasitários (Ecto, Endo e Hemoparasiticidas)",
+  "Metabólicos, Vitaminas e Minerais",
+  "Biológicos (Vacinas e Diagnósticos)",
+];
+
+function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atualizarFn, semRegistros, restaurarCatalogo, mostrarDetalhes }: {
   titulo: string; icone: any; descricao: string; semRegistros: string;
   fetchFn: () => Promise<Item[]>;
   criarFn: (dados: { nome: string; ativo?: boolean }) => Promise<Item>;
   atualizarFn: (id: number, dados: { nome: string; ativo: boolean }) => Promise<Item>;
+  restaurarCatalogo?: () => Promise<{ criados: number; total: number }>;
+  mostrarDetalhes?: boolean;
 }) {
   const [itens, setItens] = useState<Item[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [detalhado, setDetalhado] = useState<number | null>(null);
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [restaurando, setRestaurando] = useState(false);
 
   const carregar = () => fetchFn().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restaurar = async () => {
+    if (!restaurarCatalogo) return;
+    setRestaurando(true); setMsg(null);
+    try { const r = await restaurarCatalogo(); await carregar(); setMsg(`Catálogo restaurado: ${r.criados} adicionado(s), ${r.total} no total.`); }
+    catch (e: any) { setMsg(e.message || "Erro ao restaurar catálogo"); }
+    finally { setRestaurando(false); }
+  };
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (i: Item) => { setForm({ nome: i.nome, ativo: i.ativo }); setEditando(i.id); setMsg(null); };
@@ -610,19 +640,69 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((i) => !termoBusca || normalizar(i.nome).includes(termoBusca));
+  const nCols = mostrarDetalhes ? 3 : 2;
+
+  const grupos = mostrarDetalhes
+    ? ORDEM_CATEGORIAS
+        .map((nome) => ({ nome, itens: filtrados.filter((i) => i.categoria === nome) }))
+        .concat([{ nome: "Outros", itens: filtrados.filter((i) => !i.categoria || !ORDEM_CATEGORIAS.includes(i.categoria)) }])
+        .filter((g) => g.itens.length > 0)
+    : null;
+
+  const renderLinha = (i: Item) => (
+    <Fragment key={i.id}>
+      <tr>
+        <td style={{ fontWeight: 700 }}>
+          {mostrarDetalhes && (i.uso_principal || i.justificativa || i.categoria_software) ? (
+            <button onClick={() => setDetalhado(detalhado === i.id ? null : i.id)}
+              style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "none", border: "none", cursor: "pointer", color: "inherit", font: "inherit", padding: 0, textAlign: "left" }}>
+              {detalhado === i.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {i.nome}
+            </button>
+          ) : i.nome}
+          {!i.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
+        </td>
+        {mostrarDetalhes && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{i.categoria_software || "—"}</td>}
+        <td style={{ textAlign: "right" }}>
+          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(i)}>
+            <Pencil size={13} /> Editar
+          </button>
+        </td>
+      </tr>
+      {mostrarDetalhes && detalhado === i.id && (
+        <tr><td colSpan={nCols} style={{ background: "var(--surface-2)", fontSize: "0.8rem", padding: "0.7rem 1rem" }}>
+          <div style={{ marginBottom: "0.4rem" }}><strong>Uso principal:</strong> {i.uso_principal || "—"}</div>
+          <div><strong>Justificativa de estoque:</strong> {i.justificativa || "—"}</div>
+        </td></tr>
+      )}
+      {editando === i.id && (
+        <tr><td colSpan={nCols} style={{ padding: 0 }}>
+          <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />
+        </td></tr>
+      )}
+    </Fragment>
+  );
 
   return (
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
         <span className="flex items-center gap-2"><Icone size={16} /> {titulo}</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+        <div className="flex items-center gap-2">
+          {restaurarCatalogo && (
+            <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={restaurar} disabled={restaurando}
+              title="(Re)carrega o catálogo base de princípios ativos (documento base) — só adiciona os que faltam.">
+              {restaurando ? "Restaurando…" : "Restaurar catálogo base"}
+            </button>
+          )}
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+            <Plus size={14} /> Novo
+          </button>
+        </div>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{descricao}</p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {restaurarCatalogo && msg && editando === null && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{msg}</p>}
 
       {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />}
 
@@ -634,27 +714,18 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th></th></tr></thead>
+            <thead><tr><th>Nome</th>{mostrarDetalhes && <th>Categoria (software)</th>}<th></th></tr></thead>
             <tbody>
-              {filtrados.map((i) => (
-                <Fragment key={i.id}>
-                  <tr>
-                    <td style={{ fontWeight: 700 }}>{i.nome}{!i.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ textAlign: "right" }}>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(i)}>
-                        <Pencil size={13} /> Editar
-                      </button>
-                    </td>
-                  </tr>
-                  {editando === i.id && (
-                    <tr><td colSpan={2} style={{ padding: 0 }}>
-                      <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />
-                    </td></tr>
-                  )}
-                </Fragment>
-              ))}
-              {!itens.length && !editando && <tr><td colSpan={2} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{semRegistros}</td></tr>}
-              {!!itens.length && !filtrados.length && <tr><td colSpan={2} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+              {grupos
+                ? grupos.map((g) => (
+                    <Fragment key={g.nome}>
+                      <tr><td colSpan={nCols} style={{ background: "var(--surface-2)", fontWeight: 700, fontSize: "0.74rem", color: "var(--dourado-light)", padding: "0.4rem 0.7rem" }}>{g.nome}</td></tr>
+                      {g.itens.map(renderLinha)}
+                    </Fragment>
+                  ))
+                : filtrados.map(renderLinha)}
+              {!itens.length && !editando && <tr><td colSpan={nCols} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{semRegistros}</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={nCols} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
             </tbody>
           </table>
           </div>
