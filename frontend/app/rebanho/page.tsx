@@ -11,6 +11,7 @@ import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro } from "@/components/ui";
+import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const COLUNAS_REBANHO = [
@@ -152,7 +153,7 @@ function RebanhoVisaoGeral() {
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <MultiFiltro label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
+              <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
               <MultiFiltro label="Situação rep." opcoes={opc((a) => a.sit_rep)} selecionados={fSit} onChange={setFSit} />
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar nº</label>
                 <div style={{ position: "relative" }}>

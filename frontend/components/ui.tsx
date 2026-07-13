@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Check } from "lucide-react";
 
 /**
@@ -24,14 +25,33 @@ export function MultiFiltro({
 }) {
   const [aberto, setAberto] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const painelRef = useRef<HTMLDivElement>(null);
+  const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
+
+  const atualizarPosicao = () => {
+    if (!ref.current) return;
+    const r = ref.current.getBoundingClientRect();
+    setPosicao({ top: r.bottom + 4, left: r.left, width: r.width });
+  };
 
   useEffect(() => {
     if (!aberto) return;
+    atualizarPosicao();
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setAberto(false);
+      const alvo = e.target as Node;
+      const dentroTrigger = ref.current && ref.current.contains(alvo);
+      const dentroPainel = painelRef.current && painelRef.current.contains(alvo);
+      if (!dentroTrigger && !dentroPainel) setAberto(false);
     };
+    const onScrollOuResize = () => atualizarPosicao();
     document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
+    window.addEventListener("resize", onScrollOuResize);
+    window.addEventListener("scroll", onScrollOuResize, true);
+    return () => {
+      document.removeEventListener("mousedown", onDoc);
+      window.removeEventListener("resize", onScrollOuResize);
+      window.removeEventListener("scroll", onScrollOuResize, true);
+    };
   }, [aberto]);
 
   const marcados = new Set(selecionados);
@@ -62,9 +82,9 @@ export function MultiFiltro({
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: selecionados.length ? "var(--text)" : "var(--text-muted)" }}>{resumo}</span>
         <ChevronDown size={13} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
       </button>
-      {aberto && (
-        <div style={{
-          position: "absolute", zIndex: 30, top: "100%", left: 0, right: 0, marginTop: "0.25rem",
+      {aberto && posicao && typeof document !== "undefined" && createPortal(
+        <div ref={painelRef} style={{
+          position: "fixed", zIndex: 1000, top: posicao.top, left: posicao.left, width: posicao.width,
           background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
           boxShadow: "0 8px 24px rgba(0,0,0,0.18)", maxHeight: "260px", overflowY: "auto", padding: "0.25rem",
         }}>
@@ -94,7 +114,8 @@ export function MultiFiltro({
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

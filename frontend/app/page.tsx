@@ -81,8 +81,10 @@ export default function Home() {
   const kgs = serieProd.map((s: any) => s.kg).filter((v: any) => v != null) as number[];
   const kgMin = kgs.length ? Math.floor(Math.min(...kgs) - 1) : 0;
   const kgMax = kgs.length ? Math.ceil(Math.max(...kgs) + 1) : 30;
-  const donutRep = rep ? [
-    { nome: "Prenhes", v: rep.prenhes }, { nome: "Vazias", v: rep.vazias }, { nome: "Inseminadas", v: rep.inseminadas },
+  const repCats: any = d.ind?.reproducao_categorias || { todas: rep };
+  const repSel: any = repCats[catRep] || rep;
+  const donutRep = repSel ? [
+    { nome: "Prenhes", v: repSel.prenhes }, { nome: "Vazias", v: repSel.vazias }, { nome: "Inseminadas", v: repSel.inseminadas },
   ].filter((x) => x.v > 0) : [];
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
@@ -218,7 +220,19 @@ export default function Home() {
           ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem controle leiteiro — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a>.</p>}
         </div>
         <div className="card">
-          <div className="card-header mb-2 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}</div>
+          <div className="card-header mb-2 flex flex-wrap items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}
+            <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+              {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                <button key={k} onClick={() => setCatRep(k)} title={`Ver situação reprodutiva — ${lbl}`}
+                  style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                    border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
+                    background: catRep === k ? "var(--dourado)" : "transparent",
+                    color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
+                  {lbl}
+                </button>
+              ))}
+            </div>
+          </div>
           {donutRep.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
@@ -226,7 +240,12 @@ export default function Home() {
                   style={{ cursor: animais.length ? "pointer" : undefined }}
                   onClick={(e: any) => {
                     const nome = e?.name; if (!nome) return;
-                    const f = nome === "Prenhes" ? (a: AnimalRow) => a.sit_rep === "Ges." : nome === "Vazias" ? (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") : (a: AnimalRow) => a.sit_rep === "Ins.";
+                    const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
+                    const f = nome === "Prenhes"
+                      ? (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a)
+                      : nome === "Vazias"
+                      ? (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") && porCategoria(a)
+                      : (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a);
                     abrir(nome, f);
                   }}>
                   {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}

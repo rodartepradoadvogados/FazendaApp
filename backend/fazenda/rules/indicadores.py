@@ -13,6 +13,7 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
+from fazenda.rules.agenda_veterinario import PESO_APTA_MIN
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.parametros import BENCHMARK_METAS
 
@@ -164,9 +165,10 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
     return lista
 
 
-def _benchmark_categorias(animais: list[dict], servicos: list[dict], partos: list[dict]) -> dict:
+def _benchmark_categorias(
+    animais: list[dict], servicos: list[dict], partos: list[dict], vacas_nums: set,
+) -> dict:
     """Benchmark separado por categoria: todas / vaca (já pariu) / novilha."""
-    vacas_nums = {p.get("numero_matriz") for p in partos if p.get("numero_matriz")}
     animais_vaca = [a for a in animais if a.get("numero") in vacas_nums]
     animais_novilha = [a for a in animais if a.get("numero") not in vacas_nums]
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
@@ -178,14 +180,82 @@ def _benchmark_categorias(animais: list[dict], servicos: list[dict], partos: lis
     }
 
 
+def _reproducao_categorias(
+    animais: list[dict],
+    numeros_com_servico: set,
+    peso_por_animal: dict[str, float],
+    vacas_nums: set,
+) -> dict:
+    """Situação reprodutiva (prenhes/vazias/inseminadas/aptas) por categoria:
+    todas / vaca (já pariu) / novilha.
+
+    'Aptas' aqui é uma noção BEM mais estrita do que "tem situação reprodutiva
+    definida": é só a novilha nulípara (nunca inseminada, sem nenhum registro
+    de Serviço) que já atingiu o peso mínimo de 1ª cobertura (PESO_APTA_MIN,
+    o mesmo limiar usado em agenda_veterinario.py para a lista
+    "novilhas_aptas_vazias" — reaproveitado aqui para não divergir o número
+    mágico em dois lugares). Prenhe, já inseminada e vaca (já pariu) NUNCA
+    contam como apta — o oposto do cálculo antigo (prenhes + vazias +
+    inseminadas), que somava justamente os três estados que significam "já
+    tem histórico reprodutivo".
+
+    A classificação vaca/novilha aqui usa `vacas_nums` (histórico de parto),
+    o mesmo critério já usado por `_benchmark_categorias` — não o texto de
+    categoria (categoria_completa/categoria_abrev) usado em
+    agenda_veterinario.py, que é uma classificação paralela para outra
+    finalidade (roteiro do veterinário).
+    """
+    resultado: dict[str, dict] = {}
+    for chave, filtro in (
+        ("todas", lambda a: True),
+        ("vaca", lambda a: a.get("numero") in vacas_nums),
+        ("novilha", lambda a: a.get("numero") not in vacas_nums),
+    ):
+        subset = [a for a in animais if filtro(a)]
+        prenhes = vazias = inseminadas = 0
+        for a in subset:
+            sit = (a.get("sit_rep") or "").strip()
+            if sit == "Ges.":
+                prenhes += 1
+            elif sit.startswith("Vaz."):
+                vazias += 1
+            elif sit == "Ins.":
+                inseminadas += 1
+
+        aptas_nums: list[str] = []
+        for a in subset:
+            numero = a.get("numero")
+            if numero in vacas_nums:
+                continue  # vaca já pariu — não é "apta" no sentido de 1ª cobertura
+            if numero in numeros_com_servico:
+                continue  # já tem QUALQUER histórico de serviço — não é nulípara
+            peso = peso_por_animal.get(numero)
+            if peso is not None and peso >= PESO_APTA_MIN:
+                aptas_nums.append(numero)
+
+        resultado[chave] = {
+            "aptas": len(aptas_nums), "prenhes": prenhes, "vazias": vazias, "inseminadas": inseminadas,
+            "aptas_nums": aptas_nums,
+        }
+    return resultado
+
+
 def calcular_indicadores(
     animais: list[dict],
     servicos: list[dict],
     partos: list[dict],
     data_ref: date | None = None,
+    peso_por_animal: dict[str, float] | None = None,
 ) -> dict:
-    """Calcula o painel de indicadores a partir dos dados carregados."""
+    """Calcula o painel de indicadores a partir dos dados carregados.
+
+    `peso_por_animal` (numero_matriz -> peso_kg da pesagem corporal mais
+    recente) é opcional — sem ele, "aptas" (novilhas nulíparas com peso
+    mínimo de 1ª cobertura) sempre dá zero, já que peso é indispensável para
+    essa aptidão. Ver `fazenda.api.routers.indicadores` para como é montado
+    (mesmo padrão de `coletar_dados_criterios` em `routers/lotes.py`)."""
     hoje = data_ref or date.today()
+    peso_por_animal = peso_por_animal or {}
 
     # ---------------------------------------------------------------
     # Composição do rebanho
@@ -202,8 +272,14 @@ def calcular_indicadores(
     pre_parto = sum(1 for c in codigos if c == GRUPO_PRE_PARTO)
 
     # ---------------------------------------------------------------
-    # Situação reprodutiva do rebanho apto
+    # Situação reprodutiva do rebanho — herd-wide e por categoria (todas /
+    # vaca / novilha). `vacas_nums` (matrizes com pelo menos um parto) é o
+    # mesmo critério usado por `_benchmark_categorias` mais abaixo — calculado
+    # uma única vez aqui e reaproveitado nos dois lugares.
     # ---------------------------------------------------------------
+    vacas_nums = {p.get("numero_matriz") for p in partos if p.get("numero_matriz")}
+    numeros_com_servico = {s.get("numero_matriz") for s in servicos if s.get("numero_matriz")}
+
     prenhes = vazias = inseminadas = 0
     for a in animais:
         sit = (a.get("sit_rep") or "").strip()
@@ -213,10 +289,21 @@ def calcular_indicadores(
             vazias += 1
         elif sit == "Ins.":
             inseminadas += 1
-    aptas = prenhes + vazias + inseminadas
+    # Denominador de taxa_prenhez_pct/perc_vazias_pct: mantém o cálculo
+    # histórico desses dois indicadores (soma dos 3 estados com situação
+    # reprodutiva definida) — não é o mesmo "aptas" do painel abaixo.
+    _rebanho_com_situacao = prenhes + vazias + inseminadas
 
-    taxa_prenhez = round(100 * prenhes / aptas, 1) if aptas else None
-    perc_vazias = round(100 * vazias / aptas, 1) if aptas else None
+    taxa_prenhez = round(100 * prenhes / _rebanho_com_situacao, 1) if _rebanho_com_situacao else None
+    perc_vazias = round(100 * vazias / _rebanho_com_situacao, 1) if _rebanho_com_situacao else None
+
+    # "Aptas" (elegibilidade de 1ª cobertura): só novilha nulípara (nunca
+    # inseminada) com peso mínimo — ver `_reproducao_categorias`. Corrige o
+    # bug relatado: antes "aptas" somava prenhes+vazias+inseminadas (ou seja,
+    # "qualquer fêmea com situação reprodutiva definida"), o oposto de "apta
+    # pela 1ª vez".
+    reproducao_categorias = _reproducao_categorias(animais, numeros_com_servico, peso_por_animal, vacas_nums)
+    aptas = reproducao_categorias["todas"]["aptas"]
 
     # ---------------------------------------------------------------
     # Concepção — serviços diagnosticados (POSITIVO / NEGATIVO) desde 01/01/2026
@@ -311,7 +398,7 @@ def calcular_indicadores(
     # Modelo dos "medidores": Prenhez = Serviço × Concepção.
     # Calculado para todas / vaca (já pariu) / novilha.
     # ---------------------------------------------------------------
-    benchmark_categorias = _benchmark_categorias(animais, servicos, partos)
+    benchmark_categorias = _benchmark_categorias(animais, servicos, partos, vacas_nums)
     benchmark = benchmark_categorias["todas"]
     _bt = {b["chave"]: b["valor"] for b in benchmark}
 
@@ -326,6 +413,7 @@ def calcular_indicadores(
         },
         "reproducao": {
             "aptas": aptas,
+            "aptas_nums": reproducao_categorias["todas"]["aptas_nums"],
             "prenhes": prenhes,
             "vazias": vazias,
             "inseminadas": inseminadas,
@@ -350,6 +438,7 @@ def calcular_indicadores(
         },
         "benchmark": benchmark,
         "benchmark_categorias": benchmark_categorias,
+        "reproducao_categorias": reproducao_categorias,
         "producao": {
             "vacas_com_producao": len(producoes),
             "producao_media_kg": producao_media,

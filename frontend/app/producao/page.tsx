@@ -107,8 +107,8 @@ export default function ProducaoPage() {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [fAno, setFAno] = useState("");
-  const [fMes, setFMes] = useState("");
+  const [fAno, setFAno] = useState<string[]>([]);
+  const [fMes, setFMes] = useState<string[]>([]);
   const [fDelMin, setFDelMin] = useState("");
   const [fDelMax, setFDelMax] = useState("");
   const [fOrdemParto, setFOrdemParto] = useState<string[]>([]);
@@ -171,8 +171,8 @@ export default function ProducaoPage() {
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((r) =>
-      (!fAno || String(r.ano) === fAno) &&
-      (!fMes || (r.data ? r.data.slice(5, 7) === fMes : false)) &&
+      (fAno.length === 0 || (r.ano !== null && fAno.includes(String(r.ano)))) &&
+      (fMes.length === 0 || (r.data ? fMes.includes(r.data.slice(5, 7)) : false)) &&
       (delMin === null || (r.del !== null && r.del >= delMin)) &&
       (delMax === null || (r.del !== null && r.del <= delMax)) &&
       (fOrdemParto.length === 0 || (r.ordem_parto !== null && fOrdemParto.includes(String(r.ordem_parto))))
@@ -308,17 +308,15 @@ export default function ProducaoPage() {
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ano</label>
-                <select style={selStyle} value={fAno} onChange={(e) => setFAno(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.ano === null ? null : String(r.ano)).map((o) => <option key={o}>{o}</option>)}</select></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Mês</label>
-                <select style={selStyle} value={fMes} onChange={(e) => setFMes(e.target.value)}><option value="">Todos</option>{opcoes(regs, (r) => r.data ? r.data.slice(5, 7) : null).map((o) => <option key={o} value={o}>{MESES_NOME[o] || o}</option>)}</select></div>
+              <MultiFiltro label="Ano" opcoes={opcoes(regs, (r) => r.ano === null ? null : String(r.ano))} selecionados={fAno} onChange={setFAno} />
+              <MultiFiltro label="Mês" opcoes={opcoes(regs, (r) => r.data ? r.data.slice(5, 7) : null)} selecionados={fMes} onChange={setFMes} formatar={(v) => MESES_NOME[v] || v} />
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL de (dias)</label>
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 30" style={selStyle} value={fDelMin} onChange={(e) => setFDelMin(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>DEL até (dias)</label>
                 <input type="number" min={0} inputMode="numeric" placeholder="ex.: 120" style={selStyle} value={fDelMax} onChange={(e) => setFDelMax(e.target.value)} /></div>
               <MultiFiltro label="Ordem de parto" opcoes={opcoes(regs, (r) => r.ordem_parto === null ? null : String(r.ordem_parto))} selecionados={fOrdemParto} onChange={setFOrdemParto} formatar={(v) => `${v}ª`} />
             </div>
-            {(fAno || fMes || fDelMin || fDelMax || fOrdemParto.length > 0) && <button className="btn-ghost" title="Remover todos os filtros aplicados (ano, mês, faixa de DEL e ordem de parto)" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno(""); setFMes(""); setFDelMin(""); setFDelMax(""); setFOrdemParto([]); }}>Limpar filtros</button>}
+            {(fAno.length > 0 || fMes.length > 0 || fDelMin || fDelMax || fOrdemParto.length > 0) && <button className="btn-ghost" title="Remover todos os filtros aplicados (ano, mês, faixa de DEL e ordem de parto)" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setFAno([]); setFMes([]); setFDelMin(""); setFDelMax(""); setFOrdemParto([]); }}>Limpar filtros</button>}
           </div>
 
           <div className="card mb-4">
