@@ -2425,8 +2425,8 @@ const TIPOS_GRUPOS = [
     ],
   },
   { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
-  { id: "estoque", label: "Estoque", icon: Package, desc: "Entrada ou saída de item do estoque.", leaf: "estoque" },
-  { id: "exclusao", label: "Exclusão", icon: Trash2, desc: "Apagar um lançamento já salvo, com prévia de impacto.", leaf: "exclusao" },
+  { id: "estoque", label: "Balanço de estoque", icon: Package, desc: "Entrada ou saída de item do estoque (balanço do saldo).", leaf: "estoque" },
+  { id: "exclusao", label: "Excluir lançamento", icon: Trash2, desc: "Apagar um lançamento já salvo, com filtros e prévia de impacto.", leaf: "exclusao" },
 ];
 
 // Lista achatada de sub-tipos (folhas), usada para saber qual formulário renderizar.

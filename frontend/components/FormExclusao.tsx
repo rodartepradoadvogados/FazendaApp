@@ -178,7 +178,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
           <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>Buscar (refina o resultado acima)</label>
           <div style={{ position: "relative" }}>
             <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
-            <input style={{ ...inputStyle, paddingLeft: "2rem" }} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="número, nome, descrição…" />
+            <input style={{ ...inputStyle, paddingLeft: "2rem" }} value={termo} onChange={(e) => setTermo(e.target.value)} placeholder="lote, medicamento, ação, número, nome…" />
           </div>
         </div>
       )}
@@ -221,7 +221,11 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
               <div className="card-header" style={{ margin: 0, color: "var(--red)" }}>{souAdmin ? "Confirmar exclusão" : "Solicitar exclusão"}</div>
               <button onClick={() => { setAlvo(null); setImpacto(null); }} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
-            <p style={{ fontSize: "0.85rem", marginBottom: "0.6rem" }}>{alvo.titulo}</p>
+            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem", marginBottom: "0.7rem", background: "var(--surface-2)" }}>
+              <div style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em", marginBottom: "0.3rem" }}>Confira o lançamento</div>
+              <p style={{ fontSize: "0.86rem", fontWeight: 700, marginBottom: "0.15rem" }}>{alvo.titulo}</p>
+              {alvo.subtitulo && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{alvo.subtitulo}</p>}
+            </div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
               {souAdmin ? "Isto vai excluir permanentemente:" : "Se aprovado por um administrador, isto vai excluir permanentemente:"}
             </p>

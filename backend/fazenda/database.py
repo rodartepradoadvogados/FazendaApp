@@ -38,11 +38,11 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR"), ("inseminador", "VARCHAR")],
     "parto": [("numero_cria_1", "VARCHAR"), ("numero_cria_2", "VARCHAR")],
-    "estoque_semen": [("naab", "VARCHAR")],
     "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN")],
     "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],
     "animal": [
         ("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN"),
+        ("grau_sangue", "VARCHAR"),
         ("nome", "VARCHAR"), ("sisbov", "VARCHAR"), ("mae_numero", "VARCHAR"), ("mae_nome", "VARCHAR"),
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
@@ -54,6 +54,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("ativo", "BOOLEAN"), ("observacao", "VARCHAR"), ("carencia_dias", "INTEGER"),
         ("centro_custo_padrao", "VARCHAR"), ("conta_gerencial_despesa_padrao", "VARCHAR"),
         ("conta_gerencial_receita_padrao", "VARCHAR"), ("exibir_necessidade_compra_agenda", "BOOLEAN"),
+        ("gera_receita", "BOOLEAN"),
         ("estocavel", "BOOLEAN"), ("considerar_rmca", "BOOLEAN"),
         ("data_inicio_controle", "DATE"),
         ("principio_ativo", "VARCHAR"), ("classificacao_medicamento", "VARCHAR"),
@@ -69,6 +70,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("estoque_minimo_apresentacoes", "FLOAT DEFAULT 1"),
     ],
     "estoque_semen": [
+        ("naab", "VARCHAR"),
         ("valor_unitario", "FLOAT"), ("local_armazenamento", "VARCHAR"),
     ],
     "evento_sanitario": [
@@ -137,6 +139,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "baixa_animal": [
         ("tipo_valor", "VARCHAR"),
         ("numero_lancamento_gerado", "VARCHAR"),
+        ("venda_recria", "BOOLEAN"),
     ],
     "agenda_manual": [
         ("lotes", "VARCHAR"),

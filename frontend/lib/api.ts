@@ -526,7 +526,7 @@ export async function fetchBaixas() {
 }
 export async function criarBaixaAnimal(dados: {
   animais: string[]; tipo_baixa: string; motivo: string; motivo_doenca?: string;
-  valor?: number; cliente?: string; tipo_valor?: string; data_baixa: string; observacao?: string; responsavel?: string;
+  valor?: number; cliente?: string; tipo_valor?: string; venda_recria?: boolean; data_baixa: string; observacao?: string; responsavel?: string;
   pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
 }) {
   const res = await authFetch(`${API}/baixas/`, {

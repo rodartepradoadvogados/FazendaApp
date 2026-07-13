@@ -56,6 +56,7 @@ class EstoqueIn(BaseModel):
     centro_custo_padrao: str | None = None
     conta_gerencial_despesa_padrao: str | None = None
     conta_gerencial_receita_padrao: str | None = None
+    gera_receita: bool = False
     exibir_necessidade_compra_agenda: bool = False
     estocavel: bool = True
     data_inicio_controle: date | None = None
@@ -100,6 +101,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         centro_custo_padrao=dados.centro_custo_padrao,
         conta_gerencial_despesa_padrao=dados.conta_gerencial_despesa_padrao,
         conta_gerencial_receita_padrao=dados.conta_gerencial_receita_padrao,
+        gera_receita=dados.gera_receita,
         exibir_necessidade_compra_agenda=dados.exibir_necessidade_compra_agenda,
         estocavel=dados.estocavel,
         data_inicio_controle=dados.data_inicio_controle if dados.estocavel else None,

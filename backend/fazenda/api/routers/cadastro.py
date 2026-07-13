@@ -599,6 +599,7 @@ class AnimalFichaIn(BaseModel):
     sisbov: str | None = None
     sexo: str | None = None  # "F" | "M"
     raca: str | None = None
+    grau_sangue: str | None = None
     categoria_abrev: str | None = None
     grupo_primario: str | None = None
     data_nasc: date | None = None

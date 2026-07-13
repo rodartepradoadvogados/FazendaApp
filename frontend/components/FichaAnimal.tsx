@@ -158,7 +158,7 @@ export default function FichaAnimal() {
   function abrirEditAnimal() {
     const a2: any = ficha?.animal || {};
     setFormAnimal({
-      nome: a2.nome ?? "", sexo: a2.sexo ?? "", raca: a2.raca ?? "",
+      nome: a2.nome ?? "", sexo: a2.sexo ?? "", raca: a2.raca ?? "", grau_sangue: a2.grau_sangue ?? "",
       categoria_abrev: a2.categoria_abrev ?? "", grupo_primario: a2.grupo_primario ?? "",
       data_nasc: a2.data_nasc ?? "", data_entrada: a2.data_entrada ?? "",
       mae_numero: a2.mae_numero ?? "", mae_nome: a2.mae_nome ?? "",
@@ -263,6 +263,7 @@ export default function FichaAnimal() {
                   <CampoEdit label="Data de nascimento"><input type="date" style={inpStyle} value={formAnimal.data_nasc || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_nasc: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Data de entrada"><input type="date" style={inpStyle} value={formAnimal.data_entrada || ""} onChange={(e) => setFormAnimal((f) => ({ ...f, data_entrada: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Raça"><input style={inpStyle} value={formAnimal.raca} onChange={(e) => setFormAnimal((f) => ({ ...f, raca: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Grau de sangue"><input style={inpStyle} value={formAnimal.grau_sangue} onChange={(e) => setFormAnimal((f) => ({ ...f, grau_sangue: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Mãe (nº)"><input style={inpStyle} value={formAnimal.mae_numero} onChange={(e) => setFormAnimal((f) => ({ ...f, mae_numero: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Valor (R$)"><input type="number" style={inpStyle} value={formAnimal.valor} onChange={(e) => setFormAnimal((f) => ({ ...f, valor: e.target.value }))} /></CampoEdit>
@@ -281,6 +282,7 @@ export default function FichaAnimal() {
                 <div><span style={labelStyle}>Data de nascimento</span><br />{a.data_nasc ? formatDate(a.data_nasc as string) : "—"}</div>
                 <div><span style={labelStyle}>Mãe</span><br />{String(a.mae_numero || "—")}</div>
                 <div><span style={labelStyle}>Raça</span><br />{String(a.raca || "—")}</div>
+                <div><span style={labelStyle}>Grau de sangue</span><br />{String(a.grau_sangue || "—")}</div>
                 <div><span style={labelStyle}>Situação</span><br />{a.ativo ? "Ativo" : "Baixado"}</div>
                 <div><span style={labelStyle}>Data de entrada</span><br />{a.data_entrada ? formatDate(a.data_entrada as string) : "—"}</div>
                 <div><span style={labelStyle}>Valor</span><br />{a.valor != null ? `R$ ${a.valor}` : "—"}</div>
