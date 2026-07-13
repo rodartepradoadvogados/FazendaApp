@@ -337,6 +337,66 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
     return _serializar(c, eventos, doencas, principios)
 
 
+class CadastrarPreventivoIn(BaseModel):
+    """
+    Cadastro de um preventivo do calendário sanitário mirando um lote/categoria
+    e os animais marcados. Cria a regra recorrente do calendário (para as
+    próximas ocorrências) e — se `aplicar` — registra a aplicação do produto
+    padrão do evento nos animais marcados (individual ou todos os filtrados),
+    reaproveitando a baixa de estoque de /sanidade/aplicacoes.
+    """
+    evento_sanitario_id: int
+    categoria_alvo: str | None = None       # lote ou categoria alvo
+    data_evento: date
+    frequencia_valor: int = 1
+    frequencia_unidade: str = "meses"
+    animais: list[str] = []                  # animais marcados (individual ou todos)
+    aplicar: bool = False                    # também registrar a aplicação do produto padrão
+    responsavel: str | None = None
+    observacao: str | None = None
+
+
+@router.post("/calendario/cadastrar-preventivo")
+def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depends(get_session)) -> dict:
+    ev = session.get(EventoSanitario, dados.evento_sanitario_id)
+    if not ev:
+        raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
+    if dados.frequencia_unidade not in FREQUENCIAS:
+        raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
+    if dados.frequencia_valor <= 0:
+        raise HTTPException(status_code=400, detail="A frequência deve ser maior que zero")
+
+    # 1) Regra recorrente do calendário — herda produto/dose/doença do evento.
+    dosagem = None
+    if ev.dose_padrao is not None:
+        dosagem = f"{ev.dose_padrao:g} {ev.unidade_padrao}".strip() if ev.unidade_padrao else f"{ev.dose_padrao:g}"
+    regra = CalendarioSanitario(
+        evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
+        produto=ev.produto_padrao, dosagem=dosagem,
+        frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
+        data_evento=dados.data_evento, observacao=dados.observacao,
+    )
+    session.add(regra)
+    session.commit()
+    session.refresh(regra)
+
+    # 2) Aplicação do produto padrão nos animais marcados (opcional).
+    aplicacao = None
+    if dados.aplicar and dados.animais and ev.produto_padrao and ev.dose_padrao is not None and ev.unidade_padrao:
+        aplicacao = registrar_aplicacao(
+            AplicacaoIn(
+                data_aplicacao=dados.data_evento, animais=dados.animais,
+                itens=[ItemAplicacaoIn(produto=ev.produto_padrao, via=ev.via_padrao,
+                                       quantidade=ev.dose_padrao, unidade=ev.unidade_padrao)],
+                responsavel=dados.responsavel, observacao=dados.observacao or f"Preventivo: {ev.nome}",
+            ),
+            session,
+        )
+
+    eventos, doencas, principios = _nomes(session)
+    return {"regra": _serializar(regra, eventos, doencas, principios), "aplicacao": aplicacao}
+
+
 # ---------------------------------------------------------------------------
 # Protocolo sanitário — lançamento (aplicar um protocolo cadastrado a um
 # animal). Gera uma aplicação (evento de Agenda) por etapa/dia do protocolo;

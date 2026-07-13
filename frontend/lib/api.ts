@@ -666,7 +666,7 @@ export const atualizarDoenca = _doencas.atualizar;
 export type EventoSanitarioPayload = {
   nome: string; ativo?: boolean;
   tipo_agendamento?: "nenhum" | "epoca" | "evento";
-  categoria_alvo?: string | null; doenca_id?: number | null;
+  categoria_alvo?: string | null; doenca_id?: number | null; categoria_preventiva?: string | null;
   data_primeiro?: string | null; frequencia_valor?: number | null; frequencia_unidade?: string | null;
   gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;
@@ -816,6 +816,19 @@ export async function atualizarCalendarioSanitario(id: number, dados: Calendario
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar regra do calendário sanitário"); }
+  return res.json();
+}
+
+export type CadastrarPreventivoPayload = {
+  evento_sanitario_id: number; categoria_alvo?: string | null; data_evento: string;
+  frequencia_valor: number; frequencia_unidade: string; animais: string[]; aplicar?: boolean;
+  responsavel?: string | null; observacao?: string | null;
+};
+export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
+  const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar preventivo"); }
   return res.json();
 }
 

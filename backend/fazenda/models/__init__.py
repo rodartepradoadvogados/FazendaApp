@@ -934,6 +934,8 @@ class EventoSanitario(SQLModel, table=True):
     tipo_agendamento: str = Field(default="nenhum")
     categoria_alvo: Optional[str] = None  # ex.: "Bezerras (3 a 8 meses)"
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
+    # Tipo do manejo preventivo: "vacina" | "exame" | "tratamento".
+    categoria_preventiva: Optional[str] = None
 
     # Por época — recorrência fixa a partir de uma data de referência.
     data_primeiro: Optional[date] = None
