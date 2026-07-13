@@ -9,7 +9,8 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
-import { TabBar, MultiFiltro } from "@/components/ui";
+import { MultiFiltro } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -693,6 +694,16 @@ export default function SanidadePage() {
   const [aba, setAba] = useState<AbaSanidade>("curativa");
   const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
 
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS_SANIDADE.map((a) => ({
+    id: a.id, label: a.label, icon: a.icon,
+    children: a.id === "curativa" ? ABAS_CURATIVA.map((c) => ({ id: c.id, label: c.label, icon: c.icon })) : undefined,
+  })), []);
+  const onSelectSubNav = (id: string) => {
+    if (ABAS_CURATIVA.some((c) => c.id === id)) { setAba("curativa"); setAbaCur(id as AbaCurativa); }
+    else setAba(id as AbaSanidade);
+  };
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba === "curativa" ? abaCur : aba, onSelect: onSelectSubNav }), [subNavTree, aba, abaCur]));
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -700,13 +711,8 @@ export default function SanidadePage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Sanidade curativa e preventiva, mais o controle de BST.</p>
       </div>
 
-      <TabBar<AbaSanidade> abas={ABAS_SANIDADE} ativa={aba} onChange={setAba} />
-
       {aba === "curativa" && (
         <>
-          <div style={{ margin: "0.25rem 0 1rem" }}>
-            <TabBar<AbaCurativa> abas={ABAS_CURATIVA} ativa={abaCur} onChange={setAbaCur} />
-          </div>
           {abaCur === "curativo" && <AplicacoesView />}
           {abaCur === "doenca" && <DoencaMotivoView />}
           {abaCur === "bezerras" && <RelatorioBezerrasView />}

@@ -14,11 +14,11 @@ import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
 import CadastroPessoas from "./CadastroPessoas";
-import CadastroSanitario from "./CadastroSanitario";
+import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CadastroTouros from "./CadastroTouros";
 import { FormExclusao } from "./FormExclusao";
 
-const ABAS = [
+export const ABAS_CADASTRO = [
   ["lotes", "Lotes", Layers],
   ["animal", "Animal (ficha)", Beef],
   ["fornecedores", "Fornecedores", Truck],
@@ -36,9 +36,22 @@ const ABAS = [
   ["recria", "Categorias", Baby],
   ["excluir", "Excluir cadastros", Trash2],
 ] as const;
+export type AbaCadastro = (typeof ABAS_CADASTRO)[number][0];
 
-export default function Cadastro() {
-  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("lotes");
+// Rendida dentro de Configurações › Cadastro. A aba ativa (e a de Sanitário,
+// um nível abaixo) vêm controladas de fora — Configurações é quem registra a
+// árvore completa de sub-navegação (Configurações › Cadastro › Sanitário),
+// já que só um componente pode ser dono do registro por vez sem risco de um
+// sobrescrever o outro na mesma renderização.
+export default function Cadastro({ aba: abaExterna, onAbaChange, abaSanitario: abaSanitarioExterna, onAbaSanitarioChange }: {
+  aba?: AbaCadastro; onAbaChange?: (id: AbaCadastro) => void;
+  abaSanitario?: AbaCadastroSanitario; onAbaSanitarioChange?: (id: AbaCadastroSanitario) => void;
+} = {}) {
+  const [abaInterna, setAbaInterna] = useState<AbaCadastro>("lotes");
+  const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("principios");
+  const aba = abaExterna ?? abaInterna;
+  const abaSanitario = abaSanitarioExterna ?? abaSanitarioInterna;
+  const setAbaSanitario = onAbaSanitarioChange ?? setAbaSanitarioInterna;
 
   return (
     <div className="p-6 animate-in">
@@ -47,18 +60,6 @@ export default function Cadastro() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Dados mestres do site: lotes, animais, fornecedores/fabricantes/clientes e metadados de itens de estoque.
         </p>
-      </div>
-
-      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {ABAS.map(([id, label, Icon]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
       </div>
 
       {aba === "lotes" && <CadastroLotesSemMoldura />}
@@ -73,7 +74,7 @@ export default function Cadastro() {
       {aba === "motivos-baixa" && <CadastroMotivosBaixa />}
       {aba === "servicos" && <CadastroServicos />}
       {aba === "pessoas" && <CadastroPessoas />}
-      {aba === "sanitario" && <CadastroSanitario />}
+      {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}
       {aba === "recria" && <CadastroRecria />}
       {aba === "excluir" && (

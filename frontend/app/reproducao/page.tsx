@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Heart, PieChart, Stethoscope, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchServicosAnalise, podeModulo } from "@/lib/api";
 import { TabBar } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
 import AgendaVeterinarioPage from "@/app/reproducao/AgendaVeterinario";
@@ -201,18 +202,23 @@ export default function ReproducaoPage() {
   // página monta (evita mostrar abas de uma sessão anterior de outro usuário).
   useEffect(() => { setTemAnalise(podeModulo("analise")); setTemVet(podeModulo("vet")); }, []);
 
-  if (!temAnalise && !temVet) return <ReproducaoVisaoGeral />;
-
-  const abas = [
+  const abas = useMemo(() => [
     { id: "visao" as const, label: "Reprodução", icon: Heart, title: "Visão geral dos serviços reprodutivos por animal" },
     ...(temAnalise ? [{ id: "analise" as const, label: "Análise reprodutiva", icon: PieChart, title: "Taxa de concepção e perda de prenhez, com quebras por dimensão" }] : []),
     ...(temVet ? [{ id: "vet" as const, label: "Agenda do veterinário", icon: Stethoscope, title: "Roteiro da visita reprodutiva: toques, reconfirmações e classificações" }] : []),
-  ];
+  ], [temAnalise, temVet]);
   const abaAtiva = abas.some((a) => a.id === aba) ? aba : "visao";
+  // Só entra no drill-down se houver mais de uma aba real — senão a sidebar
+  // fica com a lista de módulos de sempre (nada para navegar aqui dentro).
+  const subNavTree: SubNavNode[] = useMemo(() => abas.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), [abas]);
+  useSubNavRegister(useMemo(() => (
+    subNavTree.length > 1 ? { tree: subNavTree, activeId: abaAtiva, onSelect: (id: string) => setAba(id as typeof aba) } : null
+  ), [subNavTree, abaAtiva]));
+
+  if (!temAnalise && !temVet) return <ReproducaoVisaoGeral />;
 
   return (
     <div className="px-6 pt-6">
-      <TabBar abas={abas} ativa={abaAtiva} onChange={setAba} />
       <div style={{ margin: "0 -1.5rem" }}>
         {abaAtiva === "visao" ? <ReproducaoVisaoGeral /> : abaAtiva === "analise" ? <AnaliseReprodutivaPage /> : <div className="px-6"><AgendaVeterinarioPage /></div>}
       </div>

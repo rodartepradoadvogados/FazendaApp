@@ -34,6 +34,10 @@ const ABAS = [
   ["eventos", "Evento sanitário", CalendarClock],
   ["protocolos", "Protocolo sanitário", ClipboardList],
 ] as const;
+// Reexportado para o Cadastro compor a árvore de sub-navegação (Configurações
+// › Cadastro › Sanitário › estas 4 abas) sem duplicar rótulos/ícones.
+export type AbaCadastroSanitario = (typeof ABAS)[number][0];
+export const ABAS_CADASTRO_SANITARIO = ABAS;
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -42,23 +46,18 @@ const buscaInputStyle: React.CSSProperties = { width: "100%", background: "var(-
 // Normaliza texto para busca insensível a maiúsculas e acentos.
 const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "");
 
-export default function CadastroSanitario() {
-  const [aba, setAba] = useState<(typeof ABAS)[number][0]>("principios");
+// Aceita controle externo (Cadastro precisa da aba ativa para compor a
+// árvore de sub-navegação Configurações › Cadastro › Sanitário) — sem props,
+// funciona como antes, com estado próprio.
+export default function CadastroSanitario({ abaControlada, onAbaChange }: {
+  abaControlada?: AbaCadastroSanitario; onAbaChange?: (id: AbaCadastroSanitario) => void;
+} = {}) {
+  const [abaInterna, setAbaInterna] = useState<AbaCadastroSanitario>("principios");
+  const aba = abaControlada ?? abaInterna;
+  const setAba = onAbaChange ?? setAbaInterna;
 
   return (
     <div>
-      <div className="flex items-center gap-2 mb-4" style={{ flexWrap: "wrap" }}>
-        {ABAS.map(([id, label, Icon]) => (
-          <button key={id} onClick={() => setAba(id)}
-            style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-              border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
-              background: aba === id ? "rgba(94,26,46,0.4)" : "transparent",
-              color: aba === id ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: aba === id ? 700 : 500 }}>
-            <Icon size={14} /> {label}
-          </button>
-        ))}
-      </div>
-
       {aba === "principios" && (
         <ListaNomeAtivo
           titulo="Princípios ativos" icone={Syringe}
