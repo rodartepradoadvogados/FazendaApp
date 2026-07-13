@@ -621,6 +621,7 @@ class AnimalFichaIn(BaseModel):
     mae_numero: str | None = None
     mae_nome: str | None = None
     observacoes: str | None = None
+    excluir_bst: bool = False
 
 
 @router.post("/animais")
@@ -947,6 +948,8 @@ class EventoSanitarioIn(BaseModel):
     dose_padrao: float | None = None
     unidade_padrao: str | None = None
     via_padrao: str | None = None
+    # Só para exame: avisa na Agenda N dias antes, para confirmar com o veterinário.
+    agenda_dias_antes: int | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:

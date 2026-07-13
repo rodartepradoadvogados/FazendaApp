@@ -326,12 +326,14 @@ type EventoForm = {
   data_primeiro: string; frequencia_valor: string; frequencia_unidade: string;
   gatilho: string; gatilho_lote: string; gatilho_idade_meses: string; offset_dias: string;
   produto_padrao: string; dose_padrao: string; unidade_padrao: string; via_padrao: string;
+  avisar_veterinario_30_dias: boolean;
 };
 const eventoFormVazio = (): EventoForm => ({
   nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "", doenca_id: "",
   data_primeiro: "", frequencia_valor: "", frequencia_unidade: "meses",
   gatilho: "nascimento", gatilho_lote: "", gatilho_idade_meses: "", offset_dias: "",
   produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
+  avisar_veterinario_30_dias: false,
 });
 
 function CadastroEventosSanitarios() {
@@ -365,6 +367,7 @@ function CadastroEventosSanitarios() {
       offset_dias: e.offset_dias ? String(e.offset_dias) : "",
       produto_padrao: e.produto_padrao || "", dose_padrao: e.dose_padrao != null ? String(e.dose_padrao) : "",
       unidade_padrao: e.unidade_padrao || "", via_padrao: e.via_padrao || "",
+      avisar_veterinario_30_dias: !!(e as any).agenda_dias_antes,
     });
     setEditando(e.id); setMsg(null);
   };
@@ -385,6 +388,7 @@ function CadastroEventosSanitarios() {
       offset_dias: form.tipo_agendamento === "evento" && form.offset_dias ? Number(form.offset_dias) : null,
       produto_padrao: form.produto_padrao.trim() || null, dose_padrao: form.dose_padrao ? Number(form.dose_padrao) : null,
       unidade_padrao: form.unidade_padrao || null, via_padrao: form.via_padrao || null,
+      agenda_dias_antes: form.categoria_preventiva === "exame" && form.avisar_veterinario_30_dias ? 30 : null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -497,6 +501,12 @@ function CadastroEventosSanitarios() {
                 <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
               </select></div>
           </div>
+          {form.categoria_preventiva === "exame" && (
+            <label className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+              <input type="checkbox" checked={form.avisar_veterinario_30_dias} onChange={(e) => setForm({ ...form, avisar_veterinario_30_dias: e.target.checked })} />
+              Avisar na Agenda 30 dias antes, para confirmar o exame com o veterinário
+            </label>
+          )}
         </>
       )}
 

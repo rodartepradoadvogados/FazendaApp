@@ -102,6 +102,25 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
                 "calendario_id": c.id,
                 "evento_sanitario_id": c.evento_sanitario_id,
             })
+            # Exame: aviso à parte N dias antes, para confirmar com o veterinário
+            # (distinto da pendência do próprio dia do exame).
+            if eh_exame and ev and ev.agenda_dias_antes:
+                d_aviso = d - timedelta(days=ev.agenda_dias_antes)
+                eid_aviso = f"calendario_sanitario_{c.id}__{d.isoformat()}__aviso"
+                if eid_aviso in realizados:
+                    continue
+                saida.append({
+                    "id": eid_aviso,
+                    "data": d_aviso.isoformat(),
+                    "categoria": "sanidade",
+                    "descricao": f"Confirmar com o veterinário — {nome} previsto para {d.strftime('%d/%m/%Y')} ({alvo})",
+                    "numero_animal": None,
+                    "observacao": f"Aviso {ev.agenda_dias_antes} dias antes do exame — combine a visita do veterinário.",
+                    "fonte": "auto", "cor": "var(--amber)", "ref": None,
+                    "tipo": "aviso_exame_veterinario",
+                    "categoria_alvo": c.categoria_alvo, "veterinario": c.veterinario,
+                    "calendario_id": c.id, "evento_sanitario_id": c.evento_sanitario_id,
+                })
     return saida
 
 

@@ -32,7 +32,7 @@ import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { TabBar, SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
@@ -1390,9 +1390,12 @@ type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
   categoria_alvo: string | null; doenca_id: number | null; doenca_nome: string | null;
   produto: string | null; principio_ativo_id: number | null; principio_ativo_nome: string | null;
-  dosagem: string | null; frequencia_valor: number; frequencia_unidade: string;
+  dosagem: string | null; unidade: string | null; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; proxima_ocorrencia: string; observacao: string | null; ativo: boolean;
 };
+// Separador usado para guardar mais de uma categoria-alvo no mesmo campo
+// (texto único no banco — cada regra continua com um único categoria_alvo).
+const SEP_CATEGORIAS = ", ";
 
 const FREQUENCIA_UNIDADES = [
   { v: "dias", l: "dia(s)" }, { v: "meses", l: "mês(es)" }, { v: "anos", l: "ano(s)" },
@@ -1406,11 +1409,13 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
 
   const [editando, setEditando] = useState<number | null>(null);
   const [eventoId, setEventoId] = useState("");
-  const [categoriaAlvo, setCategoriaAlvo] = useState("");
+  const [categoriaAlvoSel, setCategoriaAlvoSel] = useState<string[]>([]);
+  const [outraCategoria, setOutraCategoria] = useState("");
   const [doencaId, setDoencaId] = useState("");
   const [produto, setProduto] = useState("");
   const [principioId, setPrincipioId] = useState("");
   const [dosagem, setDosagem] = useState("");
+  const [unidade, setUnidade] = useState("");
   const [veterinario, setVeterinario] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
@@ -1433,15 +1438,18 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   }, []);
 
   const limpar = () => {
-    setEditando(null); setEventoId(""); setCategoriaAlvo(""); setDoencaId(""); setProduto("");
-    setPrincipioId(""); setDosagem(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
+    setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setOutraCategoria(""); setDoencaId(""); setProduto("");
+    setPrincipioId(""); setDosagem(""); setUnidade(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
     setDataEvento(""); setObservacao(""); setRealizado(false);
   };
 
   const abrirEdicao = (r: RegraCalendario) => {
-    setEditando(r.id); setEventoId(String(r.evento_sanitario_id)); setCategoriaAlvo(r.categoria_alvo || "");
+    setEditando(r.id); setEventoId(String(r.evento_sanitario_id));
+    setCategoriaAlvoSel(r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : []);
+    setOutraCategoria("");
     setDoencaId(r.doenca_id ? String(r.doenca_id) : ""); setProduto(r.produto || "");
     setPrincipioId(r.principio_ativo_id ? String(r.principio_ativo_id) : ""); setDosagem(r.dosagem || "");
+    setUnidade(r.unidade || "");
     setVeterinario((r as any).veterinario || "");
     setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
     setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
@@ -1459,11 +1467,12 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     setSalvando(true);
     try {
       const dados = {
-        evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvo || undefined,
+        evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
         doenca_id: doencaId ? Number(doencaId) : undefined,
         produto: ehExame ? undefined : (produto || undefined),
         principio_ativo_id: ehExame ? undefined : (principioId ? Number(principioId) : undefined),
         dosagem: ehExame ? undefined : (dosagem || undefined),
+        unidade: ehExame ? undefined : (unidade || undefined),
         veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
         observacao: observacao || undefined, realizado,
@@ -1492,9 +1501,22 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             <option value="">Selecione…</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
           </select>
         </Campo>
-        <Campo label="Categoria alvo (período de vida)">
-          <input style={inputStyle} list="categorias-alvo-calendario" value={categoriaAlvo} onChange={(e) => setCategoriaAlvo(e.target.value)} placeholder="ex.: Vacas em lactação" />
-          <datalist id="categorias-alvo-calendario">{CATEGORIAS_ANIMAIS.map((c) => <option key={c.id} value={c.label} />)}</datalist>
+        <Campo label="Categoria(s) alvo (período de vida)">
+          <MultiFiltro label="Categorias" opcoes={Array.from(new Set([...CATEGORIAS_ANIMAIS.map((c) => c.label), ...categoriaAlvoSel]))} selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel} />
+          <div className="flex items-center gap-2 mt-1">
+            <input style={{ ...inputStyle, fontSize: "0.78rem" }} value={outraCategoria} onChange={(e) => setOutraCategoria(e.target.value)}
+              placeholder="+ outra categoria…"
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" || !outraCategoria.trim()) return;
+                e.preventDefault();
+                setCategoriaAlvoSel((p) => Array.from(new Set([...p, outraCategoria.trim()])));
+                setOutraCategoria("");
+              }} />
+            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }}
+              onClick={() => { if (!outraCategoria.trim()) return; setCategoriaAlvoSel((p) => Array.from(new Set([...p, outraCategoria.trim()]))); setOutraCategoria(""); }}>
+              Adicionar
+            </button>
+          </div>
         </Campo>
         <Campo label="Doença combatida">
           <select style={inputStyle} value={doencaId} onChange={(e) => setDoencaId(e.target.value)}>
@@ -1518,6 +1540,12 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             </Campo>
             <Campo label="Dosagem recomendada">
               <input style={inputStyle} value={dosagem} onChange={(e) => setDosagem(e.target.value)} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
+            </Campo>
+            <Campo label="Unidade">
+              <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+                <option value="">—</option>
+                {unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade).map((u) => <option key={u}>{u}</option>)}
+              </select>
             </Campo>
           </>
         )}
@@ -1769,6 +1797,7 @@ function BstLancamentoView() {
   useEffect(() => { fetchAgenda().then(setDados).catch(() => setDados(null)); }, []);
   const aptos = dados?.bst_elegiveis || [];
   const excl = dados?.bst_excluidos || [];
+  const nuncaAplicados = dados?.bst_nunca_aplicados || [];
   const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
     <div className="card">
       <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
@@ -1787,8 +1816,9 @@ function BstLancamentoView() {
   return (
     <>
       <p style={nota}>BST (somatotropina bovina) — vacas aptas e excluídas do dia. Próxima visita BST: <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-2">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
         <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
+        <Tabela titulo="BST — Nunca aplicadas" lista={nuncaAplicados} cor="var(--blue)" />
         <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
       </div>
     </>
@@ -2395,9 +2425,9 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   const [responsavel, setResponsavel] = useState("");
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
   const [aplicado, setAplicado] = useState(true);
-  const [aptosSecagem, setAptosSecagem] = useState<string[]>([]);
   const [vacinas, setVacinas] = useState<string[]>([]);
-  const [vacina, setVacina] = useState("");
+  const [aplicarVacinaPreParto, setAplicarVacinaPreParto] = useState(false);
+  const [vacinasPreParto, setVacinasPreParto] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -2411,17 +2441,15 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       .finally(() => setCarregandoInfo(false));
   }, [matriz]);
 
-  // Produtos aptos para secagem (antimicrobianos intramamários de vaca seca) e
-  // vacinas (pré-parto). Carregados uma vez.
+  // Vacinas (pré-parto). Carregadas uma vez.
   useEffect(() => {
-    fetchMedicamentos({ finalidade: "secagem" }).then((d) => setAptosSecagem((d as any[]).map((m) => m.nome))).catch(() => {});
     fetchMedicamentos({ finalidade: "vacina" }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
   }, []);
 
   const nomesEstoque = estoque.map((e) => e.nome);
-  // Só medicamentos aptos para secagem; se a farmácia ainda não classificou
-  // nenhum, cai para a lista completa (para não travar o lançamento).
-  const listaProdutos = (aptosSecagem.length ? aptosSecagem : Array.from(new Set([...produtos, ...nomesEstoque]))).slice().sort();
+  // Produto de secagem é de livre escolha — não trava na lista de "aptos
+  // para secagem" (finalidade cadastrada), mostra todo o estoque/produtos.
+  const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).slice().sort();
   const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
   const escolherProduto = (idx: number, produto: string) => {
     const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
@@ -2444,6 +2472,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
         escore_condicao_corporal: ecc ? Number(ecc) : null,
         observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
         produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+        vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
       });
       let msg = "Secagem lançada com sucesso.";
       if (r.avisos?.length) msg += " " + r.avisos.join(" ");
@@ -2453,6 +2482,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       }
       setSucesso(msg);
       setMatriz(""); setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
+      setAplicarVacinaPreParto(false); setVacinasPreParto([]);
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar secagem");
     } finally {
@@ -2530,17 +2560,32 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       </div>
       <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
         <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
-        {!!vacinas.length && (
-          <select style={{ ...inputStyle, width: "auto", fontSize: "0.78rem" }} value={vacina}
-            onChange={(e) => { const v = e.target.value; if (v) { setItens((p) => [...p.filter((i) => i.produto), { ...itemSanidadeVazio(), produto: v, via: "Subcutânea" }]); setVacina(""); } }}>
-            <option value="">+ Vacina pré-parto (só vacinas)…</option>
-            {vacinas.map((v) => <option key={v} value={v}>{v}</option>)}
-          </select>
-        )}
       </div>
-      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-        A lista de produtos mostra apenas medicamentos aptos para secagem (intramamários de vaca seca). Use o seletor de vacina para incluir uma vacina pré-parto.
-      </p>
+
+      <Secao>Vacina(s) pré-parto</Secao>
+      <div className="flex items-center gap-4 mb-2">
+        <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}>
+          <input type="radio" checked={!aplicarVacinaPreParto} onChange={() => { setAplicarVacinaPreParto(false); setVacinasPreParto([]); }} /> Não
+        </label>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}>
+          <input type="radio" checked={aplicarVacinaPreParto} onChange={() => setAplicarVacinaPreParto(true)} /> Sim — aplicar vacina(s) pré-parto
+        </label>
+      </div>
+      {aplicarVacinaPreParto && (
+        <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+          {!vacinas.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhuma vacina cadastrada.</p>}
+          {vacinas.map((v) => (
+            <label key={v} className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer", padding: "0.15rem 0" }}>
+              <input type="checkbox" checked={vacinasPreParto.includes(v)}
+                onChange={() => setVacinasPreParto((p) => p.includes(v) ? p.filter((x) => x !== v) : [...p, v])} />
+              {v}
+            </label>
+          ))}
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+            Gera uma pendência na Agenda para o dia seguinte à secagem, com o animal e a(s) vacina(s) a aplicar.
+          </p>
+        </div>
+      )}
 
       {itens.some((i) => i.produto) && (
         <Campo label="O(s) produto(s) de secagem já foram aplicados?">

@@ -675,6 +675,7 @@ export type EventoSanitarioPayload = {
   data_primeiro?: string | null; frequencia_valor?: number | null; frequencia_unidade?: string | null;
   gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;
+  agenda_dias_antes?: number | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
@@ -806,7 +807,7 @@ export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; 
 
 type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
-  principio_ativo_id?: number; dosagem?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
+  principio_ativo_id?: number; dosagem?: string; unidade?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {
@@ -1123,6 +1124,7 @@ export async function criarSecagem(dados: {
   numero_matriz: string; data_secagem: string; motivo: string; escore_condicao_corporal?: number | null;
   observacao?: string; responsavel?: string; aplicado?: boolean;
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
+  vacinas_pre_parto?: string[];
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

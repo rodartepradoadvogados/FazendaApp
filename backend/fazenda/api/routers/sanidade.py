@@ -303,6 +303,7 @@ class CalendarioSanitarioIn(BaseModel):
     produto: str | None = None
     principio_ativo_id: int | None = None
     dosagem: str | None = None
+    unidade: str | None = None
     veterinario: str | None = None  # p/ exames: quem realizou/vai realizar
     frequencia_valor: int
     frequencia_unidade: str

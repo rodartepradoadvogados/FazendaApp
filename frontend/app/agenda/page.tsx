@@ -443,6 +443,7 @@ export default function AgendaPage() {
   const candidatas = agenda?.candidatas_iatf || [];
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
+  const bstNuncaAplicados = agenda?.bst_nunca_aplicados || [];
 
   // Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
   // rebanho (calculada no backend; ex.: último serviço 03/07 -> visita 24/07).
@@ -517,6 +518,8 @@ export default function AgendaPage() {
               list: bstAptos.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "BST Excluídos", value: bstExcl.length, color: "var(--amber)",
               list: bstExcl.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
+            { label: "BST Nunca aplicadas", value: bstNuncaAplicados.length, color: "var(--blue)",
+              list: bstNuncaAplicados.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "Total Eventos", value: agenda.totais?.eventos, color: "var(--dourado-light)" },
           ].map((k: any) => {
             const clic = k.list && k.list.length;

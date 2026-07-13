@@ -163,6 +163,7 @@ export default function FichaAnimal() {
       data_nasc: a2.data_nasc ?? "", data_entrada: a2.data_entrada ?? "",
       mae_numero: a2.mae_numero ?? "", mae_nome: a2.mae_nome ?? "",
       proprietario: a2.proprietario ?? "", valor: a2.valor ?? "", observacoes: a2.observacoes ?? "",
+      excluir_bst: a2.excluir_bst ?? false,
     });
     setEditAnimal(true); setAviso(null);
   }
@@ -275,6 +276,12 @@ export default function FichaAnimal() {
                   <CampoEdit label="Proprietário"><input style={inpStyle} value={formAnimal.proprietario} onChange={(e) => setFormAnimal((f) => ({ ...f, proprietario: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Valor (R$)"><input type="number" style={inpStyle} value={formAnimal.valor} onChange={(e) => setFormAnimal((f) => ({ ...f, valor: e.target.value }))} /></CampoEdit>
                   <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observações"><input style={inpStyle} value={formAnimal.observacoes} onChange={(e) => setFormAnimal((f) => ({ ...f, observacoes: e.target.value }))} /></CampoEdit></div>
+                  <div className="flex items-end">
+                    <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                      <input type="checkbox" checked={!!formAnimal.excluir_bst} onChange={(e) => setFormAnimal((f) => ({ ...f, excluir_bst: e.target.checked }))} />
+                      Excluir do BST (não entra nas listas de candidatas/aptas)
+                    </label>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3">
                   <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={salvarAnimal}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
