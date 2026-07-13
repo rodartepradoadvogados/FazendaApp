@@ -4,7 +4,8 @@ lançamento de pesagens (por vaca ou por lote inteiro, de uma vez).
 """
 from __future__ import annotations
 
-from datetime import date, datetime
+import calendar
+from datetime import date, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -13,7 +14,8 @@ from sqlmodel import Session, select
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, EntregaLeiteMensal, Estoque, LancamentoItem, Lote,
+    Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
+    LancamentoItem, Lote,
     Parto, PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
 )
 from fazenda.ordenacao import chave_numero
@@ -284,111 +286,131 @@ def _competencia(d: date | None) -> str | None:
     return f"{d.year:04d}-{d.month:02d}" if d else None
 
 
-@router.get("/relatorio-leite-italac")
-def relatorio_leite_italac(session: Session = Depends(get_session)) -> dict:
-    """Compara, por competência (mês), o controle leiteiro pesado, a entrega mensal
-    lançada e a receita/volume faturado pela ITALAC (contas gerenciais com
-    fornecedor/cliente contendo "italac"). Projeta também o consumo de leite pelas
-    bezerras/bezerros com base na dieta atual, para estimar o que sobra do "não
-    entregue" como consumo da fazenda/equipe."""
-    controles = session.exec(select(ControleLeiteiro)).all()
-    entregas = session.exec(select(EntregaLeiteMensal)).all()
-    contas = session.exec(select(ContaGerencial).where(ContaGerencial.tipo == "receita")).all()
-    qualidades = session.exec(select(QualidadeLeite)).all()
+def _parse_iso(s: str) -> date | None:
+    try:
+        return date.fromisoformat(s) if s else None
+    except ValueError:
+        return None
 
-    controle_por_mes: dict[str, dict] = {}
-    for c in controles:
-        comp = _competencia(c.data_controle)
-        if not comp or c.producao_kg is None:
+
+def _dias_por_mes_no_periodo(ini: date, fim: date) -> dict[tuple[int, int], int]:
+    """Quantos dias do período caem em cada mês (para projeção proporcional)."""
+    out: dict[tuple[int, int], int] = {}
+    d = ini
+    while d <= fim:
+        chave = (d.year, d.month)
+        out[chave] = out.get(chave, 0) + 1
+        d += timedelta(days=1)
+    return out
+
+
+@router.get("/relatorio-controle-entrega")
+def relatorio_controle_entrega(
+    data_inicio: str = "", data_fim: str = "", session: Session = Depends(get_session),
+) -> dict:
+    """
+    Controle × Entregue no PERÍODO filtrado, tudo em quilos de leite.
+
+    - Controle (projetado): média da produção diária do rebanho no período
+      (soma dos controles de cada dia ÷ nº de dias com controle) × dias do período.
+    - Entregue (projetado): a entrega é lançada por mês; para cada mês tocado
+      pelo período usa entrega_do_mês ÷ dias daquele mês (28/29/30/31) × dias do
+      período naquele mês.
+    - Receita média: mesma projeção proporcional, a partir da receita do laticínio.
+    - Não entregue = Controle − Entregue.
+    - Bezerros = leite/dia da dieta lançada × dias do período.
+    - Equipe/família = Não entregue − Bezerros (residual).
+    - Desvio padrão %: coeficiente de variação da produção diária do controle no
+      período (mede se a média projeta bem; tolerância de 5%).
+    """
+    hoje = date.today()
+    ini = _parse_iso(data_inicio) or hoje.replace(day=1)
+    fim = _parse_iso(data_fim) or hoje
+    if fim < ini:
+        ini, fim = fim, ini
+    dias_periodo = (fim - ini).days + 1
+
+    # ── Controle: soma diária do rebanho, média diária, projeção e desvio ──
+    kg_por_dia: dict[date, float] = {}
+    for c in session.exec(select(ControleLeiteiro)).all():
+        if c.data_controle and ini <= c.data_controle <= fim and c.producao_kg is not None:
+            kg_por_dia[c.data_controle] = kg_por_dia.get(c.data_controle, 0.0) + c.producao_kg
+    totais_diarios = list(kg_por_dia.values())
+    dias_com_controle = len(totais_diarios)
+    media_diaria = (sum(totais_diarios) / dias_com_controle) if dias_com_controle else 0.0
+    controle_projetado = round(media_diaria * dias_periodo, 1) if dias_com_controle else None
+    if dias_com_controle >= 2 and media_diaria:
+        variancia = sum((x - media_diaria) ** 2 for x in totais_diarios) / dias_com_controle
+        desvio_pct = round((variancia ** 0.5) / media_diaria * 100, 1)
+    else:
+        desvio_pct = None
+
+    # ── Entrega e receita: projeção proporcional por mês ──
+    entregas = {e.competencia: e.quantidade_litros for e in session.exec(select(EntregaLeiteMensal)).all()}
+    receita_por_mes: dict[str, float] = {}
+    for c in session.exec(select(ContaGerencial).where(ContaGerencial.tipo == "receita")).all():
+        if "italac" not in (c.fornecedor_cliente or "").lower():
             continue
-        acc = controle_por_mes.setdefault(comp, {"kg": 0.0, "n": 0})
-        acc["kg"] += c.producao_kg
-        acc["n"] += 1
-
-    entrega_por_mes = {e.competencia: e.quantidade_litros for e in entregas}
-
-    contas_italac = [c for c in contas if "italac" in (c.fornecedor_cliente or "").lower()]
-    # CSV importado costuma preencher quantidade direto na conta; lançamento manual
-    # guarda a quantidade no(s) item(ns) da nota — cai para a soma dos itens nesse caso.
-    numeros_sem_quantidade = {c.numero_lancamento for c in contas_italac if not c.quantidade and c.numero_lancamento}
-    quantidade_por_numero: dict[str, float] = {}
-    if numeros_sem_quantidade:
-        itens = session.exec(select(LancamentoItem).where(LancamentoItem.numero_lancamento.in_(numeros_sem_quantidade))).all()
-        for item in itens:
-            quantidade_por_numero[item.numero_lancamento] = quantidade_por_numero.get(item.numero_lancamento, 0.0) + (item.quantidade or 0.0)
-
-    italac_por_mes: dict[str, dict] = {}
-    for c in contas_italac:
         comp = _competencia(c.data_competencia)
-        if not comp:
-            continue
-        litros = c.quantidade or quantidade_por_numero.get(c.numero_lancamento or "", 0.0)
-        acc = italac_por_mes.setdefault(comp, {"litros": 0.0, "receita": 0.0})
-        acc["litros"] += litros
-        acc["receita"] += c.valor_total or 0.0
-
-    qualidade_por_mes: dict[str, list[QualidadeLeite]] = {}
-    for q in qualidades:
-        comp = _competencia(q.data_coleta)
         if comp:
-            qualidade_por_mes.setdefault(comp, []).append(q)
+            receita_por_mes[comp] = receita_por_mes.get(comp, 0.0) + (c.valor_total or 0.0)
 
-    # Consumo de leite pelas bezerras/bezerros — projeção a partir da dieta atual
-    # (mesma lógica do painel de Alimentação), incluindo machos e fêmeas.
-    dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
-    animais = [
-        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
-        if not a.eh_semen
-    ]
-    consumo = calcular_consumo(dietas, animais)
-    litros_dia_bezerros = 0.0
-    efetivo_bezerros = 0
-    for lote_info in consumo["por_lote"]:
-        if "bezerr" not in (lote_info.get("categoria") or "").lower():
-            continue
-        efetivo_bezerros += lote_info["efetivo"]
-        for item in lote_info["itens"]:
-            if "leite" in (item["ingrediente"] or "").lower():
-                litros_dia_bezerros += item["consumo_dia"]
-    litros_mes_bezerros = round(litros_dia_bezerros * 30, 1)
+    entrega_projetada = 0.0
+    receita_projetada = 0.0
+    tem_entrega = tem_receita = False
+    for (ano, mes), dias_no_mes_periodo in _dias_por_mes_no_periodo(ini, fim).items():
+        comp = f"{ano:04d}-{mes:02d}"
+        dias_do_mes = calendar.monthrange(ano, mes)[1]
+        if comp in entregas:
+            tem_entrega = True
+            entrega_projetada += entregas[comp] / dias_do_mes * dias_no_mes_periodo
+        if comp in receita_por_mes:
+            tem_receita = True
+            receita_projetada += receita_por_mes[comp] / dias_do_mes * dias_no_mes_periodo
+    entrega_kg = round(entrega_projetada, 1) if tem_entrega else None
+    receita = round(receita_projetada, 2) if tem_receita else None
+    preco_medio_kg = round(receita / entrega_kg, 4) if (receita and entrega_kg) else None
 
-    competencias = sorted(set(controle_por_mes) | set(entrega_por_mes) | set(italac_por_mes))
-    linhas = []
-    for comp in competencias:
-        kg_controle = round(controle_por_mes[comp]["kg"], 1) if comp in controle_por_mes else None
-        litros_entrega = entrega_por_mes.get(comp)
-        italac = italac_por_mes.get(comp)
-        litros_italac = round(italac["litros"], 1) if italac else None
-        receita_italac = round(italac["receita"], 2) if italac else None
-        preco_medio = round(receita_italac / litros_italac, 4) if litros_italac else None
+    # ── Bezerros: leite/dia da dieta lançada (fallback: dieta CSV) × dias ──
+    leite_dia_bezerros = sum(
+        d.leite_bezerros_kg_dia or 0.0
+        for d in session.exec(select(DietaLancamento).where(DietaLancamento.data_efetivo_encerramento == None)).all()  # noqa: E711
+    )
+    fonte_bezerros = "dieta_lancada"
+    if leite_dia_bezerros <= 0:
+        dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
+        animais = [
+            a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+            if not a.eh_semen
+        ]
+        consumo = calcular_consumo(dietas, animais)
+        for lote_info in consumo["por_lote"]:
+            if "bezerr" not in (lote_info.get("categoria") or "").lower():
+                continue
+            for item in lote_info["itens"]:
+                if "leite" in (item["ingrediente"] or "").lower():
+                    leite_dia_bezerros += item["consumo_dia"]
+        fonte_bezerros = "dieta_csv"
+    bezerros_kg = round(leite_dia_bezerros * dias_periodo, 1)
 
-        qs = qualidade_por_mes.get(comp, [])
-        ccs_vals = [q.ccs for q in qs if q.ccs is not None]
-        gordura_vals = [q.gordura_pct for q in qs if q.gordura_pct is not None]
-
-        nao_entregue = round(kg_controle - litros_entrega, 1) if (kg_controle is not None and litros_entrega is not None) else None
-        consumo_outros = round(nao_entregue - litros_mes_bezerros, 1) if nao_entregue is not None else None
-
-        linhas.append({
-            "competencia": comp,
-            "controle_leiteiro_kg": kg_controle,
-            "controles_no_mes": controle_por_mes.get(comp, {}).get("n", 0),
-            "entrega_litros": litros_entrega,
-            "italac_litros": litros_italac,
-            "italac_receita": receita_italac,
-            "preco_medio_litro": preco_medio,
-            "ccs_medio": round(sum(ccs_vals) / len(ccs_vals), 1) if ccs_vals else None,
-            "gordura_media_pct": round(sum(gordura_vals) / len(gordura_vals), 2) if gordura_vals else None,
-            "nao_entregue_kg": nao_entregue,
-            "consumo_bezerros_estimado_litros": litros_mes_bezerros if nao_entregue is not None else None,
-            "consumo_outros_estimado_litros": consumo_outros,
-        })
+    # ── Balanço ──
+    nao_entregue = round(controle_projetado - entrega_kg, 1) if (controle_projetado is not None and entrega_kg is not None) else None
+    equipe_kg = round(nao_entregue - bezerros_kg, 1) if nao_entregue is not None else None
 
     return {
-        "linhas": linhas,
-        "efetivo_bezerros": efetivo_bezerros,
-        "consumo_bezerros_dia_litros": round(litros_dia_bezerros, 1),
-        "consumo_bezerros_mes_litros": litros_mes_bezerros,
+        "data_inicio": ini.isoformat(), "data_fim": fim.isoformat(), "dias_periodo": dias_periodo,
+        "dias_com_controle": dias_com_controle,
+        "media_diaria_controle_kg": round(media_diaria, 1) if dias_com_controle else None,
+        "controle_projetado_kg": controle_projetado,
+        "desvio_padrao_pct": desvio_pct,
+        "entrega_projetada_kg": entrega_kg,
+        "receita_projetada": receita,
+        "preco_medio_kg": preco_medio_kg,
+        "nao_entregue_kg": nao_entregue,
+        "leite_bezerros_kg_dia": round(leite_dia_bezerros, 1),
+        "bezerros_kg": bezerros_kg,
+        "bezerros_fonte": fonte_bezerros,
+        "equipe_kg": equipe_kg,
     }
 
 

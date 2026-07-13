@@ -1,10 +1,13 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioLeiteItalac } from "@/lib/api";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import { AnimalPicker } from "@/components/AnimalPicker";
+import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
+import { AnimalRow } from "@/components/AnimalModal";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -92,11 +95,11 @@ const INDICADORES_QUALIDADE = [
   { key: "nul", label: "NUL (ureia)", unidade: "mg/dL" },
 ] as const;
 
-type LinhaLeiteItalac = {
-  competencia: string; controle_leiteiro_kg: number | null; controles_no_mes: number;
-  entrega_litros: number | null; italac_litros: number | null; italac_receita: number | null;
-  preco_medio_litro: number | null; ccs_medio: number | null; gordura_media_pct: number | null;
-  nao_entregue_kg: number | null; consumo_bezerros_estimado_litros: number | null; consumo_outros_estimado_litros: number | null;
+type RelatorioControleEntrega = {
+  data_inicio: string; data_fim: string; dias_periodo: number; dias_com_controle: number;
+  media_diaria_controle_kg: number | null; controle_projetado_kg: number | null; desvio_padrao_pct: number | null;
+  entrega_projetada_kg: number | null; receita_projetada: number | null; preco_medio_kg: number | null;
+  nao_entregue_kg: number | null; leite_bezerros_kg_dia: number; bezerros_kg: number; bezerros_fonte: string; equipe_kg: number | null;
 };
 
 export default function ProducaoPage() {
@@ -112,6 +115,9 @@ export default function ProducaoPage() {
   const [ucN, setUcN] = useState<1 | 2 | 3 | "todos">(1);
   const [ucAnimal, setUcAnimal] = useState("");
   const [ucLotes, setUcLotes] = useState<string[]>([]);
+  // Lista real de animais (para o seletor "lista vermelha" — Nº/Grupo/Categoria/Sit.Rep./DEL).
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
   const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
@@ -142,14 +148,16 @@ export default function ProducaoPage() {
   const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
   const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
 
-  const [relatorioItalac, setRelatorioItalac] = useState<{
-    linhas: LinhaLeiteItalac[]; efetivo_bezerros: number; consumo_bezerros_dia_litros: number; consumo_bezerros_mes_litros: number;
-  } | null>(null);
-  const [italacErro, setItalacErro] = useState<string | null>(null);
+  // Controle × Entregue — período próprio (default: mês corrente até hoje).
+  const hojeISO = new Date().toISOString().slice(0, 10);
+  const inicioMesISO = hojeISO.slice(0, 8) + "01";
+  const [ceIni, setCeIni] = useState(inicioMesISO);
+  const [ceFim, setCeFim] = useState(hojeISO);
+  const [ce, setCe] = useState<RelatorioControleEntrega | null>(null);
+  const [ceErro, setCeErro] = useState<string | null>(null);
   useEffect(() => {
-    fetchRelatorioLeiteItalac().then(setRelatorioItalac).catch((e) => setItalacErro(e.message));
-  }, []);
-  const ordItalac = useOrdenacao<LinhaLeiteItalac>(relatorioItalac?.linhas ?? []);
+    fetchRelatorioControleEntrega(ceIni || undefined, ceFim || undefined).then(setCe).catch((e) => setCeErro(e.message));
+  }, [ceIni, ceFim]);
 
   useEffect(() => {
     fetchControles().then((d) => setRegs(d.controles)).catch((e) => setError(e.message));
@@ -329,12 +337,11 @@ export default function ProducaoPage() {
                 </select></div>
               {ucModo === "animal" && (
                 <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-                  <select style={selStyle} value={ucAnimal} onChange={(e) => setUcAnimal(e.target.value)}>
-                    <option value="">Selecione…</option>{animaisDisponiveis.map((n) => <option key={n}>{n}</option>)}
-                  </select></div>
+                  <AnimalPicker animais={animais.length ? animais : animaisDisponiveis.map((n) => ({ numero: n }))} value={ucAnimal} onChange={setUcAnimal} /></div>
               )}
               {ucModo === "lote" && (
-                <MultiFiltro label="Lote(s)/grupo(s)" opcoes={lotesDisponiveis} selecionados={ucLotes} onChange={setUcLotes} />
+                <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote(s)/grupo(s)</label>
+                  <LotePicker opcoes={opcoesLoteDeAnimais(animais, lotesDisponiveis)} selecionados={ucLotes} onChange={setUcLotes} /></div>
               )}
             </div>
 
@@ -420,66 +427,84 @@ export default function ProducaoPage() {
           </SecaoRecolhivel>
 
           <SecaoRecolhivel
-            titulo="Controle leiteiro × Entrega mensal × ITALAC"
+            titulo="Controle leiteiro × Entregue"
             icon={Scale}
-            badge={relatorioItalac ? <span style={badgeStyle}>{relatorioItalac.linhas.length} meses</span> : null}
-            descricao="Compara o leite pesado no controle, o entregue ao laticínio e o faturado pela ITALAC — e estima o consumo próprio da fazenda.">
-            {italacErro ? (
-              <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar o relatório de leite/ITALAC: {italacErro}.</span></div>
-            ) : !relatorioItalac ? (
+            badge={ce ? <span style={badgeStyle}>{ce.dias_periodo} dias</span> : null}
+            descricao="Fecha, no período, o leite do controle contra o entregue ao laticínio — separando bezerros e equipe/família (só quilos).">
+            {ceErro ? (
+              <div className="alert-critico"><AlertTriangle size={16} /><span>Não foi possível carregar: {ceErro}.</span></div>
+            ) : !ce ? (
               <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando…</p>
             ) : (
             <>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Compara o que foi pesado no controle leiteiro, o que foi entregue ao laticínio (lançamento mensal) e o que a
-              ITALAC faturou (contas gerenciais). A diferença entre pesado e entregue é consumo próprio da fazenda — parte
-              dela é a projeção de leite na dieta das bezerras/bezerros; o restante é consumo estimado da equipe/família.
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
+                <input type="date" style={selStyle} value={ceIni} onChange={(e) => setCeIni(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — até</label>
+                <input type="date" style={selStyle} value={ceFim} onChange={(e) => setCeFim(e.target.value)} /></div>
+            </div>
+
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem", lineHeight: 1.5 }}>
+              Tudo em <strong>quilos de leite</strong>, projetado para o período filtrado ({ce.dias_periodo} dias).
+              O <strong>Controle projetado</strong> é a média diária do rebanho ({ce.media_diaria_controle_kg ?? "—"} kg/dia,
+              de {ce.dias_com_controle} dia(s) pesado(s)) multiplicada pelos dias do período. O <strong>Entregue</strong> vem
+              do lançamento mensal do laticínio, rateado por dia do mês (28–31 conforme o mês) e projetado para o período; a
+              <strong> Receita média</strong> segue o mesmo rateio. O <strong>não entregue</strong> (Controle − Entregue) é
+              dividido entre <strong>Bezerros</strong> (leite/dia da dieta lançada × dias) e <strong>Equipe/família</strong>
+              (o que sobra). O <strong>Desvio padrão %</strong> mede a variação diária do controle no período — até 5% indica
+              que a média projeta bem; acima disso, a projeção fica menos confiável.
             </p>
-            {relatorioItalac && relatorioItalac.efetivo_bezerros > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
-                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.efetivo_bezerros}</p>
-                  <p className="kpi-label">Bezerras/bezerros no rebanho</p></div>
-                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.consumo_bezerros_dia_litros} L</p>
-                  <p className="kpi-label">Leite na dieta/dia (projetado)</p></div>
-                <div className="kpi-card"><p className="kpi-value">{relatorioItalac.consumo_bezerros_mes_litros} L</p>
-                  <p className="kpi-label">Projeção mensal de consumo</p></div>
-              </div>
+
+            {ce.desvio_padrao_pct != null && ce.desvio_padrao_pct > 5 && (
+              <p style={{ fontSize: "0.76rem", color: "var(--amber)", marginBottom: "0.5rem" }}>
+                Produção diária oscilou {ce.desvio_padrao_pct}% no período (acima dos 5%) — a projeção do controle é menos confiável.
+              </p>
             )}
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+              <div className="kpi-card"><p className="kpi-value">{ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
+                <p className="kpi-label">Controle projetado</p></div>
+              <div className="kpi-card"><p className="kpi-value">{ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
+                <p className="kpi-label">Entregue projetado</p></div>
+              <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--dourado-light)" }}>{ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
+                <p className="kpi-label">Não entregue</p></div>
+              <div className="kpi-card"><p className="kpi-value">{ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</p>
+                <p className="kpi-label">Receita média{ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}</p></div>
+            </div>
+
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead><tr>
-                  <ThOrdenavel label="Competência" campo="competencia" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} />
-                  <ThOrdenavel label="Controle (kg)" campo="controle_leiteiro_kg" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Entregue (L)" campo="entrega_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="ITALAC (L)" campo="italac_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Receita ITALAC (R$)" campo="italac_receita" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Preço médio (R$/L)" campo="preco_medio_litro" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="CCS médio" campo="ccs_medio" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Não entregue (kg)" campo="nao_entregue_kg" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Bezerros (L, est.)" campo="consumo_bezerros_estimado_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
-                  <ThOrdenavel label="Equipe/fazenda (L, est.)" campo="consumo_outros_estimado_litros" coluna={ordItalac.coluna} dir={ordItalac.dir} ordenar={ordItalac.ordenar} alinhar="right" />
+                  <th>Item</th><th style={{ textAlign: "right" }}>Quilos (período)</th><th>Como é calculado</th>
                 </tr></thead>
                 <tbody>
-                  {ordItalac.linhasOrdenadas.map((l) => (
-                    <tr key={l.competencia}>
-                      <td>{l.competencia}</td>
-                      <td style={{ textAlign: "right" }}>{l.controle_leiteiro_kg ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.entrega_litros ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.italac_litros ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.italac_receita != null ? l.italac_receita.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.preco_medio_litro != null ? l.preco_medio_litro.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.ccs_medio ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.nao_entregue_kg ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.consumo_bezerros_estimado_litros ?? "—"}</td>
-                      <td style={{ textAlign: "right" }}>{l.consumo_outros_estimado_litros ?? "—"}</td>
-                    </tr>
-                  ))}
-                  {!ordItalac.linhasOrdenadas.length && (
-                    <tr><td colSpan={10} style={{ color: "var(--text-muted)" }}>Sem dados de controle leiteiro, entrega mensal ou receita da ITALAC ainda.</td></tr>
-                  )}
+                  <tr><td style={{ fontWeight: 700 }}>Controle projetado</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{ce.controle_projetado_kg != null ? ce.controle_projetado_kg.toLocaleString("pt-BR") : "—"}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>média diária {ce.media_diaria_controle_kg ?? "—"} kg × {ce.dias_periodo} dias</td></tr>
+                  <tr><td>Entregue projetado</td>
+                    <td style={{ textAlign: "right" }}>{ce.entrega_projetada_kg != null ? ce.entrega_projetada_kg.toLocaleString("pt-BR") : "—"}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>entrega mensal ÷ dias do mês × dias do período</td></tr>
+                  <tr><td style={{ fontWeight: 700 }}>Não entregue</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{ce.nao_entregue_kg != null ? ce.nao_entregue_kg.toLocaleString("pt-BR") : "—"}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Controle − Entregue</td></tr>
+                  <tr><td>↳ Bezerros</td>
+                    <td style={{ textAlign: "right" }}>{ce.bezerros_kg.toLocaleString("pt-BR")}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{ce.leite_bezerros_kg_dia} kg/dia (dieta {ce.bezerros_fonte === "dieta_lancada" ? "lançada" : "CSV"}) × {ce.dias_periodo} dias</td></tr>
+                  <tr><td>↳ Equipe/família</td>
+                    <td style={{ textAlign: "right", color: ce.equipe_kg != null && ce.equipe_kg < 0 ? "var(--red)" : undefined }}>{ce.equipe_kg != null ? ce.equipe_kg.toLocaleString("pt-BR") : "—"}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>Não entregue − Bezerros (residual)</td></tr>
+                  <tr><td style={{ fontWeight: 700 }}>Desvio padrão %</td>
+                    <td style={{ textAlign: "right", fontWeight: 700, color: ce.desvio_padrao_pct == null ? "var(--text-muted)" : ce.desvio_padrao_pct <= 5 ? "var(--green-light)" : "var(--amber)" }}>{ce.desvio_padrao_pct != null ? `${ce.desvio_padrao_pct}%` : "—"}</td>
+                    <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>variação diária do controle (tolerância 5%)</td></tr>
                 </tbody>
               </table>
             </div>
+            {ce.equipe_kg != null && ce.equipe_kg < 0 && (
+              <p style={{ fontSize: "0.76rem", color: "var(--red)", marginTop: "0.5rem" }}>
+                Equipe/família ficou negativo — o leite lançado para bezerros na dieta é maior que o não entregue. Revise a
+                dieta dos bezerros ou os lançamentos de controle/entrega do período.
+              </p>
+            )}
             </>
             )}
           </SecaoRecolhivel>

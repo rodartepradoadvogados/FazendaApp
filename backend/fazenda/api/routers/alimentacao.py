@@ -218,6 +218,7 @@ class DietaLancamentoIn(BaseModel):
     data_prevista_encerramento: date | None = None
     observacao: str | None = None
     base_quantidade: str | None = None  # "total" (padrão) | "animal" (por cabeça/dia)
+    leite_bezerros_kg_dia: float | None = None  # kg/dia de leite p/ bezerros (relatório Controle × Entregue)
     itens: list[ItemProgramadoIn]
     # Se True e já houver dieta ativa no lote, encerra-a na data de início
     # desta (o veterinário responde "sim" ao salvar). Se False e houver ativa,
@@ -268,6 +269,7 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
         lote=dados.lote, responsavel=dados.responsavel, data_abertura=dados.data_abertura,
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
         base_quantidade=dados.base_quantidade or "total",
+        leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
     )
     session.add(dieta)
     session.commit()

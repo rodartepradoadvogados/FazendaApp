@@ -260,15 +260,14 @@ function RebanhoVisaoGeral() {
   );
 }
 
-type Aba = "visao" | "sugestoes" | "mover" | "baixar" | "comprar" | "ficha";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "mover", "baixar", "comprar", "ficha"];
+// Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
+// Rebanho é só consulta (visão, ficha e sugestões).
+type Aba = "visao" | "sugestoes" | "ficha";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
-  { id: "mover", label: "Movimentar animais", icon: ArrowRightLeft, title: "Transferir animais entre lotes" },
-  { id: "comprar", label: "Comprar animal", icon: ShoppingCart, title: "Registrar compra de animal" },
-  { id: "baixar", label: "Baixar animal", icon: Skull, title: "Registrar morte/descarte/venda" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
@@ -289,9 +288,6 @@ export default function RebanhoPage() {
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
-        {aba === "mover" && <MovimentarAnimais />}
-        {aba === "baixar" && <BaixarAnimal />}
-        {aba === "comprar" && <ComprarAnimal />}
         {aba === "ficha" && <FichaAnimal />}
       </div>
     </div>
