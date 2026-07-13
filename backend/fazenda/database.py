@@ -64,7 +64,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("nome", "VARCHAR"), ("sisbov", "VARCHAR"), ("mae_numero", "VARCHAR"), ("mae_nome", "VARCHAR"),
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
-        ("a_descartar", "BOOLEAN DEFAULT 0"),
+        ("a_descartar", "BOOLEAN DEFAULT 0"), ("excluir_bst", "BOOLEAN DEFAULT 0"),
     ],
     "estoque": [
         ("unidade_embalagem", "VARCHAR"), ("medida_embalagem", "VARCHAR"), ("quantidade_embalagem", "FLOAT"),
@@ -98,9 +98,9 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("data_primeiro", "DATE"), ("frequencia_valor", "INTEGER"), ("frequencia_unidade", "VARCHAR"),
         ("gatilho", "VARCHAR"), ("gatilho_lote", "VARCHAR"), ("gatilho_idade_meses", "INTEGER"), ("offset_dias", "INTEGER"),
         ("produto_padrao", "VARCHAR"), ("dose_padrao", "FLOAT"), ("unidade_padrao", "VARCHAR"), ("via_padrao", "VARCHAR"),
-        ("categoria_preventiva", "VARCHAR"),
+        ("categoria_preventiva", "VARCHAR"), ("agenda_dias_antes", "INTEGER"),
     ],
-    "calendario_sanitario": [("veterinario", "VARCHAR")],
+    "calendario_sanitario": [("veterinario", "VARCHAR"), ("unidade", "VARCHAR")],
     "protocolo_sanitario_etapa": [("criterio_tipo", "VARCHAR DEFAULT 'medicamento'")],
     "protocolo_sanitario_aplicacao": [("produto", "VARCHAR")],
     "protocolo_sanitario_lancamento": [

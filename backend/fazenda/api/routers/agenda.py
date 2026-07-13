@@ -181,12 +181,19 @@ def calcular_agenda(
     # BST a cada 12 dias ancorado na ÚLTIMA APLICAÇÃO lançada (não no último
     # serviço): a próxima dose é 12 dias após a aplicação de BST mais recente.
     MARCADORES_BST = ("lactotropin", "boostin", "bst", "somatotrop")
-    datas_bst = [
-        s.data_aplicacao for s in session.exec(select(Sanidade)).all()
-        if s.data_aplicacao and any(m in (s.produto or "").lower() for m in MARCADORES_BST)
+    sanidades_bst = [
+        s for s in session.exec(select(Sanidade)).all()
+        if any(m in (s.produto or "").lower() for m in MARCADORES_BST)
     ]
+    datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
     if datas_bst:
         result.proxima_visita_bst = max(datas_bst) + timedelta(days=12)
+
+    # Candidatas aptas que NUNCA receberam nenhuma aplicação de BST — vaca que
+    # acabou de atingir DEL 60 e ainda não entrou no ciclo de doses. Sem esse
+    # destaque, ficavam perdidas dentro da lista geral de "Aptas".
+    animais_com_bst = {s.numero_matriz for s in sanidades_bst}
+    bst_nunca_aplicados = [b for b in result.bst_elegiveis if b.numero_matriz not in animais_com_bst]
 
     # Remove da lista os eventos já marcados como "realizado" (workflow da agenda).
     realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
@@ -333,6 +340,13 @@ def calcular_agenda(
     aplic_agendadas = session.exec(
         select(AplicacaoAgendada).where(AplicacaoAgendada.aplicado == False)  # noqa: E712
     ).all()
+    # Vacina(s) pré-parto (vindas da Secagem) formam um cartão só por animal —
+    # o número do animal com o indicador "Vacina(s) pré-parto" e a lista das
+    # vacinas logo abaixo — em vez de uma linha solta por vacina.
+    VACINA_PRE_PARTO = "Vacina pré-parto"
+    vacinas_pre_parto_rows = [a for a in aplic_agendadas if a.observacao == VACINA_PRE_PARTO]
+    demais_agendadas = [a for a in aplic_agendadas if a.observacao != VACINA_PRE_PARTO]
+
     eventos_aplic_agendada = [{
         "id": f"aplic_agendada_{a.id}", "data": a.data.isoformat(), "categoria": "sanidade",
         "descricao": f"Aplicar {a.produto}"
@@ -341,7 +355,24 @@ def calcular_agenda(
         "numero_animal": a.numero_matriz, "observacao": "Programada — dê baixa para aplicar e baixar o estoque.",
         "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "aplicacao_agendada",
         "produto": a.produto, "dose": a.dose, "unidade": a.unidade, "via": a.via,
-    } for a in aplic_agendadas if f"aplic_agendada_{a.id}" not in realizados]
+    } for a in demais_agendadas if f"aplic_agendada_{a.id}" not in realizados]
+
+    grupos_vacina_pre_parto: dict[tuple[str, date], list] = {}
+    for a in vacinas_pre_parto_rows:
+        grupos_vacina_pre_parto.setdefault((a.numero_matriz, a.data), []).append(a)
+    eventos_vacina_pre_parto = []
+    for (numero, data_evt), rows in grupos_vacina_pre_parto.items():
+        chave = f"vacina_pre_parto_{numero}_{data_evt.isoformat()}"
+        if chave in realizados:
+            continue
+        eventos_vacina_pre_parto.append({
+            "id": chave, "data": data_evt.isoformat(), "categoria": "sanidade",
+            "descricao": f"Vacina(s) pré-parto — matriz {numero}",
+            "numero_animal": numero,
+            "observacao": "\n".join(f"• {r.produto}" for r in rows),
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "vacina_pre_parto",
+            "vacinas": [r.produto for r in rows],
+        })
 
     # Colostragem + exame de sangue (IgG) das bezerras recém-nascidas —
     # 24h após o parto (sempre no dia seguinte). Se ao lançar o parto não se
@@ -483,7 +514,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_nova_dieta + eventos_pesagem
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -505,11 +536,13 @@ def calcular_agenda(
         "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
         "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis] if tem_reproducao else [],
         "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
+        "bst_nunca_aplicados": [b.__dict__ for b in bst_nunca_aplicados] if tem_reproducao else [],
         "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
         "eventos": eventos_visiveis,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
             "bst_elegiveis": len(result.bst_elegiveis) if tem_reproducao else 0,
+            "bst_nunca_aplicados": len(bst_nunca_aplicados) if tem_reproducao else 0,
             "contas_a_pagar": len(result.contas_a_pagar) if tem_financeiro else 0,
             "eventos": len(eventos_visiveis),
         },
@@ -607,6 +640,32 @@ def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
             nome_item=estoque_item.nome, movimento="Aplicação", quantidade=ag.dose,
             unidade=estoque_item.unidade, data_movimento=hoje,
             observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
+        ))
+    session.commit()
+
+
+def _baixar_vacina_pre_parto(session: Session, evento_id: str) -> None:
+    """Confirma TODAS as vacinas pré-parto pendentes daquele cartão (mesmo
+    animal + mesma data) de uma vez — cada uma vira um registro de Sanidade."""
+    resto = evento_id.removeprefix("vacina_pre_parto_")
+    numero_matriz, data_str = resto.rsplit("_", 1)
+    data_evt = date.fromisoformat(data_str)
+    rows = session.exec(
+        select(AplicacaoAgendada).where(
+            AplicacaoAgendada.numero_matriz == numero_matriz,
+            AplicacaoAgendada.data == data_evt,
+            AplicacaoAgendada.observacao == "Vacina pré-parto",
+            AplicacaoAgendada.aplicado == False,  # noqa: E712
+        )
+    ).all()
+    hoje = date.today()
+    for ag in rows:
+        ag.aplicado = True
+        ag.data_aplicacao = hoje
+        session.add(ag)
+        session.add(Sanidade(
+            numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
+            via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
         ))
     session.commit()
 
@@ -722,6 +781,8 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
             _baixar_protocolo_sanitario(session, dados.evento_id)
         elif dados.evento_id.startswith("aplic_agendada_"):
             _baixar_aplicacao_agendada(session, dados.evento_id)
+        elif dados.evento_id.startswith("vacina_pre_parto_"):
+            _baixar_vacina_pre_parto(session, dados.evento_id)
     return {"marcado": True}
 
 

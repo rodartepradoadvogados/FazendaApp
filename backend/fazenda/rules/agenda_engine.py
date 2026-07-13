@@ -332,22 +332,31 @@ class AgendaEngine:
                             observacao=obs,
                         ))
 
-            # ── BST
-            res_bst = avaliar_bst(
-                numero_matriz=numero,
-                grupo_primario=grupo,
-                del_dias=del_dias,
-                data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
-                data_referencia=data_referencia,
-            )
-            if res_bst.elegivel:
-                bst_elegiveis.append(res_bst)
-            else:
-                # Excluídos do BST: apenas lactantes (01/02/03) que não cumprem os
-                # requisitos — não faz sentido listar a fazenda inteira.
-                cod = (grupo or "").strip()[:2]
-                if cod in ("01", "02", "03"):
-                    bst_excluidos.append(res_bst)
+            # ── BST — marcada para excluir manualmente: nem elegível, nem excluída
+            # (some das duas listas, não é um "quase apta" a mostrar).
+            if not animal.get("excluir_bst"):
+                # DEL projetado para a data da PRÓXIMA aplicação de BST (não o DEL de
+                # hoje) — uma vaca com DEL 55 hoje mas cuja próxima aplicação é daqui
+                # a 6 dias já entra como candidata (chegará aos 60 dias na hora certa).
+                del_dias_bst = del_dias
+                if del_dias is not None and result.proxima_visita_bst and result.proxima_visita_bst > data_referencia:
+                    del_dias_bst = del_dias + (result.proxima_visita_bst - data_referencia).days
+
+                res_bst = avaliar_bst(
+                    numero_matriz=numero,
+                    grupo_primario=grupo,
+                    del_dias=del_dias_bst,
+                    data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
+                    data_referencia=data_referencia,
+                )
+                if res_bst.elegivel:
+                    bst_elegiveis.append(res_bst)
+                else:
+                    # Excluídos do BST: apenas lactantes (01/02/03) que não cumprem os
+                    # requisitos — não faz sentido listar a fazenda inteira.
+                    cod = (grupo or "").strip()[:2]
+                    if cod in ("01", "02", "03"):
+                        bst_excluidos.append(res_bst)
 
         result.bst_elegiveis = bst_elegiveis
         result.bst_excluidos = bst_excluidos

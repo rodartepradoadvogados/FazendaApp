@@ -64,6 +64,9 @@ class Animal(SQLModel, table=True):
     # de todas as ações reprodutivas (IATF, inseminação, candidatas) — marcada
     # para descarte futuro sem dar baixa definitiva.
     a_descartar: bool = False
+    # Marca manual: nunca entra nas listas de candidatas/excluídos do BST
+    # (ex.: vaca com contraindicação), independente dos critérios automáticos.
+    excluir_bst: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -970,6 +973,10 @@ class EventoSanitario(SQLModel, table=True):
     unidade_padrao: Optional[str] = None
     via_padrao: Optional[str] = None
 
+    # Só para exame: avisa na Agenda N dias antes da data prevista, para
+    # confirmar o exame com o veterinário (pendência distinta da do próprio dia).
+    agenda_dias_antes: Optional[int] = None
+
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1015,6 +1022,7 @@ class CalendarioSanitario(SQLModel, table=True):
     produto: Optional[str] = None  # nome do item de estoque (medicamento/vacina)
     principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
     dosagem: Optional[str] = None  # texto livre — ex.: "2 mL a 5 mL (conforme bula)"
+    unidade: Optional[str] = None  # ml | L | unidade | dose | kg | saca 30kg | saca 60kg
     # Veterinário/pessoa responsável (usado sobretudo em exames, que não têm baixa de estoque).
     veterinario: Optional[str] = None
     frequencia_valor: int

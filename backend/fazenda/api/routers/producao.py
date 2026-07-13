@@ -500,9 +500,17 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
         # Dias de gestação já decorridos (do serviço positivo até hoje).
         dias_gestacao = max(0, (date.today() - ultimo_servico.data_servico).days)
 
+    # DEL ao vivo — o campo animal.del_dias só é atualizado no próximo upload
+    # do GERAL.csv (fica parado entre uploads); aqui calculamos a partir do
+    # último parto, igual à lógica já usada no relatório de Controle leiteiro.
+    ultimo_parto = session.exec(
+        select(Parto).where(Parto.numero_matriz == numero_matriz).order_by(Parto.data_parto.desc())
+    ).first()
+    del_atual = (date.today() - ultimo_parto.data_parto).days if ultimo_parto else animal.del_dias
+
     return {
         "numero_matriz": numero_matriz,
-        "del_atual": animal.del_dias,
+        "del_atual": del_atual,
         "lote_atual": animal.grupo_primario,
         "data_prevista_secagem": data_prevista,
         "deve_secar": deve_secar,
@@ -531,6 +539,9 @@ class SecagemIn(BaseModel):
     # aplicado (ou a data é futura), não baixa estoque agora — vira uma
     # aplicação programada na Agenda, que baixa ao confirmar.
     aplicado: bool = True
+    # Vacina(s) pré-parto escolhidas (sim/não + quais) — nunca aplicadas na
+    # hora; sempre viram pendência na Agenda para o dia seguinte à secagem.
+    vacinas_pre_parto: list[str] = []
 
 
 @router.post("/secagem")
@@ -595,6 +606,17 @@ def registrar_secagem(
 
     if dados.produtos and not materializar:
         avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
+
+    # Vacina(s) pré-parto: nunca aplica na hora — sempre vira pendência na
+    # Agenda para o dia seguinte à secagem (o funcionário aplica e dá baixa lá).
+    if dados.vacinas_pre_parto:
+        data_vacina = dados.data_secagem + timedelta(days=1)
+        for vacina in dados.vacinas_pre_parto:
+            session.add(AplicacaoAgendada(
+                numero_matriz=dados.numero_matriz, data=data_vacina, produto=vacina,
+                responsavel=dados.responsavel, observacao="Vacina pré-parto", aplicado=False,
+            ))
+        avisos.append(f"Vacina(s) pré-parto programada(s) na Agenda para {data_vacina.strftime('%d/%m/%Y')}.")
 
     session.commit()
     return {"criado": True, "avisos": avisos, "programado": not materializar, "lote_sugerido": _lote_das_secas(session)}
