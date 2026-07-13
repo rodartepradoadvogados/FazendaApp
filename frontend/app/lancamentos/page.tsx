@@ -1404,7 +1404,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   useEffect(() => {
     fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
     fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
-    fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
+    fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
     carregarRegras();
   }, []);
 
