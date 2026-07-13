@@ -47,6 +47,9 @@
   --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: var(--text-muted);
+  /* Contorno do grupo de sub-abas aberto na Sidebar — ouro escuro no escuro/misto. */
+  --sidebar-subnav-outline: var(--dourado);
+  --sidebar-subnav-outline-bg: rgba(184, 134, 11, 0.1);
   /* Pílula de aba ativa (TabBar) e ícones de seção recolhível. No escuro o
      fundo translúcido sobre a tela escura já contrasta bem. */
   --pill-active-bg: rgba(94, 26, 46, 0.4);
@@ -81,6 +84,9 @@
   --sidebar-logo-bg: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: rgba(240, 232, 236, 0.85);
+  /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
+  --sidebar-subnav-outline: var(--vinho);
+  --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);
   /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
      contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
   --pill-active-bg: var(--vinho);
@@ -115,6 +121,8 @@
   --sidebar-logo-bg: rgba(255, 255, 255, 0.10);
   --sidebar-logo-fg: var(--dourado-light);
   --sidebar-logo-sub: rgba(245, 238, 241, 0.7);
+  /* --sidebar-subnav-outline não é redefinido aqui: herda ouro escuro do :root
+     base (a barra do misto é vinho sólido, então ouro escuro contrasta bem). */
   /* Conteúdo do misto é claro (cards brancos): mesma regra do tema claro. */
   --pill-active-bg: var(--vinho);
   --pill-active-fg: var(--dourado-light);

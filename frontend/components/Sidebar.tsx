@@ -145,36 +145,40 @@ export function Sidebar() {
       {/* Nav: se a página atual registrou sub-navegação, a árvore de sub-abas
           dela aparece aqui em cima — sempre seguida da lista de módulos
           completa logo abaixo, nunca no lugar dela, para nunca "prender" a
-          navegação dentro de uma página. */}
-      <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
+          navegação dentro de uma página. As duas listas rolam de forma
+          independente (cada uma no seu próprio container com overflow), para
+          que abrir um grupo grande de sub-abas não empurre/role o menu
+          principal junto. */}
+      <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
         {subNav && (
-          <>
+          <div className="p-3" style={{ maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "1px solid var(--sidebar-border)" }}>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
-            <div style={{ borderTop: "1px solid var(--sidebar-border)", margin: "0.6rem 0" }} />
-          </>
+          </div>
         )}
-        {[...visiveis,
-          ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
-          ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
-        ].map(({ href, label, icon: Icon, title }) => {
-          const active = path === href || (href !== "/" && path.startsWith(href));
-          return (
-            <Link
-              key={href}
-              href={href}
-              title={title || label}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-              style={{
-                background: active ? "var(--sidebar-active-bg)" : "transparent",
-                color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-              }}
-            >
-              <Icon size={16} />
-              {label}
-            </Link>
-          );
-        })}
+        <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
+          {[...visiveis,
+            ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
+            ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
+          ].map(({ href, label, icon: Icon, title }) => {
+            const active = path === href || (href !== "/" && path.startsWith(href));
+            return (
+              <Link
+                key={href}
+                href={href}
+                title={title || label}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                style={{
+                  background: active ? "var(--sidebar-active-bg)" : "transparent",
+                  color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                  borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+                }}
+              >
+                <Icon size={16} />
+                {label}
+              </Link>
+            );
+          })}
+        </div>
       </nav>
 
       {/* Footer */}
@@ -233,8 +237,15 @@ function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
         const Icon = n.icon;
         const temFilhos = !!n.children?.length;
         const ativo = temFilhos ? caminho.has(n.id) : n.id === activeId;
+        // Grupo raiz atualmente aberto (tem filhos expandidos) — destaca com
+        // uma moldura para deixar claro qual sub-menu está aberto.
+        const grupoAberto = depth === 0 && temFilhos && ativo;
         return (
-          <div key={n.id}>
+          <div key={n.id}
+            style={grupoAberto ? {
+              border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "10px",
+              padding: "0.3rem", background: "var(--sidebar-subnav-outline-bg)",
+            } : undefined}>
             <button onClick={() => onSelect(temFilhos ? (ativo ? activeId : primeiraFolha(n)) : n.id)}
               style={{
                 width: "100%", display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
