@@ -13,9 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Animal, CompraAnimal, ContaGerencial
+from fazenda.models import Animal, CompraAnimal, ContaGerencial, Usuario
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
 router = APIRouter(prefix="/compras-animais", tags=["compras-animais"])
@@ -40,11 +42,15 @@ class CompraIn(BaseModel):
 @router.get("/")
 def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
     compras = session.exec(select(CompraAnimal).order_by(CompraAnimal.data_compra.desc(), CompraAnimal.id.desc())).all()
-    return [c.model_dump() for c in compras]
+    registros = [c.model_dump() for c in compras]
+    nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
+    for r in registros:
+        r["usuario_nome"] = nomes.get(r["usuario_id"])
+    return registros
 
 
 @router.post("/")
-def registrar_compra(dados: CompraIn, session: Session = Depends(get_session)) -> dict:
+def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Informe ao menos um animal")
     if not (dados.vendedor or "").strip():
@@ -101,6 +107,7 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session)) -
             tipo_valor=dados.tipo_valor, data_compra=dados.data_compra,
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,
+            usuario_id=usuario_id_seguro(user),
         ))
         # Vincula o valor da compra à ficha do animal (para o relatório de
         # payback quando ele produzir). Preenche data de entrada e vendedor.

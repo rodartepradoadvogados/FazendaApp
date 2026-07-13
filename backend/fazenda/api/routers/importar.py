@@ -18,7 +18,7 @@ from datetime import date
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
-from fazenda.api.routers.estoque import MovimentoIn, movimentar_estoque
+from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
@@ -331,7 +331,7 @@ async def importar_estoque_movimento(file: UploadFile, session: Session = Depend
                 data_movimento=data_movimento,
                 observacao=row.get("observacao", "").strip() or None,
             )
-            movimentar_estoque(dados, session)
+            _criar_movimento_estoque(dados, session)
             criados += 1
         except HTTPException as exc:
             erros.append(f"Linha {i}: {exc.detail}")

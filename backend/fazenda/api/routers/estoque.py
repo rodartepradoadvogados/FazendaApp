@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Estoque, Fornecedor, MovimentoEstoque
+from fazenda.models import Estoque, Fornecedor, MovimentoEstoque, Usuario
+from fazenda.rules.auditoria import mapa_usuarios
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -195,7 +197,9 @@ def listar_medicamentos(
 def listar_movimentos(session: Session = Depends(get_session)) -> dict:
     """Histórico de entradas/saídas lançadas manualmente."""
     movs = session.exec(select(MovimentoEstoque).order_by(MovimentoEstoque.data_movimento.desc())).all()
-    return {"movimentos": [m.model_dump() for m in movs], "total": len(movs)}
+    nomes = mapa_usuarios(session, {m.usuario_id for m in movs})
+    movimentos = [{**m.model_dump(), "usuario_nome": nomes.get(m.usuario_id)} for m in movs]
+    return {"movimentos": movimentos, "total": len(movs)}
 
 
 class MovimentoIn(BaseModel):
@@ -207,8 +211,11 @@ class MovimentoIn(BaseModel):
     observacao: str | None = None
 
 
-@router.post("/movimentar")
-def movimentar_estoque(dados: MovimentoIn, session: Session = Depends(get_session)) -> dict:
+def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: int | None = None) -> Estoque:
+    """Lógica de fato de um lançamento de movimento (sem o commit ser feito
+    pelo chamador direto) — usada pelo endpoint HTTP e pela importação de CSV
+    (fazenda.api.routers.importar), que chama isto fora do ciclo de requisição
+    e por isso não tem um usuário logado (usuario_id fica None nesse caso)."""
     if dados.movimento not in MOVIMENTOS_VALIDOS:
         raise HTTPException(status_code=400, detail="Tipo de movimento inválido")
     if dados.quantidade <= 0:
@@ -234,7 +241,14 @@ def movimentar_estoque(dados: MovimentoIn, session: Session = Depends(get_sessio
         unidade=dados.unidade or item.unidade,
         data_movimento=dados.data_movimento,
         observacao=dados.observacao,
+        usuario_id=usuario_id,
     ))
     session.commit()
     session.refresh(item)
+    return item
+
+
+@router.post("/movimentar")
+def movimentar_estoque(dados: MovimentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    item = _criar_movimento_estoque(dados, session, usuario_id=user.id)
     return item.model_dump()

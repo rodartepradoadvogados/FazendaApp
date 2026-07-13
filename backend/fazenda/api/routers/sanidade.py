@@ -11,13 +11,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
     EventoSanitario, MovimentoEstoque,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
-    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade,
+    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
+from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
@@ -50,8 +52,10 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
+    sanidades = session.exec(select(Sanidade)).all()
+    nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
     registros = []
-    for s in session.exec(select(Sanidade)).all():
+    for s in sanidades:
         d = s.data_aplicacao
         registros.append({
             "id": s.id,
@@ -69,6 +73,7 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
             "data": d.isoformat() if d else None,
             "ano": d.year if d else None,
             "mes": f"{d.year}-{d.month:02d}" if d else None,
+            "usuario_nome": nomes.get(s.usuario_id),
         })
     return {"aplicacoes": registros, "total": len(registros)}
 
@@ -103,7 +108,7 @@ class AplicacaoIn(BaseModel):
 
 
 @router.post("/aplicacoes")
-def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_session)) -> dict:
+def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -121,6 +126,7 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
                     numero_matriz=numero, data=dados.data_aplicacao, produto=item.produto,
                     dose=item.quantidade, unidade=item.unidade, via=item.via,
                     responsavel=dados.responsavel, observacao=dados.observacao,
+                    usuario_id=usuario_id_seguro(user),
                 ))
                 agendadas += 1
         session.commit()
@@ -153,6 +159,7 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
                 via=item.via,
                 responsavel=dados.responsavel,
                 obs=dados.observacao,
+                usuario_id=usuario_id_seguro(user),
             ))
             criados += 1
 
@@ -385,7 +392,7 @@ class CadastrarPreventivoIn(BaseModel):
 
 
 @router.post("/calendario/cadastrar-preventivo")
-def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depends(get_session)) -> dict:
+def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
     if not ev:
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
@@ -419,6 +426,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
                 responsavel=dados.responsavel, observacao=dados.observacao or f"Preventivo: {ev.nome}",
             ),
             session,
+            user,
         )
 
     eventos, doencas, principios, categorias = _nomes(session)
@@ -447,16 +455,20 @@ class ProtocoloLancamentoIn(BaseModel):
     escolhas_medicamento: dict[str, str] = {}
 
 
-def _serializar_lancamento_protocolo(session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, str]) -> dict:
+def _serializar_lancamento_protocolo(
+    session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, str], nomes: dict[int, str] | None = None,
+) -> dict:
     aplicacoes = session.exec(
         select(ProtocoloSanitarioAplicacao)
         .where(ProtocoloSanitarioAplicacao.lancamento_id == lanc.id)
         .order_by(ProtocoloSanitarioAplicacao.data_prevista)
     ).all()
     etapas = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
+    nomes = nomes if nomes is not None else mapa_usuarios(session, {lanc.usuario_id})
     return {
         **lanc.model_dump(),
         "protocolo_nome": protocolos.get(lanc.protocolo_id, "—"),
+        "usuario_nome": nomes.get(lanc.usuario_id),
         "aplicacoes": [
             {**a.model_dump(), "etapa": etapas[a.etapa_id].model_dump() if a.etapa_id in etapas else None}
             for a in aplicacoes
@@ -468,11 +480,12 @@ def _serializar_lancamento_protocolo(session: Session, lanc: ProtocoloSanitarioL
 def listar_lancamentos_protocolo(session: Session = Depends(get_session)) -> list[dict]:
     protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
     lancamentos = session.exec(select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).all()
-    return [_serializar_lancamento_protocolo(session, l, protocolos) for l in lancamentos]
+    nomes = mapa_usuarios(session, {l.usuario_id for l in lancamentos})
+    return [_serializar_lancamento_protocolo(session, l, protocolos, nomes) for l in lancamentos]
 
 
 @router.post("/protocolos/lancamentos", status_code=201)
-def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(get_session)) -> dict:
+def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
@@ -555,6 +568,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
             resultado_cmt=dados.resultado_cmt,
             tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
             del_no_caso=del_no_caso, ccs_ultima=ccs_ultima, recidiva=recidiva,
+            usuario_id=usuario_id_seguro(user),
         )
         session.add(lancamento)
         session.commit()
@@ -693,7 +707,9 @@ class ColostragemIn(BaseModel):
 
 
 @router.post("/colostragem")
-def registrar_colostragem(dados: ColostragemIn, session: Session = Depends(get_session)) -> dict:
+def registrar_colostragem(
+    dados: ColostragemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
     animal = session.exec(select(Animal).where(Animal.numero == dados.numero_animal)).first()
@@ -704,7 +720,7 @@ def registrar_colostragem(dados: ColostragemIn, session: Session = Depends(get_s
         select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
     ).first()
     if not registro:
-        registro = ColostragemBezerra(animal_id=animal.id, numero_animal=dados.numero_animal)
+        registro = ColostragemBezerra(animal_id=animal.id, numero_animal=dados.numero_animal, usuario_id=usuario_id_seguro(user))
     for campo, valor in dados.model_dump(exclude={"numero_animal"}).items():
         setattr(registro, campo, valor)
     registro.atualizado_em = datetime.utcnow()
@@ -729,7 +745,9 @@ def relatorio_sanitario_bezerras(
     por animal, por lote atual (grupo_primario) ou por seleção de vários animais.
     """
     animais = session.exec(select(Animal).where(Animal.eh_semen == False)).all()  # noqa: E712
-    registros = {r.numero_animal: r for r in session.exec(select(ColostragemBezerra)).all()}
+    todos_registros = session.exec(select(ColostragemBezerra)).all()
+    registros = {r.numero_animal: r for r in todos_registros}
+    nomes = mapa_usuarios(session, {r.usuario_id for r in todos_registros})
     hoje = date.today()
 
     numeros_selecionados = {n.strip() for n in numeros} if numeros else None
@@ -769,6 +787,7 @@ def relatorio_sanitario_bezerras(
             # Sem mensuração = tem registro mas nenhum Brix/proteína sérica medido.
             "sem_mensuracao": bool(r) and (r.brix_soro is None and r.proteina_serica is None),
             "data_teste_sangue": r.data_teste_sangue if r else None,
+            "usuario_nome": nomes.get(r.usuario_id) if r else None,
         })
     saida.sort(key=lambda x: x["numero"])
     return saida

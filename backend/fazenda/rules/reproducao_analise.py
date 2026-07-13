@@ -64,5 +64,6 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "diagnosticado": diagnosticado,
             "positivo": diag == "POSITIVO",
             "perda": bool(s.get("data_perda_prenhez")),
+            "usuario_id": s.get("usuario_id"),
         })
     return registros

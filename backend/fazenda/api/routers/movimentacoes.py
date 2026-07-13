@@ -11,8 +11,10 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote
+from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, Usuario
+from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
 router = APIRouter(prefix="/movimentacoes", tags=["movimentacoes"])
@@ -146,11 +148,15 @@ def listar_movimentacoes(
     if data_fim:
         query = query.where(MovimentoLote.data_movimento <= data_fim)
     movs = session.exec(query.order_by(MovimentoLote.data_movimento.desc(), MovimentoLote.id.desc())).all()
-    return [m.model_dump() for m in movs]
+    registros = [m.model_dump() for m in movs]
+    nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
+    for r in registros:
+        r["usuario_nome"] = nomes.get(r["usuario_id"])
+    return registros
 
 
 @router.post("/mover")
-def mover_animais(dados: MoverIn, session: Session = Depends(get_session)) -> dict:
+def mover_animais(dados: MoverIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
@@ -183,6 +189,7 @@ def mover_animais(dados: MoverIn, session: Session = Depends(get_session)) -> di
             motivo=dados.motivo or "",
             observacao=dados.observacao,
             responsavel=dados.responsavel,
+            usuario_id=usuario_id_seguro(user),
         ))
         movidos += 1
 

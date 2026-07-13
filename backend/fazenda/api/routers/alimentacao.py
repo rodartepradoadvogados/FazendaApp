@@ -15,12 +15,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Animal, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal, Estoque,
-    Lote, MovimentoEstoque,
+    Lote, MovimentoEstoque, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
+from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.farmacia import pode_baixar_estoque
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
@@ -239,6 +241,9 @@ def listar_dietas(
 ) -> list[dict]:
     dietas = session.exec(select(DietaLancamento)).all()
     saida = [_serializar_dieta(session, d) for d in dietas]
+    nomes = mapa_usuarios(session, {s["usuario_id"] for s in saida})
+    for s in saida:
+        s["usuario_nome"] = nomes.get(s["usuario_id"])
     if lote is not None:
         saida = [s for s in saida if s["lote"] == lote]
     if ativo is not None:
@@ -247,7 +252,7 @@ def listar_dietas(
 
 
 @router.post("/dietas", status_code=201)
-def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session)) -> dict:
+def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
     ativa_existente = session.exec(
@@ -270,6 +275,7 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
         base_quantidade=dados.base_quantidade or "total",
         leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
+        usuario_id=user.id,
     )
     session.add(dieta)
     session.commit()
@@ -392,14 +398,14 @@ class RegistroRealIn(BaseModel):
 
 
 @router.post("/dietas/{dieta_id}/real", status_code=201)
-def registrar_real(dieta_id: int, dados: RegistroRealIn, session: Session = Depends(get_session)) -> dict:
+def registrar_real(dieta_id: int, dados: RegistroRealIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     dieta = session.get(DietaLancamento, dieta_id)
     if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento oferecido")
     for item in dados.itens:
-        session.add(DietaRegistroReal(dieta_lancamento_id=dieta_id, data=dados.data, **item.model_dump()))
+        session.add(DietaRegistroReal(dieta_lancamento_id=dieta_id, data=dados.data, usuario_id=user.id, **item.model_dump()))
     session.commit()
     return {"registrados": len(dados.itens)}
 

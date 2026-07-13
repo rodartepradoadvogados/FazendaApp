@@ -16,13 +16,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
-    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, Touro, ValeFuncionario, ValeParcela,
+    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, Touro, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
@@ -340,19 +342,22 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
             if c.numero_lancamento and c.numero_lancamento not in venc_por_numero:
                 venc_por_numero[c.numero_lancamento] = c.data_vencimento
 
+    nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
+
     return [
         {
             **r.model_dump(),
             "pessoa_nome": pessoas.get(r.pessoa_id, "—"),
             "data_vencimento": venc_por_numero.get(r.numero_lancamento_gerado),
             "detalhe": _detalhe_folha(session, r),
+            "usuario_nome": nomes_usuarios.get(r.usuario_id),
         }
         for r in registros
     ]
 
 
 @router.post("/folha-pagamento")
-def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
+def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -383,6 +388,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
+        usuario_id=user.id,
     )
     session.add(registro)
     session.add(ContaGerencial(
@@ -492,18 +498,20 @@ def _competencias_do_vale(competencia_inicio: str, parcelas: int) -> list[str]:
 def listar_vales(session: Session = Depends(get_session)) -> list[dict]:
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     vales = session.exec(select(ValeFuncionario).order_by(ValeFuncionario.data_pagamento.desc())).all()
+    nomes_usuarios = mapa_usuarios(session, {v.usuario_id for v in vales})
     saida = []
     for v in vales:
         parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == v.id)).all()
         saida.append({
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"),
+            "usuario_nome": nomes_usuarios.get(v.usuario_id),
             "parcelas_detalhe": sorted(({**p.model_dump()} for p in parcelas), key=lambda p: p["competencia"]),
         })
     return saida
 
 
 @router.post("/vales")
-def criar_vale(dados: ValeIn, session: Session = Depends(get_session)) -> dict:
+def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -548,7 +556,7 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session)) -> dict:
     vale = ValeFuncionario(
         pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
         data_pagamento=dados.data_pagamento, parcelas=dados.parcelas, competencia_inicio=dados.competencia_inicio,
-        observacao=dados.observacao,
+        observacao=dados.observacao, usuario_id=user.id,
     )
     session.add(vale)
     session.commit()

@@ -18,11 +18,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
-    Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico,
+    Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico, Usuario,
 )
+from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
 )
@@ -418,6 +420,7 @@ def listar_cocho(
     lote: str = "", ini: date | None = None, fim: date | None = None, session: Session = Depends(get_session),
 ) -> dict:
     linhas = session.exec(select(RegistroCocho).order_by(RegistroCocho.data.desc())).all()
+    nomes = mapa_usuarios(session, {r.usuario_id for r in linhas})
     saida = []
     for r in linhas:
         if lote and r.lote != lote:
@@ -426,18 +429,18 @@ def listar_cocho(
             continue
         if fim and r.data > fim:
             continue
-        saida.append(_serializa_cocho(r))
+        saida.append({**_serializa_cocho(r), "usuario_nome": nomes.get(r.usuario_id)})
     lotes = sorted({r.lote for r in linhas})
     return {"registros": saida, "lotes": lotes}
 
 
 @router.post("/cocho", status_code=201)
-def criar_cocho(dados: CochoIn, session: Session = Depends(get_session)) -> dict:
+def criar_cocho(dados: CochoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.lote.strip():
         raise HTTPException(status_code=400, detail="Informe o lote.")
     if dados.kg_sobra > dados.kg_ofertado:
         raise HTTPException(status_code=400, detail="A sobra não pode ser maior que o ofertado.")
-    r = RegistroCocho(**dados.model_dump())
+    r = RegistroCocho(**dados.model_dump(), usuario_id=user.id)
     r.lote = dados.lote.strip()
     session.add(r)
     session.commit()
@@ -467,23 +470,25 @@ def listar_ocorrencias(
     doenca: str = "", numero_matriz: str = "", session: Session = Depends(get_session),
 ) -> list[dict]:
     q = session.exec(select(OcorrenciaClinica).order_by(OcorrenciaClinica.data_ocorrencia.desc())).all()
+    nomes = mapa_usuarios(session, {o.usuario_id for o in q})
     saida = []
     for o in q:
         if doenca and o.doenca != doenca:
             continue
         if numero_matriz and o.numero_matriz != numero_matriz:
             continue
-        saida.append(o.model_dump())
+        saida.append({**o.model_dump(), "usuario_nome": nomes.get(o.usuario_id)})
     return saida
 
 
 @router.post("/ocorrencias", status_code=201)
-def criar_ocorrencia(dados: OcorrenciaIn, session: Session = Depends(get_session)) -> dict:
+def criar_ocorrencia(dados: OcorrenciaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.numero_matriz.strip() or not dados.doenca.strip():
         raise HTTPException(status_code=400, detail="Informe o animal e a doença.")
     o = OcorrenciaClinica(
         numero_matriz=dados.numero_matriz.strip(), doenca=dados.doenca.strip(),
         data_ocorrencia=dados.data_ocorrencia, observacao=(dados.observacao or None), origem="manual",
+        usuario_id=user.id,
     )
     session.add(o)
     session.commit()
