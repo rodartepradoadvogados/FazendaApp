@@ -14,6 +14,7 @@ export default function IndicadoresPage() {
   const [error, setError] = useState<string | null>(null);
   const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
+  const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
 
   const carregar = () => {
     setRecarregando(true);
@@ -24,6 +25,8 @@ export default function IndicadoresPage() {
   useEffect(() => { carregar(); }, []);
 
   const reb = ind?.rebanho, rep = ind?.reproducao, prod = ind?.producao;
+  const repCats: any = ind?.reproducao_categorias || { todas: rep };
+  const repSel: any = repCats[catRep] || rep;
   const grupos: [string, number][] = reb ? Object.entries(reb.distribuicao_grupos) : [];
   const maxGrupo = grupos.reduce((m, [, n]) => Math.max(m, n), 0) || 1;
 
@@ -47,12 +50,13 @@ export default function IndicadoresPage() {
     ? new Date(rep.concepcao_desde + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" })
     : "01/01/2026";
 
+  const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
   const linhasRep = useMemo(() => [
-    { label: "Fêmeas aptas", v: rep?.aptas, cor: undefined, f: (a: AnimalRow) => { const s = a.sit_rep || ""; return s === "Ges." || s.startsWith("Vaz.") || s === "Ins."; } },
-    { label: "Prenhes", v: rep?.prenhes, cor: "var(--green-light)", f: (a: AnimalRow) => a.sit_rep === "Ges." },
-    { label: "Vazias", v: rep?.vazias, cor: "var(--amber)", f: (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") },
-    { label: "Inseminadas (aguard. diagnóstico)", v: rep?.inseminadas, cor: "var(--blue)", f: (a: AnimalRow) => a.sit_rep === "Ins." },
-  ], [rep]);
+    { label: "Fêmeas aptas", v: repSel?.aptas, cor: undefined, nums: repSel?.aptas_nums },
+    { label: "Prenhes", v: repSel?.prenhes, cor: "var(--green-light)", f: (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a) },
+    { label: "Vazias", v: repSel?.vazias, cor: "var(--amber)", f: (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") && porCategoria(a) },
+    { label: "Inseminadas (aguard. diagnóstico)", v: repSel?.inseminadas, cor: "var(--blue)", f: (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a) },
+  ], [repSel, catRep]);
 
   return (
     <div className="p-6 animate-in">
@@ -86,11 +90,23 @@ export default function IndicadoresPage() {
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="card">
-            <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span></div>
+            <div className="card-header mb-3 flex flex-wrap items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva {alvo}<span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>{dica}</span>
+              <div style={{ marginLeft: "auto", display: "flex", gap: "0.25rem" }}>
+                {([["todas", "Todas"], ["vaca", "Vacas"], ["novilha", "Novilhas"]] as const).map(([k, lbl]) => (
+                  <button key={k} onClick={() => setCatRep(k)} title={`Ver situação reprodutiva — ${lbl}`}
+                    style={{ fontSize: "0.7rem", padding: "0.2rem 0.6rem", borderRadius: "999px", cursor: "pointer",
+                      border: "1px solid " + (catRep === k ? "var(--dourado)" : "var(--border)"),
+                      background: catRep === k ? "var(--dourado)" : "transparent",
+                      color: catRep === k ? "#1a1a1a" : "var(--text-muted)", fontWeight: catRep === k ? 700 : 400 }}>
+                    {lbl}
+                  </button>
+                ))}
+              </div>
+            </div>
             <table className="fazenda-table">
               <tbody>
-                {linhasRep.map((r) => (
-                  <tr key={r.label} onClick={() => abrir(r.label, r.f)} style={clickable} className={animais.length ? "row-clickable" : ""}>
+                {linhasRep.map((r: any) => (
+                  <tr key={r.label} onClick={() => r.nums !== undefined ? abrirNums(r.label, r.nums) : abrir(r.label, r.f)} style={clickable} className={animais.length ? "row-clickable" : ""}>
                     <td style={{ color: animais.length ? "var(--dourado-light)" : undefined }}>{r.label}</td>
                     <td style={{ fontWeight: 700, textAlign: "right", color: r.cor }}>{num(r.v)}</td>
                   </tr>

@@ -9,6 +9,7 @@ acento e em minúsculas. O que não casar é ignorado sem quebrar o import.
 from __future__ import annotations
 
 import io
+import logging
 import re
 import unicodedata
 
@@ -19,6 +20,8 @@ from sqlmodel import Session, select
 from fazenda.models import SeedFlag, Touro
 from fazenda.parsers.utils import parse_float
 from fazenda.rules.naab import central_por_codigo_naab
+
+logger = logging.getLogger(__name__)
 
 SEED_TOUROS_NAAB_ALTA = "touros_naab_alta_2026_v1"
 
@@ -176,19 +179,31 @@ def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str |
             "Não encontrei a coluna 'Código NAAB'. Confirme que é o catálogo completo do fornecedor."
         ]}
 
+    linhas = list(linhas_iter)
+    logger.info("Importando catálogo de touros NAAB (planilha rica): %d linhas, fonte=%s", len(linhas), fonte)
+
+    # Carrega todos os touros existentes de uma vez (uma única query) em vez de
+    # um SELECT por linha — com autoflush=True, um SELECT por linha dentro do
+    # loop força um flush de todos os objetos ainda não commitados a cada
+    # iteração, virando milhares de round-trips ao banco (rápido em SQLite
+    # local, mas caro o suficiente em Postgres de produção para estourar o
+    # healthcheck do deploy).
+    existentes: dict[str, Touro] = {t.naab: t for t in session.exec(select(Touro)).all()}
+
     criados = atualizados = 0
     erros: list[str] = []
-    for linha in linhas_iter:
+    for linha in linhas:
         if linha is None or all(c is None or str(c).strip() == "" for c in linha):
             continue
         valores = list(linha) + [None] * (len(cabecalhos) - len(linha))
         naab = str(valores[indices["naab"]] or "").strip().upper()
         if not naab:
             continue
-        touro = session.exec(select(Touro).where(Touro.naab == naab)).first()
+        touro = existentes.get(naab)
         novo = touro is None
         if novo:
             touro = Touro(naab=naab)
+            existentes[naab] = touro  # protege contra NAAB duplicado na mesma planilha
         for campo, _cabecalho, num in CURADOS_POR_CABECALHO:
             if campo == "naab" or campo not in indices:
                 continue
@@ -221,6 +236,7 @@ def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str |
         criados += 1 if novo else 0
         atualizados += 0 if novo else 1
     session.commit()
+    logger.info("Catálogo de touros importado: %d criados, %d atualizados", criados, atualizados)
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
@@ -237,16 +253,23 @@ def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rod
             "Não encontrei a coluna do código NAAB. Renomeie a coluna do código para 'NAAB' e tente de novo."
         ]}
 
+    logger.info("Importando catálogo de touros (CSV/planilha simples): %d linhas, fonte=%s", len(linhas), fonte)
+
+    # Mesmo motivo do importador de planilha rica: uma única query para
+    # carregar todos os touros existentes evita um SELECT (+ flush) por linha.
+    existentes: dict[str, Touro] = {t.naab: t for t in session.exec(select(Touro)).all()}
+
     criados = atualizados = 0
     erros: list[str] = []
     for i, row in enumerate(linhas, start=2):
         naab = (row.get(mapa["naab"]) or "").strip().upper()
         if not naab:
             continue
-        touro = session.exec(select(Touro).where(Touro.naab == naab)).first()
+        touro = existentes.get(naab)
         novo = touro is None
         if novo:
             touro = Touro(naab=naab)
+            existentes[naab] = touro  # protege contra NAAB duplicado na mesma planilha
         for campo, coluna in mapa.items():
             if campo == "naab":
                 continue
@@ -271,6 +294,7 @@ def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rod
         criados += 1 if novo else 0
         atualizados += 0 if novo else 1
     session.commit()
+    logger.info("Catálogo de touros importado: %d criados, %d atualizados", criados, atualizados)
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
@@ -284,6 +308,11 @@ def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:
         return
     caminho = Path(__file__).resolve().parent.parent / "seed_data" / "touros_naab_alta.xlsx"
     if not caminho.exists():
+        logger.error(
+            "Bootstrap do catálogo de touros NAAB abortado: arquivo não encontrado em %s. "
+            "O catálogo genético não será carregado automaticamente.",
+            caminho,
+        )
         return
     content = caminho.read_bytes()
     importar_touros_planilha_rica(session, content, "Alta Genetics", None)

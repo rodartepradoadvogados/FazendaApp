@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Wheat, ChevronDown, ChevronRight, ListOrdered, PieChart, CalendarClock, Package } from "lucide-react";
 import { fetchAlimentacao, fetchNecessidadeMensal, fetchEstadoBaixaAlimentacao } from "@/lib/api";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { MultiFiltro } from "@/components/ui";
 
 const TRATOS = 2; // 2 tratos por dia
 const fmt = (v: number) => Number(v.toFixed(2)).toLocaleString("pt-BR");
@@ -25,14 +26,36 @@ function StatusBaixa() {
 
 function ConsumoDiario({ a, error }: { a: any; error: string | null }) {
   const total: any[] = a?.consumo_total ?? [];
-  const maxTotal = total.reduce((m, x) => Math.max(m, x.consumo_dia), 0) || 1;
+  const porLote: any[] = a?.por_lote ?? [];
+  const [lotesSel, setLotesSel] = useState<string[]>([]);
+
+  const lotesOpcoes = useMemo(() => Array.from(new Set(porLote.map((l) => String(l.lote)))), [porLote]);
+
+  const totalFiltrado = useMemo(() => {
+    if (!lotesSel.length) return total;
+    const selecionados = porLote.filter((l) => lotesSel.includes(String(l.lote)));
+    const acc = new Map<string, { ingrediente: string; unidade: string; consumo_dia: number }>();
+    for (const l of selecionados) {
+      for (const i of l.itens ?? []) {
+        const atual = acc.get(i.ingrediente);
+        if (atual) atual.consumo_dia += i.consumo_dia;
+        else acc.set(i.ingrediente, { ingrediente: i.ingrediente, unidade: i.unidade, consumo_dia: i.consumo_dia });
+      }
+    }
+    return Array.from(acc.values());
+  }, [lotesSel, porLote, total]);
+
+  const maxTotal = totalFiltrado.reduce((m, x) => Math.max(m, x.consumo_dia), 0) || 1;
   return (
     <div className="card">
       <div className="card-header mb-3">Consumo Diário do Rebanho (por ingrediente)</div>
+      <div style={{ maxWidth: "16rem", marginBottom: "0.9rem" }}>
+        <MultiFiltro label="Lote" opcoes={lotesOpcoes} selecionados={lotesSel} onChange={setLotesSel} />
+      </div>
       <table className="fazenda-table">
         <thead><tr><th>Ingrediente</th><th></th><th style={{ textAlign: "right" }}>Por dia</th><th style={{ textAlign: "right" }}>Por trato</th></tr></thead>
         <tbody>
-          {total.map((x) => (
+          {totalFiltrado.map((x) => (
             <tr key={x.ingrediente}>
               <td style={{ fontWeight: 600, fontSize: "0.85rem", minWidth: "9rem" }}>{x.ingrediente}</td>
               <td style={{ width: "40%" }}>
@@ -42,7 +65,7 @@ function ConsumoDiario({ a, error }: { a: any; error: string | null }) {
               <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{fmt(x.consumo_dia / TRATOS)} {x.unidade}</td>
             </tr>
           ))}
-          {!total.length && !error && <tr><td colSpan={4} style={{ color: "var(--text-muted)" }}>Sem dieta carregada.</td></tr>}
+          {!totalFiltrado.length && !error && <tr><td colSpan={4} style={{ color: "var(--text-muted)" }}>Sem dieta carregada.</td></tr>}
         </tbody>
       </table>
     </div>
