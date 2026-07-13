@@ -145,6 +145,56 @@ def alimentos_padrao() -> list[str]:
     return ALIMENTOS_PADRAO
 
 
+# % de matéria seca padrão por ingrediente (volumosos ~33%, concentrados ~88%);
+# o usuário edita na aba Matéria seca.
+_MS_PADRAO = {
+    "Silagem": 33.24, "Ração Teck Milk 24%": 88.0, "Milk Proteico": 88.0, "Ração Pré-parto": 88.0,
+    "Corte 21": 88.0, "Ração Bezerro 1": 88.0, "Ração Bezerro 2": 88.0,
+}
+
+
+def _seed_materia_seca(session: Session) -> None:
+    from fazenda.models import IngredienteMS
+    existentes = {i.nome for i in session.exec(select(IngredienteMS)).all()}
+    novos = [IngredienteMS(nome=nome, ms_pct=_MS_PADRAO.get(nome)) for nome in ALIMENTOS_PADRAO if nome not in existentes]
+    if novos:
+        for n in novos:
+            session.add(n)
+        session.commit()
+
+
+@router.get("/materia-seca")
+def listar_materia_seca(session: Session = Depends(get_session)) -> list[dict]:
+    """Lista de ingredientes padrão com seu % de matéria seca (editável)."""
+    from fazenda.models import IngredienteMS
+    _seed_materia_seca(session)
+    itens = session.exec(select(IngredienteMS).order_by(IngredienteMS.nome)).all()
+    return [i.model_dump() for i in itens]
+
+
+class IngredienteMSIn(BaseModel):
+    nome: str
+    ms_pct: float | None = None
+
+
+@router.put("/materia-seca")
+def salvar_materia_seca(dados: IngredienteMSIn, session: Session = Depends(get_session)) -> dict:
+    """Upsert do % de matéria seca de um ingrediente (cadastro/edição)."""
+    from fazenda.models import IngredienteMS
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome do ingrediente é obrigatório")
+    item = session.exec(select(IngredienteMS).where(IngredienteMS.nome == nome)).first()
+    if not item:
+        item = IngredienteMS(nome=nome)
+    item.ms_pct = dados.ms_pct
+    item.atualizado_em = datetime.utcnow()
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
 @router.get("/tabela-nutricional")
 def obter_tabela_nutricional() -> dict:
     """Tabela nutricional de referência (nutriente × alimento) — para o veterinário
@@ -157,6 +207,8 @@ class ItemProgramadoIn(BaseModel):
     alimento: str
     quantidade: float
     unidade: str
+    base: str | None = None       # "MN" (matéria natural) | "MS" (matéria seca)
+    ms_pct: float | None = None   # % de matéria seca do alimento
 
 
 class DietaLancamentoIn(BaseModel):
@@ -165,6 +217,7 @@ class DietaLancamentoIn(BaseModel):
     data_abertura: date
     data_prevista_encerramento: date | None = None
     observacao: str | None = None
+    base_quantidade: str | None = None  # "total" (padrão) | "animal" (por cabeça/dia)
     itens: list[ItemProgramadoIn]
     # Se True e já houver dieta ativa no lote, encerra-a na data de início
     # desta (o veterinário responde "sim" ao salvar). Se False e houver ativa,
@@ -214,6 +267,7 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
     dieta = DietaLancamento(
         lote=dados.lote, responsavel=dados.responsavel, data_abertura=dados.data_abertura,
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
+        base_quantidade=dados.base_quantidade or "total",
     )
     session.add(dieta)
     session.commit()
