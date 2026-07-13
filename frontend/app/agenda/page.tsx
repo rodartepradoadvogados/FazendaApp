@@ -454,8 +454,28 @@ export default function AgendaPage() {
   const ordIatf = useOrdenacao(candidatas);
   const ordBstAptos = useOrdenacao(bstAptos);
   const ordBstExcl = useOrdenacao(bstExcl);
+  const ordBstNunca = useOrdenacao(bstNuncaAplicados);
   const [listaAtiva, setListaAtiva] = useState<Set<string>>(new Set());
   const toggleLista = (k: string) => setListaAtiva((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  // Ação rápida "Adicionar à agenda" a partir de uma linha de candidata/apta —
+  // cria o evento manual já vinculado ao animal, sem precisar abrir o modal geral.
+  const [agendandoNumero, setAgendandoNumero] = useState<string | null>(null);
+  const agendarAnimal = async (numero: string, descricao: string, categoria: string) => {
+    setAgendandoNumero(numero);
+    try {
+      await addEventoManual({ data_evento: today(), descricao, categoria, numero_animal: numero });
+      carregar();
+      mostrarFeedback(`Evento adicionado à agenda para o animal ${numero}.`);
+    } catch (e: any) { mostrarFeedback(e.message, true); }
+    finally { setAgendandoNumero(null); }
+  };
+  const BotaoAgendar = ({ numero, descricao, categoria }: { numero: string; descricao: string; categoria: string }) => (
+    <button className="btn-ghost" disabled={agendandoNumero === numero} title="Adicionar à agenda" onClick={() => agendarAnimal(numero, descricao, categoria)}
+      style={{ fontSize: "0.72rem", padding: "0.15rem 0.5rem" }}>
+      <Plus size={12} /> {agendandoNumero === numero ? "…" : "Agendar"}
+    </button>
+  );
 
   return (
     <div className="p-6 animate-in">
@@ -535,7 +555,7 @@ export default function AgendaPage() {
       )}
 
       {/* Listas lado a lado — cada uma expande/recolhe ao clicar, sem ocupar linhas repetidas */}
-      {(candidatas.length > 0 || bstAptos.length > 0 || bstExcl.length > 0) && (
+      {(candidatas.length > 0 || bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0) && (
         <div className="mb-4">
           <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
             {candidatas.length > 0 && (
@@ -568,6 +588,16 @@ export default function AgendaPage() {
                 BST — Excluídos ({bstExcl.length})
               </button>
             )}
+            {bstNuncaAplicados.length > 0 && (
+              <button onClick={() => toggleLista("bstNunca")} title="Mostrar/ocultar as fêmeas aptas ao BST que nunca receberam aplicação"
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--border)"),
+                  background: listaAtiva.has("bstNunca") ? "rgba(30,64,124,0.35)" : "transparent",
+                  color: listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstNunca") ? 700 : 500 }}>
+                {listaAtiva.has("bstNunca") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                BST — Nunca aplicadas ({bstNuncaAplicados.length})
+              </button>
+            )}
           </div>
 
           {listaAtiva.has("iatf") && (
@@ -578,6 +608,7 @@ export default function AgendaPage() {
                   <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
                   <ThOrdenavel label="Motivo" campo="motivo" coluna={ordIatf.coluna} dir={ordIatf.dir} ordenar={ordIatf.ordenar} />
+                  <th></th>
                 </tr></thead>
                 <tbody>
                   {ordIatf.linhasOrdenadas.map((c: any, i: number) => (
@@ -586,6 +617,7 @@ export default function AgendaPage() {
                       <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{c.sit_rep}</span></td>
                       <td>{c.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
+                      <td><BotaoAgendar numero={c.numero_matriz} descricao="IATF: candidata a novo serviço" categoria="Reprodutivo" /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -600,6 +632,7 @@ export default function AgendaPage() {
                   <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
                   <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
+                  <th></th>
                 </tr></thead>
                 <tbody>
                   {ordBstAptos.linhasOrdenadas.map((b: any, i: number) => (
@@ -607,6 +640,7 @@ export default function AgendaPage() {
                       <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
+                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin)" categoria="Sanidade" /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -630,6 +664,29 @@ export default function AgendaPage() {
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{b.motivo_exclusao}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {listaAtiva.has("bstNunca") && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
+                  <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstNunca.coluna} dir={ordBstNunca.dir} ordenar={ordBstNunca.ordenar} />
+                  <th></th>
+                </tr></thead>
+                <tbody>
+                  {ordBstNunca.linhasOrdenadas.map((b: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
+                      <td>{b.del_dias ?? "—"}</td>
+                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin) — nunca aplicada" categoria="Sanidade" /></td>
                     </tr>
                   ))}
                 </tbody>

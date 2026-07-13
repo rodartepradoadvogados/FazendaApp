@@ -233,6 +233,17 @@ export default function Home() {
               ))}
             </div>
           </div>
+          {repSel ? (
+            <div className="grid grid-cols-3 gap-2 mb-2">
+              {([
+                ["Aptas", repSel.aptas, "var(--dourado-light)", (a: AnimalRow) => (repSel.aptas_nums || []).includes(a.numero)],
+                ["Inseminadas", repSel.inseminadas, "var(--dourado-light)", (a: AnimalRow) => a.sit_rep === "Ins." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
+                ["Gestantes", repSel.prenhes, "var(--green-light)", (a: AnimalRow) => a.sit_rep === "Ges." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
+              ] as const).map(([l, v, c, f]) => (
+                <KPI key={l} l={l} v={v} c={c} onClick={() => abrir(l, f)} />
+              ))}
+            </div>
+          ) : null}
           {donutRep.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>

@@ -34,6 +34,8 @@ import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { Modal } from "@/components/Modal";
+import { CadastroProtocolosSanitarios, CadastroEventosSanitarios } from "@/components/CadastroSanitario";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
 
@@ -1430,12 +1432,14 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const ehExame = eventoSel?.categoria_preventiva === "exame";
 
   const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
+  const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
   useEffect(() => {
-    fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
+    carregarEventos();
     fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
     fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
     carregarRegras();
   }, []);
+  const [abrirNovoEvento, setAbrirNovoEvento] = useState(false);
 
   const limpar = () => {
     setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setOutraCategoria(""); setDoencaId(""); setProduto("");
@@ -1497,9 +1501,19 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
       </p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
         <Campo label="Evento sanitário">
-          <select style={inputStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
-            <option value="">Selecione…</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select style={inputStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
+              <option value="">Selecione…</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" title="Cadastrar novo evento sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoEvento(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
+          {abrirNovoEvento && (
+            <Modal title="Novo evento sanitário" onClose={() => { setAbrirNovoEvento(false); carregarEventos(); }} width="900px">
+              <CadastroEventosSanitarios />
+            </Modal>
+          )}
         </Campo>
         <Campo label="Categoria(s) alvo (período de vida)">
           <MultiFiltro label="Categorias" opcoes={Array.from(new Set([...CATEGORIAS_ANIMAIS.map((c) => c.label), ...categoriaAlvoSel]))} selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel} />
@@ -1897,7 +1911,9 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
     return animaisCategoria || [];
   }, [vinculo, animaisSelecionados, animaisDoLote, animaisCategoria]);
 
-  useEffect(() => { fetchProtocolosSanitarios().then((d) => setProtocolos(d.filter((p: ProtocoloLocal) => p.ativo))).catch(() => {}); }, []);
+  const carregarProtocolos = () => fetchProtocolosSanitarios().then((d) => setProtocolos(d.filter((p: ProtocoloLocal) => p.ativo))).catch(() => {});
+  useEffect(() => { carregarProtocolos(); }, []);
+  const [abrirNovoProtocolo, setAbrirNovoProtocolo] = useState(false);
 
   const protocolo = protocolos.find((p) => p.id === Number(protocoloId));
   const toggleTeto = (t: string) => setTetosSel((p) => { const s = new Set(p); s.has(t) ? s.delete(t) : s.add(t); return s; });
@@ -1962,10 +1978,20 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
     <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Protocolo">
-          <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
-            <option value="">Selecione…</option>
-            {protocolos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.eh_mastite ? " (mastite)" : ""}</option>)}
-          </select>
+          <div className="flex items-center gap-2">
+            <select style={inputStyle} value={protocoloId} onChange={(e) => setProtocoloId(e.target.value)}>
+              <option value="">Selecione…</option>
+              {protocolos.map((p) => <option key={p.id} value={p.id}>{p.nome}{p.eh_mastite ? " (mastite)" : ""}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" title="Cadastrar novo protocolo sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoProtocolo(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
+          {abrirNovoProtocolo && (
+            <Modal title="Novo protocolo sanitário" onClose={() => { setAbrirNovoProtocolo(false); carregarProtocolos(); }} width="900px">
+              <CadastroProtocolosSanitarios />
+            </Modal>
+          )}
         </Campo>
         <Campo label="Data de início (D1)"><input type="date" style={inputStyle} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></Campo>
 
