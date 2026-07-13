@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate } from "@/lib/api";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X, Shield, Droplets, HeartPulse, Activity, Plus } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate, fetchAgenda, cadastrarPreventivo } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
@@ -28,20 +28,147 @@ type RegraCalendario = {
 };
 
 const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
+const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento" };
+
+type EventoPrev = {
+  id: number; nome: string; categoria_preventiva: string | null; doenca_nome: string | null;
+  produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null;
+};
+
+// ── Cadastrar preventivo: escolher o evento (categoria/doença), o lote, marcar
+// os animais (individual ou todos os filtrados) e registrar a regra recorrente
+// no calendário — opcionalmente já aplicando o produto padrão nos marcados.
+function CadastrarPreventivoForm({ eventos, onSaved }: { eventos: EventoPrev[]; onSaved: () => void }) {
+  const [aberto, setAberto] = useState(false);
+  const [animais, setAnimais] = useState<AnimalRow[]>([]);
+  const [eventoId, setEventoId] = useState("");
+  const [lote, setLote] = useState("");
+  const [dataEvento, setDataEvento] = useState("");
+  const [freqValor, setFreqValor] = useState("1");
+  const [freqUnidade, setFreqUnidade] = useState("meses");
+  const [aplicar, setAplicar] = useState(false);
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+
+  useEffect(() => { if (aberto && !animais.length) fetchAnimais().then(setAnimais).catch(() => {}); }, [aberto]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const lotes = useMemo(() => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean))).sort() as string[], [animais]);
+  const animaisDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : animais), [animais, lote]);
+  const evento = eventos.find((e) => String(e.id) === eventoId);
+
+  // Ao trocar de lote, mantém só os animais selecionados que ainda pertencem ao filtro.
+  useEffect(() => {
+    setSelecionados((prev) => new Set(animaisDoLote.filter((a) => prev.has(a.numero)).map((a) => a.numero)));
+  }, [lote]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const toggle = (numero: string) => setSelecionados((prev) => {
+    const n = new Set(prev); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
+  });
+  const toggleTodos = () => setSelecionados((prev) =>
+    prev.size === animaisDoLote.length ? new Set() : new Set(animaisDoLote.map((a) => a.numero)));
+
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+
+  const salvar = async () => {
+    if (!eventoId) { setMsg({ tipo: "erro", txt: "Escolha o evento preventivo." }); return; }
+    if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
+    setSalvando(true); setMsg(null);
+    try {
+      const r = await cadastrarPreventivo({
+        evento_sanitario_id: Number(eventoId), categoria_alvo: lote || null, data_evento: dataEvento,
+        frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
+        animais: Array.from(selecionados), aplicar,
+      });
+      const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
+      setMsg({ tipo: "ok", txt: `Preventivo cadastrado no calendário${nApl ? ` · ${nApl} aplicação(ões) registrada(s)` : ""}.` });
+      setSelecionados(new Set());
+      onSaved();
+    } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <div className="card mb-4">
+      <button onClick={() => setAberto((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text)", width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
+        <Plus size={16} style={{ color: "var(--dourado)" }} /> Cadastrar preventivo (por categoria, lote e animais)
+      </button>
+      {aberto && (
+        <div style={{ marginTop: "0.85rem" }}>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Evento preventivo</label>
+              <select style={selStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
+                <option value="">Selecione…</option>
+                {eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}{ev.categoria_preventiva ? ` — ${LABEL_CAT_PREV[ev.categoria_preventiva] || ev.categoria_preventiva}` : ""}</option>)}
+              </select></div>
+            <div><label style={labelStyle}>Data de referência</label>
+              <input type="date" style={selStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></div>
+            <div><label style={labelStyle}>Repetir a cada</label>
+              <div className="flex gap-1">
+                <input type="number" min={1} style={{ ...selStyle, width: "45%" }} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+                <select style={{ ...selStyle, width: "55%" }} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+                  <option value="dias">dia(s)</option><option value="meses">mês(es)</option><option value="anos">ano(s)</option>
+                </select>
+              </div></div>
+          </div>
+
+          {evento && (evento.categoria_preventiva || evento.doenca_nome || evento.produto_padrao) && (
+            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+              {evento.categoria_preventiva && <>Categoria: <strong style={{ color: "var(--dourado-light)" }}>{LABEL_CAT_PREV[evento.categoria_preventiva] || evento.categoria_preventiva}</strong>. </>}
+              {evento.doenca_nome && <>Previne: <strong>{evento.doenca_nome}</strong>. </>}
+              {evento.produto_padrao && <>Produto padrão: <strong>{evento.produto_padrao}</strong>{evento.dose_padrao != null ? ` (${evento.dose_padrao}${evento.unidade_padrao ? " " + evento.unidade_padrao : ""})` : ""}. </>}
+            </p>
+          )}
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Lote a aplicar</label>
+              <select style={selStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
+                <option value="">Todos os lotes</option>
+                {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select></div>
+            <div className="flex items-end" style={{ gridColumn: "span 2" }}>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+                <input type="checkbox" checked={aplicar} onChange={(e) => setAplicar(e.target.checked)} />
+                Já registrar a aplicação do produto padrão nos marcados
+              </label>
+            </div>
+          </div>
+
+          <SelecaoAnimaisTabela
+            animais={animaisDoLote} selecionados={selecionados} toggle={toggle} toggleTodos={toggleTodos}
+            colunas={[
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+            ]}
+          />
+
+          {msg && <p style={{ fontSize: "0.8rem", marginTop: "0.6rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</p>}
+          <div className="flex gap-2 mt-3">
+            <button className="btn-primary" disabled={salvando} onClick={salvar} style={{ fontSize: "0.82rem" }}>
+              <Check size={14} /> {salvando ? "Salvando…" : `Cadastrar preventivo${selecionados.size ? ` (${selecionados.size} animais)` : ""}`}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function CalendarioSanitarioView() {
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [eventos, setEventos] = useState<{ id: number; nome: string }[]>([]);
+  const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [eventoId, setEventoId] = useState("");
+  const [recarregar, setRecarregar] = useState(0);
 
   useEffect(() => { fetchEventosSanitarios().then(setEventos).catch(() => {}); }, []);
   useEffect(() => {
     fetchCalendarioSanitario({ dataInicio: ini || undefined, dataFim: fim || undefined, eventoSanitarioId: eventoId ? Number(eventoId) : undefined })
       .then(setRegras).catch((e) => setError(e.message));
-  }, [ini, fim, eventoId]);
+  }, [ini, fim, eventoId, recarregar]);
 
   const linhasExport = (regras || []).map((r) => ({
     ...r, frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
@@ -52,6 +179,13 @@ function CalendarioSanitarioView() {
 
   return (
     <>
+      <div style={{ marginBottom: "0.75rem" }}>
+        <h2 className="text-lg font-bold flex items-center gap-2"><Shield size={18} style={{ color: "var(--dourado)" }} /> Preventivo (calendário sanitário)</h2>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos preventivos).</p>
+      </div>
+
+      <CadastrarPreventivoForm eventos={eventos} onSaved={() => setRecarregar((n) => n + 1)} />
+
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -545,28 +679,120 @@ function RelatorioBezerrasView() {
   );
 }
 
-type AbaSanidade = "aplicacoes" | "calendario" | "bezerras";
+// ─────────────────────────── Doença / Motivo (curativa) ───────────────────────────
+// Resumo dos tratamentos curativos agrupados pelo motivo (atividade) e pela
+// categoria do produto — uma leitura rápida do "por que" das aplicações.
+function DoencaMotivoView() {
+  const [regs, setRegs] = useState<any[] | null>(null);
+  useEffect(() => { fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch(() => setRegs([])); }, []);
+  const grupos = useMemo(() => {
+    const m = new Map<string, { motivo: string; total: number; ultima: string | null }>();
+    for (const r of regs || []) {
+      const motivo = (r.atividade || r.categoria || "Não informado") as string;
+      const g = m.get(motivo) || { motivo, total: 0, ultima: null };
+      g.total += 1;
+      if (!g.ultima || (r.data_aplicacao && r.data_aplicacao > g.ultima)) g.ultima = r.data_aplicacao || g.ultima;
+      m.set(motivo, g);
+    }
+    return Array.from(m.values()).sort((a, b) => b.total - a.total);
+  }, [regs]);
+  return (
+    <div className="card">
+      <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={16} /> Doença / Motivo dos tratamentos</div>
+      {!regs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !grupos.length ? (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum tratamento curativo lançado ainda.</p>
+      ) : (
+        <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+          {grupos.map((g) => (
+            <div key={g.motivo} className="flex items-center justify-between" style={{ padding: "0.55rem 0.8rem", borderBottom: "1px solid var(--border)" }}>
+              <span style={{ fontSize: "0.86rem", fontWeight: 600 }}>{g.motivo}</span>
+              <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.total} caso(s){g.ultima ? ` · último ${formatDate(g.ultima)}` : ""}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+        O cadastro de doenças e princípios ativos fica em Configurações › Cadastro › Sanitário.
+      </p>
+    </div>
+  );
+}
+
+// ─────────────────────────── BST (aba separada) ───────────────────────────
+function BstView() {
+  const [dados, setDados] = useState<any | null>(null);
+  useEffect(() => { fetchAgenda().then(setDados).catch(() => setDados(null)); }, []);
+  const aptos = dados?.bst_elegiveis || [];
+  const excl = dados?.bst_excluidos || [];
+  const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
+  const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
+  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
+    <div className="card">
+      <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
+      {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca.</p> : (
+        <div style={{ overflowX: "auto" }}>
+          <table style={{ borderCollapse: "collapse", width: "100%" }}>
+            <thead><tr><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th></tr></thead>
+            <tbody>{lista.map((b: any) => (
+              <tr key={b.numero_matriz}><td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td><td style={td}>{b.grupo || "—"}</td><td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+        BST (somatotropina bovina) — vacas aptas e excluídas do dia. Próxima visita BST: <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.
+      </p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
+        <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
+      </div>
+    </div>
+  );
+}
+
+type AbaSanidade = "curativa" | "preventiva" | "bst";
 const ABAS_SANIDADE = [
-  { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
-  { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras e próximas ocorrências de manejo sanitário" },
-  { id: "bezerras", label: "Relatório sanitário de bezerras", icon: Baby, title: "Colostragem e teste de sangue (IgG) por animal" },
+  { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo, protocolos e mastite" },
+  { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: calendário/preventivo sanitário" },
+  { id: "bst", label: "BST", icon: Droplets, title: "Somatotropina bovina — aptas e excluídas" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
+type AbaCurativa = "curativo" | "doenca" | "bezerras";
+const ABAS_CURATIVA = [
+  { id: "curativo", label: "Curativo (aplicações)", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
+  { id: "doenca", label: "Doença / Motivo", icon: Activity, title: "Tratamentos por doença/motivo" },
+  { id: "bezerras", label: "Relatório de bezerras", icon: Baby, title: "Colostragem e teste de sangue (IgG) por animal" },
+] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
+
 export default function SanidadePage() {
-  const [aba, setAba] = useState<AbaSanidade>("aplicacoes");
+  const [aba, setAba] = useState<AbaSanidade>("curativa");
+  const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
 
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Syringe size={22} style={{ color: "var(--dourado)" }} /> Sanidade</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Medicamentos aplicados e calendário sanitário — filtre por categoria, data, produto, animal ou evento.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Sanidade curativa e preventiva, mais o controle de BST.</p>
       </div>
 
       <TabBar<AbaSanidade> abas={ABAS_SANIDADE} ativa={aba} onChange={setAba} />
 
-      {aba === "aplicacoes" && <AplicacoesView />}
-      {aba === "calendario" && <CalendarioSanitarioView />}
-      {aba === "bezerras" && <RelatorioBezerrasView />}
+      {aba === "curativa" && (
+        <>
+          <div style={{ margin: "0.25rem 0 1rem" }}>
+            <TabBar<AbaCurativa> abas={ABAS_CURATIVA} ativa={abaCur} onChange={setAbaCur} />
+          </div>
+          {abaCur === "curativo" && <AplicacoesView />}
+          {abaCur === "doenca" && <DoencaMotivoView />}
+          {abaCur === "bezerras" && <RelatorioBezerrasView />}
+        </>
+      )}
+      {aba === "preventiva" && <CalendarioSanitarioView />}
+      {aba === "bst" && <BstView />}
     </div>
   );
 }

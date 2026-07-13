@@ -901,6 +901,7 @@ class EventoSanitarioIn(BaseModel):
     ativo: bool = True
     tipo_agendamento: str = "nenhum"
     categoria_alvo: str | None = None
+    categoria_preventiva: str | None = None  # "vacina" | "exame" | "tratamento"
     doenca_id: int | None = None
     data_primeiro: date | None = None
     frequencia_valor: int | None = None

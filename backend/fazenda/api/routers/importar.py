@@ -23,7 +23,10 @@ from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.database import get_session
-from fazenda.models import Animal, ContaGerencial, CurvaABC, Dieta, Estoque, Fornecedor, LancamentoItem, Parto, Sanidade
+from fazenda.models import (
+    Animal, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque, EventoSanitario,
+    Fornecedor, LancamentoItem, Parto, Sanidade,
+)
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
 
 router = APIRouter(prefix="/importar", tags=["importar"])
@@ -98,6 +101,20 @@ CATEGORIAS_NOVAS = {
         ],
         "colunas_csv": ["numero_matriz", "data_nascimento", "data_parto", "ordem_parto"],
         "exemplo": ["464", "10/03/2022", "05/06/2024", "1"],
+    },
+    "calendario_sanitario": {
+        "label": "Calendário sanitário (preventivo) da fazenda",
+        "colunas": [
+            "evento (nome, ex.: Vacina pré-parto)", "categoria (vacina/exame/tratamento)", "categoria_alvo (lote/categoria)",
+            "doenca (nome, opcional)", "produto (opcional)", "dosagem (opcional)",
+            "frequencia_valor", "frequencia_unidade (dias/meses/anos)", "data_evento (DD/MM/AAAA)",
+        ],
+        "colunas_csv": [
+            "evento", "categoria", "categoria_alvo", "doenca", "produto", "dosagem",
+            "frequencia_valor", "frequencia_unidade", "data_evento",
+        ],
+        "exemplo": ["Brucelose B19", "vacina", "Bezerras (3 a 8 meses)", "Brucelose", "Vacina B19", "2 mL",
+                    "1", "anos", "10/03/2026"],
     },
     "touros_naab": {
         "label": "Touros — catálogo NAAB/provas do fornecedor (Excel ou CSV)",
@@ -564,6 +581,90 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         "categoria": "dairycomp", "criados": partos_criados,
         "animais_atualizados": animais_atualizados, "erros": erros,
     }
+
+
+@router.post("/calendario_sanitario")
+async def importar_calendario_sanitario(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """
+    Calendário sanitário (preventivo) da fazenda — uma regra por linha. Casa o
+    evento sanitário pelo nome (cria se não existir, já com a categoria
+    preventiva e a doença), casa a doença pelo nome (cria se não existir) e
+    grava a regra recorrente em CalendarioSanitario. Nunca apaga nada; só
+    acrescenta o que falta (dedup por evento+categoria_alvo+data).
+    """
+    content = await file.read()
+    criados, atualizados = 0, 0
+    erros: list[str] = []
+
+    CATS_PREVENTIVAS = {"vacina", "exame", "tratamento"}
+
+    def _evento(nome: str, categoria: str | None, doenca_id: int | None) -> EventoSanitario:
+        ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome)).first()
+        if not ev:
+            ev = EventoSanitario(nome=nome)
+            session.add(ev)
+        if categoria and not ev.categoria_preventiva:
+            ev.categoria_preventiva = categoria
+        if doenca_id and not ev.doenca_id:
+            ev.doenca_id = doenca_id
+        session.flush()
+        return ev
+
+    def _doenca(nome: str) -> int | None:
+        nome = (nome or "").strip()
+        if not nome:
+            return None
+        d = session.exec(select(Doenca).where(Doenca.nome == nome)).first()
+        if not d:
+            d = Doenca(nome=nome)
+            session.add(d)
+            session.flush()
+        return d.id
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        nome_evento = row.get("evento", "").strip()
+        if not nome_evento:
+            erros.append(f"Linha {i}: evento é obrigatório")
+            continue
+        data_evento = parse_date(row.get("data_evento", ""))
+        if not data_evento:
+            erros.append(f"Linha {i}: data_evento é obrigatória (DD/MM/AAAA)")
+            continue
+        freq_valor = parse_int(row.get("frequencia_valor", "")) or 1
+        freq_unidade = (row.get("frequencia_unidade", "") or "meses").strip().lower()
+        if freq_unidade not in ("dias", "meses", "anos"):
+            freq_unidade = "meses"
+        categoria = (row.get("categoria", "") or "").strip().lower() or None
+        if categoria and categoria not in CATS_PREVENTIVAS:
+            categoria = None
+
+        doenca_id = _doenca(row.get("doenca", ""))
+        ev = _evento(nome_evento, categoria, doenca_id)
+        categoria_alvo = row.get("categoria_alvo", "").strip() or None
+
+        regra = session.exec(
+            select(CalendarioSanitario).where(
+                CalendarioSanitario.evento_sanitario_id == ev.id,
+                CalendarioSanitario.data_evento == data_evento,
+            )
+        ).first()
+        if regra and (regra.categoria_alvo or "") == (categoria_alvo or ""):
+            regra.doenca_id = doenca_id or regra.doenca_id
+            regra.produto = row.get("produto", "").strip() or regra.produto
+            regra.dosagem = row.get("dosagem", "").strip() or regra.dosagem
+            regra.frequencia_valor = freq_valor
+            regra.frequencia_unidade = freq_unidade
+            atualizados += 1
+        else:
+            session.add(CalendarioSanitario(
+                evento_sanitario_id=ev.id, categoria_alvo=categoria_alvo, doenca_id=doenca_id,
+                produto=row.get("produto", "").strip() or None, dosagem=row.get("dosagem", "").strip() or None,
+                frequencia_valor=freq_valor, frequencia_unidade=freq_unidade, data_evento=data_evento,
+            ))
+            criados += 1
+
+    session.commit()
+    return {"categoria": "calendario_sanitario", "criados": criados, "atualizados": atualizados, "erros": erros}
 
 
 @router.post("/touros_naab")
