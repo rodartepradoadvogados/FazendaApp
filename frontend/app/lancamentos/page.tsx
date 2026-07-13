@@ -32,6 +32,7 @@ import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
 
@@ -2822,13 +2823,6 @@ const TIPOS_GRUPOS = [
 const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
   g.grupos ? g.grupos.flatMap((sg) => sg.subs) : g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]
 );
-// Grupo (nível 1) dono de um determinado sub-tipo (folha).
-const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) =>
-  g.leaf === id || g.subs?.some((s) => s.id === id) || g.grupos?.some((sg) => sg.subs.some((s) => s.id === id))
-)?.id ?? "reprodutivo";
-// Sub-grupo (nível 2, ex.: Curativa/Preventiva dentro de Sanitário) dono da folha, se houver.
-const subgrupoDoSel = (id: string): string | undefined =>
-  TIPOS_GRUPOS.flatMap((g) => g.grupos ?? []).find((sg) => sg.subs.some((s) => s.id === id))?.id;
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
@@ -2886,8 +2880,16 @@ export default function LancamentosPage() {
     return idade == null || idade >= IDADE_MIN_SERVICO;
   }), [animais]);
   const tipo = TIPOS_LEAFS.find((t) => t.id === sel)!;
-  const grupoAtivo = grupoDoSel(sel);
-  const subgrupoAtivo = subgrupoDoSel(sel);
+
+  // Piloto do drill-down: a Sidebar desenha esta árvore (grupo → sub-grupo →
+  // folha) no lugar da lista de módulos enquanto Lançamentos estiver aberto.
+  const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS.map((g) => ({
+    id: g.leaf ?? g.id, label: g.label, icon: g.icon,
+    children: g.grupos
+      ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map((s) => ({ id: s.id, label: s.label, icon: s.icon })) }))
+      : g.subs?.map((s) => ({ id: s.id, label: s.label, icon: s.icon })),
+  })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: sel, onSelect: trocarTipo }), [subNavTree, sel, trocarTipo]));
 
   return (
     <div className="p-6 animate-in">
@@ -2939,101 +2941,31 @@ export default function LancamentosPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-[240px_1fr] gap-4">
-        <div className="card" style={{ padding: "0.5rem", alignSelf: "start" }}>
-          <div className="space-y-1">
-            {TIPOS_GRUPOS.map((g) => {
-              const Icon = g.icon;
-              const ativo = g.id === grupoAtivo;
-              const alvo = g.grupos ? (ativo ? sel : g.grupos[0].subs[0].id) : g.subs ? (ativo ? sel : g.subs[0].id) : g.leaf!;
-              return (
-                <div key={g.id}>
-                  <button onClick={() => trocarTipo(alvo)}
-                    style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
-                      border: "1px solid " + (ativo ? "var(--dourado)" : "transparent"), background: ativo ? "rgba(94,26,46,0.4)" : "transparent",
-                      color: ativo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.85rem", fontWeight: ativo ? 700 : 500 }}>
-                    <Icon size={16} /> {g.label}
-                  </button>
-                  {ativo && g.grupos && (
-                    <div className="space-y-1" style={{ paddingLeft: "1.4rem", marginTop: "0.2rem" }}>
-                      {g.grupos.map((sg) => {
-                        const SGIcon = sg.icon; const sgAtivo = sg.id === subgrupoAtivo;
-                        const sgAlvo = sgAtivo ? sel : sg.subs[0].id;
-                        return (
-                          <div key={sg.id}>
-                            <button onClick={() => trocarTipo(sgAlvo)}
-                              style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
-                                border: "1px solid " + (sgAtivo ? "var(--dourado)" : "transparent"), background: sgAtivo ? "rgba(94,26,46,0.3)" : "transparent",
-                                color: sgAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.8rem", fontWeight: sgAtivo ? 700 : 500 }}>
-                              <SGIcon size={13} /> {sg.label}
-                            </button>
-                            {sgAtivo && (
-                              <div className="space-y-1" style={{ paddingLeft: "1.3rem", marginTop: "0.2rem" }}>
-                                {sg.subs.map((s) => {
-                                  const SIcon = s.icon; const subAtivo = s.id === sel;
-                                  return (
-                                    <button key={s.id} onClick={() => trocarTipo(s.id)}
-                                      style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.35rem 0.55rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
-                                        border: "1px solid " + (subAtivo ? "var(--dourado)" : "transparent"), background: subAtivo ? "rgba(94,26,46,0.3)" : "transparent",
-                                        color: subAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.76rem", fontWeight: subAtivo ? 700 : 500 }}>
-                                      <SIcon size={12} /> {s.label}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {ativo && g.subs && (
-                    <div className="space-y-1" style={{ paddingLeft: "1.4rem", marginTop: "0.2rem" }}>
-                      {g.subs.map((s) => {
-                        const SIcon = s.icon; const subAtivo = s.id === sel;
-                        return (
-                          <button key={s.id} onClick={() => trocarTipo(s.id)}
-                            style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
-                              border: "1px solid " + (subAtivo ? "var(--dourado)" : "transparent"), background: subAtivo ? "rgba(94,26,46,0.3)" : "transparent",
-                              color: subAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.78rem", fontWeight: subAtivo ? 700 : 500 }}>
-                            <SIcon size={13} /> {s.label}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
-          <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
-          <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
-          {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
-          {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
-          {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
-          {sel === "parto" && <FormParto animais={animais} />}
-          {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
-          {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
-          {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
-          {sel === "entrega_leite" && <FormEntregaLeite />}
-          {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-          {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} />}
-          {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
-          {sel === "bst" && <BstLancamentoView />}
-          {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}
-          {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
-          {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
-          {sel === "estoque" && <FormEstoque estoque={estoque} />}
-          {sel === "mover_animais" && <MovimentarAnimais />}
-          {sel === "comprar_animal" && <ComprarAnimal />}
-          {sel === "baixar_animal" && <BaixarAnimal />}
-          {sel === "alimentacao_dieta" && <FormAlimentacaoDieta lotes={lotes} />}
-          {sel === "exclusao" && <FormExclusao />}
-        </div>
+      <div className="card" onChange={() => sel !== "exclusao" && setSujo(true)}>
+        <div className="card-header mb-1 flex items-center gap-2"><tipo.icon size={14} /> {tipo.label}</div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
+        {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
+        {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
+        {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
+        {sel === "parto" && <FormParto animais={animais} />}
+        {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
+        {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
+        {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}
+        {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
+        {sel === "entrega_leite" && <FormEntregaLeite />}
+        {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
+        {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} />}
+        {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
+        {sel === "bst" && <BstLancamentoView />}
+        {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}
+        {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+        {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+        {sel === "estoque" && <FormEstoque estoque={estoque} />}
+        {sel === "mover_animais" && <MovimentarAnimais />}
+        {sel === "comprar_animal" && <ComprarAnimal />}
+        {sel === "baixar_animal" && <BaixarAnimal />}
+        {sel === "alimentacao_dieta" && <FormAlimentacaoDieta lotes={lotes} />}
+        {sel === "exclusao" && <FormExclusao />}
       </div>
     </div>
   );

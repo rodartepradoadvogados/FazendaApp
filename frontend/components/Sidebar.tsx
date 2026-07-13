@@ -21,10 +21,12 @@ import {
   Baby,
   Menu,
   X,
+  ArrowLeft,
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { BullLogo } from "@/components/BullLogo";
+import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
 
 // Ordem por fluxo de gestão: (1) ciclo diário — panorama, o que fazer e
 // registrar; (2) áreas de manejo do rebanho; (3) análise e administração;
@@ -56,6 +58,13 @@ export function Sidebar() {
   const [admin, setAdmin] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+
+  // Piloto do drill-down (Lançamentos): quando a página registra sua árvore de
+  // sub-abas, a barra substitui a lista de módulos por ela — a seta "Voltar"
+  // só alterna a exibição da barra, sem navegar (a página de conteúdo é a mesma).
+  const subNav = useSubNav();
+  const [mostrarSubNav, setMostrarSubNav] = useState(true);
+  useEffect(() => { setMostrarSubNav(true); }, [path]);
 
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado.
@@ -135,31 +144,45 @@ export function Sidebar() {
         </div>
       </div>
 
-      {/* Nav links */}
-      <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
-        {[...visiveis,
-          ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
-          ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
-        ].map(({ href, label, icon: Icon, title }) => {
-          const active = path === href || (href !== "/" && path.startsWith(href));
-          return (
-            <Link
-              key={href}
-              href={href}
-              title={title || label}
-              className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
-              style={{
-                background: active ? "var(--sidebar-active-bg)" : "transparent",
-                color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-              }}
-            >
-              <Icon size={16} />
-              {label}
-            </Link>
-          );
-        })}
-      </nav>
+      {/* Nav links — ou, se a página atual registrou sub-navegação e ela está em
+          exibição, a árvore de sub-abas dela (piloto: Lançamentos) no lugar da
+          lista de módulos, com uma seta para voltar. */}
+      {subNav && mostrarSubNav ? (
+        <nav className="flex-1 p-3" style={{ overflowY: "auto" }}>
+          <button onClick={() => setMostrarSubNav(false)}
+            className="flex items-center gap-2 mb-3"
+            style={{ background: "none", border: "none", cursor: "pointer", color: "var(--sidebar-muted)", fontSize: "0.78rem", fontWeight: 600, padding: "0.3rem 0.2rem" }}>
+            <ArrowLeft size={15} /> Voltar ao menu
+          </button>
+          <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
+        </nav>
+      ) : (
+        <nav className="flex-1 p-3 space-y-1" style={{ overflowY: "auto" }}>
+          {[...visiveis,
+            ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
+            ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
+          ].map(({ href, label, icon: Icon, title }) => {
+            const active = path === href || (href !== "/" && path.startsWith(href));
+            return (
+              <Link
+                key={href}
+                href={href}
+                title={title || label}
+                onClick={() => { if (active && subNav) setMostrarSubNav(true); }}
+                className="flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150"
+                style={{
+                  background: active ? "var(--sidebar-active-bg)" : "transparent",
+                  color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                  borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+                }}
+              >
+                <Icon size={16} />
+                {label}
+              </Link>
+            );
+          })}
+        </nav>
+      )}
 
       {/* Footer */}
       <div
@@ -182,6 +205,61 @@ export function Sidebar() {
       </div>
       </aside>
     </>
+  );
+}
+
+// Folha mais à esquerda de um nó (usado ao clicar num grupo/sub-grupo: entra
+// direto na primeira folha em vez de exigir mais um clique).
+function primeiraFolha(node: SubNavNode): string {
+  if (!node.children || !node.children.length) return node.id;
+  return primeiraFolha(node.children[0]);
+}
+
+// Caminho (ids) da raiz até o nó ativo — usado para saber quais grupos/
+// sub-grupos ao longo do caminho devem aparecer expandidos.
+function caminhoAte(nodes: SubNavNode[], alvoId: string): string[] | null {
+  for (const n of nodes) {
+    if (n.id === alvoId) return [n.id];
+    if (n.children) {
+      const sub = caminhoAte(n.children, alvoId);
+      if (sub) return [n.id, ...sub];
+    }
+  }
+  return null;
+}
+
+// Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
+// da lista de módulos quando a página atual registra uma (piloto: Lançamentos).
+function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
+  nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void; depth?: number;
+}) {
+  const caminho = new Set(caminhoAte(nodes, activeId) ?? []);
+  return (
+    <div className="space-y-1" style={depth ? { paddingLeft: `${depth * 1.1}rem`, marginTop: "0.2rem" } : undefined}>
+      {nodes.map((n) => {
+        const Icon = n.icon;
+        const temFilhos = !!n.children?.length;
+        const ativo = temFilhos ? caminho.has(n.id) : n.id === activeId;
+        return (
+          <div key={n.id}>
+            <button onClick={() => onSelect(temFilhos ? (ativo ? activeId : primeiraFolha(n)) : n.id)}
+              style={{
+                width: "100%", display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
+                padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+                border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
+                background: ativo ? "var(--sidebar-active-bg)" : "transparent",
+                color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                fontSize: depth ? "0.78rem" : "0.85rem", fontWeight: ativo ? 700 : 500,
+              }}>
+              <Icon size={depth ? 13 : 16} /> {n.label}
+            </button>
+            {temFilhos && ativo && (
+              <SubNavTree nodes={n.children!} activeId={activeId} onSelect={onSelect} depth={depth + 1} />
+            )}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
