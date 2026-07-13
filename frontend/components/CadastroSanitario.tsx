@@ -2,7 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search } from "lucide-react";
 import {
-  fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo,
+  fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo, restaurarCatalogoPrincipios,
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario,
@@ -65,6 +65,7 @@ export default function CadastroSanitario() {
           descricao='Usado para classificar produtos no calendário sanitário — ex.: "Ivermectina", "Cepa RB51".'
           fetchFn={fetchPrincipiosAtivos} criarFn={criarPrincipioAtivo} atualizarFn={atualizarPrincipioAtivo}
           semRegistros="Nenhum princípio ativo cadastrado ainda."
+          restaurarCatalogo={restaurarCatalogoPrincipios}
         />
       )}
       {aba === "doencas" && (
@@ -571,11 +572,12 @@ type Item = { id: number; nome: string; ativo: boolean };
 type Form = { nome: string; ativo: boolean };
 const formVazio: Form = { nome: "", ativo: true };
 
-function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atualizarFn, semRegistros }: {
+function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atualizarFn, semRegistros, restaurarCatalogo }: {
   titulo: string; icone: any; descricao: string; semRegistros: string;
   fetchFn: () => Promise<Item[]>;
   criarFn: (dados: { nome: string; ativo?: boolean }) => Promise<Item>;
   atualizarFn: (id: number, dados: { nome: string; ativo: boolean }) => Promise<Item>;
+  restaurarCatalogo?: () => Promise<{ criados: number; total: number }>;
 }) {
   const [itens, setItens] = useState<Item[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -584,9 +586,18 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [restaurando, setRestaurando] = useState(false);
 
   const carregar = () => fetchFn().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const restaurar = async () => {
+    if (!restaurarCatalogo) return;
+    setRestaurando(true); setMsg(null);
+    try { const r = await restaurarCatalogo(); await carregar(); setMsg(`Catálogo restaurado: ${r.criados} adicionado(s), ${r.total} no total.`); }
+    catch (e: any) { setMsg(e.message || "Erro ao restaurar catálogo"); }
+    finally { setRestaurando(false); }
+  };
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (i: Item) => { setForm({ nome: i.nome, ativo: i.ativo }); setEditando(i.id); setMsg(null); };
@@ -615,14 +626,23 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
         <span className="flex items-center gap-2"><Icone size={16} /> {titulo}</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+        <div className="flex items-center gap-2">
+          {restaurarCatalogo && (
+            <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={restaurar} disabled={restaurando}
+              title="(Re)carrega o catálogo base de princípios ativos (documento base) — só adiciona os que faltam.">
+              {restaurando ? "Restaurando…" : "Restaurar catálogo base"}
+            </button>
+          )}
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+            <Plus size={14} /> Novo
+          </button>
+        </div>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>{descricao}</p>
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {restaurarCatalogo && msg && editando === null && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{msg}</p>}
 
       {editando === "novo" && <FormItem form={form} setForm={setForm} onSalvar={salvar} onCancelar={cancelar} salvando={salvando} msg={msg} />}
 

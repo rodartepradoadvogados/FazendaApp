@@ -832,6 +832,18 @@ router.get("/principios-ativos")(_listar_principios)
 router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
 
+
+@router.post("/principios-ativos/restaurar-catalogo")
+def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> dict:
+    """(Re)semeia o catálogo base de princípios ativos (documento base da farmácia)
+    — add-missing e idempotente: só cria os que faltam e não sobrescreve edições.
+    Útil quando o banco foi criado antes do catálogo completo existir."""
+    from fazenda.rules.farmacia import seed_farmacia
+    antes = len(session.exec(select(PrincipioAtivo)).all())
+    seed_farmacia(session)
+    total = len(session.exec(select(PrincipioAtivo)).all())
+    return {"criados": total - antes, "total": total}
+
 _listar_doencas, _criar_doenca, _atualizar_doenca = _crud_nome_ativo(Doenca)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)

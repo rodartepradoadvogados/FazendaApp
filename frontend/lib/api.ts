@@ -655,6 +655,11 @@ const _principiosAtivos = _crudNomeAtivo("principios-ativos", "Princípio ativo"
 export const fetchPrincipiosAtivos = _principiosAtivos.listar;
 export const criarPrincipioAtivo = _principiosAtivos.criar;
 export const atualizarPrincipioAtivo = _principiosAtivos.atualizar;
+export async function restaurarCatalogoPrincipios(): Promise<{ criados: number; total: number }> {
+  const res = await authFetch(`${API}/cadastro/principios-ativos/restaurar-catalogo`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao restaurar catálogo"); }
+  return res.json();
+}
 
 const _doencas = _crudNomeAtivo("doencas", "Doença");
 export const fetchDoencas = _doencas.listar;
