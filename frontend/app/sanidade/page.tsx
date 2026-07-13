@@ -1,8 +1,9 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X, Shield, Droplets, HeartPulse, Activity, Plus } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate, fetchAgenda, cadastrarPreventivo } from "@/lib/api";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X, Shield, Droplets, HeartPulse, Activity } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchAgenda } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -35,124 +36,13 @@ type EventoPrev = {
   produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null;
 };
 
-// ── Cadastrar preventivo: escolher o evento (categoria/doença), o lote, marcar
-// os animais (individual ou todos os filtrados) e registrar a regra recorrente
-// no calendário — opcionalmente já aplicando o produto padrão nos marcados.
-function CadastrarPreventivoForm({ eventos, onSaved }: { eventos: EventoPrev[]; onSaved: () => void }) {
-  const [aberto, setAberto] = useState(false);
-  const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  const [eventoId, setEventoId] = useState("");
-  const [lote, setLote] = useState("");
-  const [dataEvento, setDataEvento] = useState("");
-  const [freqValor, setFreqValor] = useState("1");
-  const [freqUnidade, setFreqUnidade] = useState("meses");
-  const [aplicar, setAplicar] = useState(false);
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const [salvando, setSalvando] = useState(false);
-  const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
 
-  useEffect(() => { if (aberto && !animais.length) fetchAnimais().then(setAnimais).catch(() => {}); }, [aberto]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const lotes = useMemo(() => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean))).sort() as string[], [animais]);
-  const animaisDoLote = useMemo(() => (lote ? animais.filter((a) => a.grupo_primario === lote) : animais), [animais, lote]);
-  const evento = eventos.find((e) => String(e.id) === eventoId);
-
-  // Ao trocar de lote, mantém só os animais selecionados que ainda pertencem ao filtro.
-  useEffect(() => {
-    setSelecionados((prev) => new Set(animaisDoLote.filter((a) => prev.has(a.numero)).map((a) => a.numero)));
-  }, [lote]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const toggle = (numero: string) => setSelecionados((prev) => {
-    const n = new Set(prev); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
-  });
-  const toggleTodos = () => setSelecionados((prev) =>
-    prev.size === animaisDoLote.length ? new Set() : new Set(animaisDoLote.map((a) => a.numero)));
-
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
-  const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
-
-  const salvar = async () => {
-    if (!eventoId) { setMsg({ tipo: "erro", txt: "Escolha o evento preventivo." }); return; }
-    if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
-    setSalvando(true); setMsg(null);
-    try {
-      const r = await cadastrarPreventivo({
-        evento_sanitario_id: Number(eventoId), categoria_alvo: lote || null, data_evento: dataEvento,
-        frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
-        animais: Array.from(selecionados), aplicar,
-      });
-      const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
-      setMsg({ tipo: "ok", txt: `Preventivo cadastrado no calendário${nApl ? ` · ${nApl} aplicação(ões) registrada(s)` : ""}.` });
-      setSelecionados(new Set());
-      onSaved();
-    } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
-    finally { setSalvando(false); }
-  };
-
-  return (
-    <div className="card mb-4">
-      <button onClick={() => setAberto((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text)", width: "100%", textAlign: "left", display: "flex", alignItems: "center", gap: "0.5rem", fontWeight: 700 }}>
-        <Plus size={16} style={{ color: "var(--dourado)" }} /> Cadastrar preventivo (por categoria, lote e animais)
-      </button>
-      {aberto && (
-        <div style={{ marginTop: "0.85rem" }}>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Evento preventivo</label>
-              <select style={selStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
-                <option value="">Selecione…</option>
-                {eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}{ev.categoria_preventiva ? ` — ${LABEL_CAT_PREV[ev.categoria_preventiva] || ev.categoria_preventiva}` : ""}</option>)}
-              </select></div>
-            <div><label style={labelStyle}>Data de referência</label>
-              <input type="date" style={selStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></div>
-            <div><label style={labelStyle}>Repetir a cada</label>
-              <div className="flex gap-1">
-                <input type="number" min={1} style={{ ...selStyle, width: "45%" }} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-                <select style={{ ...selStyle, width: "55%" }} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-                  <option value="dias">dia(s)</option><option value="meses">mês(es)</option><option value="anos">ano(s)</option>
-                </select>
-              </div></div>
-          </div>
-
-          {evento && (evento.categoria_preventiva || evento.doenca_nome || evento.produto_padrao) && (
-            <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-              {evento.categoria_preventiva && <>Categoria: <strong style={{ color: "var(--dourado-light)" }}>{LABEL_CAT_PREV[evento.categoria_preventiva] || evento.categoria_preventiva}</strong>. </>}
-              {evento.doenca_nome && <>Previne: <strong>{evento.doenca_nome}</strong>. </>}
-              {evento.produto_padrao && <>Produto padrão: <strong>{evento.produto_padrao}</strong>{evento.dose_padrao != null ? ` (${evento.dose_padrao}${evento.unidade_padrao ? " " + evento.unidade_padrao : ""})` : ""}. </>}
-            </p>
-          )}
-
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-            <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Lote a aplicar</label>
-              <select style={selStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
-                <option value="">Todos os lotes</option>
-                {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select></div>
-            <div className="flex items-end" style={{ gridColumn: "span 2" }}>
-              <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
-                <input type="checkbox" checked={aplicar} onChange={(e) => setAplicar(e.target.checked)} />
-                Já registrar a aplicação do produto padrão nos marcados
-              </label>
-            </div>
-          </div>
-
-          <SelecaoAnimaisTabela
-            animais={animaisDoLote} selecionados={selecionados} toggle={toggle} toggleTodos={toggleTodos}
-            colunas={[
-              { header: "Lote", render: (a) => a.grupo_primario || "—" },
-              { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
-            ]}
-          />
-
-          {msg && <p style={{ fontSize: "0.8rem", marginTop: "0.6rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</p>}
-          <div className="flex gap-2 mt-3">
-            <button className="btn-primary" disabled={salvando} onClick={salvar} style={{ fontSize: "0.82rem" }}>
-              <Check size={14} /> {salvando ? "Salvando…" : `Cadastrar preventivo${selecionados.size ? ` (${selecionados.size} animais)` : ""}`}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
+// Exame → serviço financeiro correspondente (para o botão "Lançar financeiro").
+function servicoDoExame(nome: string): string {
+  const n = (nome || "").toLowerCase();
+  if (n.includes("tubercul")) return "Exame de tuberculose";
+  if (n.includes("brucel")) return "Exame de brucelose";
+  return "Outros exames";
 }
 
 function CalendarioSanitarioView() {
@@ -163,6 +53,7 @@ function CalendarioSanitarioView() {
   const [fim, setFim] = useState("");
   const [eventoId, setEventoId] = useState("");
   const [recarregar, setRecarregar] = useState(0);
+  const admin = ehAdmin();
 
   useEffect(() => { fetchEventosSanitarios().then(setEventos).catch(() => {}); }, []);
   useEffect(() => {
@@ -170,10 +61,21 @@ function CalendarioSanitarioView() {
       .then(setRegras).catch((e) => setError(e.message));
   }, [ini, fim, eventoId, recarregar]);
 
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(regras || []);
+
   const linhasExport = (regras || []).map((r) => ({
     ...r, frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
     proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
   }));
+
+  const excluir = async (r: RegraCalendario) => {
+    if (!window.confirm(`Excluir a regra "${r.evento_sanitario_nome}" de ${formatDate(r.data_evento)}?`)) return;
+    try { await excluirCalendarioSanitario(r.id); setRecarregar((n) => n + 1); }
+    catch (e: any) { setError(e.message); }
+  };
+  const lancarFinanceiro = (r: RegraCalendario) => {
+    window.location.href = `/lancamentos?ir=financeiro_despesa&servico=${encodeURIComponent(servicoDoExame(r.evento_sanitario_nome))}`;
+  };
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
@@ -181,10 +83,8 @@ function CalendarioSanitarioView() {
     <>
       <div style={{ marginBottom: "0.75rem" }}>
         <h2 className="text-lg font-bold flex items-center gap-2"><Shield size={18} style={{ color: "var(--dourado)" }} /> Preventivo (calendário sanitário)</h2>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos preventivos).</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos). Para lançar um preventivo, use Lançamentos › Sanitário — Preventiva.</p>
       </div>
-
-      <CadastrarPreventivoForm eventos={eventos} onSaved={() => setRecarregar((n) => n + 1)} />
 
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -206,25 +106,46 @@ function CalendarioSanitarioView() {
       {regras && (
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between">
-            <span>Regras do calendário sanitário ({regras.length})</span>
+            <span>Regras do calendário sanitário ({regras.length}) — clique no cabeçalho para ordenar</span>
             <ExportarBotoes titulo="Calendário sanitário" nomeArquivoBase="calendario_sanitario" colunas={COLUNAS_CALENDARIO} linhas={linhasExport} />
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
             <table className="fazenda-table">
-              <thead><tr><th>Evento</th><th>Categoria alvo</th><th>Doença</th><th>Produto</th><th>Dosagem</th><th>Frequência</th><th>Próxima ocorrência</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Doença" campo="doenca_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <th>Produto</th><th>Dosagem</th><th>Frequência</th>
+                <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={coluna} dir={dir} ordenar={ordenar} />
+                {admin && <th style={{ textAlign: "right" }}>Ações</th>}
+              </tr></thead>
               <tbody>
-                {regras.map((r) => (
+                {linhasOrdenadas.map((r) => {
+                  const ehExame = (r as any).categoria_preventiva === "exame";
+                  return (
                   <tr key={r.id}>
-                    <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
+                    <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}{ehExame ? <span style={{ fontSize: "0.68rem", color: "var(--blue)", marginLeft: 6 }}>exame</span> : null}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.doenca_nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.produto || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.dosagem || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {LABEL_FREQ[r.frequencia_unidade]}</td>
                     <td style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{formatDate(r.proxima_ocorrencia)}</td>
+                    {admin && (
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
+                          {ehExame && (
+                            <button title="Lançar financeiro (exame)" onClick={() => lancarFinanceiro(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--green-light)", fontSize: "0.72rem", fontWeight: 700 }}>$ Financeiro</button>
+                          )}
+                          <a title="Editar em Lançamentos" href="/lancamentos?ir=calendario_sanitario" style={{ color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></a>
+                          <button title="Excluir" onClick={() => excluir(r)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                        </span>
+                      </td>
+                    )}
                   </tr>
-                ))}
-                {!regras.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
+                  );
+                })}
+                {!regras.length && <tr><td colSpan={admin ? 8 : 7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
               </tbody>
             </table>
           </div>
