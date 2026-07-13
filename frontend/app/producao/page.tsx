@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale } from "lucide-react";
-import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais } from "@/lib/api";
+import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
@@ -28,6 +28,7 @@ type Ctrl = {
   numero: string; raca: string; data: string | null; ano: number | null; producao_kg: number | null; del: number | null;
   ordem_parto: number | null; data_ult_parto: string | null;
   ordenha1_kg: number | null; ordenha2_kg: number | null; ordenha3_kg: number | null; grupo_primario: string | null;
+  usuario_nome?: string | null;
 };
 
 const LOTES_LACTACAO = ["01", "02", "03"];
@@ -103,6 +104,7 @@ type RelatorioControleEntrega = {
 };
 
 export default function ProducaoPage() {
+  const admin = ehAdmin();
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fAno, setFAno] = useState("");
@@ -366,6 +368,7 @@ export default function ProducaoPage() {
                   <ThOrdenavel label="Manhã (kg)" campo="ordenha1_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
                   <ThOrdenavel label="Noite (kg)" campo="noite_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
                   <ThOrdenavel label="Total (kg)" campo="producao_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr></thead>
                 <tbody>
                   {ordUltimos.linhasOrdenadas.map((r, i) => (
@@ -376,10 +379,11 @@ export default function ProducaoPage() {
                       <td style={{ textAlign: "right" }}>{r.ordenha1_kg ?? "—"}</td>
                       <td style={{ textAlign: "right" }}>{r.noite_kg ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{r.producao_kg ?? "—"}</td>
+                      {admin && <td>{r.usuario_nome ?? "—"}</td>}
                     </tr>
                   ))}
                   {!ucRegistros.length && (
-                    <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
+                    <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
                       {ucModo === "animal" && !ucAnimal ? "Selecione um animal." : ucModo === "lote" && !ucLotes.length ? "Selecione um ou mais lotes." : "Nenhum controle encontrado."}
                     </td></tr>
                   )}
@@ -621,6 +625,7 @@ export default function ProducaoPage() {
                   <ThOrdenavel label="Data" campo="data" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="DEL (dias)" campo="del" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Produção (kg)" campo="producao_kg" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr></thead>
                 <tbody>
                   {ordFiltrados.linhasOrdenadas.map((r, i) => (
@@ -630,9 +635,10 @@ export default function ProducaoPage() {
                       <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                       <td>{r.del ?? "—"}</td>
                       <td>{r.producao_kg != null ? `${r.producao_kg} kg` : "—"}</td>
+                      {admin && <td style={{ fontSize: "0.78rem" }}>{r.usuario_nome ?? "—"}</td>}
                     </tr>
                   ))}
-                  {!filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro.</td></tr>}
+                  {!filtrados.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro.</td></tr>}
                 </tbody>
               </table>
             </div>

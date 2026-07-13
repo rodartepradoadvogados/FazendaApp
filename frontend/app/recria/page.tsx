@@ -12,7 +12,7 @@ import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
   fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez, fetchRecriaCocho, criarRecriaCocho, excluirRecriaCocho,
-  fetchRecriaDossie,
+  fetchRecriaDossie, ehAdmin,
   type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto, type RecriaCocho,
 } from "@/lib/api";
 
@@ -444,6 +444,7 @@ function AbaNutricao() {
   const [loteFiltro, setLoteFiltro] = useState("");
   const [form, setForm] = useState<RecriaCocho>({ data: hoje(), lote: "", num_animais: 0, kg_ofertado: 0, kg_sobra: 0, kg_formulado: undefined });
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
+  const admin = ehAdmin();
   const carregar = () => fetchRecriaCocho(loteFiltro).then(setDados).catch(() => setDados({ registros: [], lotes: [] }));
   useEffect(() => { carregar(); }, [loteFiltro]);
 
@@ -510,7 +511,7 @@ function AbaNutricao() {
         {!registros.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma leitura registrada ainda.</p> : (
           <div style={{ overflowX: "auto" }}>
             <table className="fazenda-table">
-              <thead><tr><th>Data</th><th>Lote</th><th>Animais</th><th>Ofertado</th><th>Sobra</th><th>Consumido</th><th>% sobra</th><th>IMS/animal</th><th></th></tr></thead>
+              <thead><tr><th>Data</th><th>Lote</th><th>Animais</th><th>Ofertado</th><th>Sobra</th><th>Consumido</th><th>% sobra</th><th>IMS/animal</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th></th></tr></thead>
               <tbody>
                 {registros.map((r) => {
                   const cor = r.pct_sobra == null ? "var(--text-muted)" : r.pct_sobra <= 5 ? "var(--green-light)" : r.pct_sobra <= 10 ? "var(--amber)" : "var(--red)";
@@ -524,6 +525,7 @@ function AbaNutricao() {
                       <td>{r.kg_consumido} kg</td>
                       <td><span style={{ color: cor, fontWeight: 700 }}>{r.pct_sobra != null ? `${r.pct_sobra}%` : "—"}</span></td>
                       <td><strong>{r.ims_consumida_animal} kg</strong></td>
+                      {admin && <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }}><button className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }} onClick={() => excluirRecriaCocho(r.id!).then(carregar)}><Trash2 size={13} /></button></td>
                     </tr>
                   );
@@ -548,6 +550,7 @@ function AbaRegistrar() {
   const [lista, setLista] = useState<RecriaOcorrencia[] | null>(null);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
   const [salvando, setSalvando] = useState(false);
+  const admin = ehAdmin();
 
   const carregar = () => fetchRecriaOcorrencias().then(setLista).catch(() => setLista([]));
   useEffect(() => {
@@ -603,7 +606,7 @@ function AbaRegistrar() {
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table className="fazenda-table">
-              <thead><tr><th>Data</th><th>Animal</th><th>Doença</th><th>Obs.</th><th></th></tr></thead>
+              <thead><tr><th>Data</th><th>Animal</th><th>Doença</th><th>Obs.</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th></th></tr></thead>
               <tbody>
                 {lista.slice(0, 100).map((o) => (
                   <tr key={o.id}>
@@ -611,6 +614,7 @@ function AbaRegistrar() {
                     <td style={{ fontWeight: 600 }}>{o.numero_matriz}</td>
                     <td>{o.doenca}</td>
                     <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{o.observacao || "—"}</td>
+                    {admin && <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{o.usuario_nome ?? "—"}</td>}
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem" }} onClick={() => excluir(o.id)}><Trash2 size={13} /></button>
                     </td>

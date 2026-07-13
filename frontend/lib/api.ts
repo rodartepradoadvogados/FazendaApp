@@ -858,6 +858,16 @@ export async function movimentarEstoque(dados: {
   return res.json();
 }
 
+export type MovimentoEstoqueRow = {
+  id: number; nome_item: string; movimento: string; quantidade: number; unidade?: string | null;
+  data_movimento: string; observacao?: string | null; usuario_nome?: string | null;
+};
+export async function fetchMovimentosEstoque(): Promise<{ movimentos: MovimentoEstoqueRow[]; total: number }> {
+  const res = await authFetch(`${API}/estoque/movimentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Movimentos de estoque error: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchAlimentacao() {
   const res = await authFetch(`${API}/alimentacao/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Alimentação error: ${res.status}`);
@@ -1575,7 +1585,7 @@ async function _rSend(path: string, method: string, body?: any) {
   return res.json();
 }
 
-export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string };
+export type RecriaOcorrencia = { id: number; numero_matriz: string; doenca: string; data_ocorrencia: string; observacao?: string | null; origem: string; usuario_nome?: string | null };
 export type RecriaPontoCritico = { dia_pico: number; dia_min: number; dia_max: number; casos_na_janela: number; total_casos: number; pct_na_janela: number };
 export type RecriaCurva = {
   doenca: string; total_casos: number;
@@ -1631,7 +1641,7 @@ export type RecriaDossie = {
 };
 export const fetchRecriaDossie = (): Promise<RecriaDossie> => _rGet(`/recria/dossie`);
 
-export type RecriaCocho = { id?: number; data: string; lote: string; num_animais: number; kg_ofertado: number; kg_sobra: number; kg_formulado?: number | null; observacao?: string | null; kg_consumido?: number; pct_sobra?: number | null; ims_consumida_animal?: number; ims_formulada_animal?: number | null };
+export type RecriaCocho = { id?: number; data: string; lote: string; num_animais: number; kg_ofertado: number; kg_sobra: number; kg_formulado?: number | null; observacao?: string | null; kg_consumido?: number; pct_sobra?: number | null; ims_consumida_animal?: number; ims_formulada_animal?: number | null; usuario_nome?: string | null };
 export const fetchRecriaCocho = (lote = "", ini = "", fim = ""): Promise<{ registros: RecriaCocho[]; lotes: string[] }> => {
   const p = new URLSearchParams(); if (lote) p.set("lote", lote); if (ini) p.set("ini", ini); if (fim) p.set("fim", fim);
   return _rGet(`/recria/cocho${p.toString() ? "?" + p.toString() : ""}`);

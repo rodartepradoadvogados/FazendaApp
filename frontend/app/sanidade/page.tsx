@@ -161,6 +161,7 @@ type Aplic = {
   dose: number | null; unidade: string | null; via: string | null; responsavel: string | null;
   atividade: string | null; obs: string | null; ordem_parto: number | null;
   data: string | null; ano: number | null; mes: string | null;
+  usuario_nome?: string | null;
 };
 
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
@@ -341,7 +342,7 @@ function AplicacoesView() {
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
+                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
                 <tbody>
                   {filtrados.slice(0, 300).map((a) => {
                     const editando = editId === a.id;
@@ -354,6 +355,7 @@ function AplicacoesView() {
                         <td style={{ fontSize: "0.75rem" }}>{a.produto}</td>
                         <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
                         <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
+                        {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.usuario_nome ?? "—"}</td>}
                         {admin && (
                           <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                             {!editando && (
@@ -367,7 +369,7 @@ function AplicacoesView() {
                       </tr>
                       {editando && (
                         <tr>
-                          <td colSpan={admin ? 6 : 5} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                          <td colSpan={admin ? 7 : 5} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
                                 <input type="date" style={inp} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
@@ -428,6 +430,7 @@ type LinhaBezerra = {
   classe_soro: "sucesso" | "alerta" | "falha" | null;
   classe_colostragem: "excelente" | "boa" | "aceitavel" | "ruim" | null;
   apenas_colostro_po: boolean; sem_mensuracao: boolean; data_teste_sangue: string | null;
+  usuario_nome?: string | null;
 };
 
 const LABEL_CLASSE_COLOSTRO: Record<string, { txt: string; cor: string }> = {
@@ -461,6 +464,7 @@ function RelatorioBezerrasView() {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const [dados, setDados] = useState<LinhaBezerra[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const admin = ehAdmin();
 
   useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
 
@@ -556,6 +560,7 @@ function RelatorioBezerrasView() {
                   <th>Colostro?</th><th style={{ textAlign: "right" }}>Litros</th><th style={{ textAlign: "right" }}>Brix colostro</th>
                   <th>Classe colostro</th><th style={{ textAlign: "right" }}>Brix soro</th>
                   <th style={{ textAlign: "right" }}>Prot. sérica</th><th>Eficiência (IgG)</th>
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr>
               </thead>
               <tbody>
@@ -588,10 +593,11 @@ function RelatorioBezerrasView() {
                               ? <span style={{ color: "var(--text-muted)" }}>Sem mensuração</span>
                               : "—"}
                       </td>
+                      {admin && <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.usuario_nome ?? "—"}</td>}
                     </tr>
                   );
                 })}
-                {!dados.length && <tr><td colSpan={12} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado com esses filtros.</td></tr>}
+                {!dados.length && <tr><td colSpan={admin ? 13 : 12} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado com esses filtros.</td></tr>}
               </tbody>
             </table>
           </div>
