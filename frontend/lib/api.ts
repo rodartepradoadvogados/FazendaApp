@@ -863,9 +863,22 @@ export async function fetchDietas(filtros?: { lote?: number; ativo?: boolean }) 
   return res.json();
 }
 
+export async function fetchMateriaSeca(): Promise<{ id?: number; nome: string; ms_pct: number | null }[]> {
+  const res = await authFetch(`${API}/alimentacao/materia-seca`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Matéria seca error: ${res.status}`);
+  return res.json();
+}
+export async function salvarMateriaSeca(dados: { nome: string; ms_pct: number | null }) {
+  const res = await authFetch(`${API}/alimentacao/materia-seca`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar matéria seca"); }
+  return res.json();
+}
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
-  itens: { alimento: string; quantidade: number; unidade: string }[]; encerrar_anterior?: boolean;
+  base_quantidade?: string;
+  itens: { alimento: string; quantidade: number; unidade: string; base?: string; ms_pct?: number | null }[]; encerrar_anterior?: boolean;
 }) {
   const res = await authFetch(`${API}/alimentacao/dietas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

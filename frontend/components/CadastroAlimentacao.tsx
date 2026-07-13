@@ -13,10 +13,10 @@
 // Ao salvar uma nova dieta num lote que já tem dieta ativa, pergunta se deseja
 // encerrar a atual na data de início da nova.
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Wheat, ClipboardList, ChevronDown, ChevronRight } from "lucide-react";
+import { Plus, Trash2, Wheat, ClipboardList, ChevronDown, ChevronRight, Percent } from "lucide-react";
 import {
   fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta,
-  criarDieta, type ContextoDieta, type ApresentacaoDieta,
+  criarDieta, fetchMateriaSeca, salvarMateriaSeca, type ContextoDieta, type ApresentacaoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { TabelaNutricionalBotao } from "./TabelaNutricional";
@@ -25,12 +25,12 @@ const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
-type ItemForm = { alimento: string; quantidade: string; unidade: string };
-type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; itens: ItemForm[] };
+type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string };
+type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
-const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg" });
-const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", itens: [itemVazio()] });
+const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN" });
+const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", itens: [itemVazio()] });
 
 function num(v?: number | null, casas = 2): string {
   if (v == null) return "—";
@@ -49,12 +49,12 @@ const input: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 export default function CadastroAlimentacao() {
-  const [aba, setAba] = useState<"nova" | "ver">("nova");
+  const [aba, setAba] = useState<"nova" | "ver" | "ms">("nova");
   return (
     <div>
       <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-        <div className="flex items-center gap-2">
-          {([["nova", "Cadastrar nova dieta", Wheat], ["ver", "Visualizar dietas", ClipboardList]] as const).map(([id, label, Icon]) => (
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          {([["nova", "Cadastrar nova dieta", Wheat], ["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
                 border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
@@ -66,7 +66,43 @@ export default function CadastroAlimentacao() {
         </div>
         <TabelaNutricionalBotao />
       </div>
-      {aba === "nova" ? <CadastrarNovaDieta /> : <VisualizarDietas />}
+      {aba === "nova" ? <CadastrarNovaDieta /> : aba === "ver" ? <VisualizarDietas /> : <MateriaSeca />}
+    </div>
+  );
+}
+
+// ─────────────────────────── Matéria seca (ingredientes padrão) ───────────────
+function MateriaSeca() {
+  const [itens, setItens] = useState<{ nome: string; ms_pct: number | null }[]>([]);
+  const [salvando, setSalvando] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+  useEffect(() => { fetchMateriaSeca().then(setItens).catch(() => {}); }, []);
+  const patch = (nome: string, ms: string) => setItens((p) => p.map((i) => (i.nome === nome ? { ...i, ms_pct: ms === "" ? null : Number(ms) } : i)));
+  async function salvar(nome: string, ms: number | null) {
+    setSalvando(nome); setAviso(null);
+    try { await salvarMateriaSeca({ nome, ms_pct: ms }); setAviso(`Matéria seca de ${nome} salva.`); }
+    catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
+    finally { setSalvando(null); }
+  }
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+        % de matéria seca (MS) de cada ingrediente padrão — usada para converter entre matéria natural e matéria seca nas dietas. Edite e salve.
+      </p>
+      <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden", maxWidth: "36rem" }}>
+        {itens.map((i) => (
+          <div key={i.nome} className="flex items-center gap-3" style={{ padding: "0.5rem 0.7rem", borderBottom: "1px solid var(--border)" }}>
+            <span style={{ flex: 1, fontSize: "0.85rem" }}>{i.nome}</span>
+            <input type="number" inputMode="decimal" step="0.01" style={{ ...input, width: "6rem" }} value={i.ms_pct ?? ""} onChange={(e) => patch(i.nome, e.target.value)} placeholder="% MS" />
+            <span style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>%</span>
+            <button className="btn-primary" style={{ fontSize: "0.75rem", padding: "0.3rem 0.7rem" }} disabled={salvando === i.nome} onClick={() => salvar(i.nome, i.ms_pct)}>
+              {salvando === i.nome ? "…" : "Salvar"}
+            </button>
+          </div>
+        ))}
+        {!itens.length && <p style={{ padding: "0.8rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando ingredientes…</p>}
+      </div>
+      {aviso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{aviso}</p>}
     </div>
   );
 }
@@ -141,9 +177,9 @@ function CadastrarNovaDieta() {
         }
         try {
           await criarDieta({
-            lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura,
+            lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura, base_quantidade: f.baseQuantidade,
             data_prevista_encerramento: f.dataPrevista || undefined,
-            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade })),
+            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base })),
             encerrar_anterior: encerrar,
           });
           salvos.push(ln);
@@ -221,6 +257,13 @@ function CadastrarNovaDieta() {
                       <label style={lbl}>Provável data de fim</label>
                       <input type="date" style={input} value={f?.dataPrevista || ""} onChange={(e) => patchForm(ln, { dataPrevista: e.target.value })} />
                     </div>
+                    <div>
+                      <label style={lbl}>Quantidades informadas</label>
+                      <select style={input} value={f?.baseQuantidade || "total"} onChange={(e) => patchForm(ln, { baseQuantidade: e.target.value })}>
+                        <option value="total">Total do lote/dia</option>
+                        <option value="animal">Por animal/dia</option>
+                      </select>
+                    </div>
                   </div>
 
                   <div className="space-y-2 mt-3">
@@ -230,18 +273,25 @@ function CadastrarNovaDieta() {
                       const porTrato = q / NUM_TRATOS;
                       return (
                         <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem", position: "relative" }}>
-                          <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <div>
                               <label style={lbl}>Produto {idx + 1}</label>
                               <input style={input} list="alimentos-cad-dieta" value={it.alimento} onChange={(e) => patchItem(ln, idx, { alimento: e.target.value })} placeholder="ex.: Silagem de milho" />
                             </div>
                             <div>
-                              <label style={lbl}>Quantidade total/dia (lote)</label>
+                              <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
                               <input type="number" inputMode="decimal" style={input} value={it.quantidade} onChange={(e) => patchItem(ln, idx, { quantidade: e.target.value })} />
                             </div>
                             <div>
                               <label style={lbl}>Unidade</label>
                               <select style={input} value={it.unidade} onChange={(e) => patchItem(ln, idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>
+                            </div>
+                            <div>
+                              <label style={lbl}>Base</label>
+                              <select style={input} value={it.base} onChange={(e) => patchItem(ln, idx, { base: e.target.value })}>
+                                <option value="MN">Matéria natural (MN)</option>
+                                <option value="MS">Matéria seca (MS)</option>
+                              </select>
                             </div>
                           </div>
                           {/* Cálculo automático enquanto edita */}

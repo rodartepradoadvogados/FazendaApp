@@ -1186,6 +1186,9 @@ class DietaLancamento(SQLModel, table=True):
     data_prevista_encerramento: Optional[date] = None  # gera evento de análise na Agenda
     data_efetivo_encerramento: Optional[date] = None
     observacao: Optional[str] = None
+    # Como as quantidades dos itens foram informadas: "total" do lote/dia (padrão)
+    # ou "animal" (por cabeça/dia — o total é multiplicado pelo nº de animais).
+    base_quantidade: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -1199,6 +1202,23 @@ class DietaItemProgramado(SQLModel, table=True):
     alimento: str
     quantidade: float
     unidade: str
+    # Base da quantidade do ingrediente: "MN" (matéria natural, padrão) ou "MS"
+    # (matéria seca). ms_pct = % de matéria seca do alimento, para converter
+    # entre as duas bases quando informado.
+    base: Optional[str] = None
+    ms_pct: Optional[float] = None
+
+
+class IngredienteMS(SQLModel, table=True):
+    """% de matéria seca (MS) de cada ingrediente padrão — editável na aba
+    Matéria seca da Alimentação. Alimenta a conversão MN↔MS das dietas."""
+
+    __tablename__ = "ingrediente_ms"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ms_pct: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class DietaRegistroReal(SQLModel, table=True):
