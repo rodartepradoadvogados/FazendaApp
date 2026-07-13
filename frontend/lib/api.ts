@@ -696,11 +696,12 @@ export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório
 
 // Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um
 // protocolo cadastrado por princípio ativo ou classificação.
-export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string; doenca?: string }) {
+export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string; doenca?: string; finalidade?: string }) {
   const params = new URLSearchParams();
   if (filtro.principio_ativo) params.set("principio_ativo", filtro.principio_ativo);
   if (filtro.classificacao) params.set("classificacao", filtro.classificacao);
   if (filtro.doenca) params.set("doenca", filtro.doenca);
+  if (filtro.finalidade) params.set("finalidade", filtro.finalidade);
   const res = await authFetch(`${API}/estoque/medicamentos?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
   return res.json();

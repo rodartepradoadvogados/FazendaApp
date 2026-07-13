@@ -2099,13 +2099,13 @@ const MOTIVOS_SECAGEM = [
   { v: "comportamento", l: "Comportamento" },
   { v: "mastite", l: "Mastite" },
   { v: "casco", l: "Problema de casco" },
-  { v: "rotina", l: "Rotina" },
+  { v: "rotina", l: "Rotina parto" },
   { v: "outros", l: "Outros" },
 ];
 
 function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] }) {
   const [matriz, setMatriz] = useState("");
-  const [info, setInfo] = useState<{ del_atual: number | null; data_prevista_secagem: string | null; deve_secar: boolean | null; motivo_exclusao: string | null } | null>(null);
+  const [info, setInfo] = useState<{ del_atual: number | null; data_prevista_secagem: string | null; deve_secar: boolean | null; motivo_exclusao: string | null; dias_gestacao: number | null } | null>(null);
   const [carregandoInfo, setCarregandoInfo] = useState(false);
   const [dataSecagem, setDataSecagem] = useState(() => new Date().toISOString().slice(0, 10));
   const [motivo, setMotivo] = useState("");
@@ -2114,6 +2114,9 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   const [responsavel, setResponsavel] = useState("");
   const [itens, setItens] = useState<ItemSanidade[]>([itemSanidadeVazio()]);
   const [aplicado, setAplicado] = useState(true);
+  const [aptosSecagem, setAptosSecagem] = useState<string[]>([]);
+  const [vacinas, setVacinas] = useState<string[]>([]);
+  const [vacina, setVacina] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -2127,8 +2130,17 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       .finally(() => setCarregandoInfo(false));
   }, [matriz]);
 
+  // Produtos aptos para secagem (antimicrobianos intramamários de vaca seca) e
+  // vacinas (pré-parto). Carregados uma vez.
+  useEffect(() => {
+    fetchMedicamentos({ finalidade: "secagem" }).then((d) => setAptosSecagem((d as any[]).map((m) => m.nome))).catch(() => {});
+    fetchMedicamentos({ finalidade: "vacina" }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
+  }, []);
+
   const nomesEstoque = estoque.map((e) => e.nome);
-  const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).sort();
+  // Só medicamentos aptos para secagem; se a farmácia ainda não classificou
+  // nenhum, cai para a lista completa (para não travar o lançamento).
+  const listaProdutos = (aptosSecagem.length ? aptosSecagem : Array.from(new Set([...produtos, ...nomesEstoque]))).slice().sort();
   const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
   const escolherProduto = (idx: number, produto: string) => {
     const compativeis = unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade);
@@ -2173,6 +2185,9 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
         <Campo label="Vaca"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>
         <Campo label="DEL atual">
           <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
+        </Campo>
+        <Campo label="Dias de gestação">
+          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.dias_gestacao != null ? `${info.dias_gestacao} dias` : "—"} />
         </Campo>
         <Campo label="Data prevista de secagem (60 dias antes do parto)">
           <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
@@ -2232,7 +2247,19 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
           );
         })}
       </div>
-      <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+      <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+        <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar produto</button>
+        {!!vacinas.length && (
+          <select style={{ ...inputStyle, width: "auto", fontSize: "0.78rem" }} value={vacina}
+            onChange={(e) => { const v = e.target.value; if (v) { setItens((p) => [...p.filter((i) => i.produto), { ...itemSanidadeVazio(), produto: v, via: "Subcutânea" }]); setVacina(""); } }}>
+            <option value="">+ Vacina pré-parto (só vacinas)…</option>
+            {vacinas.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        )}
+      </div>
+      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+        A lista de produtos mostra apenas medicamentos aptos para secagem (intramamários de vaca seca). Use o seletor de vacina para incluir uma vacina pré-parto.
+      </p>
 
       {itens.some((i) => i.produto) && (
         <Campo label="O(s) produto(s) de secagem já foram aplicados?">

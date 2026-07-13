@@ -4,6 +4,7 @@ entradas/saídas (dá baixa ou soma direto em Estoque.quantidade).
 """
 from __future__ import annotations
 
+import unicodedata
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,6 +19,10 @@ router = APIRouter(prefix="/estoque", tags=["estoque"])
 MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"]
 MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"]
 MOVIMENTOS_VALIDOS = set(MOVIMENTOS_ENTRADA + MOVIMENTOS_SAIDA)
+
+
+def _sem_acento(s: str) -> str:
+    return unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
 # Só itens estocáveis podem ser doados ou recebidos de cortesia — itens não
 # estocáveis existem só para lançamento financeiro, sem controle de quantidade.
 MOVIMENTOS_SOMENTE_ESTOCAVEL = {"Doação", "Entrada de cortesia"}
@@ -117,6 +122,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
 @router.get("/medicamentos")
 def listar_medicamentos(
     principio_ativo: str = "", classificacao: str = "", doenca: str = "",
+    finalidade: str = "",
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Medicamentos (itens de estoque) que cumprem um critério — usado ao
@@ -144,6 +150,19 @@ def listar_medicamentos(
             if pa.doenca_id in doenca_ids:
                 pa_ids_doenca.add(pa.id)
 
+    # Finalidade: "secagem" = antimicrobianos intramamários de vaca seca;
+    # "vacina" = biológicos. Casa pela categoria da Farmácia (categoria_software
+    # / eh_biologico) e, como reforço, pelo texto da classificação do estoque.
+    pa_ids_secagem: set[int] = set()
+    pa_ids_vacina: set[int] = set()
+    if finalidade in ("secagem", "vacina"):
+        for pa in session.exec(select(PrincipioAtivo)).all():
+            cat = (getattr(pa, "categoria_software", "") or "").lower()
+            if ("vaca seca" in cat) or ("intramamario" in _sem_acento(cat)):
+                pa_ids_secagem.add(pa.id)
+            if getattr(pa, "eh_biologico", False) or "vacina" in cat:
+                pa_ids_vacina.add(pa.id)
+
     itens = session.exec(select(Estoque)).all()
     saida = []
     for e in itens:
@@ -156,6 +175,14 @@ def listar_medicamentos(
             continue
         if classificacao and (e.classificacao_medicamento or "").strip().lower() != classificacao.strip().lower():
             continue
+        if finalidade == "secagem":
+            classe = _sem_acento((e.classificacao_medicamento or "").lower())
+            if e.principio_ativo_id not in pa_ids_secagem and "vaca seca" not in classe and "intramamario" not in classe:
+                continue
+        if finalidade == "vacina":
+            classe = (e.classificacao_medicamento or "").lower()
+            if e.principio_ativo_id not in pa_ids_vacina and "vacina" not in classe:
+                continue
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,
