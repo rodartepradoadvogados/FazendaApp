@@ -33,7 +33,7 @@ const ABAS = [
   ["pessoas", "Pessoas", Users],
   ["sanitario", "Sanitário", HeartPulse],
   ["pesagem", "Pesagem do rebanho", Scale],
-  ["recria", "Recria (Dossiê)", Baby],
+  ["recria", "Categorias", Baby],
   ["excluir", "Excluir cadastros", Trash2],
 ] as const;
 
