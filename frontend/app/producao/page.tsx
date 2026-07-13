@@ -79,7 +79,7 @@ function LineChart({ dados }: { dados: { data: string; total: number }[] }) {
 type Qualidade = {
   id: number; numero_matriz: string | null; data_coleta: string;
   ccs: number | null; cbt: number | null; gordura_pct: number | null; proteina_pct: number | null;
-  solidos_totais_pct: number | null; esd_pct: number | null; lactose_pct: number | null; observacao: string | null;
+  solidos_totais_pct: number | null; esd_pct: number | null; lactose_pct: number | null; nul: number | null; observacao: string | null;
 };
 const INDICADORES_QUALIDADE = [
   { key: "ccs", label: "CCS", unidade: "mil céls./mL" },
@@ -89,6 +89,7 @@ const INDICADORES_QUALIDADE = [
   { key: "solidos_totais_pct", label: "Sólidos totais (ST)", unidade: "%" },
   { key: "esd_pct", label: "ESD", unidade: "%" },
   { key: "lactose_pct", label: "Lactose", unidade: "%" },
+  { key: "nul", label: "NUL (ureia)", unidade: "mg/dL" },
 ] as const;
 
 type LinhaLeiteItalac = {

@@ -36,12 +36,13 @@ CATEGORIAS_NOVAS = {
         "exemplo": ["464", "08/07/2026", "350"],
     },
     "controle_leiteiro_simples": {
-        "label": "Controle leiteiro simplificado (1ª e 2ª ordenha)",
-        "colunas": ["numero_matriz", "ordenha1_kg", "ordenha2_kg"],
-        "colunas_csv": ["numero_matriz", "ordenha1_kg", "ordenha2_kg"],
-        "exemplo": ["464", "14,5", "13,0"],
-        # Só esta categoria pede uma data ÚNICA no upload (o CSV não tem coluna de
-        # data) — o site já sabe o DEL a partir da ficha do animal e soma o total.
+        "label": "Controle leiteiro simplificado (1ª e 2ª ordenha) — diário/semanal/mensal",
+        "colunas": ["numero_matriz", "ordenha1_kg", "ordenha2_kg", "data_controle (opcional, DD/MM/AAAA)"],
+        "colunas_csv": ["numero_matriz", "ordenha1_kg", "ordenha2_kg", "data_controle"],
+        "exemplo": ["464", "14,5", "13,0", "05/07/2026"],
+        # Data única no upload (o site sabe o DEL pela ficha e soma o total).
+        # Flexível: se cada linha trouxer a coluna data_controle, o arquivo pode
+        # conter vários dias/semanas/meses de uma vez.
         "precisa_data_controle": True,
     },
     "financeiro": {
@@ -78,16 +79,16 @@ CATEGORIAS_NOVAS = {
         "exemplo": ["465", "Mimosa", "F", "Girolando", "10/03/2024", "01 - BEZ 1 (0 A 30)", "10/03/2024"],
     },
     "qualidade_leite": {
-        "label": "Histórico de qualidade do leite (tanque ou por vaca)",
+        "label": "Qualidade do leite — Clínica do Leite / LQL (tanque ou por vaca)",
         "colunas": [
             "numero_matriz (vazio = tanque)", "data_coleta (DD/MM/AAAA)", "ccs", "cbt", "gordura_pct", "proteina_pct",
-            "solidos_totais_pct", "esd_pct", "lactose_pct",
+            "solidos_totais_pct", "esd_pct", "lactose_pct", "nul (ureia)",
         ],
         "colunas_csv": [
             "numero_matriz", "data_coleta", "ccs", "cbt", "gordura_pct", "proteina_pct", "solidos_totais_pct",
-            "esd_pct", "lactose_pct",
+            "esd_pct", "lactose_pct", "nul",
         ],
-        "exemplo": ["", "05/07/2026", "181", "11", "3,69", "3,42", "12,69", "9,00", "4,69"],
+        "exemplo": ["", "05/07/2026", "181", "11", "3,69", "3,42", "12,69", "9,00", "4,69", "14,0"],
     },
     "dairycomp": {
         "label": "DairyComp 305 — nascimentos e partos (idade ao 1º parto)",
@@ -237,8 +238,11 @@ async def importar_controle_leiteiro_simples(
     (mesma lógica de criar_controles), a data é uma só para o lote inteiro.
     """
     content = await file.read()
-    entradas: list[OrdenhaIn] = []
     erros: list[str] = []
+    # Agrupa por data: cada linha pode trazer sua própria coluna `data_controle`
+    # (permite subir um único arquivo com vários dias/semanas/meses); quando a
+    # coluna não vem, usa a data única informada no upload.
+    por_data: dict[date, list[OrdenhaIn]] = {}
 
     for i, row in enumerate(iter_csv_rows(content), start=2):
         numero = row.get("numero_matriz", "").strip()
@@ -247,10 +251,14 @@ async def importar_controle_leiteiro_simples(
         if not numero or (ord1 is None and ord2 is None):
             erros.append(f"Linha {i}: número da matriz e ao menos uma ordenha são obrigatórios")
             continue
-        entradas.append(OrdenhaIn(numero_matriz=numero, ordenhas=[ord1 or 0, ord2 or 0]))
+        data_linha = parse_date(row.get("data_controle", "")) or data_controle
+        por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=numero, ordenhas=[ord1 or 0, ord2 or 0]))
 
-    resultado = criar_controles(ControlesIn(data_controle=data_controle, entradas=entradas), session)
-    return {"categoria": "controle_leiteiro_simples", "criados": resultado["criados"], "erros": erros}
+    criados = 0
+    for dia, entradas in por_data.items():
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session)
+        criados += resultado["criados"]
+    return {"categoria": "controle_leiteiro_simples", "criados": criados, "erros": erros}
 
 
 @router.post("/financeiro")
@@ -440,21 +448,51 @@ async def importar_qualidade_leite(file: UploadFile, session: Session = Depends(
     criados = 0
     erros: list[str] = []
 
+    import re as _re
+    import unicodedata as _ud
+
+    def _norm(s: str) -> str:
+        s = _ud.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+        return _re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+    # Apelidos de coluna para tolerar os exports da Clínica do Leite (ESALQ) e do
+    # LQL, que trazem cabeçalhos variados.
+    APELIDOS = {
+        "numero_matriz": ["numero matriz", "numero", "vaca", "animal", "id", "brinco"],
+        "data_coleta": ["data coleta", "data", "data da coleta", "coleta"],
+        "ccs": ["ccs", "ccs mil ml", "ccs x1000", "celulas somaticas"],
+        "cbt": ["cbt", "cpp", "cbt mil ufc ml", "contagem bacteriana", "ufc"],
+        "gordura_pct": ["gordura pct", "gordura", "gordura g", "teor de gordura"],
+        "proteina_pct": ["proteina pct", "proteina", "proteina g", "teor de proteina"],
+        "solidos_totais_pct": ["solidos totais pct", "solidos totais", "est", "extrato seco total"],
+        "esd_pct": ["esd pct", "esd", "extrato seco desengordurado"],
+        "lactose_pct": ["lactose pct", "lactose"],
+        "nul": ["nul", "ureia", "mun", "num", "nitrogenio ureico", "nitrogenio ureico no leite"],
+    }
+
+    def get(row_norm: dict, campo: str) -> str:
+        for ap in APELIDOS[campo]:
+            if ap in row_norm and (row_norm[ap] or "").strip() != "":
+                return row_norm[ap]
+        return ""
+
     for i, row in enumerate(iter_csv_rows(content), start=2):
-        data_coleta = parse_date(row.get("data_coleta", ""))
+        row_norm = {_norm(k): v for k, v in row.items()}
+        data_coleta = parse_date(get(row_norm, "data_coleta"))
         if not data_coleta:
             erros.append(f"Linha {i}: data_coleta é obrigatória")
             continue
         dados = QualidadeLeiteIn(
-            numero_matriz=row.get("numero_matriz", "").strip() or None,
+            numero_matriz=get(row_norm, "numero_matriz").strip() or None,
             data_coleta=data_coleta,
-            ccs=parse_float(row.get("ccs", "")),
-            cbt=parse_float(row.get("cbt", "")),
-            gordura_pct=parse_float(row.get("gordura_pct", "")),
-            proteina_pct=parse_float(row.get("proteina_pct", "")),
-            solidos_totais_pct=parse_float(row.get("solidos_totais_pct", "")),
-            esd_pct=parse_float(row.get("esd_pct", "")),
-            lactose_pct=parse_float(row.get("lactose_pct", "")),
+            ccs=parse_float(get(row_norm, "ccs")),
+            cbt=parse_float(get(row_norm, "cbt")),
+            gordura_pct=parse_float(get(row_norm, "gordura_pct")),
+            proteina_pct=parse_float(get(row_norm, "proteina_pct")),
+            solidos_totais_pct=parse_float(get(row_norm, "solidos_totais_pct")),
+            esd_pct=parse_float(get(row_norm, "esd_pct")),
+            lactose_pct=parse_float(get(row_norm, "lactose_pct")),
+            nul=parse_float(get(row_norm, "nul")),
         )
         criar_qualidade_leite(dados, session)
         criados += 1
