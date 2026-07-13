@@ -8,7 +8,9 @@ site — não há tabela paralela/inerte.
 """
 from __future__ import annotations
 
+import json
 from datetime import date, datetime
+from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -1298,6 +1300,92 @@ def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
     touros = session.exec(select(Touro)).all()
     touros.sort(key=lambda t: (-(t.tpi if t.tpi is not None else -1e9), (t.nome or t.naab)))
     return [t.model_dump() for t in touros]
+
+
+@router.get("/touros/campos-planilha")
+def campos_planilha_touros() -> list[str]:
+    """Rótulos originais das colunas do catálogo completo (Alta Genetics),
+    para o cadastro manual oferecer "preencher com os campos da planilha"
+    sem o usuário ter que lembrar/digitar cada nome."""
+    from fazenda.rules.touros import CURADOS_POR_CABECALHO
+    return [cabecalho for _campo, cabecalho, _num in CURADOS_POR_CABECALHO if _campo != "naab"]
+
+
+class TouroIn(BaseModel):
+    naab: str
+    nome: str
+    nome_completo: Optional[str] = None
+    raca: Optional[str] = None
+    central: Optional[str] = None
+    leite_kg: Optional[float] = None
+    gordura_kg: Optional[float] = None
+    gordura_pct: Optional[float] = None
+    proteina_kg: Optional[float] = None
+    proteina_pct: Optional[float] = None
+    tpi: Optional[float] = None
+    nm_dolar: Optional[float] = None
+    tipo_composto: Optional[float] = None
+    ubere_composto: Optional[float] = None
+    pernas_composto: Optional[float] = None
+    ccs_score: Optional[float] = None
+    fertilidade_filhas: Optional[float] = None
+    facilidade_parto: Optional[float] = None
+    fonte: Optional[str] = None
+    rodada_prova: Optional[str] = None
+    observacao: Optional[str] = None
+    dados_extra: Optional[list[list[str]]] = None  # [[rótulo, valor], ...] — demais dados da planilha
+
+
+@router.post("/touros")
+def criar_touro(dados: TouroIn, session: Session = Depends(get_session)) -> dict:
+    """Cadastro manual de um touro. Só o código NAAB e o nome são
+    obrigatórios — todo o resto (inclusive campos extras da planilha do
+    fornecedor) é opcional."""
+    naab = dados.naab.strip().upper()
+    if not naab:
+        raise HTTPException(status_code=400, detail="Informe o código NAAB")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome do touro")
+    if session.exec(select(Touro).where(Touro.naab == naab)).first():
+        raise HTTPException(status_code=400, detail=f"Já existe um touro cadastrado com o NAAB {naab}")
+    from fazenda.rules.naab import central_por_codigo_naab
+
+    campos = dados.model_dump(exclude={"naab", "dados_extra"})
+    touro = Touro(naab=naab, **campos)
+    if not touro.central:
+        touro.central = central_por_codigo_naab(naab)
+    if dados.dados_extra:
+        touro.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False)
+    session.add(touro)
+    session.commit()
+    session.refresh(touro)
+    return touro.model_dump()
+
+
+@router.put("/touros/{touro_id}")
+def atualizar_touro(touro_id: int, dados: TouroIn, session: Session = Depends(get_session)) -> dict:
+    t = session.get(Touro, touro_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Touro não encontrado")
+    naab = dados.naab.strip().upper()
+    if not naab:
+        raise HTTPException(status_code=400, detail="Informe o código NAAB")
+    if not dados.nome.strip():
+        raise HTTPException(status_code=400, detail="Informe o nome do touro")
+    outro = session.exec(select(Touro).where(Touro.naab == naab)).first()
+    if outro and outro.id != touro_id:
+        raise HTTPException(status_code=400, detail=f"Já existe outro touro cadastrado com o NAAB {naab}")
+    for campo, valor in dados.model_dump(exclude={"dados_extra"}).items():
+        setattr(t, campo, valor)
+    t.naab = naab
+    if dados.dados_extra is not None:
+        t.dados_extra = json.dumps(dados.dados_extra, ensure_ascii=False) if dados.dados_extra else None
+    from datetime import datetime
+    t.atualizado_em = datetime.utcnow()
+    session.add(t)
+    session.commit()
+    session.refresh(t)
+    return t.model_dump()
 
 
 @router.delete("/touros/{touro_id}")

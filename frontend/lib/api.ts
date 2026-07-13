@@ -1650,12 +1650,17 @@ export const excluirCategoriaManejo = (id: number) => _rSend(`/recria/categorias
 export const fetchComposicaoCategorias = (): Promise<{ composicao: { categoria: string; n: number }[]; total: number }> => _rGet(`/recria/categorias/composicao`);
 
 export type Touro = {
-  id?: number; naab: string; nome?: string | null; raca?: string | null; central?: string | null;
+  id?: number; naab: string; nome?: string | null; nome_completo?: string | null; raca?: string | null; central?: string | null;
   leite_kg?: number | null; gordura_kg?: number | null; gordura_pct?: number | null;
   proteina_kg?: number | null; proteina_pct?: number | null; tpi?: number | null; nm_dolar?: number | null;
   tipo_composto?: number | null; ubere_composto?: number | null; pernas_composto?: number | null;
   ccs_score?: number | null; fertilidade_filhas?: number | null; facilidade_parto?: number | null;
   fonte?: string | null; rodada_prova?: string | null; observacao?: string | null; atualizado_em?: string | null;
+  dados_extra?: string | null; // JSON [[rótulo, valor], ...] — demais dados da planilha do fornecedor
 };
+export type TouroIn = Omit<Touro, "id" | "atualizado_em" | "dados_extra"> & { dados_extra?: [string, string][] | null };
 export const fetchTouros = (): Promise<Touro[]> => _rGet(`/cadastro/touros`);
+export const fetchCamposPlanilhaTouros = (): Promise<string[]> => _rGet(`/cadastro/touros/campos-planilha`);
+export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros`, "POST", d);
+export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");

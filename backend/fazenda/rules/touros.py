@@ -12,11 +12,15 @@ import io
 import re
 import unicodedata
 
+from pathlib import Path
+
 from sqlmodel import Session, select
 
-from fazenda.models import Touro
+from fazenda.models import SeedFlag, Touro
 from fazenda.parsers.utils import parse_float
 from fazenda.rules.naab import central_por_codigo_naab
+
+SEED_TOUROS_NAAB_ALTA = "touros_naab_alta_2026_v1"
 
 
 def _norm(s: str | None) -> str:
@@ -94,6 +98,132 @@ def _mapear_colunas(cabecalhos: list[str]) -> dict[str, str]:
     return mapa
 
 
+# ---------------------------------------------------------------------------
+# Importador de planilha "rica" (catálogo completo do fornecedor, dezenas de
+# colunas de provas — ex.: exportação da Alta Genetics em PT-BR). O
+# mapeamento por apelidos acima é frágil demais para esses arquivos (colunas
+# como "Gordura" e "% Gordura", ou "Proteína" e "Prot%", normalizam para o
+# mesmo apelido). Em vez de adivinhar, este importador lê a planilha inteira
+# por posição de coluna: preenche os campos curados do modelo quando acha o
+# cabeçalho esperado, e guarda TODAS as colunas (com o rótulo original) em
+# `dados_extra`, para que nenhum dado da planilha se perca.
+CURADOS_POR_CABECALHO: list[tuple[str, str, bool]] = [
+    # (campo do modelo, cabeçalho esperado na planilha, é numérico?)
+    ("naab", "Código NAAB", False),
+    ("nome", "Nome", False),
+    ("nome_completo", "Nome completo", False),
+    ("raca", "Raça", False),
+    ("tpi", "TPI", True),
+    ("nm_dolar", "NM$", True),
+    ("leite_kg", "Leite", True),
+    ("proteina_kg", "Proteína", True),
+    ("proteina_pct", "Prot%", True),
+    ("gordura_kg", "Gordura", True),
+    ("gordura_pct", "% Gordura", True),
+    ("ccs_score", "SCS", True),
+    ("tipo_composto", "PTAT", True),
+]
+
+
+def _indice_cabecalho(cabecalhos: list[str], alvo: str, usados: set[int]) -> int | None:
+    """Primeiro índice cujo cabeçalho normalizado bate com o alvo, ignorando
+    os já usados (protege contra cabeçalhos duplicados, ex.: "D / H")."""
+    alvo_norm = _norm(alvo)
+    for i, c in enumerate(cabecalhos):
+        if i not in usados and _norm(c) == alvo_norm:
+            return i
+    return None
+
+
+def eh_planilha_rica(cabecalhos: list[object]) -> bool:
+    """Detecta o catálogo completo (dezenas de colunas de provas) vs. um CSV
+    simples de poucas colunas — para escolher o importador certo."""
+    if len(cabecalhos) < 30:
+        return False
+    primeiros = [_norm(str(c)) if c is not None else "" for c in cabecalhos[:3]]
+    return any("naab" in c for c in primeiros)
+
+
+def importar_touros_planilha_rica(session: Session, content: bytes, fonte: str | None, rodada: str | None) -> dict:
+    """Importa o catálogo completo (ex.: exportação Alta Genetics) preservando
+    TODAS as colunas por touro em `dados_extra`, além de preencher os campos
+    curados (TPI, NM$, Leite, Gordura, Proteína, SCS, PTAT...) usados em
+    outras telas do sistema. Upsert por código NAAB; nunca apaga touros
+    existentes."""
+    from datetime import datetime
+    import json
+
+    import openpyxl
+
+    wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    ws = wb.active
+    linhas_iter = ws.iter_rows(values_only=True)
+    try:
+        cabecalhos_raw = list(next(linhas_iter))
+    except StopIteration:
+        return {"criados": 0, "atualizados": 0, "erros": ["Planilha vazia ou ilegível."]}
+    cabecalhos = [str(c) if c is not None else "" for c in cabecalhos_raw]
+
+    usados: set[int] = set()
+    indices: dict[str, int] = {}
+    for campo, cabecalho, _num in CURADOS_POR_CABECALHO:
+        idx = _indice_cabecalho(cabecalhos, cabecalho, usados)
+        if idx is not None:
+            indices[campo] = idx
+            usados.add(idx)
+    if "naab" not in indices:
+        return {"criados": 0, "atualizados": 0, "erros": [
+            "Não encontrei a coluna 'Código NAAB'. Confirme que é o catálogo completo do fornecedor."
+        ]}
+
+    criados = atualizados = 0
+    erros: list[str] = []
+    for linha in linhas_iter:
+        if linha is None or all(c is None or str(c).strip() == "" for c in linha):
+            continue
+        valores = list(linha) + [None] * (len(cabecalhos) - len(linha))
+        naab = str(valores[indices["naab"]] or "").strip().upper()
+        if not naab:
+            continue
+        touro = session.exec(select(Touro).where(Touro.naab == naab)).first()
+        novo = touro is None
+        if novo:
+            touro = Touro(naab=naab)
+        for campo, _cabecalho, num in CURADOS_POR_CABECALHO:
+            if campo == "naab" or campo not in indices:
+                continue
+            v = valores[indices[campo]]
+            if v is None or str(v).strip() == "":
+                continue
+            if num:
+                # Valores da planilha já vêm como number nativo do openpyxl
+                # (ponto decimal) — parse_float espera string BR (vírgula
+                # decimal) e erraria a casa decimal se aplicado aqui.
+                vf = float(v) if isinstance(v, (int, float)) else parse_float(str(v))
+                if vf is not None:
+                    setattr(touro, campo, vf)
+            else:
+                setattr(touro, campo, str(v).strip())
+        # Todos os dados da planilha, na ordem original — nada se perde mesmo
+        # para colunas sem campo curado equivalente.
+        touro.dados_extra = json.dumps(
+            [[cabecalhos[i], valores[i]] for i in range(len(cabecalhos)) if valores[i] is not None and str(valores[i]).strip() != ""],
+            ensure_ascii=False,
+        )
+        if not touro.central:
+            touro.central = central_por_codigo_naab(naab)
+        if fonte:
+            touro.fonte = fonte
+        if rodada:
+            touro.rodada_prova = rodada
+        touro.atualizado_em = datetime.utcnow()
+        session.add(touro)
+        criados += 1 if novo else 0
+        atualizados += 0 if novo else 1
+    session.commit()
+    return {"criados": criados, "atualizados": atualizados, "erros": erros}
+
+
 def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rodada: str | None) -> dict:
     """Upsert dos touros por código NAAB. Atualiza só os campos presentes na
     planilha; nunca apaga touros que já existem. Retorna resumo."""
@@ -142,3 +272,18 @@ def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rod
         atualizados += 0 if novo else 1
     session.commit()
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+def bootstrap_touros_naab(session: Session) -> None:
+    """Carrega o catálogo NAAB completo (Alta Genetics) empacotado no
+    repositório, uma única vez (idempotente via SeedFlag) — assim o banco de
+    touros já vem pronto sem depender de o usuário fazer o upload manual."""
+    if session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
+        return
+    caminho = Path(__file__).resolve().parent.parent / "seed_data" / "touros_naab_alta.xlsx"
+    if not caminho.exists():
+        return
+    content = caminho.read_bytes()
+    importar_touros_planilha_rica(session, content, "Alta Genetics", None)
+    session.add(SeedFlag(chave=SEED_TOUROS_NAAB_ALTA))
+    session.commit()
