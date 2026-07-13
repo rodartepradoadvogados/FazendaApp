@@ -15,7 +15,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
-    ProtocoloSanitarioLancamento, Sanidade,
+    ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade,
 )
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.farmacia import pode_baixar_estoque
@@ -23,6 +23,20 @@ from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
 TETOS_VALIDOS = ["AE", "AD", "PD", "PE"]
 CLASSIFICACOES_MASTITE = ["clinica", "subclinica", "ambiental"]
+GRAUS_MASTITE = [1, 2, 3]
+RESULTADOS_CMT = ["-", "+", "++", "+++"]
+# Agentes (patógenos) de mastite mais comuns — lista padrão sugerida; o usuário
+# pode informar outro no lançamento.
+AGENTES_MASTITE = [
+    "Staphylococcus aureus", "Streptococcus agalactiae", "Mycoplasma bovis", "Negativo",
+    "Coliformes", "Streptococcus uberis", "Streptococcus dysgalactiae", "Escherichia coli",
+    "Klebsiella pneumoniae", "Enterobacter aerogenes", "Serratia spp.", "Pseudomonas spp.",
+    "Proteus spp.", "Arcanobacterium pyogenes", "Nocardia spp.", "Bacillus spp.",
+    "Fungos", "Leveduras", "Algas",
+]
+# Intervalo abaixo do qual um novo caso no mesmo teto é considerado recidiva
+# (indica trocar para o próximo tratamento).
+DIAS_RECIDIVA_MASTITE = 20
 
 router = APIRouter(prefix="/sanidade", tags=["sanidade"])
 
@@ -336,7 +350,9 @@ class ProtocoloLancamentoIn(BaseModel):
     responsavel: str | None = None
     observacao: str | None = None
     classificacao_mastite: str | None = None  # "clinica" | "subclinica" | "ambiental"
-    resultado_cmt: str | None = None
+    grau_mastite: int | None = None  # 1, 2 ou 3
+    agente: str | None = None
+    resultado_cmt: str | None = None  # "-", "+", "++" ou "+++"
     tetos_afetados: list[str] = []  # subconjunto de AE/AD/PD/PE
     # Medicamento escolhido por etapa (etapa_id -> nome do medicamento), quando
     # a etapa foi cadastrada por princípio ativo/classificação.
@@ -403,14 +419,54 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         else:
             produto_por_etapa[etapa.id] = None
 
+    if dados.grau_mastite is not None and dados.grau_mastite not in GRAUS_MASTITE:
+        raise HTTPException(status_code=400, detail="Grau de mastite inválido (aceitos: 1, 2 ou 3)")
+
     protocolos = {protocolo.id: protocolo.nome}
     lancamentos_criados = []
+    avisos: list[str] = []
     for numero in numeros:
+        del_no_caso = None
+        ccs_ultima = None
+        recidiva = None
+        if protocolo.eh_mastite:
+            animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+            del_no_caso = animal.del_dias if animal else None
+            # Última CCS do animal (ou do tanque, na falta) — snapshot do caso.
+            ult_ccs = session.exec(
+                select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
+                .order_by(QualidadeLeite.data_coleta.desc())
+            ).first()
+            ccs_ultima = ult_ccs.ccs if ult_ccs else None
+            # Recidiva: caso de mastite anterior no MESMO teto com intervalo < 20 dias.
+            tetos_novos = set(dados.tetos_afetados)
+            if tetos_novos:
+                limite = dados.data_inicio - timedelta(days=DIAS_RECIDIVA_MASTITE)
+                anteriores = session.exec(
+                    select(ProtocoloSanitarioLancamento).where(
+                        ProtocoloSanitarioLancamento.numero_matriz == numero,
+                        ProtocoloSanitarioLancamento.data_inicio >= limite,
+                        ProtocoloSanitarioLancamento.data_inicio < dados.data_inicio,
+                    )
+                ).all()
+                for ant in anteriores:
+                    tetos_ant = set((ant.tetos_afetados or "").split(",")) if ant.tetos_afetados else set()
+                    if tetos_novos & tetos_ant:
+                        recidiva = True
+                        avisos.append(
+                            f"Recidiva no(s) teto(s) {', '.join(sorted(tetos_novos & tetos_ant))} do animal {numero} "
+                            f"(caso em {ant.data_inicio.strftime('%d/%m/%Y')}, menos de {DIAS_RECIDIVA_MASTITE} dias) — "
+                            f"troque para o próximo tratamento."
+                        )
+                        break
         lancamento = ProtocoloSanitarioLancamento(
             protocolo_id=dados.protocolo_id, numero_matriz=numero, data_inicio=dados.data_inicio,
             responsavel=dados.responsavel, observacao=dados.observacao,
-            classificacao_mastite=dados.classificacao_mastite, resultado_cmt=dados.resultado_cmt,
+            classificacao_mastite=dados.classificacao_mastite,
+            grau_mastite=dados.grau_mastite, agente=dados.agente,
+            resultado_cmt=dados.resultado_cmt,
             tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
+            del_no_caso=del_no_caso, ccs_ultima=ccs_ultima, recidiva=recidiva,
         )
         session.add(lancamento)
         session.commit()
@@ -425,7 +481,58 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
 
-    return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados}
+    return {"criados": len(lancamentos_criados), "lancamentos": lancamentos_criados, "avisos": avisos}
+
+
+@router.get("/mastite/opcoes")
+def opcoes_mastite() -> dict:
+    """Listas padrão do lançamento de mastite (agentes, graus, tetos, CMT)."""
+    return {
+        "agentes": AGENTES_MASTITE, "graus": GRAUS_MASTITE, "tetos": TETOS_VALIDOS,
+        "resultados_cmt": RESULTADOS_CMT, "classificacoes": CLASSIFICACOES_MASTITE,
+    }
+
+
+@router.get("/mastite/contexto")
+def contexto_mastite(numero: str, session: Session = Depends(get_session)) -> dict:
+    """DEL atual, última CCS e último CMT do animal — preenchidos automaticamente
+    ao abrir um caso de mastite."""
+    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    ult_ccs = session.exec(
+        select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
+        .order_by(QualidadeLeite.data_coleta.desc())
+    ).first()
+    ult_caso = session.exec(
+        select(ProtocoloSanitarioLancamento).where(
+            ProtocoloSanitarioLancamento.numero_matriz == numero, ProtocoloSanitarioLancamento.resultado_cmt != None  # noqa: E711
+        ).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())
+    ).first()
+    return {
+        "numero": numero,
+        "del_atual": animal.del_dias if animal else None,
+        "ccs_ultima": ult_ccs.ccs if ult_ccs else None,
+        "data_ccs": ult_ccs.data_coleta.isoformat() if ult_ccs else None,
+        "cmt_ultimo": ult_caso.resultado_cmt if ult_caso else None,
+    }
+
+
+class MarcarCuraIn(BaseModel):
+    lancamento_id: int
+    curada: bool
+
+
+@router.post("/mastite/cura")
+def marcar_cura_mastite(dados: MarcarCuraIn, session: Session = Depends(get_session)) -> dict:
+    """Marca, no último dia do protocolo, se o caso de mastite foi curado ou não.
+    Se não curado, sinaliza a necessidade do próximo tratamento."""
+    lanc = session.get(ProtocoloSanitarioLancamento, dados.lancamento_id)
+    if not lanc:
+        raise HTTPException(status_code=404, detail="Lançamento de mastite não encontrado")
+    lanc.curada = dados.curada
+    session.add(lanc)
+    session.commit()
+    proximo = None if dados.curada else "Caso não curado — inicie o próximo tratamento (protocolo seguinte)."
+    return {"lancamento_id": lanc.id, "curada": lanc.curada, "proximo_tratamento": proximo}
 
 
 # ---------------------------------------------------------------------------

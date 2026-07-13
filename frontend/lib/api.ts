@@ -767,13 +767,24 @@ export async function fetchLancamentosProtocolo() {
 }
 export async function lancarProtocoloSanitario(dados: {
   protocolo_id: number; numeros_matriz: string[]; data_inicio: string; responsavel?: string; observacao?: string;
-  classificacao_mastite?: string; resultado_cmt?: string; tetos_afetados?: string[];
+  classificacao_mastite?: string; grau_mastite?: number; agente?: string; resultado_cmt?: string; tetos_afetados?: string[];
   escolhas_medicamento?: Record<string, string>;
 }) {
   const res = await authFetch(`${API}/sanidade/protocolos/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo sanitário"); }
+  return res.json();
+}
+
+export async function fetchMastiteOpcoes(): Promise<{ agentes: string[]; graus: number[]; tetos: string[]; resultados_cmt: string[] }> {
+  const res = await authFetch(`${API}/sanidade/mastite/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Mastite opções error: ${res.status}`);
+  return res.json();
+}
+export async function fetchMastiteContexto(numero: string): Promise<{ del_atual: number | null; ccs_ultima: number | null; data_ccs: string | null; cmt_ultimo: string | null }> {
+  const res = await authFetch(`${API}/sanidade/mastite/contexto?numero=${encodeURIComponent(numero)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Mastite contexto error: ${res.status}`);
   return res.json();
 }
 

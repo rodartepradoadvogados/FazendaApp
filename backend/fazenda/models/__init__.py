@@ -1055,8 +1055,17 @@ class ProtocoloSanitarioLancamento(SQLModel, table=True):
     observacao: Optional[str] = None
     # Campos específicos de mastite — só usados quando o protocolo é de mastite.
     classificacao_mastite: Optional[str] = None  # "clinica" | "subclinica" | "ambiental"
-    resultado_cmt: Optional[str] = None
+    grau_mastite: Optional[int] = None   # 1, 2 ou 3
+    agente: Optional[str] = None         # patógeno identificado (ver AGENTES_MASTITE)
+    resultado_cmt: Optional[str] = None  # "-", "+", "++" ou "+++"
     tetos_afetados: Optional[str] = None  # ex.: "AE,PD" — quadrantes: AE/AD/PD/PE
+    # Snapshots do animal no momento do caso (preenchidos automaticamente).
+    del_no_caso: Optional[int] = None
+    ccs_ultima: Optional[float] = None
+    # Recidiva: True quando há caso anterior no mesmo teto com intervalo < 20 dias.
+    recidiva: Optional[bool] = None
+    # Avaliação de cura no último dia do protocolo (marcada pela Agenda).
+    curada: Optional[bool] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
