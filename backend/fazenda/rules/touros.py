@@ -274,16 +274,19 @@ def importar_touros(session: Session, linhas: list[dict], fonte: str | None, rod
     return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
-def bootstrap_touros_naab(session: Session) -> None:
+def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:
     """Carrega o catálogo NAAB completo (Alta Genetics) empacotado no
     repositório, uma única vez (idempotente via SeedFlag) — assim o banco de
-    touros já vem pronto sem depender de o usuário fazer o upload manual."""
-    if session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
+    touros já vem pronto sem depender de o usuário fazer o upload manual.
+    `forcar=True` reimporta mesmo com a flag já marcada (upsert por NAAB,
+    nunca apaga touros existentes) — usado pelo botão de autoatendimento."""
+    if not forcar and session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
         return
     caminho = Path(__file__).resolve().parent.parent / "seed_data" / "touros_naab_alta.xlsx"
     if not caminho.exists():
         return
     content = caminho.read_bytes()
     importar_touros_planilha_rica(session, content, "Alta Genetics", None)
-    session.add(SeedFlag(chave=SEED_TOUROS_NAAB_ALTA))
+    if not session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
+        session.add(SeedFlag(chave=SEED_TOUROS_NAAB_ALTA))
     session.commit()

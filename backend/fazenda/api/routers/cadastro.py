@@ -1302,6 +1302,19 @@ def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
     return [t.model_dump() for t in touros]
 
 
+@router.post("/touros/recarregar-catalogo")
+def recarregar_catalogo_touros(session: Session = Depends(get_session)) -> dict:
+    """Reimporta o catálogo NAAB completo empacotado no servidor (upsert por
+    NAAB — nunca apaga touros existentes). Serve de botão de autoatendimento
+    caso a carga automática na inicialização não tenha rodado por algum
+    motivo (ex.: banco criado antes deste recurso existir)."""
+    from fazenda.rules.touros import bootstrap_touros_naab
+    antes = len(session.exec(select(Touro)).all())
+    bootstrap_touros_naab(session, forcar=True)
+    depois = len(session.exec(select(Touro)).all())
+    return {"touros_antes": antes, "touros_depois": depois}
+
+
 @router.get("/touros/campos-planilha")
 def campos_planilha_touros() -> list[str]:
     """Rótulos originais das colunas do catálogo completo (Alta Genetics),

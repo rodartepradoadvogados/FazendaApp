@@ -221,3 +221,19 @@ class TestCadastroManual:
         assert "TPI" in rotulos
         assert "NM$" in rotulos
         assert "naab" not in [r.lower() for r in rotulos]
+
+    def test_recarregar_catalogo_chama_bootstrap_forcado(self, client, monkeypatch):
+        c, _engine = client
+        chamadas = []
+
+        def _fake_bootstrap(session, forcar=False):
+            chamadas.append(forcar)
+            session.add(Touro(naab="000FAKE001", nome="Recarregado"))
+            session.commit()
+
+        monkeypatch.setattr("fazenda.rules.touros.bootstrap_touros_naab", _fake_bootstrap)
+        resp = c.post("/cadastro/touros/recarregar-catalogo")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+        assert corpo["touros_depois"] == corpo["touros_antes"] + 1
+        assert chamadas == [True]

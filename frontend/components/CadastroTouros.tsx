@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X } from "lucide-react";
-import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, type Touro, type TouroIn } from "@/lib/api";
+import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, recarregarCatalogoTouros, type Touro, type TouroIn } from "@/lib/api";
 
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -161,6 +161,21 @@ export default function CadastroTouros() {
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<number | null>(null);
   const [editando, setEditando] = useState<Touro | "novo" | null>(null);
+  const [recarregando, setRecarregando] = useState(false);
+
+  async function recarregarCatalogo() {
+    setRecarregando(true);
+    setErro("");
+    try {
+      const r = await recarregarCatalogoTouros();
+      await carregar();
+      alert(`Catálogo padrão recarregado: ${r.touros_depois} touro(s) no banco (eram ${r.touros_antes}).`);
+    } catch (e: any) {
+      setErro(e.message || "Falha ao recarregar o catálogo");
+    } finally {
+      setRecarregando(false);
+    }
+  }
 
   async function carregar() {
     setCarregando(true);
@@ -220,9 +235,15 @@ export default function CadastroTouros() {
             manualmente aqui. Só o código NAAB e o nome são obrigatórios; todo o resto é opcional.
           </p>
         </div>
-        <button onClick={() => setEditando("novo")} className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
-          <Plus size={15} /> Novo touro
-        </button>
+        <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+          <button onClick={recarregarCatalogo} disabled={recarregando} className="btn-secondary" title="Reimporta o catálogo padrão empacotado no servidor (upsert por NAAB — não apaga touros existentes). Use se o catálogo não aparecer."
+            style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
+            <RefreshCw size={15} /> {recarregando ? "Recarregando..." : "Recarregar catálogo padrão"}
+          </button>
+          <button onClick={() => setEditando("novo")} className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", whiteSpace: "nowrap" }}>
+            <Plus size={15} /> Novo touro
+          </button>
+        </div>
       </div>
 
       <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>

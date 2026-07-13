@@ -4,7 +4,8 @@
 // desktop (/reproducao/*).
 import { useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { fetchEstoqueSemen } from "@/lib/api";
+import { fetchEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
+import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import {
   type Animal, type Semen, useCache, useEnvio, hoje, rotuloAnimal,
   MobPill, LinhaPills, BotoesEscolha, SeletorAnimal,
@@ -47,6 +48,8 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   const [matriz, setMatriz] = useState(animalFixado || "");
   const [data, setData] = useState(hoje());
   const [touro, setTouro] = useState("");
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
+  const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
 
   function salvar() {
     if (!matriz) return erroValidacao("Selecione a matriz.");
@@ -60,6 +63,7 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   }
 
   const opcoes = semen.dados.map((s) => s.touro_nome).filter(Boolean);
+  const itensCatalogo: TouroPickerItem[] = catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
   return (
     <>
       <MobCampo label="Matriz (nº / nome)">
@@ -69,10 +73,24 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
       </MobCampo>
       <MobCampo label="Touro / sêmen (opcional)">
-        <select className="mob-input" value={touro} onChange={(e) => setTouro(e.target.value)}>
-          <option value="">Selecione o sêmen…</option>
-          {opcoes.map((t) => <option key={t} value={t}>{t}</option>)}
-        </select>
+        {!incluirSemEstoque ? (
+          <select className="mob-input" value={touro} onChange={(e) => setTouro(e.target.value)}>
+            <option value="">Selecione o sêmen…</option>
+            {opcoes.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        ) : (
+          <TouroPicker className="mob-input" itens={itensCatalogo} value={touro} placeholder="Buscar touro no catálogo NAAB..."
+            onChangeTexto={setTouro} onSelecionar={(t) => setTouro(t.nome)} />
+        )}
+        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
+          <input type="checkbox" checked={incluirSemEstoque}
+            onChange={(e) => {
+              setIncluirSemEstoque(e.target.checked);
+              setTouro("");
+              if (e.target.checked && !catalogoTouros.length) fetchTouros().then(setCatalogoTouros).catch(() => {});
+            }} />
+          Incluir touros sem estoque (catálogo NAAB)
+        </label>
       </MobCampo>
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
