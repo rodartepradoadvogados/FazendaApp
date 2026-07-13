@@ -185,6 +185,8 @@ export default function FichaAnimal() {
       tomou_colostro: c.tomou_colostro == null ? "" : String(c.tomou_colostro),
       litros_colostro: c.litros_colostro ?? "", brix_colostro: c.brix_colostro ?? "",
       data_colostro: c.data_colostro ?? "", brix_soro: c.brix_soro ?? "",
+      hora_parto: c.hora_parto ?? "", hora_colostro: c.hora_colostro ?? "", peso_nascer_kg: c.peso_nascer_kg ?? "",
+      proteina_serica: c.proteina_serica ?? "", apenas_colostro_po: c.apenas_colostro_po ? "true" : "",
       data_teste_sangue: c.data_teste_sangue ?? "", observacao: c.observacao ?? "",
     });
     setEditColostro(true); setAviso(null);
@@ -199,7 +201,12 @@ export default function FichaAnimal() {
         litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
         brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
         data_colostro: f.data_colostro || undefined,
+        hora_parto: f.hora_parto || undefined,
+        hora_colostro: f.hora_colostro || undefined,
+        peso_nascer_kg: f.peso_nascer_kg === "" ? undefined : Number(f.peso_nascer_kg),
         brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
+        proteina_serica: f.proteina_serica === "" ? undefined : Number(f.proteina_serica),
+        apenas_colostro_po: f.apenas_colostro_po === "true" ? true : undefined,
         data_teste_sangue: f.data_teste_sangue || undefined,
         observacao: f.observacao || undefined,
       });

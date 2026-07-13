@@ -651,11 +651,34 @@ function classeSoro(brix: number): { txt: string; cor: string } {
 }
 const OPCOES_SORO = Array.from({ length: 13 }, (_, i) => (6 + i * 0.5).toFixed(1)); // 6,0 … 12,0
 
+// Eficiência de colostragem em 4 níveis por Brix sérico (%) OU proteína
+// sérica (g/dL) — o que estiver disponível (Brix tem prioridade).
+function classeColostragemUI(brix: number | null, proteina: number | null): { txt: string; cor: string } {
+  const excelente = { txt: "Excelente", cor: "var(--green-light)" };
+  const boa = { txt: "Boa", cor: "var(--dourado-light)" };
+  const aceitavel = { txt: "Aceitável", cor: "var(--amber)" };
+  const ruim = { txt: "Ruim — bezerra desprotegida", cor: "var(--red)" };
+  if (brix != null && !Number.isNaN(brix)) {
+    if (brix > 9.4) return excelente;
+    if (brix >= 8.9) return boa;
+    if (brix >= 8.1) return aceitavel;
+    return ruim;
+  }
+  if (proteina != null && !Number.isNaN(proteina)) {
+    if (proteina > 6.2) return excelente;
+    if (proteina >= 5.8) return boa;
+    if (proteina >= 5.1) return aceitavel;
+    return ruim;
+  }
+  return { txt: "—", cor: "var(--text-muted)" };
+}
+
 function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [matriz, setMatriz] = useState("");
   const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
   const [tipoParto, setTipoParto] = useState("");
   const [gemelar, setGemelar] = useState(false);
+  const [gemelarSexo, setGemelarSexo] = useState("");
   const [criaNumero, setCriaNumero] = useState("");
   const [criaSexo, setCriaSexo] = useState("");
   const [criaBaixada, setCriaBaixada] = useState(false);
@@ -671,10 +694,15 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const [litros, setLitros] = useState("");
   const [brix, setBrix] = useState("");
   const [alvo, setAlvo] = useState("25");
+  const [horaParto, setHoraParto] = useState("");
+  const [horaColostro, setHoraColostro] = useState("");
+  const [pesoNascer, setPesoNascer] = useState("");
   const [manualColostroAberto, setManualColostroAberto] = useState(false);
   const [manualSangueAberto, setManualSangueAberto] = useState(false);
 
   const [soro, setSoro] = useState("");
+  const [proteinaSerica, setProteinaSerica] = useState("");
+  const [apenasColostroPo, setApenasColostroPo] = useState(false);
   const brixN = brix ? Number(brix) : null;
   const litrosN = litros ? Number(litros) : 0;
   const cls = brixN != null ? classeColostro(brixN) : null;
@@ -683,6 +711,16 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   const enriquecer = brixN != null && brixN < 25;
   const medidasPorL = enriquecer ? Math.max(0, Number(alvo) - brixN!) : 0;
   const totalMedidas = medidasPorL * (litrosN || 1);
+  // Intervalo parto→colostro em horas (a partir de "HH:MM"), tratando virada de dia.
+  const intervaloColostroHoras = (() => {
+    if (!horaParto || !horaColostro) return null;
+    const [hp, mp] = horaParto.split(":").map(Number);
+    const [hc, mc] = horaColostro.split(":").map(Number);
+    if ([hp, mp, hc, mc].some((n) => Number.isNaN(n))) return null;
+    let diff = (hc * 60 + mc) - (hp * 60 + mp);
+    if (diff < 0) diff += 24 * 60; // colostro no dia seguinte ao parto
+    return diff / 60;
+  })();
 
   async function alocarSeConfirmado(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
     try {
@@ -711,6 +749,7 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       const r = await criarParto({
         numero_matriz: matriz, data_parto: dataParto, tipo_parto: tipoParto || undefined,
         crias, retencao_placenta: retencaoPlacenta, gemelar,
+        gemelar_sexo: gemelar ? (gemelarSexo || undefined) : undefined,
       });
       // Efeitos colaterais do parto (alocação de lote e colostragem) são
       // complementares: não bloqueiam o parto já salvo, mas as falhas são
@@ -728,7 +767,7 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
       // e algum dado foi informado.
       const criaRegistrada = r.crias_criadas.includes(criaNumero);
-      if (criaRegistrada && (tomouColostro || litros || brix || soro)) {
+      if (criaRegistrada && (tomouColostro || litros || brix || soro || proteinaSerica || horaParto || horaColostro || pesoNascer || apenasColostroPo)) {
         try {
           await registrarColostragem({
             numero_animal: criaNumero,
@@ -736,7 +775,12 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
             litros_colostro: litrosN || undefined,
             brix_colostro: brixN ?? undefined,
             data_colostro: brix ? dataParto : undefined,
+            hora_parto: horaParto || undefined,
+            hora_colostro: horaColostro || undefined,
+            peso_nascer_kg: pesoNascer ? Number(pesoNascer) : undefined,
             brix_soro: soroN ?? undefined,
+            proteina_serica: proteinaSerica ? Number(proteinaSerica) : undefined,
+            apenas_colostro_po: apenasColostroPo || undefined,
             data_teste_sangue: soro ? dataParto : undefined,
           });
         } catch (e: any) {
@@ -744,11 +788,12 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
         }
       }
       setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
-      setMatriz(""); setTipoParto(""); setGemelar(false);
+      setMatriz(""); setTipoParto(""); setGemelar(false); setGemelarSexo("");
       setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
       setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
       setRetencaoPlacenta(false);
-      setTomou(""); setLitros(""); setBrix(""); setSoro("");
+      setTomou(""); setLitros(""); setBrix(""); setSoro(""); setProteinaSerica("");
+      setHoraParto(""); setHoraColostro(""); setPesoNascer(""); setApenasColostroPo(false);
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
     } finally {
@@ -765,11 +810,23 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
         <Campo label="Data do parto"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
         <Campo label="Tipo de parto">
           <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
-            <option value="">Selecione…</option><option>Normal</option><option>Distócico</option><option>Cesariana</option>
+            <option value="">Selecione…</option><option>Normal</option>
+            <option>Distócico moderado</option><option>Distócico severo</option>
+            <option>Cesariana</option>
           </select>
         </Campo>
-        <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim</label></Campo>
+        <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim (gera item na Agenda)</label></Campo>
         <Campo label="Parto gemelar (2 crias)"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={gemelar} onChange={(e) => setGemelar(e.target.checked)} /> Sim</label></Campo>
+        {gemelar && (
+          <Campo label="Sexos do parto gemelar">
+            <select style={inputStyle} value={gemelarSexo} onChange={(e) => setGemelarSexo(e.target.value)}>
+              <option value="">Selecione… (ou deriva dos sexos)</option>
+              <option value="FF">FF — duas fêmeas</option>
+              <option value="FM">FM — fêmea e macho (fêmea pode ser freemartin)</option>
+              <option value="MM">MM — dois machos</option>
+            </select>
+          </Campo>
+        )}
       </div>
 
       <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
@@ -777,7 +834,7 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
           <Baby size={14} /> Cadastro da cria (prole)
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <Campo label="Número da cria"><input style={inputStyle} value={criaNumero} onChange={(e) => setCriaNumero(e.target.value)} placeholder="ex.: 483" /></Campo>
+          <Campo label="Número da cria (vazio = baixa automática)"><input style={inputStyle} value={criaNumero} onChange={(e) => setCriaNumero(e.target.value)} placeholder="ex.: 483 — em branco, natimorto/baixa" /></Campo>
           <Campo label="Sexo da cria"><select style={inputStyle} value={criaSexo} onChange={(e) => setCriaSexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
           <Campo label="Cria baixada? (não entra no rebanho)">
             <select style={inputStyle} value={criaBaixada ? "Sim" : "Não"} onChange={(e) => setCriaBaixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
@@ -795,6 +852,17 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
 
         <div className="mt-3" style={{ background: "rgba(22,101,52,0.12)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--green-light)" }}>Colostragem da cria</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+            <Campo label="Hora do parto"><input type="time" style={inputStyle} value={horaParto} onChange={(e) => setHoraParto(e.target.value)} /></Campo>
+            <Campo label="Hora do colostro"><input type="time" style={inputStyle} value={horaColostro} onChange={(e) => setHoraColostro(e.target.value)} /></Campo>
+            <Campo label="Peso ao nascer (kg)"><input type="number" step="0.1" inputMode="decimal" style={inputStyle} value={pesoNascer} onChange={(e) => setPesoNascer(e.target.value)} placeholder="ex.: 38" /></Campo>
+          </div>
+          {horaParto && horaColostro && (
+            <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+              Intervalo parto→colostro: <strong style={{ color: intervaloColostroHoras != null && intervaloColostroHoras <= 6 ? "var(--green-light)" : "var(--amber)" }}>
+                {intervaloColostroHoras != null ? `${intervaloColostroHoras.toFixed(1)} h` : "—"}</strong> (ideal ≤ 6 h; quanto antes, melhor a absorção de IgG).
+            </p>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
             <Campo label="Tomou colostro?"><select style={inputStyle} value={tomouColostro} onChange={(e) => setTomou(e.target.value)}><option value="" disabled>Selecione…</option><option>Sim</option><option>Não</option></select></Campo>
             <Campo label="Quantidade de colostro (litros)">
@@ -840,8 +908,9 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
         <div className="mt-3" style={{ background: "rgba(30,111,168,0.1)", border: "1px solid var(--blue)", borderRadius: "8px", padding: "0.6rem 0.8rem" }}>
           <p style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--blue)" }}>Exame de sangue (IgG) da cria</p>
           <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
-            Colher entre <strong>24h e 48h</strong> após o nascimento. Meta: Brix do soro &gt; 8,4%
-            (≥ 8,4% sucesso · 8,1–8,3% alerta · ≤ 8,0% falha).
+            Colher entre <strong>24h e 48h</strong> após o nascimento. Pode informar <strong>Brix sérico</strong> OU
+            <strong> proteína sérica</strong>. Classificação: excelente (Brix &gt;9,4% · prot. &gt;6,2 g/dL) ·
+            boa (8,9–9,3% · 5,8–6,1) · aceitável (8,1–8,8% · 5,1–5,7) · ruim (abaixo disso).
           </p>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
             <Campo label="Brix do soro (%)">
@@ -850,8 +919,19 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
                 {OPCOES_SORO.map((v) => <option key={v} value={v}>{v.replace(".", ",")}%</option>)}
               </select>
             </Campo>
-            {clsSoro && <div style={{ display: "flex", alignItems: "flex-end" }}><p style={{ fontSize: "0.82rem" }}>Resultado: <strong style={{ color: clsSoro.cor }}>{clsSoro.txt}</strong></p></div>}
+            <Campo label="Proteína sérica (g/dL)">
+              <input type="number" step="0.1" inputMode="decimal" style={inputStyle} value={proteinaSerica} onChange={(e) => setProteinaSerica(e.target.value)} placeholder="ex.: 6,0" />
+            </Campo>
           </div>
+          {(clsSoro || proteinaSerica) && (
+            <p style={{ fontSize: "0.82rem", marginTop: "0.4rem" }}>
+              Eficiência de colostragem: <strong style={{ color: classeColostragemUI(soroN, proteinaSerica ? Number(proteinaSerica) : null).cor }}>
+                {classeColostragemUI(soroN, proteinaSerica ? Number(proteinaSerica) : null).txt}</strong>
+            </p>
+          )}
+          <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", marginTop: "0.4rem" }}>
+            <input type="checkbox" checked={apenasColostroPo} onChange={(e) => setApenasColostroPo(e.target.checked)} /> Bezerra recebeu somente colostro em pó (sem colostro materno)
+          </label>
           <div className="flex items-center gap-3 mt-2" style={{ flexWrap: "wrap" }}>
             <button onClick={() => setManualSangueAberto(true)} className="btn-ghost flex items-center gap-1" style={{ fontSize: "0.75rem" }}><BookOpen size={13} /> Manual do sangue</button>
           </div>

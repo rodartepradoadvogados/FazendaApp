@@ -367,7 +367,11 @@ type LinhaBezerra = {
   grupo_primario: string | null; data_nasc: string | null; idade_meses: number | null; ativo: boolean;
   tomou_colostro: boolean | null; litros_colostro: number | null; brix_colostro: number | null;
   classe_colostro: "ouro" | "prata" | "bronze" | null; data_colostro: string | null;
-  brix_soro: number | null; classe_soro: "sucesso" | "alerta" | "falha" | null; data_teste_sangue: string | null;
+  hora_parto: string | null; hora_colostro: string | null; peso_nascer_kg: number | null;
+  brix_soro: number | null; proteina_serica: number | null;
+  classe_soro: "sucesso" | "alerta" | "falha" | null;
+  classe_colostragem: "excelente" | "boa" | "aceitavel" | "ruim" | null;
+  apenas_colostro_po: boolean; sem_mensuracao: boolean; data_teste_sangue: string | null;
 };
 
 const LABEL_CLASSE_COLOSTRO: Record<string, { txt: string; cor: string }> = {
@@ -378,13 +382,18 @@ const LABEL_CLASSE_SORO: Record<string, { txt: string; cor: string }> = {
   sucesso: { txt: "Sucesso", cor: "var(--green-light)" }, alerta: { txt: "Alerta", cor: "var(--amber)" },
   falha: { txt: "Falha", cor: "var(--red)" },
 };
+const LABEL_CLASSE_COLOSTRAGEM: Record<string, { txt: string; cor: string }> = {
+  excelente: { txt: "Excelente", cor: "var(--green-light)" }, boa: { txt: "Boa", cor: "var(--dourado-light)" },
+  aceitavel: { txt: "Aceitável", cor: "var(--amber)" }, ruim: { txt: "Ruim", cor: "var(--red)" },
+};
 
 const COLUNAS_BEZERRAS = [
   { header: "Data", key: "data_teste_sangue" }, { header: "Nº", key: "numero" }, { header: "Nome", key: "nome" },
   { header: "Categoria", key: "categoria_abrev" }, { header: "Lote", key: "grupo_primario" }, { header: "Idade (meses)", key: "idade_meses" },
   { header: "Tomou colostro", key: "tomou_colostroFmt" }, { header: "Litros", key: "litros_colostro" },
   { header: "Brix colostro (%)", key: "brix_colostro" }, { header: "Classe colostro", key: "classe_colostroFmt" },
-  { header: "Brix soro (%)", key: "brix_soro" }, { header: "Classe soro", key: "classe_soroFmt" },
+  { header: "Brix soro (%)", key: "brix_soro" }, { header: "Proteína sérica (g/dL)", key: "proteina_serica" },
+  { header: "Eficiência colostragem", key: "classe_colostragemFmt" }, { header: "Classe soro", key: "classe_soroFmt" },
 ];
 
 function RelatorioBezerrasView() {
@@ -424,6 +433,7 @@ function RelatorioBezerrasView() {
     ...l, tomou_colostroFmt: l.tomou_colostro == null ? "—" : l.tomou_colostro ? "Sim" : "Não",
     classe_colostroFmt: l.classe_colostro ? LABEL_CLASSE_COLOSTRO[l.classe_colostro].txt : "—",
     classe_soroFmt: l.classe_soro ? LABEL_CLASSE_SORO[l.classe_soro].txt : "—",
+    classe_colostragemFmt: l.classe_colostragem ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].txt : (l.apenas_colostro_po ? "Só colostro em pó" : l.sem_mensuracao ? "Sem mensuração" : "—"),
   }));
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -488,12 +498,13 @@ function RelatorioBezerrasView() {
                 <tr>
                   <th>Nº</th><th>Nome</th><th>Categoria</th><th>Lote</th><th style={{ textAlign: "right" }}>Idade (m)</th>
                   <th>Colostro?</th><th style={{ textAlign: "right" }}>Litros</th><th style={{ textAlign: "right" }}>Brix colostro</th>
-                  <th>Classe colostro</th><th style={{ textAlign: "right" }}>Brix soro</th><th>Classe soro (IgG)</th>
+                  <th>Classe colostro</th><th style={{ textAlign: "right" }}>Brix soro</th>
+                  <th style={{ textAlign: "right" }}>Prot. sérica</th><th>Eficiência (IgG)</th>
                 </tr>
               </thead>
               <tbody>
                 {dados.map((l) => {
-                  const grave = l.classe_soro === "falha" || l.classe_colostro === "bronze";
+                  const grave = l.classe_soro === "falha" || l.classe_colostragem === "ruim" || l.classe_colostro === "bronze";
                   const trStyle: React.CSSProperties = grave
                     ? { background: "rgba(192,57,43,0.12)", borderLeft: "3px solid var(--red)" }
                     : {};
@@ -511,13 +522,20 @@ function RelatorioBezerrasView() {
                         {l.classe_colostro ? LABEL_CLASSE_COLOSTRO[l.classe_colostro].txt : "—"}
                       </td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.brix_soro ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem", fontWeight: 700, color: l.classe_soro ? LABEL_CLASSE_SORO[l.classe_soro].cor : "var(--text-muted)" }}>
-                        {l.classe_soro ? LABEL_CLASSE_SORO[l.classe_soro].txt : "—"}
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.proteina_serica ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem", fontWeight: 700, color: l.classe_colostragem ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].cor : "var(--text-muted)" }}>
+                        {l.classe_colostragem
+                          ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].txt
+                          : l.apenas_colostro_po
+                            ? <span style={{ color: "var(--blue)" }}>Só colostro em pó</span>
+                            : l.sem_mensuracao
+                              ? <span style={{ color: "var(--text-muted)" }}>Sem mensuração</span>
+                              : "—"}
                       </td>
                     </tr>
                   );
                 })}
-                {!dados.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado com esses filtros.</td></tr>}
+                {!dados.length && <tr><td colSpan={12} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado com esses filtros.</td></tr>}
               </tbody>
             </table>
           </div>
