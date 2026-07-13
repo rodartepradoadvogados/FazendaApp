@@ -98,6 +98,21 @@ CATEGORIAS_NOVAS = {
         "colunas_csv": ["numero_matriz", "data_nascimento", "data_parto", "ordem_parto"],
         "exemplo": ["464", "10/03/2022", "05/06/2024", "1"],
     },
+    "touros_naab": {
+        "label": "Touros — catálogo NAAB/provas do fornecedor (Excel ou CSV)",
+        "colunas": [
+            "NAAB (código)", "Nome", "Raça", "Central", "Leite", "Gordura kg", "Gordura %", "Proteína kg",
+            "Proteína %", "TPI", "NM$", "Tipo (PTAT)", "Úbere (UDC)", "Pernas (FLC)", "CCS (SCS)",
+            "Fertilidade (DPR)", "Facilidade de parto",
+        ],
+        "colunas_csv": [
+            "naab", "nome", "raca", "central", "leite", "gordura_kg", "gordura", "proteina_kg", "proteina",
+            "tpi", "nm", "tipo", "ubere", "pernas", "ccs", "dpr", "facilidade de parto",
+        ],
+        "exemplo": ["7HO16011", "FRAZZLED", "Holandês", "Select Sires", "800", "45", "0.03", "35", "0.02",
+                    "2850", "780", "2.10", "1.80", "1.20", "2.85", "1.5", "6.2"],
+        "aceita_excel": True,
+    },
 }
 
 # Categorias que já têm parser rico do Ideagri — seguem usando POST /upload/{tipo}.
@@ -511,6 +526,29 @@ async def importar_dairycomp(file: UploadFile, session: Session = Depends(get_se
         "categoria": "dairycomp", "criados": partos_criados,
         "animais_atualizados": animais_atualizados, "erros": erros,
     }
+
+
+@router.post("/touros_naab")
+async def importar_touros_naab(
+    file: UploadFile,
+    fonte: str = Form(""),
+    rodada: str = Form(""),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Catálogo genético de touros (provas do fornecedor / NAAB-CDCB). Aceita o
+    Excel (.xlsx) ou CSV exportado do ABS BullSearch, Alta, Select Sires etc.
+    Casa as colunas por apelidos (PT/EN), faz upsert por código NAAB e nunca
+    apaga touros existentes.
+    """
+    from fazenda.rules.touros import importar_touros, ler_planilha
+    content = await file.read()
+    try:
+        linhas = ler_planilha(content, file.filename)
+    except Exception as e:  # noqa: BLE001 — arquivo ilegível vira erro amigável
+        raise HTTPException(status_code=400, detail=f"Não consegui ler o arquivo: {e}")
+    resultado = importar_touros(session, linhas, fonte.strip() or None, rodada.strip() or None)
+    return {"categoria": "touros_naab", **resultado}
 
 
 @router.post("/backfill")

@@ -25,7 +25,10 @@ export default function ConfiguracoesPage() {
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
     setAbasVisiveis(abas);
-    setAba(abas[0]?.id ?? null);
+    // Respeita ?aba=... (ex.: link da Agenda para "Importar dados"), desde que
+    // a sub-aba exista e o usuário tenha acesso a ela; senão cai na primeira.
+    const alvo = new URLSearchParams(window.location.search).get("aba") as Aba | null;
+    setAba(alvo && abas.some((a) => a.id === alvo) ? alvo : (abas[0]?.id ?? null));
   }, []);
 
   if (!aba) {

@@ -12,7 +12,7 @@ from fazenda.database import get_session
 from fazenda.models import (
     Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen, MovimentoLote, Parto,
     PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
-    Sanidade, Secagem, Servico,
+    Sanidade, Secagem, Servico, Touro,
 )
 from fazenda.ordenacao import chave_numero
 
@@ -178,10 +178,23 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         s.touro_nome.strip().lower(): s.naab
         for s in session.exec(select(EstoqueSemen)).all() if s.naab
     }
+    # Banco de touros (provas NAAB/CDCB) — para mostrar nome + provas do pai.
+    touros = session.exec(select(Touro)).all()
+    touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
+    touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
     servicos_dump = []
     for s in servicos:
         d = s.model_dump()
-        d["reprodutor_naab"] = naab_por_touro.get((s.reprodutor or "").strip().lower())
+        naab = naab_por_touro.get((s.reprodutor or "").strip().lower())
+        d["reprodutor_naab"] = naab
+        # Casa o touro pelo NAAB (ou, na falta, pelo nome do reprodutor).
+        touro = (touro_por_naab.get((naab or "").strip().upper())
+                 or touro_por_nome.get((s.reprodutor or "").strip().lower()))
+        d["touro"] = touro.model_dump() if touro else None
+        # Chaves planas para a tabela genérica da ficha (provas do pai).
+        d["touro_central"] = touro.central if touro else None
+        d["touro_tpi"] = touro.tpi if touro else None
+        d["touro_nm"] = touro.nm_dolar if touro else None
         servicos_dump.append(d)
 
     protocolos_iatf = session.exec(

@@ -17,7 +17,7 @@ from sqlmodel import Session, select
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor, MotivoBaixa,
-    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, ValeFuncionario, ValeParcela,
+    Pessoa, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, Touro, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -1261,5 +1261,25 @@ def excluir_estoque_semen(item_id: int, session: Session = Depends(get_session))
     if not item:
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     session.delete(item)
+    session.commit()
+    return {"excluido": True}
+
+
+# ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────
+@router.get("/touros")
+def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
+    """Banco de touros importado do catálogo do fornecedor, ordenado por TPI
+    (maior primeiro) e depois por nome."""
+    touros = session.exec(select(Touro)).all()
+    touros.sort(key=lambda t: (-(t.tpi if t.tpi is not None else -1e9), (t.nome or t.naab)))
+    return [t.model_dump() for t in touros]
+
+
+@router.delete("/touros/{touro_id}")
+def excluir_touro(touro_id: int, session: Session = Depends(get_session)) -> dict:
+    t = session.get(Touro, touro_id)
+    if not t:
+        raise HTTPException(status_code=404, detail="Touro não encontrado")
+    session.delete(t)
     session.commit()
     return {"excluido": True}

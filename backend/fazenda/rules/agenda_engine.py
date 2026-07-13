@@ -43,6 +43,8 @@ class AgendaItem:
     ref: str | None = None  # referência p/ agrupar (ex.: nº do lançamento financeiro)
     lote: str | None = None  # CSV de códigos de lote, quando o evento manual é vinculado a lote(s)
     tipo_evento: str | None = None  # Compra, Venda, Serviço, Outro (só em eventos manuais)
+    apenas_admin: bool = False  # evento visível somente para o administrador
+    link: str | None = None  # rota interna de instruções/ação
 
     @property
     def chave(self) -> str:
@@ -415,6 +417,8 @@ class AgendaEngine:
                     fonte="manual",
                     lote=ev.get("lotes"),
                     tipo_evento=ev.get("tipo_evento"),
+                    apenas_admin=bool(ev.get("apenas_admin")),
+                    link=ev.get("link"),
                 ))
 
         # Ordena todos os eventos por data

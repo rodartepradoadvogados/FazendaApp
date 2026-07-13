@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Upload as UploadIcon, Download, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet, Wand2 } from "lucide-react";
 import { fetchModelosImportar, importarCSV, uploadCSV, backfillFornecedoresEstoque } from "@/lib/api";
 
-type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string; precisa_data_controle?: boolean };
+type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string; precisa_data_controle?: boolean; aceita_excel?: boolean };
 type Status = "idle" | "uploading" | "ok" | "error";
 type Estado = { status: Status; msg: string };
 
@@ -33,6 +33,8 @@ export default function ImportarDados() {
   const [estados, setEstados] = useState<Record<string, Estado>>({});
   const [dragging, setDragging] = useState<string | null>(null);
   const [datasControle, setDatasControle] = useState<Record<string, string>>({});
+  // Campos extras por modalidade (ex.: fonte/rodada do catálogo de touros).
+  const [extras, setExtras] = useState<Record<string, Record<string, string>>>({});
   const [backfill, setBackfill] = useState<{ status: "idle" | "rodando" | "ok" | "error"; msg: string; detalhe?: { fornecedores: string[]; estoque: string[] } }>({ status: "idle", msg: "" });
 
   useEffect(() => { fetchModelosImportar().then(setModelos).catch((e) => setError(e.message)); }, []);
@@ -58,7 +60,7 @@ export default function ImportarDados() {
     }
     setEstados((p) => ({ ...p, [categoria]: { status: "uploading", msg: "Enviando…" } }));
     try {
-      const extra = precisaData ? { data_controle: datasControle[categoria] } : undefined;
+      const extra = precisaData ? { data_controle: datasControle[categoria] } : (extras[categoria] || undefined);
       const res = await importarCSV(categoria, file, extra);
       const partes: string[] = [];
       if (res.criados !== undefined) partes.push(`${res.criados} criados`);
@@ -87,7 +89,7 @@ export default function ImportarDados() {
     }
   }, []);
 
-  const Dropzone = ({ id, onFile }: { id: string; onFile: (f: File) => void }) => {
+  const Dropzone = ({ id, onFile, accept = ".csv" }: { id: string; onFile: (f: File) => void; accept?: string }) => {
     const estado = estados[id] ?? { status: "idle" as Status, msg: "" };
     return (
       <>
@@ -95,7 +97,7 @@ export default function ImportarDados() {
           onDragOver={(e) => { e.preventDefault(); setDragging(id); }}
           onDragLeave={() => setDragging(null)}
           onDrop={(e) => { e.preventDefault(); setDragging(null); const f = e.dataTransfer.files[0]; if (f) onFile(f); }}>
-          <input type="file" accept=".csv" style={{ display: "none" }}
+          <input type="file" accept={accept} style={{ display: "none" }}
             onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.target.value = ""; }} />
           {estado.status === "uploading" ? (
             <div className="flex flex-col items-center gap-2">
@@ -198,7 +200,23 @@ export default function ImportarDados() {
                       style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                   </div>
                 )}
-                <Dropzone id={id} onFile={(f) => handleNova(id, f, m.precisa_data_controle)} />
+                {m.aceita_excel && (
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <div>
+                      <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Central (fonte)</label>
+                      <input value={extras[id]?.fonte || ""} placeholder="Ex.: Select Sires"
+                        onChange={(e) => setExtras((p) => ({ ...p, [id]: { ...(p[id] || {}), fonte: e.target.value } }))}
+                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>Rodada da prova</label>
+                      <input value={extras[id]?.rodada || ""} placeholder="Ex.: Abr/2026"
+                        onChange={(e) => setExtras((p) => ({ ...p, [id]: { ...(p[id] || {}), rodada: e.target.value } }))}
+                        style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                    </div>
+                  </div>
+                )}
+                <Dropzone id={id} accept={m.aceita_excel ? ".csv,.xlsx,.xlsm" : ".csv"} onFile={(f) => handleNova(id, f, m.precisa_data_controle)} />
               </div>
             ))}
           </div>

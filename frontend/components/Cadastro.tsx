@@ -15,6 +15,7 @@ import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
 import CadastroPessoas from "./CadastroPessoas";
 import CadastroSanitario from "./CadastroSanitario";
+import CadastroTouros from "./CadastroTouros";
 import { FormExclusao } from "./FormExclusao";
 
 const ABAS = [
@@ -23,6 +24,7 @@ const ABAS = [
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Itens de estoque", Package],
   ["estoque-semen", "Estoque de sêmen", Dna],
+  ["touros", "Touros (NAAB)", Dna],
   ["farmacia", "Farmácia", Pill],
   ["alimentacao", "Alimentação", Wheat],
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
@@ -64,6 +66,7 @@ export default function Cadastro() {
       {aba === "fornecedores" && <CadastroFornecedores />}
       {aba === "estoque" && <CadastroEstoqueMeta />}
       {aba === "estoque-semen" && <CadastroEstoqueSemen />}
+      {aba === "touros" && <CadastroTouros />}
       {aba === "farmacia" && <Farmacia />}
       {aba === "alimentacao" && <CadastroAlimentacao />}
       {aba === "motivos" && <CadastroMotivosMovimentacao />}
