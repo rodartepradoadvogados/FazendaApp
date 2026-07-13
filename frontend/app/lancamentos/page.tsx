@@ -2772,20 +2772,26 @@ const TIPOS_GRUPOS = [
     ],
   },
   {
-    id: "sanidade_curativa", label: "Sanitário — Curativa", icon: HeartPulse,
-    desc: "Tratamento curativo: aplicações de medicamento e protocolos sanitários.",
-    subs: [
-      { id: "sanidade_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicação de medicamento curativo — por animal, categoria, vários animais ou lote." },
-      { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
-    ],
-  },
-  {
-    id: "sanidade_preventiva", label: "Sanitário — Preventiva", icon: Shield,
-    desc: "Manejo preventivo: aplicações preventivas, calendário sanitário e BST.",
-    subs: [
-      { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
-      { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
-      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — vacas aptas e excluídas do dia." },
+    id: "sanidade", label: "Sanitário", icon: HeartPulse,
+    desc: "Tratamento curativo ou manejo preventivo.",
+    grupos: [
+      {
+        id: "sanidade_curativa", label: "Curativa", icon: HeartPulse,
+        desc: "Tratamento curativo: aplicações de medicamento e protocolos sanitários.",
+        subs: [
+          { id: "sanidade_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicação de medicamento curativo — por animal, categoria, vários animais ou lote." },
+          { id: "protocolo_sanitario", label: "Protocolo sanitário", icon: ClipboardList, desc: "Aplicar um protocolo cadastrado (mastite e outros) a um animal — gera um evento na Agenda por dia (D1, D2...)." },
+        ],
+      },
+      {
+        id: "sanidade_preventiva", label: "Preventiva", icon: Shield,
+        desc: "Manejo preventivo: aplicações preventivas, calendário sanitário e BST.",
+        subs: [
+          { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
+          { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
+          { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — vacas aptas e excluídas do dia." },
+        ],
+      },
     ],
   },
   {
@@ -2811,9 +2817,18 @@ const TIPOS_GRUPOS = [
 ];
 
 // Lista achatada de sub-tipos (folhas), usada para saber qual formulário renderizar.
-const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) => (g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]));
-// Grupo dono de um determinado sub-tipo (folha).
-const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) => g.leaf === id || g.subs?.some((s) => s.id === id))?.id ?? "reprodutivo";
+// Um grupo pode ter folhas direto (subs), estar sozinho (leaf) ou se ramificar em
+// sub-grupos (grupos) — caso do Sanitário, que abre Curativa/Preventiva antes das folhas.
+const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
+  g.grupos ? g.grupos.flatMap((sg) => sg.subs) : g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]
+);
+// Grupo (nível 1) dono de um determinado sub-tipo (folha).
+const grupoDoSel = (id: string) => TIPOS_GRUPOS.find((g) =>
+  g.leaf === id || g.subs?.some((s) => s.id === id) || g.grupos?.some((sg) => sg.subs.some((s) => s.id === id))
+)?.id ?? "reprodutivo";
+// Sub-grupo (nível 2, ex.: Curativa/Preventiva dentro de Sanitário) dono da folha, se houver.
+const subgrupoDoSel = (id: string): string | undefined =>
+  TIPOS_GRUPOS.flatMap((g) => g.grupos ?? []).find((sg) => sg.subs.some((s) => s.id === id))?.id;
 
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
@@ -2872,6 +2887,7 @@ export default function LancamentosPage() {
   }), [animais]);
   const tipo = TIPOS_LEAFS.find((t) => t.id === sel)!;
   const grupoAtivo = grupoDoSel(sel);
+  const subgrupoAtivo = subgrupoDoSel(sel);
 
   return (
     <div className="p-6 animate-in">
@@ -2929,7 +2945,7 @@ export default function LancamentosPage() {
             {TIPOS_GRUPOS.map((g) => {
               const Icon = g.icon;
               const ativo = g.id === grupoAtivo;
-              const alvo = g.subs ? (ativo ? sel : g.subs[0].id) : g.leaf!;
+              const alvo = g.grupos ? (ativo ? sel : g.grupos[0].subs[0].id) : g.subs ? (ativo ? sel : g.subs[0].id) : g.leaf!;
               return (
                 <div key={g.id}>
                   <button onClick={() => trocarTipo(alvo)}
@@ -2938,6 +2954,39 @@ export default function LancamentosPage() {
                       color: ativo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.85rem", fontWeight: ativo ? 700 : 500 }}>
                     <Icon size={16} /> {g.label}
                   </button>
+                  {ativo && g.grupos && (
+                    <div className="space-y-1" style={{ paddingLeft: "1.4rem", marginTop: "0.2rem" }}>
+                      {g.grupos.map((sg) => {
+                        const SGIcon = sg.icon; const sgAtivo = sg.id === subgrupoAtivo;
+                        const sgAlvo = sgAtivo ? sel : sg.subs[0].id;
+                        return (
+                          <div key={sg.id}>
+                            <button onClick={() => trocarTipo(sgAlvo)}
+                              style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.4rem 0.6rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
+                                border: "1px solid " + (sgAtivo ? "var(--dourado)" : "transparent"), background: sgAtivo ? "rgba(94,26,46,0.3)" : "transparent",
+                                color: sgAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.8rem", fontWeight: sgAtivo ? 700 : 500 }}>
+                              <SGIcon size={13} /> {sg.label}
+                            </button>
+                            {sgAtivo && (
+                              <div className="space-y-1" style={{ paddingLeft: "1.3rem", marginTop: "0.2rem" }}>
+                                {sg.subs.map((s) => {
+                                  const SIcon = s.icon; const subAtivo = s.id === sel;
+                                  return (
+                                    <button key={s.id} onClick={() => trocarTipo(s.id)}
+                                      style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", padding: "0.35rem 0.55rem", borderRadius: "6px", cursor: "pointer", textAlign: "left",
+                                        border: "1px solid " + (subAtivo ? "var(--dourado)" : "transparent"), background: subAtivo ? "rgba(94,26,46,0.3)" : "transparent",
+                                        color: subAtivo ? "var(--dourado-light)" : "var(--text-muted)", fontSize: "0.76rem", fontWeight: subAtivo ? 700 : 500 }}>
+                                      <SIcon size={12} /> {s.label}
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                   {ativo && g.subs && (
                     <div className="space-y-1" style={{ paddingLeft: "1.4rem", marginTop: "0.2rem" }}>
                       {g.subs.map((s) => {
