@@ -1,5 +1,5 @@
 "use client";
-import React, { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
@@ -2832,12 +2832,12 @@ export default function LancamentosPage() {
     const ir = new URLSearchParams(window.location.search).get("ir");
     if (ir && TIPOS_LEAFS.some((t) => t.id === ir)) setSel(ir);
   }, []);
-  const trocarTipo = (novoId: string) => {
+  const trocarTipo = useCallback((novoId: string) => {
     if (novoId === sel) return;
     if (sujo && !window.confirm("Você tem certeza que quer sair dessa página? Os dados não salvos serão perdidos.")) return;
     setSujo(false);
     setSel(novoId);
-  };
+  }, [sel, sujo]);
   // Avisa também ao fechar a aba/recarregar/sair do site com dados não salvos.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (sujo) { e.preventDefault(); e.returnValue = ""; } };

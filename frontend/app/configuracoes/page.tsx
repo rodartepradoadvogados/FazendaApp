@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
@@ -50,12 +50,12 @@ export default function ConfiguracoesPage() {
     }
   )), [abasVisiveis]);
   const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba) : (aba ?? "");
-  const onSelect = (id: string) => {
+  const onSelect = useCallback((id: string) => {
     if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
     if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
     setAba("cadastro"); setCadastroAba(id as AbaCadastro);
-  };
-  useSubNavRegister(useMemo(() => (aba ? { tree: subNavTree, activeId, onSelect } : null), [subNavTree, activeId, aba])); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [abasVisiveis]);
+  useSubNavRegister(useMemo(() => (aba ? { tree: subNavTree, activeId, onSelect } : null), [subNavTree, activeId, aba, onSelect]));
 
   if (!aba) {
     return (
