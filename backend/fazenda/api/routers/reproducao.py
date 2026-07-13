@@ -174,7 +174,7 @@ def registrar_reconfirmacao(dados: ReconfirmacaoIn, session: Session = Depends(g
 
 
 class CriaIn(BaseModel):
-    numero: str
+    numero: str = ""      # vazio = cria sem número → baixa automática (natimorto/não entra no rebanho)
     sexo: str  # "F" | "M"
     nasceu_viva: bool = True
 
@@ -186,6 +186,7 @@ class PartoIn(BaseModel):
     crias: list[CriaIn] = []
     retencao_placenta: bool | None = None
     gemelar: bool | None = None
+    gemelar_sexo: str | None = None  # "FF" | "FM" | "MM" (informado ou derivado dos sexos das crias)
     observacao: str | None = None
 
 
@@ -206,6 +207,12 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
     ).first()
     ordem_parto = (ultimo_parto.ordem_parto or 0) + 1 if ultimo_parto else 1
 
+    # Sexo do parto gemelar: usa o informado ou deriva dos sexos das crias.
+    gemelar_sexo = dados.gemelar_sexo
+    if not gemelar_sexo and len(dados.crias) >= 2:
+        combo = "".join(sorted((dados.crias[0].sexo or "").upper() + (dados.crias[1].sexo or "").upper()))
+        gemelar_sexo = {"FF": "FF", "FM": "FM", "MM": "MM"}.get(combo)
+
     parto = Parto(
         animal_id=mae.id,
         numero_matriz=dados.numero_matriz,
@@ -214,16 +221,21 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
         tipo_parto=dados.tipo_parto,
         sexo_cria_1=dados.crias[0].sexo if len(dados.crias) > 0 else None,
         sexo_cria_2=dados.crias[1].sexo if len(dados.crias) > 1 else None,
-        numero_cria_1=dados.crias[0].numero if len(dados.crias) > 0 else None,
-        numero_cria_2=dados.crias[1].numero if len(dados.crias) > 1 else None,
+        numero_cria_1=(dados.crias[0].numero or None) if len(dados.crias) > 0 else None,
+        numero_cria_2=(dados.crias[1].numero or None) if len(dados.crias) > 1 else None,
         gemelar=dados.gemelar if dados.gemelar is not None else len(dados.crias) > 1,
+        gemelar_sexo=gemelar_sexo,
         retencao_placenta=dados.retencao_placenta,
     )
     session.add(parto)
 
     crias_criadas = []
+    crias_baixadas = []
     for cria in dados.crias:
-        if not cria.nasceu_viva:
+        # Sem número OU marcada como não-viva → baixa automática (natimorto/não
+        # entra no rebanho). Fica registrada no parto (sexo), mas sem ficha.
+        if not (cria.numero or "").strip() or not cria.nasceu_viva:
+            crias_baixadas.append(cria.sexo or "?")
             continue
         if session.exec(select(Animal).where(Animal.numero == cria.numero)).first():
             continue  # já cadastrada — não sobrescreve
@@ -233,6 +245,19 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
         ))
         crias_criadas.append(cria.numero)
 
+    # Retenção de placenta → gera um item na Agenda (avaliação/tratamento) no
+    # dia do parto, para não passar despercebido.
+    if dados.retencao_placenta:
+        from fazenda.models import AgendaManual
+        session.add(AgendaManual(
+            data_evento=dados.data_parto,
+            descricao=f"Retenção de placenta — vaca {mae.numero}: avaliar/tratar",
+            categoria="Sanidade",
+            numero_animal=mae.numero,
+            tipo_evento="Outro",
+            observacao="Gerado automaticamente pelo lançamento de parto com retenção de placenta.",
+        ))
+
     # DEL reseta ao parir — o resto da ficha (categoria, produção etc.) só é
     # atualizado de fato no próximo upload do GERAL.csv.
     mae.del_dias = 0
@@ -240,7 +265,7 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
     session.add(mae)
 
     session.commit()
-    return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas}
+    return {"criado": True, "ordem_parto": ordem_parto, "crias_criadas": crias_criadas, "crias_baixadas": crias_baixadas}
 
 
 class HormonioIatfIn(BaseModel):

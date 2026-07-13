@@ -570,7 +570,9 @@ export async function fetchSanidade() {
 
 export async function registrarColostragem(dados: {
   numero_animal: string; tomou_colostro?: boolean; litros_colostro?: number; brix_colostro?: number;
-  data_colostro?: string; brix_soro?: number; data_teste_sangue?: string; observacao?: string;
+  data_colostro?: string; hora_parto?: string; hora_colostro?: string; peso_nascer_kg?: number;
+  brix_soro?: number; proteina_serica?: number; apenas_colostro_po?: boolean;
+  data_teste_sangue?: string; observacao?: string;
 }) {
   const res = await authFetch(`${API}/sanidade/colostragem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1116,7 +1118,7 @@ export async function criarServico(dados: {
 export async function criarParto(dados: {
   numero_matriz: string; data_parto: string; tipo_parto?: string;
   crias: { numero: string; sexo: string; nasceu_viva?: boolean }[];
-  retencao_placenta?: boolean; gemelar?: boolean; observacao?: string;
+  retencao_placenta?: boolean; gemelar?: boolean; gemelar_sexo?: string; observacao?: string;
 }) {
   const res = await authFetch(`${API}/reproducao/parto`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

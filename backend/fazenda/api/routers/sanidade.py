@@ -453,13 +453,46 @@ def _classe_soro(brix: float | None) -> str | None:
     return "falha"
 
 
+def _classe_colostragem(brix: float | None, proteina: float | None) -> str | None:
+    """Eficiência de transferência de imunidade passiva, em 4 níveis, por Brix
+    sérico (%) OU proteína sérica total (g/dL) — o que estiver disponível
+    (Brix tem prioridade). Faixas (Lombard et al.):
+      excelente  Brix >9,4  · proteína >6,2   (meta: >50% das bezerras)
+      boa        Brix 8,9-9,3 · proteína 5,8-6,1 (meta: 30%)
+      aceitavel  Brix 8,1-8,8 · proteína 5,1-5,7 (meta: 15%)
+      ruim       Brix <8,1  · proteína <5,1    (meta: <5%)
+    """
+    if brix is not None:
+        if brix > 9.4:
+            return "excelente"
+        if brix >= 8.9:
+            return "boa"
+        if brix >= 8.1:
+            return "aceitavel"
+        return "ruim"
+    if proteina is not None:
+        if proteina > 6.2:
+            return "excelente"
+        if proteina >= 5.8:
+            return "boa"
+        if proteina >= 5.1:
+            return "aceitavel"
+        return "ruim"
+    return None
+
+
 class ColostragemIn(BaseModel):
     numero_animal: str
     tomou_colostro: bool | None = None
     litros_colostro: float | None = None
     brix_colostro: float | None = None
     data_colostro: date | None = None
+    hora_parto: str | None = None
+    hora_colostro: str | None = None
+    peso_nascer_kg: float | None = None
     brix_soro: float | None = None
+    proteina_serica: float | None = None
+    apenas_colostro_po: bool | None = None
     data_teste_sangue: date | None = None
     observacao: str | None = None
 
@@ -530,8 +563,16 @@ def relatorio_sanitario_bezerras(
             "brix_colostro": r.brix_colostro if r else None,
             "classe_colostro": _classe_colostro(r.brix_colostro if r else None),
             "data_colostro": r.data_colostro if r else None,
+            "hora_parto": r.hora_parto if r else None,
+            "hora_colostro": r.hora_colostro if r else None,
+            "peso_nascer_kg": r.peso_nascer_kg if r else None,
             "brix_soro": r.brix_soro if r else None,
+            "proteina_serica": r.proteina_serica if r else None,
             "classe_soro": _classe_soro(r.brix_soro if r else None),
+            "classe_colostragem": _classe_colostragem(r.brix_soro if r else None, r.proteina_serica if r else None),
+            "apenas_colostro_po": (r.apenas_colostro_po if r else None) or False,
+            # Sem mensuração = tem registro mas nenhum Brix/proteína sérica medido.
+            "sem_mensuracao": bool(r) and (r.brix_soro is None and r.proteina_serica is None),
             "data_teste_sangue": r.data_teste_sangue if r else None,
         })
     saida.sort(key=lambda x: x["numero"])

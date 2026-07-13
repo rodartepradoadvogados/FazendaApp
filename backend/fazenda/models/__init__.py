@@ -246,6 +246,9 @@ class Parto(SQLModel, table=True):
     numero_cria_1: Optional[str] = None
     numero_cria_2: Optional[str] = None
     gemelar: Optional[bool] = None
+    # Combinação de sexos de um parto gemelar: "FF" | "FM" | "MM". Em FM, a fêmea
+    # costuma ser freemartin (infértil) — informação útil no descarte precoce.
+    gemelar_sexo: Optional[str] = None
     retencao_placenta: Optional[bool] = None
 
 
@@ -267,7 +270,14 @@ class ColostragemBezerra(SQLModel, table=True):
     litros_colostro: Optional[float] = None
     brix_colostro: Optional[float] = None  # Ouro >25% · Prata 18-25% · Bronze <18%
     data_colostro: Optional[date] = None
-    brix_soro: Optional[float] = None  # teste de sangue (IgG): Sucesso >=8,4 · Alerta 8,1-8,3 · Falha <=8,0
+    hora_parto: Optional[str] = None       # "HH:MM" — hora do parto
+    hora_colostro: Optional[str] = None    # "HH:MM" — hora do 1º oferecimento de colostro
+    peso_nascer_kg: Optional[float] = None # peso do animal ao nascer
+    brix_soro: Optional[float] = None  # teste de sangue: Brix sérico (refratômetro)
+    proteina_serica: Optional[float] = None  # teste de sangue: proteína sérica total (g/dL)
+    # True = bezerra que recebeu somente colostro em pó (sem colostro materno);
+    # entra em grupo próprio no relatório de eficiência de colostragem.
+    apenas_colostro_po: Optional[bool] = None
     data_teste_sangue: Optional[date] = None
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
