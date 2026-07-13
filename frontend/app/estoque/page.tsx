@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Package, AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchEstoque, fetchAgenda, formatBRL } from "@/lib/api";
+import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, formatDate, type MovimentoEstoqueRow } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
@@ -10,6 +10,12 @@ const COLUNAS_ESTOQUE = [
   { header: "Qtd", key: "quantidade" }, { header: "Unidade", key: "unidade" },
   { header: "Mínimo", key: "estoque_minimo" }, { header: "Valor unit.", key: "valor_unitario" },
   { header: "Valor total", key: "valor_total" }, { header: "Status", key: "status" },
+];
+
+const COLUNAS_MOVIMENTOS = [
+  { header: "Data", key: "data_movimento" }, { header: "Item", key: "nome_item" },
+  { header: "Movimento", key: "movimento" }, { header: "Quantidade", key: "quantidade" },
+  { header: "Unidade", key: "unidade" }, { header: "Observação", key: "observacao" },
 ];
 
 type Item = {
@@ -28,10 +34,13 @@ export default function EstoquePage() {
   const [fCat, setFCat] = useState("");
   const [busca, setBusca] = useState("");
   const [soAbaixo, setSoAbaixo] = useState(false);
+  const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const admin = ehAdmin();
 
   useEffect(() => {
     fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
     fetchAgenda().then((a) => setHorm(a.hormonios_check || [])).catch(() => {});
+    fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch(() => {});
   }, []);
 
   const categorias = useMemo(() => {
@@ -158,6 +167,40 @@ export default function EstoquePage() {
               {filtrados.length > 200 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 200 de {filtrados.length}.</p>}
             </div>
           </div>
+
+          {movimentos && (
+            <div className="card mt-4">
+              <div className="card-header mb-3 flex items-center justify-between">
+                <span>Movimentos (entradas/saídas manuais)</span>
+                <div className="flex items-center gap-3">
+                  <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{movimentos.length}</span>
+                  <ExportarBotoes titulo="Movimentos de estoque" nomeArquivoBase="movimentos_estoque" colunas={COLUNAS_MOVIMENTOS} linhas={movimentos} />
+                </div>
+              </div>
+              <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+                <table className="fazenda-table">
+                  <thead><tr>
+                    <th>Data</th><th>Item</th><th>Movimento</th><th style={{ textAlign: "right" }}>Qtd</th><th>Observação</th>
+                    {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                  </tr></thead>
+                  <tbody>
+                    {movimentos.slice(0, 200).map((m) => (
+                      <tr key={m.id}>
+                        <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{formatDate(m.data_movimento)}</td>
+                        <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{m.movimento}</td>
+                        <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
+                        <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
+                        {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
+                      </tr>
+                    ))}
+                    {!movimentos.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento lançado ainda.</td></tr>}
+                  </tbody>
+                </table>
+                {movimentos.length > 200 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 200 de {movimentos.length}.</p>}
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

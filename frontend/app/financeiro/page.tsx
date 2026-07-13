@@ -7,7 +7,7 @@ import {
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
-  criarVale, atualizarLancamentoFinanceiro,
+  criarVale, atualizarLancamentoFinanceiro, ehAdmin,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -43,6 +43,7 @@ type Lanc = {
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
   mes_competencia: string | null; mes_caixa: string | null;
   itens?: { produto: string }[];
+  usuario_nome?: string | null;
 };
 
 type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca";
@@ -777,6 +778,7 @@ const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--
  * pagamento (data, conta corrente, forma de pagamento, comprovante).
  */
 function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
+  const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
@@ -981,6 +983,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
               <th>Situação</th>
               <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
               <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
+              {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
             </tr></thead>
             <tbody>
               {ordenados.map((r) => {
@@ -1002,10 +1005,11 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
                     </td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
+                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
                   </tr>
                 );
               })}
-              {!filtrados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
+              {!filtrados.length && <tr><td colSpan={admin ? 8 : 7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1257,6 +1261,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
 }
 
 function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void }) {
+  const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
   const hoje = new Date().toISOString().slice(0, 10);
   const rotuloContraparte = rel === "a_receber" || rel === "recebidas" ? "Cliente" : rel === "extrato" ? "Fornecedor/Cliente" : "Fornecedor";
@@ -1374,6 +1379,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
                 <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
                 {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />}
                 {!emAberto && <th>Conta bancária</th>}
+                {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 <th style={{ textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
@@ -1393,6 +1399,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
                     {!emAberto && <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.valor_pago != null ? formatBRL(r.valor_pago) : "—"}</td>}
                     {!emAberto && <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>{r.conta_bancaria || "—"}</td>}
+                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
                     <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
                       {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
@@ -1400,7 +1407,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
                   </tr>
                 );
               })}
-              {!ordenados.length && <tr><td colSpan={10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
+              {!ordenados.length && <tr><td colSpan={admin ? 11 : 10} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1.5rem" }}>Nenhum lançamento nesta aba.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1422,6 +1429,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
 }) {
+  const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [opcoes, setOpcoes] = useState<{ fornecedores: string[]; produtos: string[] }>({ fornecedores: [], produtos: [] });
@@ -1574,6 +1582,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
               <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
               <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
               <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
+              {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               <th></th>
             </tr></thead>
             <tbody>
@@ -1591,11 +1600,12 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.fornecedor || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)", maxWidth: "220px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{produtos || "—"}</td>
                     <td style={{ textAlign: "right", fontWeight: 600, color: r.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{formatBRL(r.valor)}</td>
+                    {admin && <td>{r.usuario_nome ?? "—"}</td>}
                     <td>{ativa ? <CheckCircle2 size={14} style={{ color: "var(--dourado-light)" }} /> : <Circle size={14} style={{ color: "var(--text-muted)", opacity: 0.4 }} />}</td>
                   </tr>
                 );
               })}
-              {!filtradas.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
+              {!filtradas.length && <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma nota em aberto no filtro.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1665,6 +1675,7 @@ type RegistroFolha = {
   recorrente: boolean; dia_vencimento: number | null;
   origem_recorrencia_id: number | null; numero_lancamento_gerado: string | null;
   detalhe: { label: string; valor: number }[];
+  usuario_nome?: string | null;
 };
 
 function arredonda2(n: number) {
@@ -1692,6 +1703,7 @@ function CampoRetencao({
 }
 
 function FolhaPagamentoView() {
+  const admin = ehAdmin();
   const [pessoas, setPessoas] = useState<PessoaFolha[]>([]);
   const [regs, setRegs] = useState<RegistroFolha[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1998,7 +2010,9 @@ function FolhaPagamentoView() {
               <th style={{ textAlign: "right" }}>Valor bruto</th>
               <th style={{ textAlign: "right" }}>Descontos de folha</th>
               <th style={{ textAlign: "right" }}>Descontos de vale</th>
-              <th>Status</th><th style={{ textAlign: "right" }}>Valor pago</th><th></th>
+              <th>Status</th><th style={{ textAlign: "right" }}>Valor pago</th>
+              {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+              <th></th>
             </tr></thead>
             <tbody>
               {regsFiltrados.map((r) => {
@@ -2040,6 +2054,7 @@ function FolhaPagamentoView() {
                       </td>
                       <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: r.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{r.status === "pago" ? "Pago" : "Pendente"}</span></td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{r.status === "pago" ? formatBRL(r.valor_liquido) : "—"}</td>
+                      {admin && <td>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         {r.status === "pendente" && (
                           <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
@@ -2047,7 +2062,7 @@ function FolhaPagamentoView() {
                       </td>
                     </tr>
                     {descAberto && (
-                      <tr><td colSpan={9}>
+                      <tr><td colSpan={admin ? 10 : 9}>
                         <div style={{ padding: "0.5rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
                             {expandDesc!.tipo === "folha" ? "Descontos de folha" : "Descontos de vale"} — {r.pessoa_nome}, {mesCompLabel(r.competencia)}
@@ -2081,7 +2096,7 @@ function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {pagandoId === r.id && (
-                      <tr><td colSpan={9}>
+                      <tr><td colSpan={admin ? 10 : 9}>
                         <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
                           <div><label style={labelStyleLote}>Data do pagamento</label>
                             <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
@@ -2092,7 +2107,7 @@ function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {expandido && !editando && (
-                      <tr><td colSpan={9}>
+                      <tr><td colSpan={admin ? 10 : 9}>
                         <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
                             <tbody>
@@ -2116,7 +2131,7 @@ function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {editando && (
-                      <tr><td colSpan={9}>
+                      <tr><td colSpan={admin ? 10 : 9}>
                         <div style={{ padding: "0.75rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Pessoa</label>
@@ -2170,7 +2185,7 @@ function FolhaPagamentoView() {
                   </Fragment>
                 );
               })}
-              {regs && !regsFiltrados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{regs.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
+              {regs && !regsFiltrados.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{regs.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
             </tbody>
           </table>
         </div>

@@ -1,14 +1,14 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { ShoppingCart, Check } from "lucide-react";
-import { criarCompraAnimal, fetchComprasAnimais, fetchFornecedores } from "@/lib/api";
+import { criarCompraAnimal, fetchComprasAnimais, fetchFornecedores, ehAdmin } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
 type Compra = {
   id: number; numero_animal: string; vendedor: string; valor: number; tipo_valor: string;
-  data_compra: string; numero_lancamento_gerado: string | null;
+  data_compra: string; numero_lancamento_gerado: string | null; usuario_nome?: string | null;
 };
 
 const selStyle: React.CSSProperties = {
@@ -32,6 +32,7 @@ export default function ComprarAnimal() {
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const admin = ehAdmin();
 
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [pagarComissao, setPagarComissao] = useState(false);
@@ -167,7 +168,7 @@ export default function ComprarAnimal() {
           <div className="card-header mb-3">Compras registradas</div>
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Nº</th><th>Vendedor</th><th>Data</th><th style={{ textAlign: "right" }}>Valor (por animal)</th><th>Lançamento</th></tr></thead>
+              <thead><tr><th>Nº</th><th>Vendedor</th><th>Data</th><th style={{ textAlign: "right" }}>Valor (por animal)</th><th>Lançamento</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}</tr></thead>
               <tbody>
                 {historico.map((c) => (
                   <tr key={c.id}>
@@ -176,6 +177,7 @@ export default function ComprarAnimal() {
                     <td style={{ fontSize: "0.8rem" }}>{c.data_compra}</td>
                     <td style={{ textAlign: "right" }}>R$ {c.valor.toFixed(2)}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{c.numero_lancamento_gerado || "—"}</td>
+                    {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{c.usuario_nome ?? "—"}</td>}
                   </tr>
                 ))}
               </tbody>

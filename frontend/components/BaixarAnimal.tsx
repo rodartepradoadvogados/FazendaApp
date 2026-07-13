@@ -1,12 +1,17 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Skull, AlertTriangle, Check, Search } from "lucide-react";
-import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar } from "@/lib/api";
+import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
+type Baixa = {
+  id: number; numero_animal: string; tipo_baixa: string; motivo: string; data_baixa: string;
+  valor: number | null; cliente: string | null; numero_lancamento_gerado: string | null;
+  usuario_nome?: string | null;
+};
 
 const LABEL_TIPO_BAIXA: Record<string, string> = {
   morte: "Morte", descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário",
@@ -43,6 +48,9 @@ export default function BaixarAnimal() {
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+  const admin = ehAdmin();
+
+  const [historico, setHistorico] = useState<Baixa[] | null>(null);
 
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [pagarComissao, setPagarComissao] = useState(false);
@@ -55,6 +63,7 @@ export default function BaixarAnimal() {
     fetchAnimais().then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
     fetchOpcoesBaixa().then(setOpcoes).catch((e) => setError(e.message));
     fetchFornecedores().then(setFornecedores).catch(() => {});
+    fetchBaixas().then(setHistorico).catch(() => {});
   };
   useEffect(carregar, []);
 
@@ -277,6 +286,31 @@ export default function BaixarAnimal() {
           <button className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : modo === "a_descartar" ? `Marcar ${selecionados.size || ""} como "A descartar"` : `Baixar ${selecionados.size || ""} animal(is)`}
           </button>
+        </div>
+      )}
+
+      {historico && historico.length > 0 && (
+        <div className="card">
+          <div className="card-header mb-3">Baixas registradas</div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th>Nº</th><th>Tipo</th><th>Motivo</th><th>Data</th><th style={{ textAlign: "right" }}>Valor</th><th>Cliente</th><th>Lançamento</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}</tr></thead>
+              <tbody>
+                {historico.map((b) => (
+                  <tr key={b.id}>
+                    <td style={{ fontWeight: 700 }}>{b.numero_animal}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{LABEL_TIPO_BAIXA[b.tipo_baixa] || b.tipo_baixa}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{LABEL_MOTIVO[b.motivo] || b.motivo}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{b.data_baixa}</td>
+                    <td style={{ textAlign: "right" }}>{b.valor != null ? `R$ ${b.valor.toFixed(2)}` : "—"}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{b.cliente || "—"}</td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.numero_lancamento_gerado || "—"}</td>
+                    {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.usuario_nome ?? "—"}</td>}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>

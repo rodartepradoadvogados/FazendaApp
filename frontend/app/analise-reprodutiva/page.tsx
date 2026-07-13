@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
-import { fetchServicosAnalise } from "@/lib/api";
+import { fetchServicosAnalise, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
@@ -24,6 +24,7 @@ type Reg = {
   tipo_servico: string; protocolo: string; touro: string; inseminador: string; metodo_ia: string;
   ano: number | null; mes: string | null; data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  usuario_nome?: string | null;
 };
 
 // Dimensões que o usuário pode usar para filtrar e para quebrar os gráficos.
@@ -99,6 +100,7 @@ export default function AnaliseReprodutivaPage() {
   const [dimensao, setDimensao] = useState<keyof Reg>("tipo_servico");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
+  const admin = ehAdmin();
 
   useEffect(() => {
     fetchServicosAnalise()
@@ -257,6 +259,7 @@ export default function AnaliseReprodutivaPage() {
                   <ThOrdenavel label="Inseminador" campo="inseminador" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Protocolo" campo="protocolo" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
                   <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordFiltrados.coluna} dir={ordFiltrados.dir} ordenar={ordFiltrados.ordenar} />
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr></thead>
                 <tbody>
                   {ordFiltrados.linhasOrdenadas.map((r, i) => (
@@ -270,9 +273,10 @@ export default function AnaliseReprodutivaPage() {
                       <td style={{ fontSize: "0.78rem" }}>{r.inseminador && r.inseminador !== "(sem inseminador)" ? r.inseminador : "—"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.protocolo || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.diagnostico || "—"}</td>
+                      {admin && <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.usuario_nome ?? "—"}</td>}
                     </tr>
                   ))}
-                  {!filtrados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro atual.</td></tr>}
+                  {!filtrados.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum registro no filtro atual.</td></tr>}
                 </tbody>
               </table>
             </div>

@@ -1,12 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { History, AlertTriangle, Search } from "lucide-react";
-import { fetchMovimentacoes, formatDate } from "@/lib/api";
+import { fetchMovimentacoes, formatDate, ehAdmin } from "@/lib/api";
 
 type Movimento = {
   id: number; numero_matriz: string; lote_origem: string | null; lote_destino: string;
   data_movimento: string; hora_movimento: string | null; motivo: string;
-  observacao: string | null; responsavel: string | null;
+  observacao: string | null; responsavel: string | null; usuario_nome?: string | null;
 };
 
 const selStyle: React.CSSProperties = {
@@ -18,6 +18,7 @@ export default function HistoricoMovimentacoes() {
   const [movs, setMovs] = useState<Movimento[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const admin = ehAdmin();
 
   useEffect(() => { fetchMovimentacoes().then(setMovs).catch((e) => setError(e.message)); }, []);
 
@@ -52,6 +53,7 @@ export default function HistoricoMovimentacoes() {
                 <tr>
                   <th>Data</th><th>Hora</th><th>Matriz</th><th>Origem</th><th>Destino</th>
                   <th>Motivo</th><th>Responsável</th><th>Observação</th>
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                 </tr>
               </thead>
               <tbody>
@@ -65,9 +67,10 @@ export default function HistoricoMovimentacoes() {
                     <td style={{ fontSize: "0.78rem" }}>{m.motivo}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.responsavel || "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
+                    {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
                   </tr>
                 ))}
-                {!filtrados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
+                {!filtrados.length && <tr><td colSpan={admin ? 9 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma movimentação registrada.</td></tr>}
               </tbody>
             </table>
           </div>

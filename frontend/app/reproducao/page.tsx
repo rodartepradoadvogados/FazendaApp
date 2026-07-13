@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Heart, PieChart, Stethoscope, AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchServicosAnalise, podeModulo } from "@/lib/api";
+import { fetchServicosAnalise, podeModulo, ehAdmin } from "@/lib/api";
 import { TabBar } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -14,6 +14,7 @@ type Serv = {
   tipo_servico: string; touro: string; metodo_ia?: string;
   data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  usuario_nome?: string | null;
 };
 
 const DIAG_COR: Record<string, string> = { POSITIVO: "var(--green-light)", NEGATIVO: "var(--red)", ABERTO: "var(--amber)" };
@@ -35,6 +36,7 @@ function ReproducaoVisaoGeral() {
   const [modo, setModo] = useState<"data" | "ciclo">("data");
   const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
   const [cicloIdx, setCicloIdx] = useState(0);
+  const admin = ehAdmin();
 
   useEffect(() => { fetchServicosAnalise().then((d) => setRegs(d.servicos)).catch((e) => setError(e.message)); }, []);
 
@@ -169,6 +171,7 @@ function ReproducaoVisaoGeral() {
                 <ThOrdenavel label="Tentativa" campo="ordem_tentativa" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="DEL" campo="del_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="Touro" campo="touro" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               </tr></thead>
               <tbody>
                 {ordServ.linhasOrdenadas.slice(0, 500).map((s) => (
@@ -182,6 +185,7 @@ function ReproducaoVisaoGeral() {
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.del_servico ?? "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{s.touro}</td>
+                    {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{s.usuario_nome ?? "—"}</td>}
                   </tr>
                 ))}
               </tbody>

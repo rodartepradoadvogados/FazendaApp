@@ -16,7 +16,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, Wheat, ClipboardList, ChevronDown, ChevronRight, Percent } from "lucide-react";
 import {
   fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta,
-  criarDieta, fetchMateriaSeca, salvarMateriaSeca, type ContextoDieta, type ApresentacaoDieta,
+  criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, type ContextoDieta, type ApresentacaoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { TabelaNutricionalBotao } from "./TabelaNutricional";
@@ -404,13 +404,14 @@ function Metrica({ titulo, valor }: { titulo: string; valor: string }) {
 }
 
 // ─────────────────────────── Visualizar dietas ───────────────────────────
-type DietaRow = { id: number; lote: number; responsavel?: string | null; data_abertura: string; data_prevista_encerramento?: string | null; data_efetivo_encerramento?: string | null; ativa: boolean };
+type DietaRow = { id: number; lote: number; responsavel?: string | null; data_abertura: string; data_prevista_encerramento?: string | null; data_efetivo_encerramento?: string | null; ativa: boolean; usuario_nome?: string | null };
 
 function VisualizarDietas() {
   const [dietas, setDietas] = useState<DietaRow[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [aberta, setAberta] = useState<number | null>(null);
   const [apres, setApres] = useState<Record<number, ApresentacaoDieta | null>>({});
+  const admin = ehAdmin();
 
   useEffect(() => { fetchDietas().then(setDietas).catch((e) => setErro(e.message)); }, []);
 
@@ -428,7 +429,7 @@ function VisualizarDietas() {
   return (
     <div className="overflow-x-auto">
       <table className="fazenda-table">
-        <thead><tr><th></th><th>Lote</th><th>Responsável</th><th>Início</th><th>Provável fim</th><th>Situação</th></tr></thead>
+        <thead><tr><th></th><th>Lote</th><th>Responsável</th><th>Início</th><th>Provável fim</th><th>Situação</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}</tr></thead>
         <tbody>
           {dietas.map((d) => (
             <Fragment key={d.id}>
@@ -443,9 +444,10 @@ function VisualizarDietas() {
                     {d.ativa ? "Ativa" : `Encerrada em ${formatDate(d.data_efetivo_encerramento)}`}
                   </span>
                 </td>
+                {admin && <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{d.usuario_nome ?? "—"}</td>}
               </tr>
               {aberta === d.id && (
-                <tr><td colSpan={6} style={{ padding: 0 }}>
+                <tr><td colSpan={admin ? 7 : 6} style={{ padding: 0 }}>
                   <div style={{ background: "var(--surface-2)", padding: "0.85rem" }}>
                     {apres[d.id] === null ? <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando apresentação…</p> : apres[d.id] && <ApresentacaoBox a={apres[d.id]!} />}
                   </div>
@@ -453,7 +455,7 @@ function VisualizarDietas() {
               )}
             </Fragment>
           ))}
-          {!dietas.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma dieta lançada ainda.</td></tr>}
+          {!dietas.length && <tr><td colSpan={admin ? 7 : 6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma dieta lançada ainda.</td></tr>}
         </tbody>
       </table>
     </div>
