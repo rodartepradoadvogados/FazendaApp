@@ -4,9 +4,11 @@ Robô do Telegram — intake de documentos financeiros.
 O usuário manda um XML de NF-e, uma foto/PDF de nota fiscal ou um recibo/
 comprovante para o robô. O robô pergunta, com botões, se é RECEITA ou DESPESA;
 ao responder, lê o documento com a mesma leitura automática do site
-(`parse_nfe_xml` para XML, `ler_documento`/IA para foto/PDF) e cria o
-lançamento em Contas a pagar/receber (ou pagas/recebidas, se for recibo já
-quitado), deixando-o pendente de conferência e edição no site.
+(`parse_nfe_xml` para XML, `ler_documento`/IA para foto/PDF) e cria um
+LancamentoPendente (tipo "despesa"/"receita") — igual aos lançamentos
+operacionais, NUNCA materializa direto. O lançamento só vira um registro real
+em Contas a pagar/receber (ou pagas/recebidas) quando a conta principal aprova
+em Aprovações (site ou app); ver `fazenda.rules.telegram_fluxos.criar_registro`.
 
 Ligado só quando `TELEGRAM_BOT_TOKEN` está configurado. As chamadas do Telegram
 chegam no webhook `/telegram/webhook` (rota pública, validada pelo segredo
@@ -87,74 +89,6 @@ def _chats_liberados() -> set[int]:
 def _autorizado(chat_id: int) -> bool:
     liberados = _chats_liberados()
     return bool(liberados) and chat_id in liberados
-
-
-# ── Conversão do documento lido em lançamento financeiro ───────────────────
-def _parse_data(valor) -> date | None:
-    if not valor:
-        return None
-    try:
-        return date.fromisoformat(str(valor)[:10])
-    except ValueError:
-        return None
-
-
-def _criar_lancamento_do_documento(session: Session, dados: dict, tipo: str) -> dict:
-    """Monta um LancamentoIn a partir do documento lido e grava usando a mesma
-    lógica do site. `tipo` é a escolha do usuário: 'receita' ou 'despesa'."""
-    # Importado aqui para evitar import circular (financeiro importa muita coisa).
-    from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento
-
-    itens_doc = dados.get("itens") or []
-    itens: list[ItemIn] = []
-    for it in itens_doc:
-        produto = (it.get("produto") or "").strip()
-        if not produto:
-            continue
-        vt = it.get("valor_total")
-        if vt is None and it.get("quantidade") and it.get("valor_unitario"):
-            vt = round(it["quantidade"] * it["valor_unitario"], 2)
-        itens.append(ItemIn(
-            produto=produto,
-            quantidade=it.get("quantidade"),
-            valor_unitario=it.get("valor_unitario"),
-            valor_total=float(vt or 0),
-        ))
-    if not itens:
-        # Sem itens discriminados: um único item com o valor total do documento.
-        rotulo = (dados.get("fornecedor_cliente") or "Documento recebido pelo Telegram").strip()
-        itens = [ItemIn(produto=rotulo, valor_total=float(dados.get("valor_total") or 0))]
-
-    eh_recibo = dados.get("tipo_documento") == "recibo"
-    data_emissao = _parse_data(dados.get("data_emissao"))
-    data_pagamento = _parse_data(dados.get("data_pagamento")) if eh_recibo else None
-    valor_total = sum(i.valor_total for i in itens)
-
-    lanc = LancamentoIn(
-        tipo=tipo,
-        itens=itens,
-        fornecedor_cliente=dados.get("fornecedor_cliente"),
-        numero_documento=dados.get("numero_documento"),
-        tipo_documento="Nota fiscal" if not eh_recibo else "Recibo/comprovante",
-        data_emissao=data_emissao,
-        # Vencimento alimenta Contas a pagar/receber e a Agenda.
-        data_vencimento=data_emissao or data_pagamento,
-        # Recibo já quitado nasce pago (vai para Contas pagas/recebidas).
-        data_pagamento=data_pagamento,
-        valor_pago=valor_total if data_pagamento else None,
-        conta_bancaria=dados.get("conta_bancaria") if eh_recibo else None,
-    )
-    res = criar_lancamento(dados=lanc, session=session)
-    # Marca a origem "telegram" (LancamentoIn não carrega esse campo) para
-    # identificar os lançamentos que vieram pelo robô.
-    from fazenda.models import ContaGerencial
-    for cid in res.get("ids", []):
-        conta = session.get(ContaGerencial, cid)
-        if conta:
-            conta.origem = "telegram"
-            session.add(conta)
-    session.commit()
-    return res
 
 
 def _ler_documento_pendente(pend: TelegramPendente) -> dict:
@@ -505,10 +439,9 @@ def _tratar_callback(session: Session, cq: dict) -> None:
         if tipo not in ("receita", "despesa"):
             _enviar(chat_id, "Não entendi a escolha. Envie o documento de novo.")
             return
-        _enviar(chat_id, "⏳ Lendo o documento e lançando…")
+        _enviar(chat_id, "⏳ Lendo o documento…")
         try:
             dados = _ler_documento_pendente(pend)
-            res = _criar_lancamento_do_documento(session, dados, tipo)
         except RuntimeError as e:
             _enviar(chat_id, f"⚠️ {e}")
             return
@@ -519,18 +452,22 @@ def _tratar_callback(session: Session, cq: dict) -> None:
             session.delete(pend)
             session.commit()
 
-        eh_recibo = dados.get("tipo_documento") == "recibo"
-        destino = ("Contas recebidas" if eh_recibo else "Contas a receber") if tipo == "receita" \
-            else ("Contas pagas" if eh_recibo else "Contas a pagar")
+        # Nunca materializa direto — todo lançamento financeiro do robô entra
+        # na fila de aprovação (mesma regra dos lançamentos operacionais).
+        resumo = fx.montar_resumo(tipo, dados)
+        pendente = LancamentoPendente(
+            tipo=tipo, payload=json.dumps(dados, default=str), resumo=resumo,
+            solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
+        )
+        session.add(pendente)
+        session.commit()
         forn = dados.get("fornecedor_cliente") or "—"
-        valor = res.get("valor_liquido") or 0
+        valor = dados.get("valor_total") or 0
         _enviar(chat_id, (
-            f"✅ Lançado em <b>{destino}</b>.\n"
-            f"Nº do lançamento: <code>{res.get('numero_lancamento')}</code>\n"
+            f"✅ Enviado para <b>aprovação</b> ({'receita' if tipo == 'receita' else 'despesa'}).\n"
             f"Contraparte: {forn}\n"
             f"Valor: R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + "\n\n"
-            "Está <b>pendente de conferência</b> — abra o site em "
-            "Financeiro → " + destino + " e use <b>Editar</b> para revisar e salvar."
+            "A conta principal vai revisar e aprovar no site ou no app, em <b>Aprovações</b>."
         ))
 
 
