@@ -877,6 +877,7 @@ class PrincipioAtivo(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     ativo: bool = True
     # Enriquecimento (documento base de princípios ativos).
+    categoria: Optional[str] = None  # grupo amplo do documento base, ex.: "Antimicrobianos e Antibióticos", "Biológicos (Vacinas e Diagnósticos)"
     categoria_software: Optional[str] = None  # ex.: "Antimicrobiano Sistêmico Injetável", "AINE", "Biológico (Vacina)"
     uso_principal: Optional[str] = None
     justificativa: Optional[str] = None

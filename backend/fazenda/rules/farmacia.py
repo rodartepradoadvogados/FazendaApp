@@ -75,6 +75,7 @@ def seed_farmacia(session: Session) -> None:
             pa = PrincipioAtivo(nome=p["nome"])
             session.add(pa)
         # Preenche só o que estiver vazio (respeita edições do usuário).
+        pa.categoria = pa.categoria or p.get("categoria")
         pa.categoria_software = pa.categoria_software or p.get("categoria_software")
         pa.uso_principal = pa.uso_principal or p.get("uso_principal")
         pa.justificativa = pa.justificativa or p.get("justificativa")
@@ -162,6 +163,25 @@ def compatibilizar_estoque(session: Session) -> dict:
     return {"vinculados": vinculados, "criados": criados}
 
 
+_NOME_LEGADO_SEM_CATALOGO = "Cepa B19 (Brucella abortus atenuada)"
+
+
+def _limpar_principio_legado(session: Session) -> None:
+    """Remove o placeholder legado (seed mínimo pré-catálogo) se nunca tiver sido
+    usado — sem marca comercial nem item de estoque vinculado. O princípio
+    correto do documento base é "Brucelose Bovina (Cepa 19 ou RB51)", já criado
+    pelo seed_farmacia. Não apaga nada que tenha uso real."""
+    pa = session.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == _NOME_LEGADO_SEM_CATALOGO)).first()
+    if not pa:
+        return
+    tem_marca = session.exec(select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == pa.id)).first()
+    tem_estoque = session.exec(select(Estoque).where(Estoque.principio_ativo_id == pa.id)).first()
+    if tem_marca or tem_estoque:
+        return
+    session.delete(pa)
+    session.commit()
+
+
 def bootstrap_farmacia(session: Session) -> None:
     """Garante o catálogo de princípios ativos/marcas e compatibiliza o estoque.
 
@@ -170,6 +190,7 @@ def bootstrap_farmacia(session: Session) -> None:
     base entram sem depender de flag de versão — corrige bancos que semearam antes
     do catálogo estar completo. A compatibilização do estoque legado roda uma vez."""
     seed_farmacia(session)
+    _limpar_principio_legado(session)
     chave = "farmacia_compat_v2"
     if not session.get(SeedFlag, chave):
         compatibilizar_estoque(session)
@@ -245,7 +266,7 @@ def resumo_principios(session: Session) -> list[dict]:
         minimo = pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0
         abaixo_minimo = bool(grupo) and apresentacoes < minimo
         saida.append({
-            "id": pa.id, "nome": pa.nome, "categoria_software": pa.categoria_software,
+            "id": pa.id, "nome": pa.nome, "categoria": pa.categoria, "categoria_software": pa.categoria_software,
             "uso_principal": pa.uso_principal, "justificativa": pa.justificativa,
             "eh_biologico": pa.eh_biologico, "doenca_id": pa.doenca_id,
             "unidade_base": pa.unidade_base, "unidade_apresentacao": pa.unidade_apresentacao,

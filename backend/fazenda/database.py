@@ -72,6 +72,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("estoque_inicializado", "BOOLEAN"),
     ],
     "principio_ativo": [
+        ("categoria", "VARCHAR"),
         ("categoria_software", "VARCHAR"), ("uso_principal", "VARCHAR"), ("justificativa", "VARCHAR"),
         ("doenca_id", "INTEGER"), ("eh_biologico", "BOOLEAN DEFAULT 0"),
         ("unidade_base", "VARCHAR"), ("unidade_apresentacao", "VARCHAR"),

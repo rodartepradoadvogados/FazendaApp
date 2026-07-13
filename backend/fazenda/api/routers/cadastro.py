@@ -709,21 +709,18 @@ SEED_DOENCAS = [
     "Brucelose", "Clostridiose", "Diarreia Neonatal", "Botulismo", "Pasteurelose", "Verminose",
     "Leptospirose", "Tuberculose", "Febre Aftosa", "Raiva",
 ]
-# Pequeno exemplo — só para ilustrar o vínculo com produtos já no Estoque.
-SEED_PRINCIPIOS_ATIVOS = ["Ivermectina", "Cepa B19 (Brucella abortus atenuada)"]
 
 
 def seed_cadastro_sanitario(session: Session) -> None:
-    """Cria os cadastros sanitários padrão se as tabelas ainda estiverem vazias (idempotente)."""
+    """Cria os cadastros sanitários padrão se as tabelas ainda estiverem vazias (idempotente).
+    Princípios ativos não entram aqui: o catálogo completo (documento base) é
+    responsabilidade de bootstrap_farmacia, que roda em todo start."""
     if not session.exec(select(EventoSanitario)).first():
         for nome in SEED_EVENTOS_SANITARIOS:
             session.add(EventoSanitario(nome=nome))
     if not session.exec(select(Doenca)).first():
         for nome in SEED_DOENCAS:
             session.add(Doenca(nome=nome))
-    if not session.exec(select(PrincipioAtivo)).first():
-        for nome in SEED_PRINCIPIOS_ATIVOS:
-            session.add(PrincipioAtivo(nome=nome))
     session.commit()
 
 

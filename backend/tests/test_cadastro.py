@@ -492,17 +492,27 @@ class TestValeFuncionario:
 class TestCadastroSanitario:
     """Princípio ativo / Doença / Evento sanitário — cadastros simples nome+ativo."""
 
-    def test_seed_cria_eventos_doencas_e_principios_padrao(self, client):
+    def test_seed_cria_eventos_e_doencas_padrao(self, client):
         c, engine = client
         from fazenda.api.routers.cadastro import seed_cadastro_sanitario
         with Session(engine) as s:
             seed_cadastro_sanitario(s)
         eventos = c.get("/cadastro/eventos-sanitarios").json()
         doencas = c.get("/cadastro/doencas").json()
-        principios = c.get("/cadastro/principios-ativos").json()
         assert any(e["nome"] == "Vermífugo" for e in eventos)
         assert any(d["nome"] == "Brucelose" for d in doencas)
-        assert len(principios) >= 1
+
+    def test_bootstrap_farmacia_cria_catalogo_de_principios_com_categoria(self, client):
+        # O catálogo de princípios ativos (documento base) é responsabilidade de
+        # bootstrap_farmacia, não de seed_cadastro_sanitario — roda em todo start.
+        c, engine = client
+        from fazenda.rules.farmacia import bootstrap_farmacia
+        with Session(engine) as s:
+            bootstrap_farmacia(s)
+        principios = c.get("/cadastro/principios-ativos").json()
+        assert len(principios) == 38
+        assert all(p["categoria"] for p in principios)
+        assert any(p["nome"] == "Ivermectina" for p in principios)
 
     def test_seed_e_idempotente(self, client):
         c, engine = client
