@@ -123,6 +123,7 @@ class MovimentoLote(SQLModel, table=True):
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -165,6 +166,7 @@ class Servico(SQLModel, table=True):
     # toque (data_diagnostico/diagnostico) para a agenda do veterinário.
     data_reconfirmacao: Optional[date] = None
     diagnostico_reconfirmacao: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -190,6 +192,7 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     # agenda; nos protocolos normais, etapas já passadas ficam escondidas.
     retroativo: bool = Field(default=False)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class ProtocoloIatfAplicacao(SQLModel, table=True):
@@ -250,6 +253,7 @@ class Parto(SQLModel, table=True):
     # costuma ser freemartin (infértil) — informação útil no descarte precoce.
     gemelar_sexo: Optional[str] = None
     retencao_placenta: Optional[bool] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +286,7 @@ class ColostragemBezerra(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -307,6 +312,7 @@ class ControleLeiteiro(SQLModel, table=True):
     ordenha1_kg: Optional[float] = None
     ordenha2_kg: Optional[float] = None
     ordenha3_kg: Optional[float] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -329,6 +335,7 @@ class PesagemCorporal(SQLModel, table=True):
     # "pos_parto" (recém-parida) ou None (fora de transição / recria).
     fase: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class AgendamentoPesagem(SQLModel, table=True):
@@ -376,6 +383,7 @@ class QualidadeLeite(SQLModel, table=True):
     nul: Optional[float] = None  # Nitrogênio Ureico no Leite / MUN (mg/dL)
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class EntregaLeiteMensal(SQLModel, table=True):
@@ -389,6 +397,7 @@ class EntregaLeiteMensal(SQLModel, table=True):
     quantidade_litros: float
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -433,6 +442,7 @@ class ContaGerencial(SQLModel, table=True):
     desconto_nota: Optional[float] = None
     acrescimo_nota: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -707,6 +717,7 @@ class FolhaPagamento(SQLModel, table=True):
     dia_vencimento: Optional[int] = None
     origem_recorrencia_id: Optional[int] = None  # id do lançamento-modelo, quando gerado automaticamente
     numero_lancamento_gerado: Optional[str] = None  # nº do lançamento (LC-...) criado em Contas a Pagar
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -727,6 +738,7 @@ class ValeFuncionario(SQLModel, table=True):
     competencia_inicio: str = Field(index=True)  # "AAAA-MM" — primeira competência com desconto
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class ValeParcela(SQLModel, table=True):
@@ -809,6 +821,7 @@ class MovimentoEstoque(SQLModel, table=True):
     data_movimento: date
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -836,6 +849,7 @@ class Sanidade(SQLModel, table=True):
     atividade: Optional[str] = None
     obs: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class AplicacaoAgendada(SQLModel, table=True):
@@ -860,6 +874,7 @@ class AplicacaoAgendada(SQLModel, table=True):
     aplicado: bool = Field(default=False, index=True)
     data_aplicacao: Optional[date] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1072,6 +1087,7 @@ class ProtocoloSanitarioLancamento(SQLModel, table=True):
     # Avaliação de cura no último dia do protocolo (marcada pela Agenda).
     curada: Optional[bool] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class ProtocoloSanitarioAplicacao(SQLModel, table=True):
@@ -1214,6 +1230,7 @@ class DietaLancamento(SQLModel, table=True):
     # veterinário/nutricionista ao lançar a dieta de um lote de bezerras.
     leite_bezerros_kg_dia: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class DietaItemProgramado(SQLModel, table=True):
@@ -1257,6 +1274,7 @@ class DietaRegistroReal(SQLModel, table=True):
     quantidade: float
     unidade: str
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1301,6 +1319,7 @@ class AgendaManual(SQLModel, table=True):
     apenas_admin: bool = False  # evento visível somente para o administrador
     link: Optional[str] = None  # rota interna de instruções/ação (ex.: "/configuracoes?aba=importar")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1403,6 +1422,7 @@ class BaixaAnimal(SQLModel, table=True):
     observacao: Optional[str] = None
     responsavel: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1425,6 +1445,7 @@ class CompraAnimal(SQLModel, table=True):
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na compra
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1483,6 +1504,7 @@ class OcorrenciaClinica(SQLModel, table=True):
     observacao: Optional[str] = None
     origem: str = "manual"                    # "manual" | "importacao" | "sanidade"
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class MetaRecria(SQLModel, table=True):
@@ -1580,6 +1602,7 @@ class RegistroCocho(SQLModel, table=True):
     kg_formulado: Optional[float] = None   # meta formulada (kg total do lote), opcional
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 class CategoriaManejo(SQLModel, table=True):

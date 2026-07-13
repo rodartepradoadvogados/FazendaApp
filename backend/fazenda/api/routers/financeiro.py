@@ -11,11 +11,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
-    PlanoContaGerencial, SeedFlag,
+    PlanoContaGerencial, SeedFlag, Usuario,
 )
+from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
@@ -269,14 +271,18 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "valor_total": it.valor_total,
         })
 
+    contas = session.exec(select(ContaGerencial)).all()
+    nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
+
     registros = []
-    for c in session.exec(select(ContaGerencial)).all():
+    for c in contas:
         dc = c.data_competencia
         dp = c.data_pagamento
         registros.append({
             "id": c.id,
             "numero_lancamento": c.numero_lancamento,
             "tipo": c.tipo,
+            "usuario_nome": nomes_usuarios.get(c.usuario_id),
             "valor": c.valor_total or 0.0,
             "valor_pago": c.valor_pago,
             "desconto_acrescimo": c.desconto_acrescimo,
@@ -578,7 +584,7 @@ def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("/lancamentos", status_code=201)
-def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session)) -> dict:
+def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """
     Cria um lançamento financeiro com um ou mais produtos/serviços (itens).
     Desconto/acréscimo ajustam o valor bruto dos itens para o valor líquido,
@@ -641,6 +647,11 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         origem="manual",
         desconto_nota=dados.desconto or None,
         acrescimo_nota=dados.acrescimo or None,
+        # Alguns fluxos (importação de CSV, lançamento via Telegram) chamam esta
+        # função diretamente, fora do ciclo de requisição do FastAPI — nesses
+        # casos `user` não é resolvido pela injeção de dependência e chega aqui
+        # como o próprio sentinel Depends(...), não uma instância de Usuario.
+        usuario_id=user.id if isinstance(user, Usuario) else None,
     )
 
     criados: list[ContaGerencial] = []
@@ -888,6 +899,7 @@ def contas_a_pagar(
     limite = hoje + __import__("datetime").timedelta(days=dias)
 
     contas = session.exec(select(ContaGerencial)).all()
+    nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
     resultado = []
     for c in contas:
         if (
@@ -896,6 +908,6 @@ def contas_a_pagar(
             and (c.valor_pago or 0) < (c.valor_total or 0)
             and c.tipo == "despesa"
         ):
-            resultado.append(c.model_dump())
+            resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})
 
     return sorted(resultado, key=lambda x: x["data_vencimento"])

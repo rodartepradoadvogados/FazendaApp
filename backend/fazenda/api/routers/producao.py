@@ -12,14 +12,16 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
     LancamentoItem, Lote,
-    Parto, PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico,
+    Parto, PesagemCorporal, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.alimentacao import calcular_consumo
+from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
@@ -29,6 +31,19 @@ from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 router = APIRouter(prefix="/producao", tags=["producao"])
 
 MOTIVOS_SECAGEM = ["doente", "baixa_producao", "comportamento", "mastite", "casco", "rotina", "outros"]
+
+
+def _usuario_id_seguro(user: Usuario) -> int | None:
+    """Resolve o id do usuário logado para o carimbo de auditoria.
+
+    Estas funções de criação também são chamadas diretamente (fora do ciclo
+    de requisição do FastAPI) pela importação de CSV (importar.py) e pelos
+    fluxos do bot do Telegram (telegram_fluxos.py), passando só `dados` e
+    `session` — nesses casos `user` fica com o valor padrão não resolvido
+    (`Depends(...)`), não uma instância real de `Usuario`. Sem usuário real,
+    não há quem carimbar.
+    """
+    return user.id if isinstance(user, Usuario) else None
 
 
 class OrdenhaIn(BaseModel):
@@ -57,8 +72,10 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
+    controles = session.exec(select(ControleLeiteiro)).all()
+    nomes = mapa_usuarios(session, {c.usuario_id for c in controles})
     registros = []
-    for c in session.exec(select(ControleLeiteiro)).all():
+    for c in controles:
         d = c.data_controle
         ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
         registros.append({
@@ -74,16 +91,20 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
             "ordenha2_kg": c.ordenha2_kg,
             "ordenha3_kg": c.ordenha3_kg,
             "grupo_primario": grupo_por_numero.get(c.numero_matriz),  # lote atual do animal (não histórico)
+            "usuario_nome": nomes.get(c.usuario_id),
         })
     return {"controles": registros, "total": len(registros)}
 
 
 @router.post("/controles")
-def criar_controles(dados: ControlesIn, session: Session = Depends(get_session)) -> dict:
+def criar_controles(
+    dados: ControlesIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
     """
     Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
     individual ou em lote — o front manda uma entrada por vaca do lote).
     """
+    usuario_id = _usuario_id_seguro(user)
     criados = []
     for entrada in dados.entradas:
         if not entrada.ordenhas or not any(entrada.ordenhas):
@@ -100,6 +121,7 @@ def criar_controles(dados: ControlesIn, session: Session = Depends(get_session))
             ordenha1_kg=ordenhas[0] if len(ordenhas) > 0 else None,
             ordenha2_kg=ordenhas[1] if len(ordenhas) > 1 else None,
             ordenha3_kg=ordenhas[2] if len(ordenhas) > 2 else None,
+            usuario_id=usuario_id,
         )
         session.add(registro)
         criados.append(registro)
@@ -144,8 +166,11 @@ def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: dat
 
 
 @router.post("/pesagens")
-def criar_pesagens(dados: PesagensIn, session: Session = Depends(get_session)) -> dict:
+def criar_pesagens(
+    dados: PesagensIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
     """Registra a pesagem corporal do dia para uma ou várias vacas de uma vez."""
+    usuario_id = _usuario_id_seguro(user)
     criados = []
     for entrada in dados.entradas:
         if not entrada.peso_kg:
@@ -159,6 +184,7 @@ def criar_pesagens(dados: PesagensIn, session: Session = Depends(get_session)) -
             idade_meses=animal.idade_meses if animal else None,
             grupo_primario=animal.grupo_primario if animal else None,
             fase=_fase_transicao(session, animal, dados.data_pesagem),
+            usuario_id=usuario_id,
         )
         session.add(registro)
         criados.append(registro)
@@ -241,12 +267,20 @@ class QualidadeLeiteIn(BaseModel):
 @router.get("/qualidade-leite")
 def listar_qualidade_leite(session: Session = Depends(get_session)) -> dict:
     registros = session.exec(select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)).all()
-    return {"registros": [r.model_dump() for r in registros], "total": len(registros)}
+    nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
+    linhas = []
+    for r in registros:
+        linha = r.model_dump()
+        linha["usuario_nome"] = nomes.get(linha.pop("usuario_id"))
+        linhas.append(linha)
+    return {"registros": linhas, "total": len(registros)}
 
 
 @router.post("/qualidade-leite", status_code=201)
-def criar_qualidade_leite(dados: QualidadeLeiteIn, session: Session = Depends(get_session)) -> dict:
-    registro = QualidadeLeite(**dados.model_dump())
+def criar_qualidade_leite(
+    dados: QualidadeLeiteIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    registro = QualidadeLeite(**dados.model_dump(), usuario_id=_usuario_id_seguro(user))
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -262,11 +296,19 @@ class EntregaLeiteMensalIn(BaseModel):
 @router.get("/entrega-leite")
 def listar_entrega_leite(session: Session = Depends(get_session)) -> dict:
     registros = session.exec(select(EntregaLeiteMensal).order_by(EntregaLeiteMensal.competencia)).all()
-    return {"registros": [r.model_dump() for r in registros], "total": len(registros)}
+    nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
+    linhas = []
+    for r in registros:
+        linha = r.model_dump()
+        linha["usuario_nome"] = nomes.get(linha.pop("usuario_id"))
+        linhas.append(linha)
+    return {"registros": linhas, "total": len(registros)}
 
 
 @router.post("/entrega-leite", status_code=201)
-def criar_entrega_leite(dados: EntregaLeiteMensalIn, session: Session = Depends(get_session)) -> dict:
+def criar_entrega_leite(
+    dados: EntregaLeiteMensalIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
     existente = session.exec(select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)).first()
     if existente:
         existente.quantidade_litros = dados.quantidade_litros
@@ -275,7 +317,7 @@ def criar_entrega_leite(dados: EntregaLeiteMensalIn, session: Session = Depends(
         session.commit()
         session.refresh(existente)
         return existente.model_dump()
-    registro = EntregaLeiteMensal(**dados.model_dump())
+    registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user))
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -492,7 +534,9 @@ class SecagemIn(BaseModel):
 
 
 @router.post("/secagem")
-def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session)) -> dict:
+def registrar_secagem(
+    dados: SecagemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
     if dados.motivo not in MOTIVOS_SECAGEM:
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
@@ -504,6 +548,7 @@ def registrar_secagem(dados: SecagemIn, session: Session = Depends(get_session))
         motivo=dados.motivo,
         escore_condicao_corporal=dados.escore_condicao_corporal,
         observacao=dados.observacao,
+        usuario_id=_usuario_id_seguro(user),
     ))
 
     # Data futura ou "ainda não apliquei" → os produtos de secagem não baixam

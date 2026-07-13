@@ -10,12 +10,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento, SeedFlag, Servico,
+    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento, SeedFlag, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
+from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.reproducao_analise import analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
@@ -89,6 +91,9 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
     """
     servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
     registros = analisar_servicos(servicos)
+    nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
+    for r in registros:
+        r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
     return {"servicos": registros, "total": len(registros)}
 
 
@@ -191,7 +196,7 @@ class PartoIn(BaseModel):
 
 
 @router.post("/parto")
-def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> dict:
+def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """
     Registra o parto e cria a ficha de cada cria nascida viva ainda não
     cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
@@ -226,6 +231,7 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
         gemelar=dados.gemelar if dados.gemelar is not None else len(dados.crias) > 1,
         gemelar_sexo=gemelar_sexo,
         retencao_placenta=dados.retencao_placenta,
+        usuario_id=usuario_id_seguro(user),
     )
     session.add(parto)
 
@@ -256,6 +262,7 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session)) -> 
             numero_animal=mae.numero,
             tipo_evento="Outro",
             observacao="Gerado automaticamente pelo lançamento de parto com retenção de placenta.",
+            usuario_id=usuario_id_seguro(user),
         ))
 
     # DEL reseta ao parir — o resto da ficha (categoria, produção etc.) só é
@@ -286,7 +293,7 @@ class ProtocoloIatfIn(BaseModel):
 
 
 @router.post("/protocolo-iatf")
-def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get_session)) -> dict:
+def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """
     Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11) — não cria o serviço em si.
     A inseminação de fato (D11) é lançada à parte em POST /reproducao/servico,
@@ -297,7 +304,7 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    lancamento = ProtocoloIatfLancamento(nome_protocolo=dados.protocolo, data_d0=dados.data_d0)
+    lancamento = ProtocoloIatfLancamento(nome_protocolo=dados.protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user))
     session.add(lancamento)
     session.flush()  # garante lancamento.id antes de criar as aplicações
 
@@ -460,7 +467,7 @@ class ServicoIn(BaseModel):
 
 
 @router.post("/servico")
-def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session)) -> dict:
+def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """
     Registra a inseminação/cobertura em si — cio natural (sem protocolo) ou a
     inseminação de um protocolo IATF já agendado (protocolo preenchido).
@@ -493,6 +500,7 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session))
         intervalo_tentativas=intervalo,
         del_servico=animal.del_dias,
         ult_ocorrencia=1,
+        usuario_id=usuario_id_seguro(user),
     )
     session.add(servico)
 
@@ -528,7 +536,7 @@ def _nome_auto_iatf(d0: date) -> str:
 
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
                           tipo_servico: str, protocolo: str | None, reprodutor: str | None,
-                          inseminador: str | None = None) -> Servico | None:
+                          inseminador: str | None = None, usuario_id: int | None = None) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
     commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
     animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
@@ -546,7 +554,7 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
         animal_id=animal.id, numero_matriz=numero_matriz, raca_matriz=animal.raca,
         data_nasc_matriz=animal.data_nasc, data_servico=data_servico, tipo_servico=tipo_servico,
         protocolo=protocolo, reprodutor=reprodutor, inseminador=inseminador, ordem_tentativa=ordem_tentativa,
-        intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1,
+        intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1, usuario_id=usuario_id,
     )
     session.add(servico)
     if protocolo:
@@ -591,7 +599,7 @@ class ServicoLoteIn(BaseModel):
 
 
 @router.post("/servico-lote")
-def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_session)) -> dict:
+def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """
     Inseminação de vários animais de uma vez. `tipo` = cio_natural (IA sem
     protocolo), iatf (IA vinculada a protocolo) ou monta_natural. No IATF, se o
@@ -615,7 +623,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero)
             if alvo is None and dados.auto_lancar_iatf:
                 d0 = dados.data_servico - timedelta(days=11)
-                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True)
+                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True, usuario_id=usuario_id_seguro(user))
                 session.add(alvo)
                 session.flush()
                 for dias, descricao in PASSOS_PROTOCOLO_IATF:
@@ -642,7 +650,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             session.flush()
             protocolo_name = alvo.nome_protocolo
 
-        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel)
+        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel, usuario_id=usuario_id_seguro(user))
         if s is None:
             incompativeis.append(numero)
         else:

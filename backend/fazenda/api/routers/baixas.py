@@ -11,9 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Animal, BaixaAnimal, ContaGerencial, MotivoBaixa
+from fazenda.models import Animal, BaixaAnimal, ContaGerencial, MotivoBaixa, Usuario
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
 router = APIRouter(prefix="/baixas", tags=["baixas"])
@@ -94,11 +96,15 @@ def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_sessi
 @router.get("/")
 def listar_baixas(session: Session = Depends(get_session)) -> list[dict]:
     baixas = session.exec(select(BaixaAnimal).order_by(BaixaAnimal.data_baixa.desc(), BaixaAnimal.id.desc())).all()
-    return [b.model_dump() for b in baixas]
+    registros = [b.model_dump() for b in baixas]
+    nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
+    for r in registros:
+        r["usuario_nome"] = nomes.get(r["usuario_id"])
+    return registros
 
 
 @router.post("/")
-def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session)) -> dict:
+def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo_baixa not in TIPOS_BAIXA:
@@ -178,6 +184,7 @@ def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session)) -> 
             venda_recria=dados.venda_recria if dados.motivo == "venda" else False,
             numero_lancamento_gerado=numero_lancamento,
             data_baixa=dados.data_baixa, observacao=dados.observacao, responsavel=dados.responsavel,
+            usuario_id=usuario_id_seguro(user),
         ))
 
         animal.ativo = False

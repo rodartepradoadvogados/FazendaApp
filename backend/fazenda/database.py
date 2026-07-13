@@ -35,19 +35,29 @@ engine = create_engine(DATABASE_URL, **engine_kwargs)
 _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "controle_leiteiro": [
         ("raca", "VARCHAR"), ("ordenha1_kg", "FLOAT"), ("ordenha2_kg", "FLOAT"), ("ordenha3_kg", "FLOAT"),
+        ("usuario_id", "INTEGER"),
     ],
-    "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR"), ("inseminador", "VARCHAR")],
-    "parto": [("numero_cria_1", "VARCHAR"), ("numero_cria_2", "VARCHAR"), ("gemelar_sexo", "VARCHAR")],
+    "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR"), ("inseminador", "VARCHAR"), ("usuario_id", "INTEGER")],
+    "parto": [("numero_cria_1", "VARCHAR"), ("numero_cria_2", "VARCHAR"), ("gemelar_sexo", "VARCHAR"), ("usuario_id", "INTEGER")],
     "colostragem_bezerra": [
         ("hora_parto", "VARCHAR"), ("hora_colostro", "VARCHAR"), ("peso_nascer_kg", "FLOAT"),
-        ("proteina_serica", "FLOAT"), ("apenas_colostro_po", "BOOLEAN"),
+        ("proteina_serica", "FLOAT"), ("apenas_colostro_po", "BOOLEAN"), ("usuario_id", "INTEGER"),
     ],
-    "qualidade_leite": [("nul", "FLOAT")],
-    "pesagem_corporal": [("fase", "VARCHAR")],
-    "dieta_lancamento": [("base_quantidade", "VARCHAR"), ("leite_bezerros_kg_dia", "FLOAT")],
+    "qualidade_leite": [("nul", "FLOAT"), ("usuario_id", "INTEGER")],
+    "pesagem_corporal": [("fase", "VARCHAR"), ("usuario_id", "INTEGER")],
+    "dieta_lancamento": [("base_quantidade", "VARCHAR"), ("leite_bezerros_kg_dia", "FLOAT"), ("usuario_id", "INTEGER")],
     "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT")],
-    "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN")],
-    "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR")],
+    "dieta_registro_real": [("usuario_id", "INTEGER")],
+    "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER")],
+    "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER")],
+    "aplicacao_agendada": [("usuario_id", "INTEGER")],
+    "entrega_leite_mensal": [("usuario_id", "INTEGER")],
+    "vale_funcionario": [("usuario_id", "INTEGER")],
+    "movimento_estoque": [("usuario_id", "INTEGER")],
+    "movimento_lote": [("usuario_id", "INTEGER")],
+    "compra_animal": [("usuario_id", "INTEGER")],
+    "ocorrencia_clinica": [("usuario_id", "INTEGER")],
+    "registro_cocho": [("usuario_id", "INTEGER")],
     "animal": [
         ("sexo", "VARCHAR"), ("eh_semen", "BOOLEAN"), ("grupo_manual", "BOOLEAN"),
         ("grau_sangue", "VARCHAR"),
@@ -95,7 +105,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "protocolo_sanitario_aplicacao": [("produto", "VARCHAR")],
     "protocolo_sanitario_lancamento": [
         ("grau_mastite", "INTEGER"), ("agente", "VARCHAR"), ("del_no_caso", "INTEGER"),
-        ("ccs_ultima", "FLOAT"), ("recidiva", "BOOLEAN"), ("curada", "BOOLEAN"),
+        ("ccs_ultima", "FLOAT"), ("recidiva", "BOOLEAN"), ("curada", "BOOLEAN"), ("usuario_id", "INTEGER"),
     ],
     "fornecedor": [("categoria", "VARCHAR")],
     "pessoa": [("salario_base", "FLOAT")],
@@ -119,6 +129,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("acrescimo_nota", "FLOAT"),
         ("forma_pagamento", "VARCHAR"),
         ("data_vencimento_cartao", "DATE"),
+        ("usuario_id", "INTEGER"),
     ],
     "plano_conta_gerencial": [
         ("rmca_receita_leite", "BOOLEAN"),
@@ -137,6 +148,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("valor_inss", "FLOAT DEFAULT 0"),
         ("valor_ir", "FLOAT DEFAULT 0"),
         ("valor_vale", "FLOAT DEFAULT 0"),
+        ("usuario_id", "INTEGER"),
     ],
     "lote": [
         ("status_lactacao", "VARCHAR"),
@@ -156,6 +168,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("tipo_valor", "VARCHAR"),
         ("numero_lancamento_gerado", "VARCHAR"),
         ("venda_recria", "BOOLEAN"),
+        ("usuario_id", "INTEGER"),
     ],
     "agenda_manual": [
         ("lotes", "VARCHAR"),
@@ -166,6 +179,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("origem_recorrencia_id", "INTEGER"),
         ("apenas_admin", "BOOLEAN DEFAULT 0"),
         ("link", "VARCHAR"),
+        ("usuario_id", "INTEGER"),
     ],
 }
 

@@ -805,7 +805,7 @@ class AgendaManualIn(BaseModel):
 
 
 @router.post("/manual")
-def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(get_session)) -> dict:
+def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     """Adiciona um evento manual à agenda (equivalente à aba AGENDA_MANUAL do Excel)."""
     if dados.tipo_evento and dados.tipo_evento not in TIPOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"tipo_evento inválido. Use um de: {', '.join(TIPOS_EVENTO)}")
@@ -824,6 +824,7 @@ def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(ge
         recorrente=dados.recorrente,
         intervalo_dias=dados.intervalo_dias if dados.recorrente else None,
         intervalo_meses=dados.intervalo_meses if dados.recorrente else None,
+        usuario_id=user.id,
     )
     session.add(evento)
     session.commit()
