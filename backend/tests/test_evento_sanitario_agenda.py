@@ -129,3 +129,57 @@ class TestAgendaPorEvento:
         })
         meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "500"]
         assert len(meus) == 1 and meus[0]["produto"] == "VacinaPre"
+
+
+def _agenda_calendario(c) -> list[dict]:
+    r = c.get("/agenda/", params={"data": HOJE.isoformat()})
+    assert r.status_code == 200, r.text
+    return [e for e in r.json()["eventos"] if e.get("tipo") == "calendario_sanitario"]
+
+
+class TestCalendarioNaAgenda:
+    """Regra do calendário sanitário (preventivo) precisa virar pendência na
+    Agenda — antes só existia na tela de calendário e nunca dava baixa."""
+
+    def _cria_exame(self, c, realizado=False):
+        ev = c.post("/cadastro/eventos-sanitarios", json={"nome": "Exame de brucelose", "categoria_preventiva": "exame"})
+        assert ev.status_code == 200, ev.text
+        r = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": ev.json()["id"], "categoria_alvo": "Novilhas",
+            "frequencia_valor": 1, "frequencia_unidade": "anos", "data_evento": HOJE.isoformat(),
+            "veterinario": "Dr. Carlos", "realizado": realizado,
+        })
+        assert r.status_code == 200, r.text
+        return r.json()
+
+    def test_exame_hoje_aparece_na_agenda(self, client):
+        c, _ = client
+        self._cria_exame(c)
+        evs = _agenda_calendario(c)
+        assert len(evs) == 1
+        assert evs[0]["data"] == HOJE.isoformat()
+        assert evs[0]["produto"] is None  # exame não tem baixa de estoque
+        assert evs[0]["veterinario"] == "Dr. Carlos"
+        assert evs[0]["categoria_preventiva"] == "exame"
+
+    def test_baixa_some_da_agenda(self, client):
+        c, _ = client
+        self._cria_exame(c)
+        eid = _agenda_calendario(c)[0]["id"]
+        rb = c.post("/agenda/realizados", json={"evento_id": eid})
+        assert rb.status_code == 200, rb.text
+        assert not _agenda_calendario(c)
+
+    def test_realizado_no_cadastro_ja_some(self, client):
+        c, _ = client
+        self._cria_exame(c, realizado=True)
+        # marcado como realizado no cadastro → não aparece como pendência
+        assert not _agenda_calendario(c)
+
+    def test_excluir_regra_remove_da_agenda(self, client):
+        c, _ = client
+        regra = self._cria_exame(c)
+        assert _agenda_calendario(c)
+        rd = c.delete(f"/sanidade/calendario/{regra['id']}")
+        assert rd.status_code == 200, rd.text
+        assert not _agenda_calendario(c)

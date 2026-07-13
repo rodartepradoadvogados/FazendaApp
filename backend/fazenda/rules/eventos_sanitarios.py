@@ -19,7 +19,7 @@ from datetime import date, timedelta
 
 from sqlmodel import Session, select
 
-from fazenda.models import Animal, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
+from fazenda.models import Animal, CalendarioSanitario, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
 
 # Janela de geração: um gatilho recente (até 120 dias atrás) ainda pendura na
@@ -28,20 +28,80 @@ JANELA_PASSADO = 120
 HORIZONTE_FUTURO = 180
 
 
-def _ocorrencias_epoca(ev: EventoSanitario, hoje: date) -> list[date]:
+def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None, hoje: date) -> list[date]:
     """Datas da recorrência dentro da janela [hoje-120, hoje+180]."""
-    if not (ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade):
+    if not (base and valor and unidade):
         return []
     minimo = hoje - timedelta(days=JANELA_PASSADO)
     limite = hoje + timedelta(days=HORIZONTE_FUTURO)
     saida: list[date] = []
-    d = ev.data_primeiro
+    d = base
     guarda = 0
     while d <= limite and guarda < 3000:
         if d >= minimo:
             saida.append(d)
-        d = proxima_ocorrencia(d, ev.frequencia_valor, ev.frequencia_unidade)
+        d = proxima_ocorrencia(d, valor, unidade)
         guarda += 1
+    return saida
+
+
+def _ocorrencias_epoca(ev: EventoSanitario, hoje: date) -> list[date]:
+    return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje)
+
+
+def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
+    """
+    Eventos da Agenda vindos das REGRAS do calendário sanitário (preventivo).
+    Antes, essas regras só apareciam na tela de calendário e nunca na Agenda —
+    então um exame lançado "para hoje" não gerava pendência nem permitia baixa.
+    Aqui cada regra ativa projeta suas ocorrências na janela e vira pendência.
+    Exame (categoria_preventiva == "exame") não tem produto/baixa de estoque:
+    a baixa apenas marca como realizado (e permite lançar o financeiro).
+    """
+    regras = session.exec(
+        select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    ).all()
+    if not regras:
+        return []
+    eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    saida: list[dict] = []
+    for c in regras:
+        ev = eventos.get(c.evento_sanitario_id)
+        nome = ev.nome if ev else "Evento sanitário"
+        categoria = (ev.categoria_preventiva if ev else None) or None
+        eh_exame = categoria == "exame"
+        alvo = c.categoria_alvo or "rebanho"
+        for d in _ocorrencias_recorrentes(c.data_evento, c.frequencia_valor, c.frequencia_unidade, hoje):
+            eid = f"calendario_sanitario_{c.id}__{d.isoformat()}"
+            if eid in realizados:
+                continue
+            desc = f"{nome} — {alvo}"
+            if c.produto and not eh_exame:
+                desc += f" — {c.produto}"
+            saida.append({
+                "id": eid,
+                "data": d.isoformat(),
+                "categoria": "sanidade",
+                "descricao": desc,
+                "numero_animal": None,
+                "observacao": (
+                    "Exame preventivo — dê baixa quando realizado (e lance o financeiro, se houver custo)."
+                    if eh_exame else "Dê baixa para gerar a aplicação e a saída de estoque."
+                ),
+                "fonte": "auto",
+                "cor": "var(--dourado)",
+                "ref": None,
+                "tipo": "calendario_sanitario",
+                "produto": None if eh_exame else c.produto,
+                "dose": None,
+                "unidade": None,
+                "via": None,
+                "categoria_alvo": c.categoria_alvo,
+                "categoria_preventiva": categoria,
+                "veterinario": c.veterinario,
+                "calendario_id": c.id,
+                "evento_sanitario_id": c.evento_sanitario_id,
+            })
     return saida
 
 
@@ -75,8 +135,6 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
             EventoSanitario.tipo_agendamento != "nenhum",
         )
     ).all()
-    if not eventos:
-        return []
 
     # Pré-carrega Sanidade por animal (produto minúsculo, data) para deduplicar:
     # se já foi aplicado depois do gatilho, o evento some da Agenda.
@@ -142,5 +200,8 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
                 continue
             vistos.add(numero)
             saida.append(evt)
+
+    # Regras do calendário sanitário (preventivo) também viram pendências.
+    saida.extend(_eventos_calendario_agenda(session, hoje, realizados))
 
     return saida
