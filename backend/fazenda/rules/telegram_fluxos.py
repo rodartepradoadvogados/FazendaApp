@@ -169,6 +169,27 @@ FLUXOS: dict[str, dict] = {
             C("valor", "Qual o <b>valor</b> (R$)? (ou <code>pular</code> se não houver)", "numero", obrigatorio=False),
         ],
     },
+    # Despesa/receita vindas do intake de documento (foto/PDF/XML) — não são
+    # perguntadas em conversa (o motor de conversa nunca abre este fluxo);
+    # os "campos" aqui só alimentam o resumo mostrado na tela de aprovação.
+    "despesa": {
+        "rotulo": "🧾 Despesa (documento)",
+        "campos": [
+            C("fornecedor_cliente", "Fornecedor", "texto", obrigatorio=False),
+            C("valor_total", "Valor total", "numero", obrigatorio=False),
+            C("numero_documento", "Nº do documento", "texto", obrigatorio=False),
+            C("data_emissao", "Data de emissão", "data", obrigatorio=False),
+        ],
+    },
+    "receita": {
+        "rotulo": "💰 Receita (documento)",
+        "campos": [
+            C("fornecedor_cliente", "Cliente", "texto", obrigatorio=False),
+            C("valor_total", "Valor total", "numero", obrigatorio=False),
+            C("numero_documento", "Nº do documento", "texto", obrigatorio=False),
+            C("data_emissao", "Data de emissão", "data", obrigatorio=False),
+        ],
+    },
 }
 
 
@@ -290,7 +311,65 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
             tipo_valor=("total" if dados["motivo"] == "venda" and valor is not None else None),
         ), session)
 
+    if tipo in ("despesa", "receita"):
+        return _criar_lancamento_financeiro(tipo, dados, session)
+
     raise ValueError(f"Tipo de lançamento desconhecido: {tipo}")
+
+
+def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> dict:
+    """Materializa a despesa/receita lida do documento (foto/PDF/XML) enviado
+    pelo Telegram — só chamada quando a conta principal APROVA. O
+    fornecedor/cliente precisa já existir no cadastro (Configurações >
+    Cadastro > Fornecedores); nunca é criado à revelia a partir do texto lido
+    do documento."""
+    from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento
+    from fazenda.models import ContaGerencial, Fornecedor
+
+    forn = (dados.get("fornecedor_cliente") or "").strip()
+    if forn and not session.exec(select(Fornecedor).where(Fornecedor.nome == forn)).first():
+        raise ValueError(
+            f'Fornecedor/cliente "{forn}" não está cadastrado. Cadastre-o em Configurações > '
+            'Cadastro > Fornecedores (ou corrija o nome para um já cadastrado) antes de aprovar.'
+        )
+
+    itens_doc = dados.get("itens") or []
+    itens: list[ItemIn] = []
+    for it in itens_doc:
+        produto = (it.get("produto") or "").strip()
+        if not produto:
+            continue
+        vt = it.get("valor_total")
+        if vt is None and it.get("quantidade") and it.get("valor_unitario"):
+            vt = round(it["quantidade"] * it["valor_unitario"], 2)
+        itens.append(ItemIn(produto=produto, quantidade=it.get("quantidade"),
+                             valor_unitario=it.get("valor_unitario"), valor_total=float(vt or 0)))
+    if not itens:
+        itens = [ItemIn(produto=forn or "Documento recebido pelo Telegram", valor_total=float(dados.get("valor_total") or 0))]
+
+    eh_recibo = dados.get("tipo_documento") == "recibo"
+    data_emissao = _d_opt(dados.get("data_emissao"))
+    data_pagamento = _d_opt(dados.get("data_pagamento")) if eh_recibo else None
+    valor_total = sum(i.valor_total for i in itens)
+
+    lanc = LancamentoIn(
+        tipo=tipo, itens=itens, fornecedor_cliente=dados.get("fornecedor_cliente"),
+        numero_documento=dados.get("numero_documento"),
+        tipo_documento="Nota fiscal" if not eh_recibo else "Recibo/comprovante",
+        data_emissao=data_emissao, data_vencimento=data_emissao or data_pagamento,
+        data_pagamento=data_pagamento, valor_pago=valor_total if data_pagamento else None,
+        conta_bancaria=dados.get("conta_bancaria") if eh_recibo else None,
+    )
+    res = criar_lancamento(dados=lanc, session=session)
+    # Marca a origem "telegram" (LancamentoIn não carrega esse campo) para
+    # identificar os lançamentos que vieram pelo robô.
+    for cid in res.get("ids", []):
+        conta = session.get(ContaGerencial, cid)
+        if conta:
+            conta.origem = "telegram"
+            session.add(conta)
+    session.commit()
+    return res
 
 
 def _d(valor) -> date:
@@ -298,6 +377,11 @@ def _d(valor) -> date:
     if isinstance(valor, date):
         return valor
     return date.fromisoformat(str(valor)[:10])
+
+
+def _d_opt(valor) -> date | None:
+    """Como `_d`, mas aceita None (data opcional, ex.: data_pagamento de nota que ainda não foi paga)."""
+    return _d(valor) if valor else None
 
 
 def _lista(valor) -> list[str]:
