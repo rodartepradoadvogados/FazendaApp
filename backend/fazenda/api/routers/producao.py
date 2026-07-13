@@ -115,6 +115,32 @@ class PesagensIn(BaseModel):
     entradas: list[PesoIn]
 
 
+def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: date) -> str | None:
+    """Classifica a vaca na data da pesagem para os pesos de transição:
+    pré-parto (<=30 dias do parto previsto), vaca seca (31-60 dias antes) ou
+    pós-parto (recém-parida). Fora disso (ou recria), retorna None."""
+    if not animal:
+        return None
+    from fazenda.models import Servico
+    from fazenda.rules.gestation import calcular_parto_provavel
+    # Recém-parida: DEL pequeno na data da pesagem → pós-parto.
+    if animal.del_dias is not None and 0 <= animal.del_dias <= 30:
+        return "pos_parto"
+    ultimo_pos = session.exec(
+        select(Servico).where(
+            Servico.numero_matriz == animal.numero, Servico.diagnostico == "POSITIVO"
+        ).order_by(Servico.data_servico.desc())
+    ).first()
+    if ultimo_pos and ultimo_pos.data_servico:
+        parto_provavel = calcular_parto_provavel(ultimo_pos.data_servico, animal.raca).data_parto_provavel
+        dias_para_parto = (parto_provavel - data_pesagem).days
+        if 0 <= dias_para_parto <= 30:
+            return "pre_parto"
+        if 31 <= dias_para_parto <= 60:
+            return "vaca_seca"
+    return None
+
+
 @router.post("/pesagens")
 def criar_pesagens(dados: PesagensIn, session: Session = Depends(get_session)) -> dict:
     """Registra a pesagem corporal do dia para uma ou várias vacas de uma vez."""
@@ -130,6 +156,7 @@ def criar_pesagens(dados: PesagensIn, session: Session = Depends(get_session)) -
             del_dias=animal.del_dias if animal else None,
             idade_meses=animal.idade_meses if animal else None,
             grupo_primario=animal.grupo_primario if animal else None,
+            fase=_fase_transicao(session, animal, dados.data_pesagem),
         )
         session.add(registro)
         criados.append(registro)
@@ -398,6 +425,7 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
     data_prevista = None
     deve_secar = None
     motivo_exclusao = None
+    dias_gestacao = None
     if ultimo_servico and ultimo_servico.data_servico:
         res_gest = calcular_parto_provavel(ultimo_servico.data_servico, animal.raca)
         em_lactacao = bool(animal.del_dias and animal.del_dias > 0)
@@ -405,6 +433,8 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
         data_prevista = res_sec.data_secagem.isoformat()
         deve_secar = res_sec.deve_secar
         motivo_exclusao = res_sec.motivo_exclusao
+        # Dias de gestação já decorridos (do serviço positivo até hoje).
+        dias_gestacao = max(0, (date.today() - ultimo_servico.data_servico).days)
 
     return {
         "numero_matriz": numero_matriz,
@@ -413,6 +443,7 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
         "data_prevista_secagem": data_prevista,
         "deve_secar": deve_secar,
         "motivo_exclusao": motivo_exclusao,
+        "dias_gestacao": dias_gestacao,
         "lote_sugerido": _lote_das_secas(session),
     }
 

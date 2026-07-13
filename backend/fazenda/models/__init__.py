@@ -324,6 +324,10 @@ class PesagemCorporal(SQLModel, table=True):
     del_dias: Optional[int] = None
     idade_meses: Optional[float] = None
     grupo_primario: Optional[str] = None
+    # Fase da vaca na data da pesagem, para pesos de transição:
+    # "pre_parto" (<=30 dias do parto previsto), "vaca_seca" (31-60 dias antes),
+    # "pos_parto" (recém-parida) ou None (fora de transição / recria).
+    fase: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

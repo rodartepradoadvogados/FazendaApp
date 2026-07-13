@@ -64,7 +64,7 @@ def _touros_opcoes(session: Session, dados: dict) -> list[tuple[str, str]]:
 
 
 MOTIVOS_SECAGEM = [("doente", "Doente"), ("baixa_producao", "Baixa produção"), ("comportamento", "Comportamento"),
-                   ("mastite", "Mastite"), ("casco", "Casco"), ("rotina", "Rotina"), ("outros", "Outros")]
+                   ("mastite", "Mastite"), ("casco", "Casco"), ("rotina", "Rotina parto"), ("outros", "Outros")]
 RESULTADOS_DIAG = [("reconfirmada", "Prenhe (confirmada)"), ("retoque", "Prenhe — marcar retoque"),
                    ("negativo", "Vazia"), ("indefinido", "Indefinido (reavaliar)")]
 METODOS_DIAG = [("Palpação", "Palpação (toque)"), ("Ultrassom", "Ultrassom"), ("Cio de repasse", "Cio de repasse")]
