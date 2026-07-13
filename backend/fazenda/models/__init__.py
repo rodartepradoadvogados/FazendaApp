@@ -369,6 +369,7 @@ class QualidadeLeite(SQLModel, table=True):
     solidos_totais_pct: Optional[float] = None
     esd_pct: Optional[float] = None  # extrato seco desengordurado
     lactose_pct: Optional[float] = None
+    nul: Optional[float] = None  # Nitrogênio Ureico no Leite / MUN (mg/dL)
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 

@@ -1022,7 +1022,7 @@ export async function fetchQualidadeLeite() {
 export async function criarQualidadeLeite(dados: {
   numero_matriz?: string | null; data_coleta: string;
   ccs?: number | null; cbt?: number | null; gordura_pct?: number | null; proteina_pct?: number | null;
-  solidos_totais_pct?: number | null; esd_pct?: number | null; lactose_pct?: number | null; observacao?: string | null;
+  solidos_totais_pct?: number | null; esd_pct?: number | null; lactose_pct?: number | null; nul?: number | null; observacao?: string | null;
 }) {
   const res = await authFetch(`${API}/producao/qualidade-leite`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

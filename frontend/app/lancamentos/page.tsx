@@ -964,6 +964,12 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
   const [sucesso, setSucesso] = useState<string | null>(null);
 
   const del = useMemo(() => animais.find((a) => a.numero === vaca)?.del_dias ?? null, [animais, vaca]);
+  // Controle leiteiro é só de quem está em lactação: em lote de lactação
+  // (01/02/03) ou com DEL em curso (> 0).
+  const animaisLact = useMemo(
+    () => animais.filter((a) => (a.grupo_primario && lotesLact.includes(a.grupo_primario)) || ((a.del_dias ?? 0) > 0)),
+    [animais, lotesLact],
+  );
   const total = ord.slice(0, nOrd).reduce((s, v) => s + (Number(v) || 0), 0);
 
   // Vacas do lote selecionado — abre a listagem individual pra pesagem de cada uma.
@@ -1015,7 +1021,7 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
         </Campo>
         {modo === "vaca" ? (
           <>
-            <Campo label="Vaca"><SelectAnimal animais={animais} value={vaca} onChange={setVaca} placeholder="Selecione a vaca…" /></Campo>
+            <Campo label="Vaca (só em lactação)"><SelectAnimal animais={animaisLact} value={vaca} onChange={setVaca} placeholder="Selecione a vaca em lactação…" /></Campo>
             <Campo label="DEL (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={del != null ? `${del} dias` : "—"} readOnly /></Campo>
           </>
         ) : (
@@ -2261,6 +2267,7 @@ function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
   const [solidosTotais, setSolidosTotais] = useState("");
   const [esd, setEsd] = useState("");
   const [lactose, setLactose] = useState("");
+  const [nul, setNul] = useState("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -2279,11 +2286,11 @@ function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
         numero_matriz: alvo === "vaca" ? matriz : null,
         data_coleta: dataColeta,
         ccs: num(ccs), cbt: num(cbt), gordura_pct: num(gordura), proteina_pct: num(proteina),
-        solidos_totais_pct: num(solidosTotais), esd_pct: num(esd), lactose_pct: num(lactose),
+        solidos_totais_pct: num(solidosTotais), esd_pct: num(esd), lactose_pct: num(lactose), nul: num(nul),
         observacao: observacao || undefined,
       });
       setSucesso("Qualidade do leite lançada com sucesso.");
-      setMatriz(""); setCcs(""); setCbt(""); setGordura(""); setProteina(""); setSolidosTotais(""); setEsd(""); setLactose(""); setObservacao("");
+      setMatriz(""); setCcs(""); setCbt(""); setGordura(""); setProteina(""); setSolidosTotais(""); setEsd(""); setLactose(""); setNul(""); setObservacao("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar qualidade do leite");
     } finally {
@@ -2315,7 +2322,9 @@ function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
         <Campo label="Sólidos totais — ST (%)"><input type="number" inputMode="decimal" style={inputStyle} value={solidosTotais} onChange={(e) => setSolidosTotais(e.target.value)} /></Campo>
         <Campo label="ESD (%)"><input type="number" inputMode="decimal" style={inputStyle} value={esd} onChange={(e) => setEsd(e.target.value)} /></Campo>
         <Campo label="Lactose (%) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={lactose} onChange={(e) => setLactose(e.target.value)} /></Campo>
+        <Campo label="NUL / ureia (mg/dL) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={nul} onChange={(e) => setNul(e.target.value)} /></Campo>
       </div>
+      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.4rem" }}>Todos os índices são opcionais — preencha só os que o laudo trouxer.</p>
       <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}

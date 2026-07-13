@@ -205,6 +205,7 @@ class QualidadeLeiteIn(BaseModel):
     solidos_totais_pct: float | None = None
     esd_pct: float | None = None
     lactose_pct: float | None = None
+    nul: float | None = None
     observacao: str | None = None
 
 
