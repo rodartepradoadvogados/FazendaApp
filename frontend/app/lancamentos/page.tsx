@@ -11,7 +11,7 @@ import {
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario,
   fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
-  fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchLotes, previewCriteriosLote, fetchMedicamentos,
+  fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
   fetchApresentacoesFarmacia,
 } from "@/lib/api";
@@ -1558,14 +1558,25 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
   const [classificacaoMastite, setClassificacaoMastite] = useState("");
+  const [grauMastite, setGrauMastite] = useState("");
+  const [agente, setAgente] = useState("");
   const [resultadoCmt, setResultadoCmt] = useState("");
   const [tetosSel, setTetosSel] = useState<Set<string>>(new Set());
+  const [agentesMastite, setAgentesMastite] = useState<string[]>([]);
+  const [ctxMastite, setCtxMastite] = useState<{ del_atual: number | null; ccs_ultima: number | null; cmt_ultimo: string | null } | null>(null);
   // Etapas cadastradas por princípio ativo/classificação: escolher o medicamento agora.
   const [escolhasMed, setEscolhasMed] = useState<Record<number, string>>({});
   const [medOpcoes, setMedOpcoes] = useState<Record<number, { nome: string; quantidade?: number | null; unidade?: string | null }[]>>({});
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  const protocoloSel = protocolos.find((p) => String(p.id) === protocoloId);
+  useEffect(() => { if (protocoloSel?.eh_mastite && !agentesMastite.length) fetchMastiteOpcoes().then((o) => setAgentesMastite(o.agentes)).catch(() => {}); }, [protocoloSel?.eh_mastite]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (protocoloSel?.eh_mastite && matriz) { fetchMastiteContexto(matriz).then(setCtxMastite).catch(() => setCtxMastite(null)); }
+    else setCtxMastite(null);
+  }, [protocoloSel?.eh_mastite, matriz]);
 
   // Lançamento em massa (protocolos que não são de mastite): animal(is), lote(s) ou categoria de animais.
   const [vinculo, setVinculo] = useState<"animal" | "lote" | "categoria">("animal");
@@ -1655,12 +1666,15 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
       const r = await lancarProtocoloSanitario({
         protocolo_id: protocolo.id, numeros_matriz: numeros, data_inicio: dataInicio,
         responsavel: responsavel || undefined, observacao: observacao || undefined,
-        classificacao_mastite: classificacaoMastite || undefined, resultado_cmt: resultadoCmt || undefined,
+        classificacao_mastite: classificacaoMastite || undefined,
+        grau_mastite: grauMastite ? Number(grauMastite) : undefined, agente: agente || undefined,
+        resultado_cmt: resultadoCmt || undefined,
         tetos_afetados: Array.from(tetosSel),
         escolhas_medicamento: Object.fromEntries(etapasCriterio.map((e) => [String(e.id), escolhasMed[e.id as number]])),
       });
-      setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.`);
-      setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setResultadoCmt(""); setTetosSel(new Set());
+      const avisoTxt = (r.avisos && r.avisos.length) ? " ⚠️ " + r.avisos.join(" ") : "";
+      setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.${avisoTxt}`);
+      setMatriz(""); setObservacao(""); setClassificacaoMastite(""); setGrauMastite(""); setAgente(""); setResultadoCmt(""); setTetosSel(new Set());
       setAnimaisSelecionados(new Set()); setLotesSelecionados(new Set()); setCategoriaId("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar protocolo sanitário");
@@ -1744,6 +1758,13 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
       {protocolo?.eh_mastite && (
         <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
           <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.6rem" }}>Tratamento diferenciado de mastite</p>
+          {ctxMastite && (
+            <div className="flex items-center gap-4 mb-2" style={{ flexWrap: "wrap", fontSize: "0.78rem" }}>
+              <span>DEL: <strong>{ctxMastite.del_atual != null ? `${ctxMastite.del_atual} dias` : "—"}</strong></span>
+              <span>Última CCS: <strong>{ctxMastite.ccs_ultima != null ? `${ctxMastite.ccs_ultima} mil/mL` : "—"}</strong></span>
+              <span>Último CMT: <strong>{ctxMastite.cmt_ultimo || "—"}</strong></span>
+            </div>
+          )}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
             <Campo label="Classificação">
               <select style={inputStyle} value={classificacaoMastite} onChange={(e) => setClassificacaoMastite(e.target.value)}>
@@ -1751,7 +1772,22 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
                 {CLASSIFICACOES_MASTITE.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               </select>
             </Campo>
-            <Campo label="Resultado do CMT"><input style={inputStyle} value={resultadoCmt} onChange={(e) => setResultadoCmt(e.target.value)} placeholder="ex.: +++ (forte)" /></Campo>
+            <Campo label="Grau">
+              <select style={inputStyle} value={grauMastite} onChange={(e) => setGrauMastite(e.target.value)}>
+                <option value="">Selecione…</option>
+                <option value="1">Grau 1</option><option value="2">Grau 2</option><option value="3">Grau 3</option>
+              </select>
+            </Campo>
+            <Campo label="Agente (patógeno)">
+              <input style={inputStyle} list="agentes-mastite" value={agente} onChange={(e) => setAgente(e.target.value)} placeholder="Selecione ou digite…" />
+              <datalist id="agentes-mastite">{agentesMastite.map((a) => <option key={a} value={a} />)}</datalist>
+            </Campo>
+            <Campo label="Resultado do CMT">
+              <select style={inputStyle} value={resultadoCmt} onChange={(e) => setResultadoCmt(e.target.value)}>
+                <option value="">Selecione…</option>
+                {["-", "+", "++", "+++"].map((v) => <option key={v} value={v}>{v}</option>)}
+              </select>
+            </Campo>
             <Campo label="Teto(s) afetado(s)" full>
               <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
                 {TETOS.map((t) => (
