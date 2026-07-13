@@ -6,6 +6,12 @@ import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
 
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
+// Graus de sangue padrão (Holandês x Gir / Girolando). O campo é livre — estas
+// são apenas sugestões pré-configuradas; o usuário pode digitar outro.
+const GRAUS_SANGUE = [
+  "1/2 Holandês x Gir", "3/4 Holandês", "7/8 Holandês", "15/16 Holandês",
+  "31/32 Holandês", "PCOD Holandês", "PO Holandês",
+];
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -20,12 +26,12 @@ const Secao = ({ children }: { children: React.ReactNode }) => (
 );
 
 type Ficha = {
-  numero: string; nome: string; sisbov: string; sexo: string; raca: string; categoria_abrev: string;
+  numero: string; nome: string; sisbov: string; sexo: string; raca: string; grau_sangue: string; categoria_abrev: string;
   grupo_primario: string; data_nasc: string; data_entrada: string; proprietario: string; valor: string;
   motivo_baixa: string; data_baixa: string; mae_numero: string; mae_nome: string; observacoes: string;
 };
 const fichaVazia: Ficha = {
-  numero: "", nome: "", sisbov: "", sexo: "", raca: "Girolando", categoria_abrev: "",
+  numero: "", nome: "", sisbov: "", sexo: "", raca: "Girolando", grau_sangue: "", categoria_abrev: "",
   grupo_primario: "", data_nasc: "", data_entrada: "", proprietario: "Jairo Nasser Quintiliano da Silva", valor: "",
   motivo_baixa: "", data_baixa: "", mae_numero: "", mae_nome: "", observacoes: "",
 };
@@ -34,6 +40,7 @@ function paraPayload(f: Ficha) {
   const s = (v: string) => (v.trim() === "" ? null : v.trim());
   return {
     numero: f.numero.trim(), nome: s(f.nome), sisbov: s(f.sisbov), sexo: s(f.sexo), raca: s(f.raca),
+    grau_sangue: s(f.grau_sangue),
     categoria_abrev: s(f.categoria_abrev), grupo_primario: s(f.grupo_primario),
     data_nasc: s(f.data_nasc), data_entrada: s(f.data_entrada), proprietario: s(f.proprietario),
     valor: f.valor.trim() === "" ? null : Number(f.valor),
@@ -66,6 +73,7 @@ export default function CadastroAnimalForm() {
     if (!a) return;
     setForm({
       numero: a.numero, nome: a.nome || "", sisbov: a.sisbov || "", sexo: a.sexo || "", raca: a.raca || "",
+      grau_sangue: a.grau_sangue || "",
       categoria_abrev: a.categoria_abrev || "", grupo_primario: a.grupo_primario || "",
       data_nasc: a.data_nasc || "", data_entrada: a.data_entrada || "", proprietario: a.proprietario || "",
       valor: a.valor?.toString() ?? "", motivo_baixa: a.motivo_baixa || "", data_baixa: a.data_baixa || "",
@@ -148,6 +156,12 @@ export default function CadastroAnimalForm() {
               <select style={inputStyle} value={form.raca} onChange={(e) => setForm({ ...form, raca: e.target.value })}>
                 <option>Girolando</option><option>Holandês</option><option>Gir</option><option>Outra</option>
               </select>
+            </Campo>
+            <Campo label="Grau de sangue">
+              <input style={inputStyle} list="graus-sangue" value={form.grau_sangue}
+                onChange={(e) => setForm({ ...form, grau_sangue: e.target.value })}
+                placeholder="Selecione ou digite…" />
+              <datalist id="graus-sangue">{GRAUS_SANGUE.map((g) => <option key={g} value={g} />)}</datalist>
             </Campo>
             <Campo label="Categoria">
               <select style={inputStyle} value={form.categoria_abrev} onChange={(e) => setForm({ ...form, categoria_abrev: e.target.value })}>

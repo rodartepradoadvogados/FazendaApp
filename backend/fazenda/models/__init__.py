@@ -31,6 +31,9 @@ class Animal(SQLModel, table=True):
     categoria_completa: Optional[str] = None
     categoria_abrev: Optional[str] = None
     raca: Optional[str] = None
+    # Grau de sangue / composição racial (ex.: "1/2 Holandês x Gir", "3/4 Holandês",
+    # "PO Holandês"). Livre, com opções padrão sugeridas no cadastro.
+    grau_sangue: Optional[str] = None
     sexo: Optional[str] = None          # "F", "M" ou None (sêmen/reprodutor)
     eh_semen: bool = False              # cadastro de sêmen/reprodutor, não é animal do rebanho
     sit_rep: Optional[str] = None
@@ -590,6 +593,9 @@ class Estoque(SQLModel, table=True):
     centro_custo_padrao: Optional[str] = None
     conta_gerencial_despesa_padrao: Optional[str] = None  # código do plano de contas (ex.: "3.01.01.01")
     conta_gerencial_receita_padrao: Optional[str] = None
+    # True = produto que gera receita (venda: leite, animal, esterco...). Classifica
+    # o item para relatórios de receita e para a conta gerencial de receita padrão.
+    gera_receita: Optional[bool] = None
     exibir_necessidade_compra_agenda: Optional[bool] = None  # abaixo do mínimo -> lembrete na Agenda
     # None/True = estocável (item real de estoque, participa de baixa automática
     # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
@@ -1332,6 +1338,7 @@ class BaixaAnimal(SQLModel, table=True):
     valor: Optional[float] = None        # preenchido só quando motivo == "venda" — sempre o valor POR ANIMAL já resolvido
     cliente: Optional[str] = None        # preenchido só quando motivo == "venda"
     tipo_valor: Optional[str] = None     # "por_animal" | "total" — como o valor foi originalmente digitado (metadado)
+    venda_recria: Optional[bool] = None  # True quando é venda de animal de recria (para simular receita vs custo de recria)
     numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na venda
     data_baixa: date
     observacao: Optional[str] = None

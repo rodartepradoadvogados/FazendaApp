@@ -37,6 +37,7 @@ export default function BaixarAnimal() {
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [cliente, setCliente] = useState("");
+  const [vendaRecria, setVendaRecria] = useState(false);
   const [dataBaixa, setDataBaixa] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
@@ -71,7 +72,7 @@ export default function BaixarAnimal() {
 
   const limpar = () => {
     setSelecionados(new Set()); setBusca(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca("");
-    setValor(""); setTipoValor("por_animal"); setCliente(""); setObservacao("");
+    setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
 
@@ -106,6 +107,7 @@ export default function BaixarAnimal() {
         valor: motivo === "venda" ? Number(valor) : undefined,
         tipo_valor: motivo === "venda" ? tipoValor : undefined,
         cliente: motivo === "venda" ? cliente.trim() : undefined,
+        venda_recria: motivo === "venda" ? vendaRecria : undefined,
         data_baixa: dataBaixa, observacao: observacao || undefined, responsavel: responsavel || undefined,
         pagar_comissao: motivo === "venda" ? pagarComissao : undefined,
         corretor_nome: motivo === "venda" && pagarComissao ? corretorNome.trim() : undefined,
@@ -242,6 +244,10 @@ export default function BaixarAnimal() {
                   Equivale a R$ {(Number(valor) / selecionados.size).toFixed(2)} por animal.
                 </p>
               )}
+              <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", marginTop: "0.2rem" }}
+                title="Marque quando for venda de animal de recria (novilha/bezerra), para simular a receita contra o custo de recria.">
+                <input type="checkbox" checked={vendaRecria} onChange={(e) => setVendaRecria(e.target.checked)} /> Venda de recria (simular receita × custo de recria)
+              </label>
 
               <ComissaoCorretagemForm
                 pagarComissao={pagarComissao} setPagarComissao={setPagarComissao}

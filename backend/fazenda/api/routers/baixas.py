@@ -31,6 +31,7 @@ class BaixaIn(BaseModel):
     valor: float | None = None
     cliente: str | None = None
     tipo_valor: str | None = None  # "por_animal" | "total" — exigido quando motivo == "venda"
+    venda_recria: bool = False     # marca venda de animal de recria (para simular receita vs custo de recria)
     data_baixa: date
     observacao: str | None = None
     responsavel: str | None = None
@@ -174,6 +175,7 @@ def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session)) -> 
             valor=valor_unitario if dados.motivo == "venda" else None,
             cliente=dados.cliente if dados.motivo == "venda" else None,
             tipo_valor=dados.tipo_valor if dados.motivo == "venda" else None,
+            venda_recria=dados.venda_recria if dados.motivo == "venda" else False,
             numero_lancamento_gerado=numero_lancamento,
             data_baixa=dados.data_baixa, observacao=dados.observacao, responsavel=dados.responsavel,
         ))

@@ -25,6 +25,7 @@ const vazio = {
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
   conta_gerencial_despesa_padrao: "", conta_gerencial_despesa_nome: "",
   conta_gerencial_receita_padrao: "", conta_gerencial_receita_nome: "",
+  gera_receita: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
   principio_ativo: "", classificacao_medicamento: "",
 };
@@ -70,6 +71,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         centro_custo_padrao: str(form.centro_custo_padrao),
         conta_gerencial_despesa_padrao: str(form.conta_gerencial_despesa_padrao),
         conta_gerencial_receita_padrao: str(form.conta_gerencial_receita_padrao),
+        gera_receita: form.gera_receita,
         exibir_necessidade_compra_agenda: form.estocavel ? form.exibir_necessidade_compra_agenda : false,
         estocavel: form.estocavel,
         data_inicio_controle: form.estocavel && form.data_inicio_controle.trim() !== "" ? form.data_inicio_controle : null,
@@ -176,6 +178,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         <div className="flex items-end gap-3">
           <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
             <input type="checkbox" checked={form.ativo} onChange={(e) => set({ ativo: e.target.checked })} /> Ativo
+          </label>
+        </div>
+        <div className="flex items-end gap-3">
+          <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }} title="Produto de venda (leite, animal, esterco…) — usado nos relatórios de receita.">
+            <input type="checkbox" checked={form.gera_receita} onChange={(e) => set({ gera_receita: e.target.checked })} /> Gera receita
           </label>
         </div>
         <div className="flex items-end gap-3">
