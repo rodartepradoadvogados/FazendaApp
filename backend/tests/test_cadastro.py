@@ -596,7 +596,10 @@ class TestServicoCadastro:
         servicos = c.get("/cadastro/servicos").json()
         assert any(s["nome"] == "Frete" for s in servicos)
         assert any(s["nome"] == "Manutenção em tratores" for s in servicos)
-        assert len(servicos) == 9
+        # 9 serviços padrão + 4 serviços de exames (Exames + 3 categorias).
+        assert any(s["nome"] == "Exames" for s in servicos)
+        assert any(s["nome"] == "Exame de tuberculose" for s in servicos)
+        assert len(servicos) == 13
 
     def test_seed_e_idempotente(self, client):
         c, engine = client

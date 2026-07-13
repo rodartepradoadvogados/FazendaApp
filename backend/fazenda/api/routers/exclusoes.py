@@ -62,6 +62,7 @@ TIPOS = [
     {"id": "doenca", "label": "Doença"},
     {"id": "evento_sanitario", "label": "Evento sanitário"},
     {"id": "protocolo_sanitario", "label": "Protocolo sanitário (cadastro)"},
+    {"id": "calendario_sanitario", "label": "Evento do calendário sanitário"},
 ]
 
 
@@ -250,6 +251,20 @@ def buscar(
         out = [
             {"id": p.id, "titulo": p.nome, "subtitulo": "Mastite" if p.eh_mastite else "—"}
             for p in rows if _contem(termo, p.nome)
+        ]
+        return sorted(out, key=lambda x: x["titulo"])[:200]
+
+    if tipo == "calendario_sanitario":
+        eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+        doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
+        rows = session.exec(select(CalendarioSanitario)).all()
+        out = [
+            {"id": c.id,
+             "titulo": f"{eventos.get(c.evento_sanitario_id, '—')} — {_br(c.data_evento)}",
+             "subtitulo": f"{c.categoria_alvo or 'rebanho'} · a cada {c.frequencia_valor} {c.frequencia_unidade}"}
+            for c in rows
+            if _contem(termo, eventos.get(c.evento_sanitario_id), c.categoria_alvo, c.produto, doencas.get(c.doenca_id))
+            and _dentro_periodo(c.data_evento, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
@@ -442,6 +457,14 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         if etapas:
             impacto.append(f"{len(etapas)} etapa(s) do protocolo")
         return impacto, [protocolo, *etapas]
+
+    if tipo == "calendario_sanitario":
+        c = session.get(CalendarioSanitario, int(id_))
+        if not c:
+            raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+        evento = session.get(EventoSanitario, c.evento_sanitario_id)
+        nome = evento.nome if evento else "evento"
+        return [f"Evento do calendário sanitário: {nome} — {_br(c.data_evento)}"], [c]
 
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 

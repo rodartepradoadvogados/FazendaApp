@@ -999,6 +999,8 @@ class CalendarioSanitario(SQLModel, table=True):
     produto: Optional[str] = None  # nome do item de estoque (medicamento/vacina)
     principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
     dosagem: Optional[str] = None  # texto livre — ex.: "2 mL a 5 mL (conforme bula)"
+    # Veterinário/pessoa responsável (usado sobretudo em exames, que não têm baixa de estoque).
+    veterinario: Optional[str] = None
     frequencia_valor: int
     frequencia_unidade: str  # "dias" | "meses" | "anos"
     data_evento: date  # data de referência do evento (base da recorrência)

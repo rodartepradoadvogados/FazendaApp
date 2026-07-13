@@ -763,14 +763,28 @@ SEED_SERVICOS = [
     "Revisão em máquinas", "Revisão em equipamentos", "Revisão em implementos",
 ]
 
+# Serviços de exames — usados no botão "lançar financeiro" do calendário
+# sanitário (exames não têm baixa de estoque, viram despesa/serviço). O
+# guarda-chuva "Exames" mais as 3 categorias pedidas.
+SEED_SERVICOS_EXAMES = [
+    "Exames", "Exame de tuberculose", "Exame de brucelose", "Outros exames",
+]
+
 
 def seed_servicos(session: Session) -> None:
-    """Cria os serviços padrão se a tabela ainda estiver vazia (idempotente)."""
-    if session.exec(select(ServicoCadastro)).first():
-        return
-    for nome in SEED_SERVICOS:
-        session.add(ServicoCadastro(nome=nome))
-    session.commit()
+    """Cria os serviços padrão (se a tabela estiver vazia) e garante, sempre,
+    os serviços de exames — estes por checagem nome a nome, para também
+    aparecerem em bancos que já foram semeados antes."""
+    if not session.exec(select(ServicoCadastro)).first():
+        for nome in SEED_SERVICOS:
+            session.add(ServicoCadastro(nome=nome))
+        session.commit()
+    existentes = {s.nome for s in session.exec(select(ServicoCadastro)).all()}
+    novos = [nome for nome in SEED_SERVICOS_EXAMES if nome not in existentes]
+    if novos:
+        for nome in novos:
+            session.add(ServicoCadastro(nome=nome))
+        session.commit()
 
 
 class NomeAtivoIn(BaseModel):

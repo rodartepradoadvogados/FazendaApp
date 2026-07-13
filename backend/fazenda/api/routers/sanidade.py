@@ -13,7 +13,8 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoSanitario, MovimentoEstoque,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
+    EventoSanitario, MovimentoEstoque,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade,
 )
@@ -244,17 +245,21 @@ def excluir_aplicacao(aplicacao_id: int, session: Session = Depends(get_session)
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.
 # ---------------------------------------------------------------------------
-def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str]]:
-    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, str], dict[int, str | None]]:
+    evs = session.exec(select(EventoSanitario)).all()
+    eventos = {e.id: e.nome for e in evs}
+    categorias = {e.id: e.categoria_preventiva for e in evs}
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     principios = {p.id: p.nome for p in session.exec(select(PrincipioAtivo)).all()}
-    return eventos, doencas, principios
+    return eventos, doencas, principios, categorias
 
 
-def _serializar(c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict) -> dict:
+def _serializar(c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict, categorias: dict | None = None) -> dict:
+    categorias = categorias or {}
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
+        "categoria_preventiva": categorias.get(c.evento_sanitario_id),
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
@@ -272,9 +277,9 @@ def listar_calendario(
     o objetivo é acompanhar o que está por vir — não o histórico já aplicado
     (esse fica em /sanidade/aplicacoes).
     """
-    eventos, doencas, principios = _nomes(session)
+    eventos, doencas, principios, categorias = _nomes(session)
     regras = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)).all()  # noqa: E712
-    saida = [_serializar(c, eventos, doencas, principios) for c in regras]
+    saida = [_serializar(c, eventos, doencas, principios, categorias) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -291,11 +296,15 @@ class CalendarioSanitarioIn(BaseModel):
     produto: str | None = None
     principio_ativo_id: int | None = None
     dosagem: str | None = None
+    veterinario: str | None = None  # p/ exames: quem realizou/vai realizar
     frequencia_valor: int
     frequencia_unidade: str
     data_evento: date
     observacao: str | None = None
     ativo: bool = True
+    # "Já foi realizado?" — quando a 1ª ocorrência é hoje/passada e já aconteceu,
+    # marca o evento como realizado (some da Agenda). Não é campo do modelo.
+    realizado: bool = False
 
 
 def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
@@ -314,12 +323,19 @@ def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
 @router.post("/calendario")
 def criar_calendario(dados: CalendarioSanitarioIn, session: Session = Depends(get_session)) -> dict:
     _validar_calendario(dados, session)
-    c = CalendarioSanitario(**dados.model_dump())
+    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}))
     session.add(c)
     session.commit()
     session.refresh(c)
-    eventos, doencas, principios = _nomes(session)
-    return _serializar(c, eventos, doencas, principios)
+    # "Já foi realizado?" — marca a ocorrência de referência como realizada para
+    # não aparecer como pendência na Agenda (útil p/ exames já feitos hoje).
+    if dados.realizado and c.data_evento <= date.today():
+        eid = f"calendario_sanitario_{c.id}__{c.data_evento.isoformat()}"
+        if not session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first():
+            session.add(EventoRealizado(evento_id=eid))
+            session.commit()
+    eventos, doencas, principios, categorias = _nomes(session)
+    return _serializar(c, eventos, doencas, principios, categorias)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -328,13 +344,24 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
     if not c:
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session)
-    for campo, valor in dados.model_dump().items():
+    for campo, valor in dados.model_dump(exclude={"realizado"}).items():
         setattr(c, campo, valor)
     session.add(c)
     session.commit()
     session.refresh(c)
-    eventos, doencas, principios = _nomes(session)
-    return _serializar(c, eventos, doencas, principios)
+    eventos, doencas, principios, categorias = _nomes(session)
+    return _serializar(c, eventos, doencas, principios, categorias)
+
+
+@router.delete("/calendario/{calendario_id}")
+def excluir_calendario(calendario_id: int, session: Session = Depends(get_session)) -> dict:
+    """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
+    c = session.get(CalendarioSanitario, calendario_id)
+    if not c:
+        raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    session.delete(c)
+    session.commit()
+    return {"excluido": True, "id": calendario_id}
 
 
 class CadastrarPreventivoIn(BaseModel):
@@ -393,8 +420,8 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             session,
         )
 
-    eventos, doencas, principios = _nomes(session)
-    return {"regra": _serializar(regra, eventos, doencas, principios), "aplicacao": aplicacao}
+    eventos, doencas, principios, categorias = _nomes(session)
+    return {"regra": _serializar(regra, eventos, doencas, principios, categorias), "aplicacao": aplicacao}
 
 
 # ---------------------------------------------------------------------------
