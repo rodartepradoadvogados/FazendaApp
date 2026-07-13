@@ -180,6 +180,9 @@ def _benchmark_categorias(
     }
 
 
+DEL_APTA_MIN = 45  # vaca apta a novo serviço: dias mínimos após o último parto
+
+
 def _reproducao_categorias(
     animais: list[dict],
     numeros_com_servico: set,
@@ -189,21 +192,17 @@ def _reproducao_categorias(
     """Situação reprodutiva (prenhes/vazias/inseminadas/aptas) por categoria:
     todas / vaca (já pariu) / novilha.
 
-    'Aptas' aqui é uma noção BEM mais estrita do que "tem situação reprodutiva
-    definida": é só a novilha nulípara (nunca inseminada, sem nenhum registro
-    de Serviço) que já atingiu o peso mínimo de 1ª cobertura (PESO_APTA_MIN,
-    o mesmo limiar usado em agenda_veterinario.py para a lista
-    "novilhas_aptas_vazias" — reaproveitado aqui para não divergir o número
-    mágico em dois lugares). Prenhe, já inseminada e vaca (já pariu) NUNCA
-    contam como apta — o oposto do cálculo antigo (prenhes + vazias +
-    inseminadas), que somava justamente os três estados que significam "já
-    tem histórico reprodutivo".
-
-    A classificação vaca/novilha aqui usa `vacas_nums` (histórico de parto),
-    o mesmo critério já usado por `_benchmark_categorias` — não o texto de
-    categoria (categoria_completa/categoria_abrev) usado em
-    agenda_veterinario.py, que é uma classificação paralela para outra
-    finalidade (roteiro do veterinário).
+    'Aptas' usa dois critérios diferentes conforme a categoria, porque
+    "apta" tem sentido distinto para quem já pariu e para quem nunca pariu:
+    - Vaca: DEL (dias desde o último parto) >= DEL_APTA_MIN e não está
+      inseminada nem prenhe (sit_rep diferente de "Ins."/"Ges.") — apta a
+      novo serviço.
+    - Novilha: nulípara (nunca teve nenhum Serviço) que já atingiu o peso
+      mínimo de 1ª cobertura (PESO_APTA_MIN, mesmo limiar usado em
+      agenda_veterinario.py para "novilhas_aptas_vazias" — reaproveitado
+      aqui para não divergir o número mágico em dois lugares); novilha não
+      tem parto, então o critério de DEL não se aplica a ela.
+    "Todas" soma os dois grupos.
     """
     resultado: dict[str, dict] = {}
     for chave, filtro in (
@@ -225,8 +224,14 @@ def _reproducao_categorias(
         aptas_nums: list[str] = []
         for a in subset:
             numero = a.get("numero")
+            sit = (a.get("sit_rep") or "").strip()
+            if sit in ("Ins.", "Ges."):
+                continue  # já inseminada ou prenhe — não é "apta" a novo serviço
             if numero in vacas_nums:
-                continue  # vaca já pariu — não é "apta" no sentido de 1ª cobertura
+                del_dias = a.get("del_dias")
+                if del_dias is not None and del_dias >= DEL_APTA_MIN:
+                    aptas_nums.append(numero)
+                continue
             if numero in numeros_com_servico:
                 continue  # já tem QUALQUER histórico de serviço — não é nulípara
             peso = peso_por_animal.get(numero)

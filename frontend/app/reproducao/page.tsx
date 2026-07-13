@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Heart, PieChart, Stethoscope, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchServicosAnalise, podeModulo, ehAdmin } from "@/lib/api";
-import { TabBar } from "@/components/ui";
+import { TabBar, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
@@ -28,9 +28,9 @@ function ReproducaoVisaoGeral() {
   const [animal, setAnimal] = useState("");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
-  const [ordemParto, setOrdemParto] = useState("");
-  const [ordemTentativa, setOrdemTentativa] = useState("");
-  const [tipo, setTipo] = useState("");
+  const [ordemParto, setOrdemParto] = useState<string[]>([]);
+  const [ordemTentativa, setOrdemTentativa] = useState<string[]>([]);
+  const [metodo, setMetodo] = useState<string[]>([]);
   const [diag, setDiag] = useState("");
   // Filtro por DATA (de/até) OU por CICLO reprodutivo (janelas de 21 dias).
   const [modo, setModo] = useState<"data" | "ciclo">("data");
@@ -78,12 +78,12 @@ function ReproducaoVisaoGeral() {
       (modo === "data"
         ? (!ini || (s.data ? s.data >= ini : false)) && (!fim || (s.data ? s.data <= fim : false))
         : (!janelas || (s.data ? janelas.some(([a, b]) => s.data! >= a && s.data! <= b) : false))) &&
-      (!ordemParto || String(s.ordem_parto) === ordemParto) &&
-      (!ordemTentativa || String(s.ordem_tentativa) === ordemTentativa) &&
-      (!tipo || s.tipo_servico === tipo) &&
+      (!ordemParto.length || ordemParto.includes(String(s.ordem_parto))) &&
+      (!ordemTentativa.length || ordemTentativa.includes(String(s.ordem_tentativa))) &&
+      (!metodo.length || metodo.includes(s.metodo_ia || "")) &&
       (!diag || (s.diagnostico || "ABERTO") === diag)
     ).sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1));
-  }, [regs, animal, ini, fim, ordemParto, ordemTentativa, tipo, diag, modo, janelas]);
+  }, [regs, animal, ini, fim, ordemParto, ordemTentativa, metodo, diag, modo, janelas]);
 
   const diagnosticados = filtrados.filter((s) => s.diagnosticado).length;
   const positivos = filtrados.filter((s) => s.positivo).length;
@@ -98,7 +98,7 @@ function ReproducaoVisaoGeral() {
     <div className="p-6 animate-in">
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Heart size={22} style={{ color: "var(--dourado)" }} /> Reprodução</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Serviços por animal — filtre por data ou por ciclo reprodutivo (21 dias), ordem de parto/tentativa, tipo e diagnóstico.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Serviços por animal — filtre por data ou por ciclo reprodutivo (21 dias), ordem de parto/tentativa, método (IATF/IA em cio natural/monta natural) e diagnóstico.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o reprodutivo</a>.</span></div>}
@@ -139,12 +139,9 @@ function ReproducaoVisaoGeral() {
                   </select></div>
               </>
             )}
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ordem de parto</label>
-              <select style={selStyle} value={ordemParto} onChange={(e) => setOrdemParto(e.target.value)}><option value="">Todas</option>{opc((s) => s.ordem_parto === null ? null : String(s.ordem_parto)).map((o) => <option key={o}>{o}</option>)}</select></div>
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ordem de tentativa</label>
-              <select style={selStyle} value={ordemTentativa} onChange={(e) => setOrdemTentativa(e.target.value)}><option value="">Todas</option>{opc((s) => s.ordem_tentativa === null ? null : String(s.ordem_tentativa)).map((o) => <option key={o}>{o}</option>)}</select></div>
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Tipo</label>
-              <select style={selStyle} value={tipo} onChange={(e) => setTipo(e.target.value)}><option value="">Todos</option>{opc((s) => s.tipo_servico).map((o) => <option key={o}>{o}</option>)}</select></div>
+            <MultiFiltro label="Ordem de parto" opcoes={opc((s) => s.ordem_parto === null ? null : String(s.ordem_parto))} selecionados={ordemParto} onChange={setOrdemParto} />
+            <MultiFiltro label="Ordem de tentativa" opcoes={opc((s) => s.ordem_tentativa === null ? null : String(s.ordem_tentativa))} selecionados={ordemTentativa} onChange={setOrdemTentativa} />
+            <MultiFiltro label="Método" opcoes={opc((s) => s.metodo_ia || null)} selecionados={metodo} onChange={setMetodo} />
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Diagnóstico</label>
               <select style={selStyle} value={diag} onChange={(e) => setDiag(e.target.value)}><option value="">Todos</option>{["POSITIVO", "NEGATIVO", "ABERTO"].map((o) => <option key={o}>{o}</option>)}</select></div>
           </div>

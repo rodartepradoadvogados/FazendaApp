@@ -90,7 +90,7 @@ type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; ati
 const etapaVazia = (dia: number): ProtocoloEtapa => ({ dia, criterio_tipo: "medicamento", produto: "", dosagem: 0, unidade: "ml", via: "" });
 const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, ativo: true, etapas: [etapaVazia(1)] });
 
-function CadastroProtocolosSanitarios() {
+export function CadastroProtocolosSanitarios() {
   const [itens, setItens] = useState<Protocolo[] | null>(null);
   const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
@@ -336,7 +336,7 @@ const eventoFormVazio = (): EventoForm => ({
   avisar_veterinario_30_dias: false,
 });
 
-function CadastroEventosSanitarios() {
+export function CadastroEventosSanitarios() {
   const [itens, setItens] = useState<EventoSanitarioRow[] | null>(null);
   const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
