@@ -178,7 +178,11 @@ def _tratar_mensagem(session: Session, msg: dict) -> None:
         nome_l = (file_name or "").lower()
         if mime in ("text/xml", "application/xml") or nome_l.endswith(".xml"):
             kind = "xml"
-        elif mime in MIME_DOCUMENTO:
+        elif mime in MIME_DOCUMENTO or nome_l.endswith((".pdf", ".jpg", ".jpeg", ".png")):
+            # O mime_type do Telegram é preenchido pelo cliente e às vezes vem
+            # ausente/genérico (ex.: app que compartilha PDF sem setar o mime
+            # certo) — sem o fallback pela extensão, o arquivo era descartado
+            # em silêncio e o bot respondia como se nada tivesse sido enviado.
             kind = "documento"
     elif "photo" in msg and msg["photo"]:
         maior = msg["photo"][-1]  # a última é a de maior resolução
@@ -203,6 +207,16 @@ def _tratar_mensagem(session: Session, msg: dict) -> None:
                 {"text": "✖️ Cancelar", "callback_data": f"cancel:{pend.id}"},
             ]],
         )
+        return
+
+    if file_id and not kind:
+        # Chegou um arquivo, mas não reconhecemos nem o mime_type nem a
+        # extensão — antes disso caía direto na mensagem genérica de comando,
+        # como se o usuário não tivesse enviado nada.
+        if not _autorizado(chat_id):
+            _enviar(chat_id, f"🚫 Chat não liberado. Seu id é <code>{chat_id}</code> — peça ao administrador.")
+            return
+        _enviar(chat_id, f"⚠️ Não reconheci o tipo deste arquivo ({file_name or mime or 'desconhecido'}). Envie XML, PDF, JPG ou PNG.")
         return
 
     # Sem arquivo: comandos/perguntas do fluxo operacional.

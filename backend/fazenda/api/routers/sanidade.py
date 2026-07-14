@@ -390,6 +390,15 @@ class CadastrarPreventivoIn(BaseModel):
     veterinario: str | None = None           # p/ exames
     responsavel: str | None = None
     observacao: str | None = None
+    # Overrides opcionais do produto/dose/via padrão do evento — usados pela
+    # confirmação inline da Agenda ("dar baixa" sem abrir a tela de lançamento),
+    # onde o usuário pode ajustar o que veio do cadastro antes de confirmar.
+    # Quando omitidos, o comportamento é idêntico ao de sempre (usa o padrão).
+    produto: str | None = None
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
+    principio_ativo_id: int | None = None
 
 
 @router.post("/calendario/cadastrar-preventivo")
@@ -402,13 +411,20 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
     if dados.frequencia_valor <= 0:
         raise HTTPException(status_code=400, detail="A frequência deve ser maior que zero")
 
-    # 1) Regra recorrente do calendário — herda produto/dose/doença do evento.
+    produto = dados.produto or ev.produto_padrao
+    dose = dados.dose if dados.dose is not None else ev.dose_padrao
+    unidade = dados.unidade or ev.unidade_padrao
+    via = dados.via if dados.via is not None else ev.via_padrao
+
+    # 1) Regra recorrente do calendário — herda produto/dose/doença do evento
+    # (ou o que foi confirmado/ajustado na hora de dar baixa).
     dosagem = None
-    if ev.dose_padrao is not None:
-        dosagem = f"{ev.dose_padrao:g} {ev.unidade_padrao}".strip() if ev.unidade_padrao else f"{ev.dose_padrao:g}"
+    if dose is not None:
+        dosagem = f"{dose:g} {unidade}".strip() if unidade else f"{dose:g}"
     regra = CalendarioSanitario(
         evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
-        produto=ev.produto_padrao, dosagem=dosagem, veterinario=dados.veterinario,
+        produto=produto, principio_ativo_id=dados.principio_ativo_id, dosagem=dosagem, unidade=unidade,
+        veterinario=dados.veterinario,
         frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
         data_evento=dados.data_evento, observacao=dados.observacao,
     )
@@ -416,14 +432,13 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
     session.commit()
     session.refresh(regra)
 
-    # 2) Aplicação do produto padrão nos animais marcados (opcional).
+    # 2) Aplicação do produto (padrão ou confirmado/ajustado) nos animais marcados (opcional).
     aplicacao = None
-    if dados.aplicar and dados.animais and ev.produto_padrao and ev.dose_padrao is not None and ev.unidade_padrao:
+    if dados.aplicar and dados.animais and produto and dose is not None and unidade:
         aplicacao = registrar_aplicacao(
             AplicacaoIn(
                 data_aplicacao=dados.data_evento, animais=dados.animais,
-                itens=[ItemAplicacaoIn(produto=ev.produto_padrao, via=ev.via_padrao,
-                                       quantidade=ev.dose_padrao, unidade=ev.unidade_padrao)],
+                itens=[ItemAplicacaoIn(produto=produto, via=via, quantidade=dose, unidade=unidade)],
                 responsavel=dados.responsavel, observacao=dados.observacao or f"Preventivo: {ev.nome}",
             ),
             session,

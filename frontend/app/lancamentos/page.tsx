@@ -22,6 +22,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
@@ -527,6 +528,23 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const [autoLancar, setAutoLancar] = useState(false);
   const [lancamentos, setLancamentos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string }[]>([]);
   const [semen, setSemen] = useState<SemenDisponivel | null>(null);
+  // Origem da seleção: avulsa (qualquer matriz apta) ou vinda de um protocolo
+  // IATF em andamento — nesse caso a lista se restringe às matrizes no D11.
+  const [origemSelecao, setOrigemSelecao] = useState<"avulsa" | "protocolo">("avulsa");
+  const [protocolosAtivos, setProtocolosAtivos] = useState<{ lancamento_id: number; nome_protocolo: string; data_d0: string; animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[] }[]>([]);
+  useEffect(() => { fetchProtocolosIatfAtivos().then(setProtocolosAtivos).catch(() => setProtocolosAtivos([])); }, []);
+  const protocolosD11 = useMemo(
+    () => protocolosAtivos
+      .map((p) => ({ ...p, animaisD11: p.animais.filter((a) => a.etapa_atual === "D11") }))
+      .filter((p) => p.animaisD11.length > 0),
+    [protocolosAtivos]
+  );
+  const mapaProtocoloPorAnimal = useMemo(() => {
+    const m = new Map<string, string>();
+    protocolosD11.forEach((p) => p.animaisD11.forEach((a) => m.set(a.numero_matriz, p.nome_protocolo)));
+    return m;
+  }, [protocolosD11]);
+  const animaisProtocolo = useMemo(() => animais.filter((a) => mapaProtocoloPorAnimal.has(a.numero)), [animais, mapaProtocoloPorAnimal]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -555,8 +573,20 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
     const qs = new URLSearchParams(window.location.search);
     const numeroMatriz = qs.get("numero_matriz");
     if (numeroMatriz) setSel(new Set([numeroMatriz]));
-    if (qs.get("protocolo")) setTipo("iatf");
+    if (qs.get("protocolo")) { setTipo("iatf"); setOrigemSelecao("protocolo"); }
   }, []);
+
+  // Na origem "protocolo", quando a seleção pertence a um único lançamento
+  // IATF, vincula automaticamente — evita o usuário ter que escolher à toa.
+  useEffect(() => {
+    if (origemSelecao !== "protocolo") return;
+    const ids = new Set<number>();
+    sel.forEach((n) => {
+      const p = protocolosD11.find((pp) => pp.animaisD11.some((a) => a.numero_matriz === n));
+      if (p) ids.add(p.lancamento_id);
+    });
+    setProtocoloId(ids.size === 1 ? String([...ids][0]) : "");
+  }, [sel, origemSelecao, protocolosD11]);
 
   // Touro da fazenda ⇒ sempre monta natural.
   useEffect(() => { if (categoria === "fazenda") setTipo("monta_natural"); }, [categoria]);
@@ -608,13 +638,31 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         </div>
       )}
 
-      <Campo label="Matriz / novilha (aptas) — pode selecionar várias" full>
-        <SelecaoAnimaisTabela
-          animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
+      <div className="mb-3">
+        <label style={lbl}>Origem da inseminação</label>
+        <TabBar<"avulsa" | "protocolo">
+          abas={[
+            { id: "avulsa", label: "Inseminação avulsa", title: "Escolher livremente entre as matrizes aptas" },
+            { id: "protocolo", label: "Protocolo de IATF atual", title: "Mostrar apenas as matrizes no D11 de um protocolo IATF em andamento" },
+          ]}
+          ativa={origemSelecao}
+          onChange={(o) => { setOrigemSelecao(o); setSel(new Set()); if (o === "protocolo") setTipo("iatf"); }}
+        />
+        {origemSelecao === "protocolo" && !animaisProtocolo.length && (
+          <p style={{ ...nota, color: "var(--amber)" }}>Nenhuma matriz está no D11 de um protocolo IATF em andamento no momento.</p>
+        )}
+      </div>
+
+      <Campo label={origemSelecao === "protocolo" ? "Matrizes no D11 do protocolo IATF — pode selecionar várias" : "Matriz / novilha (aptas) — pode selecionar várias"} full>
+        <AnimalPickerModal
+          animais={origemSelecao === "protocolo" ? animaisProtocolo : animais}
+          selecionados={sel} onToggle={toggle}
+          titulo={origemSelecao === "protocolo" ? "Escolher matrizes no D11 (IATF)" : "Escolher matriz / novilha"}
           colunas={[
             { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
             { header: "Lote", render: (a) => a.grupo_primario || "—" },
             { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+            ...(origemSelecao === "protocolo" ? [{ header: "Protocolo", render: (a: AnimalRow) => mapaProtocoloPorAnimal.get(a.numero) || "—" }] : []),
           ]}
         />
       </Campo>
@@ -658,12 +706,23 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
             { id: "monta_natural", label: "Monta natural", title: "Cobertura por touro (monta natural)" },
           ]}
           ativa={tipo}
-          onChange={(t) => { if (categoria !== "fazenda") setTipo(t); }}
+          onChange={(t) => { if (categoria !== "fazenda" && origemSelecao !== "protocolo") setTipo(t); }}
         />
         {categoria === "fazenda" && <p style={nota}>Touro da fazenda selecionado — registrado como <strong>monta natural</strong>.</p>}
+        {origemSelecao === "protocolo" && <p style={nota}>Origem "Protocolo de IATF atual" — sempre registrado como <strong>IATF</strong>.</p>}
       </div>
 
-      {tipo === "iatf" && (
+      {tipo === "iatf" && origemSelecao === "protocolo" && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.82rem" }}>
+            {protocoloId
+              ? <>Vinculado automaticamente ao protocolo <strong>{protocolosD11.find((p) => String(p.lancamento_id) === protocoloId)?.nome_protocolo}</strong>.</>
+              : "Cada matriz será vinculada ao seu próprio protocolo IATF em andamento (detectado automaticamente)."}
+          </p>
+        </div>
+      )}
+
+      {tipo === "iatf" && origemSelecao === "avulsa" && (
         <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Campo label="Vincular ao protocolo IATF">
@@ -760,8 +819,9 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   return (
     <>
       <Campo label="Matriz / novilha (servidas) — pode selecionar várias" full>
-        <SelecaoAnimaisTabela
-          animais={servidas} selecionados={selecionados} toggle={toggle} toggleTodos={toggleTodos}
+        <AnimalPickerModal
+          animais={servidas} selecionados={selecionados} onToggle={toggle}
+          titulo="Escolher matriz / novilha servida"
           colunas={[
             { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
             { header: "Lote", render: (a) => a.grupo_primario || "—" },
@@ -2095,13 +2155,12 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   const [animaisSelecionados, setAnimaisSelecionados] = useState<Set<string>>(new Set());
   const [lotesSelecionados, setLotesSelecionados] = useState<Set<string>>(new Set());
   const [lotesTodos, setLotesTodos] = useState<LoteRow[]>([]);
-  const [pickerAberto, setPickerAberto] = useState<"animal" | "lote" | null>(null);
-  const abrirPicker = (tipo: "animal" | "lote") => {
-    if (tipo === "lote" && !lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
-    setPickerAberto(tipo);
+  const [pickerAberto, setPickerAberto] = useState<"lote" | null>(null);
+  const abrirPickerLotes = () => {
+    if (!lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
+    setPickerAberto("lote");
   };
   const toggleAnimalSelecionado = (numero: string) => setAnimaisSelecionados((p) => { const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n; });
-  const toggleTodosAnimais = () => setAnimaisSelecionados((p) => (p.size === animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
   const toggleLoteSelecionado = (codigo: string) => setLotesSelecionados((p) => { const n = new Set(p); n.has(codigo) ? n.delete(codigo) : n.add(codigo); return n; });
   const toggleTodosLotes = () => setLotesSelecionados((p) => (p.size === lotesTodos.length ? new Set() : new Set(lotesTodos.map((l) => l.codigo))));
   const pickerColunasAnimais = [
@@ -2250,12 +2309,10 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
               onChange={setVinculo}
             />
             {vinculo === "animal" && (
-              <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("animal")}>
-                {animaisSelecionados.size ? `${animaisSelecionados.size} animal(is) selecionado(s) — alterar` : "Selecionar animais…"}
-              </button>
+              <AnimalPickerModal animais={animais} selecionados={animaisSelecionados} onToggle={toggleAnimalSelecionado} colunas={pickerColunasAnimais} titulo="Selecionar animal(is)" />
             )}
             {vinculo === "lote" && (
-              <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("lote")}>
+              <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={abrirPickerLotes}>
                 {lotesSelecionados.size ? `${lotesSelecionados.size} lote(s) selecionado(s) (${animaisDoLote.length} animal(is)) — alterar` : "Selecionar lotes…"}
               </button>
             )}
@@ -2355,15 +2412,11 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
         </button>
       </div>
 
-      {pickerAberto && (
+      {pickerAberto === "lote" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: "1rem" }}>
           <div className="card" style={{ width: "640px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-            <div className="card-header mb-3">{pickerAberto === "animal" ? "Selecionar animal(is)" : "Selecionar lote(s)"}</div>
-            {pickerAberto === "animal" ? (
-              <SelecaoAnimaisTabela animais={animais} selecionados={animaisSelecionados} toggle={toggleAnimalSelecionado} toggleTodos={toggleTodosAnimais} colunas={pickerColunasAnimais} />
-            ) : (
-              <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
-            )}
+            <div className="card-header mb-3">Selecionar lote(s)</div>
+            <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setPickerAberto(null)} className="btn-primary">OK</button>
             </div>

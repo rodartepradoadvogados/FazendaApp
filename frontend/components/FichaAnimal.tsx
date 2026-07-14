@@ -120,8 +120,11 @@ const inpStyle: React.CSSProperties = { width: "100%", padding: "0.35rem 0.5rem"
 const btnEdit: React.CSSProperties = { fontSize: "0.75rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" };
 
 // Um campo editável (label + input/select) para os formulários da ficha.
-function CampoEdit({ label, children }: { label: string; children: React.ReactNode }) {
-  return <div><label style={labelStyle}>{label}</label>{children}</div>;
+// `destaque` marca em vermelho o campo que motivou uma pendência da Agenda
+// (colostragem/IgG não lançados no parto) — sinaliza exatamente o que falta,
+// em vez de só levar o usuário até a tela.
+function CampoEdit({ label, children, destaque }: { label: string; children: React.ReactNode; destaque?: boolean }) {
+  return <div><label style={destaque ? { ...labelStyle, color: "var(--red)", fontWeight: 700 } : labelStyle}>{label}{destaque ? " — pendente" : ""}</label>{children}</div>;
 }
 
 export default function FichaAnimal() {
@@ -137,8 +140,22 @@ export default function FichaAnimal() {
   const [formColostro, setFormColostro] = useState<Record<string, any>>({});
   const [salvando, setSalvando] = useState(false);
   const [aviso, setAviso] = useState<string | null>(null);
+  // Chegando da Agenda (pendência de colostragem/IgG não lançada no parto):
+  // abre direto na ficha do animal certo, com o campo em falta destacado e o
+  // formulário de colostragem já aberto para preencher.
+  const [destacar, setDestacar] = useState<"colostragem" | "igg" | null>(null);
+  const [abrirEdicaoAoCarregar, setAbrirEdicaoAoCarregar] = useState(false);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const n = params.get("numero");
+    const d = params.get("destacar");
+    if (d === "colostragem" || d === "igg") { setDestacar(d); setAbrirEdicaoAoCarregar(true); }
+    if (n) buscar(n);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   async function buscar(n: string) {
     setNumero(n);
@@ -192,6 +209,18 @@ export default function FichaAnimal() {
     });
     setEditColostro(true); setAviso(null);
   }
+
+  // Chegou da Agenda com uma pendência de colostro/IgG: assim que a ficha
+  // carrega, abre direto o formulário de colostragem (não fica só na tela de
+  // leitura esperando o usuário achar o botão "Lançar").
+  useEffect(() => {
+    if (ficha && abrirEdicaoAoCarregar) {
+      abrirEditColostro();
+      setAbrirEdicaoAoCarregar(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ficha]);
+
   async function salvarColostro() {
     setSalvando(true); setAviso(null);
     try {
@@ -212,6 +241,7 @@ export default function FichaAnimal() {
         observacao: f.observacao || undefined,
       });
       setEditColostro(false); setAviso("Colostragem/IgG salvos.");
+      setDestacar(null);
       await buscar(numero);
     } catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
     finally { setSalvando(false); }
@@ -304,19 +334,25 @@ export default function FichaAnimal() {
             )}
           </div>
 
-          <div className="card" style={cardStyle}>
+          <div className="card" style={destacar ? { ...cardStyle, borderColor: "var(--red)" } : cardStyle}>
             <div className="card-header mb-3 flex items-center justify-between">
               <span>Colostragem e teste de sangue (IgG)</span>
               {!editColostro && <button className="btn-ghost" style={btnEdit} onClick={abrirEditColostro}><Pencil size={13} /> {ficha.colostragem ? "Editar" : "Lançar"}</button>}
             </div>
+            {destacar && (
+              <p style={{ fontSize: "0.78rem", color: "var(--red)", fontWeight: 600, marginBottom: "0.6rem" }}>
+                <AlertTriangle size={13} style={{ display: "inline", marginRight: "0.3rem", verticalAlign: "-2px" }} />
+                Pendente da Agenda — preencha {destacar === "colostragem" ? "os litros e o Brix do colostro" : "o Brix do soro (IgG)"} abaixo.
+              </p>
+            )}
             {editColostro ? (
               <>
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <CampoEdit label="Tomou colostro?"><select style={inpStyle} value={formColostro.tomou_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, tomou_colostro: e.target.value }))}><option value="">—</option><option value="true">Sim</option><option value="false">Não</option></select></CampoEdit>
-                  <CampoEdit label="Litros de colostro"><input type="number" style={inpStyle} value={formColostro.litros_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, litros_colostro: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Brix colostro (%)"><input type="number" style={inpStyle} value={formColostro.brix_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_colostro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Litros de colostro" destaque={destacar === "colostragem"}><input type="number" style={inpStyle} value={formColostro.litros_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, litros_colostro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Brix colostro (%)" destaque={destacar === "colostragem"}><input type="number" style={inpStyle} value={formColostro.brix_colostro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_colostro: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Data do colostro"><input type="date" style={inpStyle} value={formColostro.data_colostro || ""} onChange={(e) => setFormColostro((f) => ({ ...f, data_colostro: e.target.value }))} /></CampoEdit>
-                  <CampoEdit label="Brix soro / IgG (%)"><input type="number" style={inpStyle} value={formColostro.brix_soro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_soro: e.target.value }))} /></CampoEdit>
+                  <CampoEdit label="Brix soro / IgG (%)" destaque={destacar === "igg"}><input type="number" style={inpStyle} value={formColostro.brix_soro} onChange={(e) => setFormColostro((f) => ({ ...f, brix_soro: e.target.value }))} /></CampoEdit>
                   <CampoEdit label="Data do teste de sangue"><input type="date" style={inpStyle} value={formColostro.data_teste_sangue || ""} onChange={(e) => setFormColostro((f) => ({ ...f, data_teste_sangue: e.target.value }))} /></CampoEdit>
                   <div style={{ gridColumn: "span 2" }}><CampoEdit label="Observação"><input style={inpStyle} value={formColostro.observacao} onChange={(e) => setFormColostro((f) => ({ ...f, observacao: e.target.value }))} /></CampoEdit></div>
                 </div>

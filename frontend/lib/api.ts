@@ -922,6 +922,10 @@ export type CadastrarPreventivoPayload = {
   evento_sanitario_id: number; categoria_alvo?: string | null; data_evento: string;
   frequencia_valor: number; frequencia_unidade: string; animais: string[]; aplicar?: boolean;
   veterinario?: string | null; responsavel?: string | null; observacao?: string | null;
+  // Overrides opcionais do produto/dose/via/princípio ativo padrão do evento —
+  // usados na confirmação inline da Agenda ("dar baixa" sem abrir Lançamentos).
+  produto?: string | null; dose?: number | null; unidade?: string | null; via?: string | null;
+  principio_ativo_id?: number | null;
 };
 export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {
