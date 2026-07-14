@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Parto, PesagemCorporal, Servico
+from fazenda.models import Animal, Lote, Parto, PesagemCorporal, Servico
 from fazenda.rules.indicadores import calcular_indicadores
 
 router = APIRouter(prefix="/indicadores", tags=["indicadores"])
@@ -42,4 +42,5 @@ def obter_indicadores(
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
-    return calcular_indicadores(animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal)
+    lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
+    return calcular_indicadores(animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal, lotes=lotes)

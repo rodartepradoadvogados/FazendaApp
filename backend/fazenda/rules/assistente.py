@@ -22,7 +22,7 @@ from datetime import date
 from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
-from fazenda.models import Animal, ContaGerencial, Estoque, Fornecedor, Parto, PesagemCorporal, Servico, Usuario
+from fazenda.models import Animal, ContaGerencial, Estoque, Fornecedor, Lote, Parto, PesagemCorporal, Servico, Usuario
 from fazenda.rules.indicadores import calcular_indicadores
 
 MODEL = "claude-sonnet-5"
@@ -154,7 +154,8 @@ def _tool_consultar_indicadores(session: Session) -> dict:
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
-    return calcular_indicadores(animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal)
+    lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
+    return calcular_indicadores(animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes)
 
 
 def _tool_buscar_animal(session: Session, numero: str) -> dict:

@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone } from "lucide-react";
 import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
@@ -149,7 +149,13 @@ export default function AgendaPage() {
   };
 
   const hoje = today();
+  // Comunicados (ex.: aviso de nova dieta) são informativos, não atividades:
+  // ficam fixos enquanto vigoram (hoje/amanhã), não têm ação de excluir/dar
+  // baixa, e somem sozinhos no dia seguinte — por isso vivem numa seção
+  // própria, sempre visível, sem passar pelos filtros da agenda cronológica.
+  const comunicados = (agenda?.eventos || []).filter((e: any) => e.comunicado);
   const eventosBase = (agenda?.eventos || []).filter((e: any) => {
+    if (e.comunicado) return false;
     if (fCat && e.categoria !== fCat) return false;
     if (de && e.data < de) return false;
     if (ate && e.data > ate) return false;
@@ -865,6 +871,32 @@ export default function AgendaPage() {
         </div>
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
+
+      {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
+          de uma atividade: não têm botão de excluir/realizado, ficam fixos
+          enquanto vigoram e somem sozinhos quando a data passa. */}
+      {comunicados.length > 0 && (
+        <div className="card mb-4" style={{ border: "1px solid var(--dourado)" }}>
+          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--dourado-light)" }}>
+            <Megaphone size={15} /> Comunicados ({comunicados.length})
+          </div>
+          <div className="space-y-2">
+            {comunicados.map((e: any) => (
+              <div key={e.id} className="flex items-start justify-between gap-3" style={{ padding: "0.6rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+                <div>
+                  <p style={{ fontSize: "0.83rem", fontWeight: 600 }}>{e.descricao}</p>
+                  {e.observacao && <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>{e.observacao}</p>}
+                </div>
+                {e.categoria === "alimentacao" && (
+                  <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}>
+                    <Wheat size={12} /> Ir para Dieta
+                  </a>
+                )}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Pendentes (eventos anteriores a hoje ainda em aberto) — sempre visível, mesmo vazia */}
       <div className="card mb-4" style={{ border: eventosPendentes.length ? "1px solid var(--amber)" : "1px solid var(--border)" }}>

@@ -438,16 +438,28 @@ class TestDietaContextoApresentacao:
         assert len(hoje_alerta) == 1
         assert "HOJE" in hoje_alerta[0]["descricao"]
 
-    def test_marcar_realizado_remove_alerta_de_nova_dieta(self, client):
+    def test_alerta_de_nova_dieta_e_um_comunicado_nao_dispensavel(self, client):
+        """Comunicado (ex.: nova dieta) não é atividade — não pode ser marcado
+        como realizado/excluído; ele só some sozinho quando a data passa."""
         c, engine = client
         self._seed_lote(engine)
         c.post("/alimentacao/dietas", json={
             "lote": 1, "data_abertura": "2026-07-09",
             "itens": [{"alimento": "Silagem", "quantidade": 400.0, "unidade": "kg"}],
         })
-        chave = [e for e in c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
-                 if e.get("tipo") == "nova_dieta"][0]["id"]
-        c.post("/agenda/realizados", json={"evento_id": chave})
+        evento = [e for e in c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
+                  if e.get("tipo") == "nova_dieta"][0]
+        assert evento["comunicado"] is True
+        chave = evento["id"]
+
+        r = c.post("/agenda/realizados", json={"evento_id": chave})
+        assert r.status_code == 400
+
         depois = [e for e in c.get("/agenda/", params={"data": "2026-07-09", "dias": 30}).json()["eventos"]
                   if e["id"] == chave]
-        assert len(depois) == 0
+        assert len(depois) == 1
+
+        # Já não vigora mais nem véspera nem dia-de → some sozinho, sem ação do usuário.
+        futuro = [e for e in c.get("/agenda/", params={"data": "2026-07-11", "dias": 30}).json()["eventos"]
+                  if e["id"] == chave]
+        assert len(futuro) == 0
