@@ -263,7 +263,7 @@ function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFix
               }} title={a ? rotuloAnimal(a) : undefined}>
                 {n}
                 <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
-                  style={{ width: 22, height: 22, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.9rem", lineHeight: 1 }}>
+                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>
                   ×
                 </button>
               </span>

@@ -69,6 +69,17 @@ export function useCache<T>(chave: string, buscar: () => Promise<T>, inicial: T)
   return estado;
 }
 
+/** Vibração curta de confirmação — feedback tátil pra quem já guardou o
+ * celular no bolso ou está com luva/sujeira na tela. Sem suporte (iOS Safari
+ * não tem `navigator.vibrate`), é um no-op silencioso. */
+function vibrar(padrao: number | number[]) {
+  try {
+    navigator.vibrate?.(padrao);
+  } catch {
+    // ignora — vibração é só um reforço, nunca deve quebrar o envio.
+  }
+}
+
 // ── Envio padrão de todos os formulários ─────────────────────────────────────
 export type Aviso = { tipo: "ok" | "offline" | "erro"; msg: string } | null;
 
@@ -87,9 +98,11 @@ export function useEnvio() {
       setAviso(enviado
         ? { tipo: "ok", msg: msgs?.ok ?? "Lançamento salvo." }
         : { tipo: "offline", msg: msgs?.offline ?? "Sem internet — guardado, será enviado automaticamente ao conectar." });
+      vibrar(enviado ? 20 : [15, 60, 15]);
       aoLimpar?.();
     } catch (e) {
       setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar." });
+      vibrar([25, 60, 25, 60, 25]);
     } finally {
       setEnviando(false);
     }

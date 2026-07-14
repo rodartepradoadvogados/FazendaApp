@@ -40,8 +40,12 @@ export function MobTitulo({ children, badge }: { children: ReactNode; badge?: Re
 
 /** Check circular grande — fica verde-luminoso quando concluído. */
 export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: () => void; title?: string }) {
+  function aoClicar() {
+    try { navigator.vibrate?.(20); } catch { /* sem suporte — segue sem vibrar */ }
+    onClick?.();
+  }
   return (
-    <button type="button" className={`mob-check${feito ? " feito" : ""}`} onClick={onClick} title={title || (feito ? "Concluído — toque para desfazer" : "Toque para marcar como feito")} aria-label={title || "Concluir"}>
+    <button type="button" className={`mob-check${feito ? " feito" : ""}`} onClick={aoClicar} title={title || (feito ? "Concluído — toque para desfazer" : "Toque para marcar como feito")} aria-label={title || "Concluir"}>
       <Check size={22} strokeWidth={3} />
     </button>
   );

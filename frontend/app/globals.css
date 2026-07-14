@@ -380,7 +380,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-acao:      #5E1A2E;         /* cor de destaque de botão/aba ativa */
   --mob-acao-fg:   #F8E9B0;
   --mob-sombra:    0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
-  --mob-verde:     #00C97F;         /* verde OK legível no claro */
+  --mob-verde:     #047857;         /* verde OK — escurecido p/ contraste AA em texto no sol forte (4.5:1+) */
   --mob-verde-neon:#00FF9D;
   --mob-vermelho:  #DC2626;
   --mob-azul:      #2563EB;
@@ -498,10 +498,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 
-/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). */
+/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). Padding vertical
+   calibrado para >= 44px de altura de toque (dedo sujo/com luva no curral). */
 .mob-pill {
-  padding: 0.6rem 1.1rem; border-radius: 12px; cursor: pointer;
-  font-size: 0.9rem; font-weight: 700;
+  padding: 0.8rem 1.1rem; border-radius: 12px; cursor: pointer;
+  font-size: 0.9rem; font-weight: 700; min-height: 44px;
   border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
 }
 .mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }

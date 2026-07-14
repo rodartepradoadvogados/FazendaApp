@@ -39,12 +39,16 @@ export default function Baixar() {
 
   function limpar() { setNumero(""); setTipoBaixa(""); setMotivo(""); setData(today()); setObservacao(""); setConfirmar(false); }
 
+  function vibrar(padrao: number | number[]) {
+    try { navigator.vibrate?.(padrao); } catch { /* sem suporte — segue sem vibrar */ }
+  }
+
   async function enviar() {
     setAviso(null);
     if (!numero) { setAviso({ tipo: "erro", texto: "Selecione o animal." }); return; }
     if (!tipoBaixa) { setAviso({ tipo: "erro", texto: "Selecione o tipo de baixa." }); return; }
     if (!motivo) { setAviso({ tipo: "erro", texto: "Selecione o motivo." }); return; }
-    if (!confirmar) { setConfirmar(true); return; } // 1º toque: pede confirmação
+    if (!confirmar) { setConfirmar(true); vibrar(15); return; } // 1º toque: pede confirmação
 
     setEnviando(true);
     try {
@@ -56,10 +60,12 @@ export default function Baixar() {
       setAviso(enviado
         ? { tipo: "ok", texto: "Baixa salva." }
         : { tipo: "offline", texto: "Sem internet — guardado, será enviado ao conectar." });
+      vibrar(enviado ? 20 : [15, 60, 15]);
       limpar();
     } catch (e) {
       setConfirmar(false);
       setAviso({ tipo: "erro", texto: e instanceof Error ? e.message : "Erro ao registrar baixa." });
+      vibrar([25, 60, 25, 60, 25]);
     } finally {
       setEnviando(false);
     }
