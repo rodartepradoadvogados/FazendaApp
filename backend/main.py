@@ -15,6 +15,7 @@ from fazenda.api.routers import (
     alimentacao,
     animais,
     aprovacoes,
+    assistente,
     auth,
     baixas,
     cadastro,
@@ -162,6 +163,8 @@ app.include_router(notificacoes.router, dependencies=_protegido)
 app.include_router(telegram.router)
 # Aprovações: cada rota já exige admin (exigir_admin) internamente.
 app.include_router(aprovacoes.router)
+# Assistente Claude (protótipo): a rota já exige admin (exigir_admin) internamente.
+app.include_router(assistente.router)
 
 
 @app.get("/")

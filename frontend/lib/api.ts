@@ -1765,3 +1765,9 @@ export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/tour
 export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
 export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
+
+// ── Assistente Claude (protótipo, admin-only) ──
+export type AssistenteResposta = { resposta: string; historico: any[] };
+export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {
+  return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico });
+}
