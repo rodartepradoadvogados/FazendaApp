@@ -44,7 +44,7 @@ const links = [
   { href: "/recria",      label: "Recria",       icon: Baby,          title: "Recria — Dossiê Zootécnico de bezerras e novilhas: saúde por idade, ponto crítico e crescimento" },
   // ── Análise e administração ──
   { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro" },
-  { href: "/relatorios",  label: "Relatórios",   icon: FileBarChart,  title: "Relatórios gerenciais — listas de manejo do dia e gráficos gerenciais do rebanho" },
+  { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)" },
   { href: "/financeiro",  label: "Financeiro",   icon: BarChart3,     title: "Financeiro — contas a pagar/receber, folha e indicadores" },
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo" },
 ];

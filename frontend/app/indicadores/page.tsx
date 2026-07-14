@@ -1,14 +1,16 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw } from "lucide-react";
-import { fetchIndicadores, fetchAnimais } from "@/lib/api";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart } from "lucide-react";
+import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
 
-export default function IndicadoresPage() {
+function IndicadoresGerais() {
   const [ind, setInd] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -150,5 +152,26 @@ export default function IndicadoresPage() {
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
+  );
+}
+
+type Aba = "gerais" | "gerencial";
+
+export default function IndicadoresPage() {
+  const [aba, setAba] = useState<Aba>("gerais");
+  const vePermiteGerencial = podeModulo("reproducao");
+
+  const subNavTree: SubNavNode[] = useMemo(() => {
+    const tree: SubNavNode[] = [{ id: "gerais", label: "Gerais", icon: Gauge }];
+    if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
+    return tree;
+  }, [vePermiteGerencial]);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
+
+  return (
+    <>
+      {aba === "gerais" && <IndicadoresGerais />}
+      {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
+    </>
   );
 }

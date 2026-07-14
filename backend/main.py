@@ -44,7 +44,7 @@ from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
-    seed_protocolos_inducao_lactacao,
+    seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico,
 )
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
@@ -70,6 +70,9 @@ async def lifespan(app: FastAPI):
         configurar_calendario_sanitario_padrao(session)
         seed_motivos_baixa(session)
         seed_servicos(session)
+        # Tipos de serviço (Cobertura/IA) e métodos (Monta Natural/IA em cio
+        # natural/IATF) — vocabulário do lançamento de Serviço/Inseminação.
+        seed_tipos_metodos_servico(session)
         seed_semen_categorias(session)
         seed_estoque_semen_inicial(session)
         atualizar_estoque_semen_202607(session)

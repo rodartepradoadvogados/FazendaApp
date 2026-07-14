@@ -13,6 +13,7 @@ import CadastroEstoqueSemen from "./CadastroEstoqueSemen";
 import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
+import CadastroTiposMetodosServico from "./CadastroTiposMetodosServico";
 import CadastroPessoas from "./CadastroPessoas";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CadastroTouros from "./CadastroTouros";
@@ -30,6 +31,7 @@ export const ABAS_CADASTRO = [
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
   ["servicos", "Serviços", Wrench],
+  ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
   ["pessoas", "Pessoas", Users],
   ["sanitario", "Sanitário", HeartPulse],
   ["pesagem", "Pesagem do rebanho", Scale],
@@ -73,6 +75,7 @@ export default function Cadastro({ aba: abaExterna, onAbaChange, abaSanitario: a
       {aba === "motivos" && <CadastroMotivosMovimentacao />}
       {aba === "motivos-baixa" && <CadastroMotivosBaixa />}
       {aba === "servicos" && <CadastroServicos />}
+      {aba === "tipos-metodos-servico" && <CadastroTiposMetodosServico />}
       {aba === "pessoas" && <CadastroPessoas />}
       {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}

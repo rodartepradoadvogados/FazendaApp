@@ -4,14 +4,14 @@ import { Users, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-rea
 import { fetchPessoas, criarPessoa, atualizarPessoa } from "@/lib/api";
 
 type Pessoa = {
-  id: number; nome: string; tipo: string; telefone: string | null; email: string | null;
+  id: number; nome: string; tipos: string[]; telefone: string | null; email: string | null;
   observacoes: string | null; ativo: boolean; salario_base: number | null;
 };
-type Form = { nome: string; tipo: string; telefone: string; email: string; observacoes: string; ativo: boolean; salarioBase: string };
-const formVazio: Form = { nome: "", tipo: "Funcionário", telefone: "", email: "", observacoes: "", ativo: true, salarioBase: "" };
+type Form = { nome: string; tipos: string[]; telefone: string; email: string; observacoes: string; ativo: boolean; salarioBase: string };
+const formVazio: Form = { nome: "", tipos: ["Funcionário"], telefone: "", email: "", observacoes: "", ativo: true, salarioBase: "" };
 
 // Mesma lista de fazenda.api.routers.cadastro.TIPOS_PESSOA no backend.
-const TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços"];
+const TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços", "Inseminador"];
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -23,7 +23,7 @@ const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
   return {
-    nome: f.nome.trim(), tipo: f.tipo, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes),
+    nome: f.nome.trim(), tipos: f.tipos, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes),
     ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
   };
 }
@@ -43,7 +43,7 @@ export default function CadastroPessoas() {
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
-      nome: p.nome, tipo: p.tipo, telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "",
+      nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "",
       ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "",
     });
     setEditando(p.id); setMsg(null);
@@ -52,6 +52,7 @@ export default function CadastroPessoas() {
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
+    if (!form.tipos.length) { setMsg("Selecione ao menos um tipo."); return; }
     setSalvando(true); setMsg(null);
     try {
       const dados = paraPayload(form);
@@ -68,7 +69,7 @@ export default function CadastroPessoas() {
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((p) =>
-    !termoBusca || normalizar(`${p.nome} ${p.tipo} ${p.telefone ?? ""} ${p.email ?? ""}`).includes(termoBusca)
+    !termoBusca || normalizar(`${p.nome} ${p.tipos.join(" ")} ${p.telefone ?? ""} ${p.email ?? ""}`).includes(termoBusca)
   );
 
   return (
@@ -104,7 +105,7 @@ export default function CadastroPessoas() {
                 <Fragment key={p.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.tipo}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{p.tipos.join(", ")}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.telefone || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.email || "—"}</td>
                     <td style={{ textAlign: "right" }}>
@@ -134,14 +135,21 @@ export default function CadastroPessoas() {
 function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
   form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
 }) {
+  const toggleTipo = (t: string) =>
+    setForm({ ...form, tipos: form.tipos.includes(t) ? form.tipos.filter((x) => x !== t) : [...form.tipos, t] });
+
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
-        <div><label style={labelStyle}>Tipo</label>
-          <select style={inputStyle} value={form.tipo} onChange={(e) => setForm({ ...form, tipo: e.target.value })}>
-            {TIPOS_PESSOA.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select></div>
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Tipo(s) — pode marcar mais de um</label>
+          <div className="flex flex-wrap gap-x-3 gap-y-1" style={{ marginTop: "0.2rem" }}>
+            {TIPOS_PESSOA.map((t) => (
+              <label key={t} className="flex items-center gap-1" style={{ fontSize: "0.78rem" }}>
+                <input type="checkbox" checked={form.tipos.includes(t)} onChange={() => toggleTipo(t)} /> {t}
+              </label>
+            ))}
+          </div></div>
         <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
         <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>

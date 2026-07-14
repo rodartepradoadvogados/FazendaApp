@@ -19,7 +19,7 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Animal, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal, Estoque,
-    Lote, MovimentoEstoque, Usuario,
+    IngredienteMS, Lote, MovimentoEstoque, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
 from fazenda.rules.auditoria import mapa_usuarios
@@ -186,6 +186,8 @@ def salvar_materia_seca(dados: IngredienteMSIn, session: Session = Depends(get_s
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do ingrediente é obrigatório")
+    if dados.ms_pct is not None and not (0 < dados.ms_pct <= 100):
+        raise HTTPException(status_code=400, detail="% de matéria seca deve ser maior que 0 e no máximo 100.")
     item = session.exec(select(IngredienteMS).where(IngredienteMS.nome == nome)).first()
     if not item:
         item = IngredienteMS(nome=nome)
@@ -211,6 +213,16 @@ class ItemProgramadoIn(BaseModel):
     unidade: str
     base: str | None = None       # "MN" (matéria natural) | "MS" (matéria seca)
     ms_pct: float | None = None   # % de matéria seca do alimento
+
+
+def _quantidade_fisica(quantidade: float, unidade: str | None, base: str | None, ms_pct: float | None) -> float:
+    """Converte a quantidade lançada em matéria seca (MS) para o físico
+    (matéria natural, MN) a oferecer de fato no vagão — só se aplica a
+    unidades de massa (kg/g); nas demais (L, dose, unidade...) a conversão de
+    MS não faz sentido e a quantidade é usada como está."""
+    if base == "MS" and ms_pct and (unidade or "").lower() in ("kg", "g"):
+        return quantidade / (ms_pct / 100)
+    return quantidade
 
 
 class DietaLancamentoIn(BaseModel):
@@ -255,6 +267,18 @@ def listar_dietas(
 def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
+    ms_por_nome = {i.nome: i.ms_pct for i in session.exec(select(IngredienteMS)).all()}
+    for item in dados.itens:
+        if item.ms_pct is None:
+            item.ms_pct = ms_por_nome.get(item.alimento)
+        if item.base == "MS" and not item.ms_pct:
+            raise HTTPException(
+                status_code=400,
+                detail=f'Informe o % de matéria seca de "{item.alimento}" em Configurações > Cadastro > '
+                       f'Alimentação > Matéria seca antes de lançar em base MS.',
+            )
+        if item.ms_pct is not None and not (0 < item.ms_pct <= 100):
+            raise HTTPException(status_code=400, detail=f'% de matéria seca inválido para "{item.alimento}" — deve ser entre 0 e 100.')
     ativa_existente = session.exec(
         select(DietaLancamento).where(
             DietaLancamento.lote == dados.lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
@@ -320,8 +344,11 @@ def contexto_dieta(lote: int, session: Session = Depends(get_session)) -> dict:
             "data_abertura": ativa.data_abertura.isoformat(),
             "responsavel": ativa.responsavel,
             "itens": [
-                {"alimento": it.alimento, "unidade": it.unidade, "total_dia": it.quantidade,
-                 "por_cabeca": round(it.quantidade / n, 3) if n else None}
+                {
+                    "alimento": it.alimento, "unidade": it.unidade,
+                    "total_dia": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct), 2),
+                    "por_cabeca": round(_quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct) / n, 3) if n else None,
+                }
                 for it in itens
             ],
         }
@@ -355,7 +382,7 @@ def apresentacao_dieta(dieta_id: int, session: Session = Depends(get_session)) -
     linhas = []
     total_dia = 0.0
     for it in itens:
-        td = it.quantidade  # total do lote/dia
+        td = _quantidade_fisica(it.quantidade, it.unidade, it.base, it.ms_pct)  # total físico (MN) do lote/dia
         linhas.append({
             "alimento": it.alimento, "unidade": it.unidade,
             "total_dia": round(td, 2),

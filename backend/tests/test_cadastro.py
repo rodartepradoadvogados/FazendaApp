@@ -177,26 +177,39 @@ class TestPessoas:
 
     def test_cria_pessoa(self, client):
         c, engine = client
-        r = c.post("/cadastro/pessoas", json={"nome": "Dr. Huerik", "tipo": "Veterinário"})
+        r = c.post("/cadastro/pessoas", json={"nome": "Dr. Huerik", "tipos": ["Veterinário"]})
         assert r.status_code == 200
-        assert r.json()["tipo"] == "Veterinário"
+        assert r.json()["tipos"] == ["Veterinário"]
+
+    def test_cria_pessoa_com_multiplos_tipos(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Zé Inseminador", "tipos": ["Funcionário", "Inseminador"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Funcionário", "Inseminador"]
+        r = c.get("/cadastro/pessoas/inseminadores")
+        assert r.json() == ["Zé Inseminador"]
 
     def test_rejeita_tipo_invalido(self, client):
         c, engine = client
-        r = c.post("/cadastro/pessoas", json={"nome": "Fulano", "tipo": "Gerente"})
+        r = c.post("/cadastro/pessoas", json={"nome": "Fulano", "tipos": ["Gerente"]})
+        assert r.status_code == 400
+
+    def test_rejeita_sem_nenhum_tipo(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Fulano", "tipos": []})
         assert r.status_code == 400
 
     def test_atualiza_pessoa(self, client):
         c, engine = client
-        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista X", "tipo": "Diarista"}).json()["id"]
-        r = c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Diarista X", "tipo": "Diarista", "ativo": False})
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista X", "tipos": ["Diarista"]}).json()["id"]
+        r = c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Diarista X", "tipos": ["Diarista"], "ativo": False})
         assert r.status_code == 200
         assert r.json()["ativo"] is False
 
 
 class TestFolhaPagamento:
     def _pessoa(self, c):
-        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Teste", "tipo": "Funcionário"}).json()["id"]
+        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Teste", "tipos": ["Funcionário"]}).json()["id"]
 
     def test_cria_lancamento_de_folha(self, client):
         c, engine = client
@@ -281,7 +294,7 @@ class TestFolhaPagamento:
     def test_listagem_traz_detalhe_discriminado_com_vale(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c)
-        c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Funcionário Teste", "tipo": "Funcionário", "salario_base": 3000.0})
+        c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Funcionário Teste", "tipos": ["Funcionário"], "salario_base": 3000.0})
         c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 150.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-06-10", "parcelas": 1, "competencia_inicio": "2026-07",
@@ -301,7 +314,7 @@ class TestFolhaPagamento:
 
 class TestFolhaPagamentoRecorrente:
     def _pessoa(self, c):
-        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Recorrente", "tipo": "Funcionário"}).json()["id"]
+        return c.post("/cadastro/pessoas", json={"nome": "Funcionário Recorrente", "tipos": ["Funcionário"]}).json()["id"]
 
     def _competencia_anterior(self, competencia: str, meses: int) -> str:
         ano, mes = (int(x) for x in competencia.split("-"))
@@ -411,10 +424,10 @@ class TestFolhaPagamentoRecorrente:
 
 class TestValeFuncionario:
     def _pessoa(self, c, salario_base=None):
-        r = c.post("/cadastro/pessoas", json={"nome": "Funcionário Vale", "tipo": "Funcionário"}).json()
+        r = c.post("/cadastro/pessoas", json={"nome": "Funcionário Vale", "tipos": ["Funcionário"]}).json()
         if salario_base is not None:
             c.put(f"/cadastro/pessoas/{r['id']}", json={
-                "nome": "Funcionário Vale", "tipo": "Funcionário", "salario_base": salario_base,
+                "nome": "Funcionário Vale", "tipos": ["Funcionário"], "salario_base": salario_base,
             })
         return r["id"]
 
