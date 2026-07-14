@@ -2,7 +2,7 @@
 // Peças compartilhadas da tela LANÇAR (app móvel de campo):
 // tipos, helpers, cache offline de listas para selects, envio padrão
 // (enviarOuEnfileirar) e um seletor de animal por busca (número/nome).
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
@@ -69,6 +69,17 @@ export function useCache<T>(chave: string, buscar: () => Promise<T>, inicial: T)
   return estado;
 }
 
+/** Vibração curta de confirmação — feedback tátil pra quem já guardou o
+ * celular no bolso ou está com luva/sujeira na tela. Sem suporte (iOS Safari
+ * não tem `navigator.vibrate`), é um no-op silencioso. */
+function vibrar(padrao: number | number[]) {
+  try {
+    navigator.vibrate?.(padrao);
+  } catch {
+    // ignora — vibração é só um reforço, nunca deve quebrar o envio.
+  }
+}
+
 // ── Envio padrão de todos os formulários ─────────────────────────────────────
 export type Aviso = { tipo: "ok" | "offline" | "erro"; msg: string } | null;
 
@@ -87,9 +98,11 @@ export function useEnvio() {
       setAviso(enviado
         ? { tipo: "ok", msg: msgs?.ok ?? "Lançamento salvo." }
         : { tipo: "offline", msg: msgs?.offline ?? "Sem internet — guardado, será enviado automaticamente ao conectar." });
+      vibrar(enviado ? 20 : [15, 60, 15]);
       aoLimpar?.();
     } catch (e) {
       setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar." });
+      vibrar([25, 60, 25, 60, 25]);
     } finally {
       setEnviando(false);
     }
@@ -110,6 +123,29 @@ export function MobPill({ ativa, onClick, children }: { ativa: boolean; onClick:
 
 export function LinhaPills({ children }: { children: ReactNode }) {
   return <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.9rem" }}>{children}</div>;
+}
+
+/**
+ * Grade de blocos grandes e coloridos para escolher uma sub-ação real (ex.:
+ * dentro de Reprodutivo: Inseminação/Diagnóstico/Parto/Protocolo IATF) — abre
+ * o formulário só depois do toque no bloco, no lugar de pílulas de texto
+ * pequenas disfarçando uma navegação de verdade. Mesmo visual dos 6 blocos da
+ * tela raiz de Lançar (`.mob-bloco`), com o ícone tingido por categoria.
+ */
+export type OpcaoAcao = { id: string; label: string; icone: ReactNode; cor?: string };
+
+export function GradeAcoes({ opcoes, onEscolher }: { opcoes: OpcaoAcao[]; onEscolher: (id: string) => void }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
+      {opcoes.map((o) => (
+        <button key={o.id} type="button" className="mob-bloco" onClick={() => onEscolher(o.id)}
+          style={o.cor ? ({ "--c": o.cor } as CSSProperties) : undefined}>
+          <span className="icone">{o.icone}</span>
+          {o.label}
+        </button>
+      ))}
+    </div>
+  );
 }
 
 /** Dois botões grandes exclusivos (ex.: Positivo/Negativo, M/F, Entrada/Saída). */

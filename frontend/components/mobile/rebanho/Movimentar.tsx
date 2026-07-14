@@ -30,6 +30,10 @@ export default function Movimentar() {
 
   function limpar() { setNumero(""); setDestino(""); setMotivo(""); setData(today()); }
 
+  function vibrar(padrao: number | number[]) {
+    try { navigator.vibrate?.(padrao); } catch { /* sem suporte — segue sem vibrar */ }
+  }
+
   async function enviar() {
     setAviso(null);
     if (!numero) { setAviso({ tipo: "erro", texto: "Selecione o animal." }); return; }
@@ -44,9 +48,11 @@ export default function Movimentar() {
       setAviso(enviado
         ? { tipo: "ok", texto: "Movimentação salva." }
         : { tipo: "offline", texto: "Sem internet — guardado, será enviado ao conectar." });
+      vibrar(enviado ? 20 : [15, 60, 15]);
       limpar();
     } catch (e) {
       setAviso({ tipo: "erro", texto: e instanceof Error ? e.message : "Erro ao mover animal." });
+      vibrar([25, 60, 25, 60, 25]);
     } finally {
       setEnviando(false);
     }

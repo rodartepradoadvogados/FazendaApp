@@ -1100,6 +1100,7 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     dosagem: float
     unidade: str
     via: Optional[str] = None
+    observacao: Optional[str] = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
 
 
 class ProtocoloSanitarioLancamento(SQLModel, table=True):

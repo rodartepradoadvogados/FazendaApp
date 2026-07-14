@@ -3,15 +3,20 @@
 // Diagnóstico, Parto e Protocolo IATF (D0). Usa os mesmos endpoints do
 // desktop (/reproducao/*).
 import { useState } from "react";
-import { MobCampo, MobAviso } from "@/components/mobile/ui";
+import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
+import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { fetchEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import {
   type Animal, type Semen, useCache, useEnvio, hoje, rotuloAnimal,
-  MobPill, LinhaPills, BotoesEscolha, SeletorAnimal,
+  BotoesEscolha, SeletorAnimal, GradeAcoes,
 } from "./comum";
 
 type Aba = "inseminacao" | "diagnostico" | "parto" | "iatf";
+
+const TITULOS_ABA: Record<Aba, string> = {
+  inseminacao: "Inseminação", diagnostico: "Diagnóstico", parto: "Parto", iatf: "Protocolo IATF",
+};
 
 // Cronograma do protocolo IATF — mesmos hormônios do backend
 // (fazenda/api/routers/reproducao.py → PASSOS_PROTOCOLO_IATF). O D0 é o que
@@ -24,15 +29,25 @@ const ETAPAS_IATF: { dia: number; hormonios: string }[] = [
 ];
 
 export function FormReprodutivo({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const [aba, setAba] = useState<Aba>("inseminacao");
+  const [aba, setAba] = useState<Aba | null>(null);
+
+  if (!aba) {
+    return (
+      <GradeAcoes
+        opcoes={[
+          { id: "inseminacao", label: "Inseminação", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
+          { id: "diagnostico", label: "Diagnóstico", icone: <Stethoscope size={28} />, cor: "var(--mob-verde)" },
+          { id: "parto", label: "Parto", icone: <Baby size={28} />, cor: "var(--mob-roxo)" },
+          { id: "iatf", label: "Protocolo IATF", icone: <CalendarClock size={28} />, cor: "var(--mob-laranja)" },
+        ]}
+        onEscolher={(id) => setAba(id as Aba)}
+      />
+    );
+  }
+
   return (
     <>
-      <LinhaPills>
-        <MobPill ativa={aba === "inseminacao"} onClick={() => setAba("inseminacao")}>Inseminação</MobPill>
-        <MobPill ativa={aba === "diagnostico"} onClick={() => setAba("diagnostico")}>Diagnóstico</MobPill>
-        <MobPill ativa={aba === "parto"} onClick={() => setAba("parto")}>Parto</MobPill>
-        <MobPill ativa={aba === "iatf"} onClick={() => setAba("iatf")}>Protocolo IATF</MobPill>
-      </LinhaPills>
+      <MobVoltar titulo={TITULOS_ABA[aba]} onVoltar={() => setAba(null)} />
       {aba === "inseminacao" && <Inseminacao animais={animais} animalFixado={animalFixado} />}
       {aba === "diagnostico" && <Diagnostico animais={animais} animalFixado={animalFixado} />}
       {aba === "parto" && <Parto animais={animais} animalFixado={animalFixado} />}
@@ -248,7 +263,7 @@ function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFix
               }} title={a ? rotuloAnimal(a) : undefined}>
                 {n}
                 <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
-                  style={{ width: 22, height: 22, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "0.9rem", lineHeight: 1 }}>
+                  style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>
                   ×
                 </button>
               </span>

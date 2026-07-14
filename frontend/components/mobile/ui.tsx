@@ -40,17 +40,22 @@ export function MobTitulo({ children, badge }: { children: ReactNode; badge?: Re
 
 /** Check circular grande — fica verde-luminoso quando concluído. */
 export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: () => void; title?: string }) {
+  function aoClicar() {
+    try { navigator.vibrate?.(20); } catch { /* sem suporte — segue sem vibrar */ }
+    onClick?.();
+  }
   return (
-    <button type="button" className={`mob-check${feito ? " feito" : ""}`} onClick={onClick} title={title || (feito ? "Concluído — toque para desfazer" : "Toque para marcar como feito")} aria-label={title || "Concluir"}>
+    <button type="button" className={`mob-check${feito ? " feito" : ""}`} onClick={aoClicar} title={title || (feito ? "Concluído — toque para desfazer" : "Toque para marcar como feito")} aria-label={title || "Concluir"}>
       <Check size={22} strokeWidth={3} />
     </button>
   );
 }
 
-/** Bloco grande do Lançamento Rápido. */
-export function MobBloco({ icone, label, destaque, onClick }: { icone: ReactNode; label: string; destaque?: boolean; onClick: () => void }) {
+/** Bloco grande do Lançamento Rápido — `cor` tinge o contorno e o fundo leve
+ * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca. */
+export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; label: string; cor?: string; onClick: () => void }) {
   return (
-    <button type="button" className={`mob-bloco${destaque ? " destaque" : ""}`} onClick={onClick}>
+    <button type="button" className="mob-bloco" onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
       <span className="icone">{icone}</span>
       {label}
     </button>

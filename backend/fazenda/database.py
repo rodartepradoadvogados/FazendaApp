@@ -105,7 +105,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("categoria_preventiva", "VARCHAR"), ("agenda_dias_antes", "INTEGER"),
     ],
     "calendario_sanitario": [("veterinario", "VARCHAR"), ("unidade", "VARCHAR")],
-    "protocolo_sanitario_etapa": [("criterio_tipo", "VARCHAR DEFAULT 'medicamento'")],
+    "protocolo_sanitario_etapa": [("criterio_tipo", "VARCHAR DEFAULT 'medicamento'"), ("observacao", "TEXT")],
     "protocolo_sanitario_aplicacao": [("produto", "VARCHAR")],
     "protocolo_sanitario_lancamento": [
         ("grau_mastite", "INTEGER"), ("agente", "VARCHAR"), ("del_no_caso", "INTEGER"),

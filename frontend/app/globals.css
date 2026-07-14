@@ -380,11 +380,14 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-acao:      #5E1A2E;         /* cor de destaque de botão/aba ativa */
   --mob-acao-fg:   #F8E9B0;
   --mob-sombra:    0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
-  --mob-verde:     #00C97F;         /* verde OK legível no claro */
+  --mob-verde:     #047857;         /* verde OK — escurecido p/ contraste AA em texto no sol forte (4.5:1+) */
   --mob-verde-neon:#00FF9D;
   --mob-vermelho:  #DC2626;
   --mob-azul:      #2563EB;
   --mob-ambar:     #B45309;
+  --mob-roxo:      #7C3AED;
+  --mob-laranja:   #C2410C;
+  --mob-amarelo:   #A16207;
 
   min-height: 100dvh;
   background: var(--mob-bg);
@@ -407,6 +410,9 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-verde:     #00E08C;
   --mob-azul:      #5BA8E0;
   --mob-ambar:     #E8A33D;
+  --mob-roxo:      #A78BFA;
+  --mob-laranja:   #FB923C;
+  --mob-amarelo:   #FBBF24;
 }
 
 /* Área de conteúdo rola por baixo da barra fixa inferior. */
@@ -475,13 +481,16 @@ html, body { max-width: 100%; overflow-x: hidden; }
   color: var(--mob-text); font-weight: 700; font-size: 0.9rem;
   text-align: center; padding: 0.8rem 0.5rem;
 }
+/* Contorno colorido + fundo leve (18% da cor) — cada bloco tinge seu ícone
+   via a variável --c definida inline (ex.: style={{ '--c': 'var(--mob-roxo)' }}).
+   Sem --c definido, cai no dourado da marca (comportamento anterior). */
 .mob-bloco .icone {
   width: 46px; height: 46px; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
-  background: rgba(184, 134, 11, 0.12); color: var(--mob-dourado-2);
+  background: color-mix(in srgb, var(--c, var(--mob-dourado-2)) 18%, var(--mob-surface));
+  border: 1.6px solid var(--c, var(--mob-dourado-2));
+  color: var(--c, var(--mob-dourado-2));
 }
-.mob-bloco.destaque { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #FFFFFF; }
-.mob-bloco.destaque .icone { background: rgba(255, 255, 255, 0.14); color: #F8E9B0; }
 
 /* Botão de ação principal, largura total. */
 .mob-btn {
@@ -498,10 +507,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   display: flex; align-items: center; justify-content: center; gap: 0.5rem;
 }
 
-/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). */
+/* Pílulas de sub-aba (Ficha do Animal / Movimentar / Baixar). Padding vertical
+   calibrado para >= 44px de altura de toque (dedo sujo/com luva no curral). */
 .mob-pill {
-  padding: 0.6rem 1.1rem; border-radius: 12px; cursor: pointer;
-  font-size: 0.9rem; font-weight: 700;
+  padding: 0.8rem 1.1rem; border-radius: 12px; cursor: pointer;
+  font-size: 0.9rem; font-weight: 700; min-height: 44px;
   border: 1px solid var(--mob-border); background: var(--mob-surface); color: var(--mob-text);
 }
 .mob-pill.ativa { background: var(--mob-vinho); border-color: var(--mob-vinho); color: #F8E9B0; }

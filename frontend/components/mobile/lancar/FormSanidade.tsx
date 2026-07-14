@@ -3,12 +3,13 @@
 // protocolo sanitário — por animal ou por lote.
 // Endpoints: POST /sanidade/aplicacoes | POST /sanidade/protocolos/lancamentos.
 import { useEffect, useMemo, useState } from "react";
-import { MobCampo, MobAviso } from "@/components/mobile/ui";
+import { Syringe, ClipboardList } from "lucide-react";
+import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
-  MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis,
+  MobPill, LinhaPills, SeletorAnimal, unidadesCompativeis, GradeAcoes,
 } from "./comum";
 
 type Protocolo = { id: number; nome: string; eh_mastite?: boolean };
@@ -19,7 +20,7 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
   const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
   const protocolos = useCache<Protocolo[]>("protocolos_sanitarios", () => fetchProtocolosSanitarios() as Promise<Protocolo[]>, []);
 
-  const [tipo, setTipo] = useState<"aplicacao" | "protocolo">("aplicacao");
+  const [tipo, setTipo] = useState<"aplicacao" | "protocolo" | null>(null);
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState(animalFixado || "");
   const [lote, setLote] = useState("");
@@ -110,13 +111,21 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     );
   }
 
+  if (!tipo) {
+    return (
+      <GradeAcoes
+        opcoes={[
+          { id: "aplicacao", label: "Aplicação de remédio", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
+          { id: "protocolo", label: "Protocolo sanitário", icone: <ClipboardList size={28} />, cor: "var(--mob-roxo)" },
+        ]}
+        onEscolher={(id) => setTipo(id as "aplicacao" | "protocolo")}
+      />
+    );
+  }
+
   return (
     <>
-      <LinhaPills>
-        <MobPill ativa={tipo === "aplicacao"} onClick={() => setTipo("aplicacao")}>Aplicação de remédio</MobPill>
-        <MobPill ativa={tipo === "protocolo"} onClick={() => setTipo("protocolo")}>Protocolo</MobPill>
-      </LinhaPills>
-
+      <MobVoltar titulo={tipo === "aplicacao" ? "Aplicação de remédio" : "Protocolo sanitário"} onVoltar={() => setTipo(null)} />
       <LinhaPills>
         <MobPill ativa={modo === "animal"} onClick={() => setModo("animal")}>Animal</MobPill>
         <MobPill ativa={modo === "lote"} onClick={() => setModo("lote")}>Lote</MobPill>

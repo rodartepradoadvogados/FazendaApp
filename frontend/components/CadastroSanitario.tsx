@@ -1,14 +1,15 @@
 "use client";
-import { Fragment, useEffect, useState } from "react";
-import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight } from "lucide-react";
+import { Fragment, useEffect, useRef, useState } from "react";
+import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
 import {
   fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo, restaurarCatalogoPrincipios,
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
-  fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario,
+  fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
   type ProtocoloEtapa, type EventoSanitarioPayload,
 } from "@/lib/api";
+import { exportarExcel } from "@/lib/export";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
@@ -87,7 +88,7 @@ type Protocolo = {
   etapas: ProtocoloEtapa[];
 };
 type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapa[] };
-const etapaVazia = (dia: number): ProtocoloEtapa => ({ dia, criterio_tipo: "medicamento", produto: "", dosagem: 0, unidade: "ml", via: "" });
+const etapaVazia = (dia: number): ProtocoloEtapa => ({ dia, criterio_tipo: "medicamento", produto: "", dosagem: 0, unidade: "ml", via: "", observacao: "" });
 const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, ativo: true, etapas: [etapaVazia(1)] });
 
 export function CadastroProtocolosSanitarios() {
@@ -101,6 +102,9 @@ export function CadastroProtocolosSanitarios() {
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  const [importando, setImportando] = useState(false);
+  const [msgImport, setMsgImport] = useState<{ erro: boolean; texto: string } | null>(null);
+  const inputImportRef = useRef<HTMLInputElement>(null);
 
   const carregar = () => fetchProtocolosSanitarios().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
@@ -134,7 +138,7 @@ export function CadastroProtocolosSanitarios() {
       const dados = {
         nome: form.nome.trim(), doenca_id: form.doenca_id ? Number(form.doenca_id) : undefined,
         eh_mastite: form.eh_mastite, ativo: form.ativo,
-        etapas: form.etapas.map((e) => ({ ...e, dia: Number(e.dia), dosagem: Number(e.dosagem), via: e.via || undefined })),
+        etapas: form.etapas.map((e) => ({ ...e, dia: Number(e.dia), dosagem: Number(e.dosagem), via: e.via || undefined, observacao: e.observacao || undefined })),
       };
       if (editando === "novo") await criarProtocoloSanitario(dados);
       else if (typeof editando === "number") await atualizarProtocoloSanitario(editando, dados);
@@ -147,6 +151,45 @@ export function CadastroProtocolosSanitarios() {
     }
   };
 
+  const baixarModelo = () => {
+    exportarExcel(
+      "Modelo de importação — Protocolo sanitário",
+      [
+        { header: "Nome do protocolo", key: "nome", width: 26 },
+        { header: "Dia da aplicação", key: "dia", width: 14 },
+        { header: "Definido por", key: "definido_por", width: 16 },
+        { header: "Medicamento", key: "medicamento", width: 20 },
+        { header: "Dosagem", key: "dosagem", width: 12 },
+        { header: "Unidade", key: "unidade", width: 12 },
+        { header: "Via", key: "via", width: 16 },
+      ],
+      [
+        { nome: "Exemplo - Protocolo 1", dia: 1, definido_por: "Medicamento", medicamento: "Borgal", dosagem: 40, unidade: "ml", via: "Intramuscular" },
+        { nome: "Exemplo - Protocolo 1", dia: 1, definido_por: "Medicamento", medicamento: "Spectramast", dosagem: 2, unidade: "unidade", via: "Intramamária" },
+        { nome: "Exemplo - Protocolo 1", dia: 2, definido_por: "Medicamento", medicamento: "Spectramast", dosagem: 2, unidade: "unidade", via: "Intramamária" },
+      ],
+      "modelo_protocolo_sanitario",
+    );
+  };
+
+  const importarArquivo = async (file: File) => {
+    setImportando(true); setMsgImport(null);
+    try {
+      const r = await importarProtocoloSanitarioExcel(file);
+      const partes: string[] = [];
+      if (r.criados?.length) partes.push(`${r.criados.length} protocolo(s) criado(s): ${r.criados.join(", ")}`);
+      if (r.atualizados?.length) partes.push(`${r.atualizados.length} atualizado(s): ${r.atualizados.join(", ")}`);
+      if (r.erros?.length) partes.push(`Erros: ${r.erros.join(" | ")}`);
+      setMsgImport({ erro: !!r.erros?.length && !r.criados?.length && !r.atualizados?.length, texto: partes.join(" — ") || "Nenhum protocolo reconhecido na planilha." });
+      await carregar();
+    } catch (e: any) {
+      setMsgImport({ erro: true, texto: e.message || "Erro ao importar planilha" });
+    } finally {
+      setImportando(false);
+      if (inputImportRef.current) inputImportRef.current.value = "";
+    }
+  };
+
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((p) =>
     !termoBusca || normalizar(`${p.nome} ${p.doenca_nome ?? ""}`).includes(termoBusca)
@@ -156,17 +199,37 @@ export function CadastroProtocolosSanitarios() {
     <div className="card">
       <div className="card-header mb-3 flex items-center justify-between">
         <span className="flex items-center gap-2"><ClipboardList size={16} /> Protocolos sanitários</span>
-        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
-          <Plus size={14} /> Novo
-        </button>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={baixarModelo} title="Baixar planilha-modelo para preencher e importar">
+            <Download size={13} /> Baixar modelo
+          </button>
+          <button
+            className="btn-ghost" style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+            onClick={() => inputImportRef.current?.click()} disabled={importando}
+            title="Importar protocolo(s) de uma planilha Excel/CSV"
+          >
+            <Upload size={13} /> {importando ? "Importando…" : "Importar Excel"}
+          </button>
+          <input ref={inputImportRef} type="file" accept=".xlsx,.xlsm,.csv" style={{ display: "none" }}
+            onChange={(e) => { const f = e.target.files?.[0]; if (f) importarArquivo(f); }} />
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+            <Plus size={14} /> Novo
+          </button>
+        </div>
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
         mastite. Os dias começam em D1 — protocolos sanitários não têm D0 (isso é exclusivo do protocolo hormonal
         IATF). Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
-        classificação (clínica/subclínica/ambiental).
+        classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
+        preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
       </p>
 
+      {msgImport && (
+        <p style={{ color: msgImport.erro ? "var(--red)" : "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+          {msgImport.texto}
+        </p>
+      )}
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
 
@@ -244,7 +307,7 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
       <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D1, D2, D3...)</p>
       <div className="space-y-2 mb-2">
         {form.etapas.map((e, idx) => (
-          <div key={idx} className="grid grid-cols-2 md:grid-cols-7 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "6px" }}>
+          <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "6px" }}>
             <div><label style={labelStyle}>Dia (D)</label><input type="number" min={1} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
             <div><label style={labelStyle}>Definir por</label>
               <select style={inputStyle} value={e.criterio_tipo || "medicamento"} onChange={(ev) => atualizarEtapa(idx, { criterio_tipo: ev.target.value, produto: "" })}>
@@ -281,11 +344,13 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
                 );
               })()}
             </div>
+            <div><label style={labelStyle}>Via</label>
+              <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
+                <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
+              </select></div>
             <div className="flex items-end gap-1">
-              <div style={{ flex: 1 }}><label style={labelStyle}>Via</label>
-                <select style={inputStyle} value={e.via || ""} onChange={(ev) => atualizarEtapa(idx, { via: ev.target.value })}>
-                  <option value="">—</option>{VIAS_APLICACAO.map((v) => <option key={v}>{v}</option>)}
-                </select></div>
+              <div style={{ flex: 1 }}><label style={labelStyle}>Observação</label>
+                <input style={inputStyle} value={e.observacao || ""} onChange={(ev) => atualizarEtapa(idx, { observacao: ev.target.value })} placeholder="ex.: Se necessário" /></div>
               {form.etapas.length > 1 && <button type="button" className="btn-ghost" style={{ color: "var(--red)" }} onClick={() => removerEtapa(idx)}><Trash2 size={13} /></button>}
             </div>
           </div>

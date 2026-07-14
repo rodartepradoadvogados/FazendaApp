@@ -3,7 +3,7 @@
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useState } from "react";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, MinusCircle, Search, X, ChevronRight } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
 import { fetchAnimais } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
@@ -55,12 +55,12 @@ export function LancarTela() {
         : <BuscaAnimal animais={animais.dados} onEscolher={setFixado} />}
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem", marginTop: "0.4rem" }}>
-        <MobBloco icone={<Activity size={24} />} label="Reprodutivo" destaque onClick={() => setTela("reprodutivo")} />
-        <MobBloco icone={<Milk size={24} />} label="Produção (Leite)" onClick={() => setTela("producao")} />
-        <MobBloco icone={<Syringe size={24} />} label="Sanidade" onClick={() => setTela("sanidade")} />
-        <MobBloco icone={<Wheat size={24} />} label="Alimentação" onClick={() => setTela("alimentacao")} />
-        <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" onClick={() => setTela("movimentar")} />
-        <MobBloco icone={<MinusCircle size={24} />} label="Baixar animal" onClick={() => setTela("baixar")} />
+        <MobBloco icone={<Activity size={24} />} label="Reprodutivo" cor="var(--mob-roxo)" onClick={() => setTela("reprodutivo")} />
+        <MobBloco icone={<Milk size={24} />} label="Produção (Leite)" cor="var(--mob-azul)" onClick={() => setTela("producao")} />
+        <MobBloco icone={<Syringe size={24} />} label="Sanidade" cor="var(--mob-verde)" onClick={() => setTela("sanidade")} />
+        <MobBloco icone={<Wheat size={24} />} label="Alimentação" cor="var(--mob-laranja)" onClick={() => setTela("alimentacao")} />
+        <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" cor="var(--mob-amarelo)" onClick={() => setTela("movimentar")} />
+        <MobBloco icone={<Skull size={24} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
       </div>
     </div>
   );
@@ -108,7 +108,7 @@ function ChipAnimal({ animal, onSoltar }: { animal: Animal; onSoltar: () => void
         {rotuloAnimal(animal) && <span style={{ display: "block", fontSize: "0.8rem", opacity: 0.85, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{rotuloAnimal(animal)}</span>}
       </span>
       <button type="button" onClick={onSoltar} aria-label="Soltar animal"
-        style={{ width: 36, height: 36, borderRadius: 10, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
+        style={{ width: 44, height: 44, borderRadius: 10, border: "none", cursor: "pointer", background: "rgba(255,255,255,0.16)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
         <X size={18} />
       </button>
     </div>
