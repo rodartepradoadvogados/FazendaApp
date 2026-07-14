@@ -130,6 +130,8 @@ def agregar_mensal(registros: list[dict], secagens: list[dict], controles: list[
         return round(100 * pos / diag, 1) if diag else None
 
     def _delta(serie):
+        if not serie:
+            return []
         out = [None]
         for i in range(1, len(serie)):
             a, b = serie[i - 1], serie[i]

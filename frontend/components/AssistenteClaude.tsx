@@ -72,7 +72,8 @@ export default function AssistenteClaude() {
           <div style={{ flex: 1, overflowY: "auto", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
             {!mensagens.length && (
               <p style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
-                Pergunte sobre os indicadores da fazenda, um animal específico (pelo número) ou a agenda de hoje.
+                Pergunte sobre indicadores, um animal (pelo número), agenda, financeiro, estoque, sanidade ou
+                análise reprodutiva — as respostas usam só os dados que você tem permissão de ver no site.
               </p>
             )}
             {mensagens.map((m, i) => (

@@ -1,6 +1,7 @@
 """
 Router do Assistente Claude (protótipo) — POST /assistente/perguntar.
-Restrito a administradores enquanto o recurso está em avaliação.
+Disponível para qualquer usuário logado; cada ferramenta interna é oferecida
+só a quem tem o módulo correspondente liberado (ver fazenda.rules.assistente).
 """
 from __future__ import annotations
 
@@ -8,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session
 
-from fazenda.auth import exigir_admin
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import Usuario
 from fazenda.rules.assistente import responder
@@ -25,7 +26,7 @@ class PerguntaIn(BaseModel):
 def perguntar(
     dados: PerguntaIn,
     session: Session = Depends(get_session),
-    usuario: Usuario = Depends(exigir_admin),
+    usuario: Usuario = Depends(get_current_user),
 ) -> dict:
     if not dados.mensagem.strip():
         raise HTTPException(status_code=400, detail="Mensagem vazia")

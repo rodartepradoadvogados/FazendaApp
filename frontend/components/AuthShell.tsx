@@ -53,7 +53,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           <ThemeSwitcher />
         </div>
         <NotificationBell />
-        {ehAdmin() && <AssistenteClaude />}
+        <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
       </div>
     </SubNavProvider>

@@ -163,8 +163,9 @@ app.include_router(notificacoes.router, dependencies=_protegido)
 app.include_router(telegram.router)
 # Aprovações: cada rota já exige admin (exigir_admin) internamente.
 app.include_router(aprovacoes.router)
-# Assistente Claude (protótipo): a rota já exige admin (exigir_admin) internamente.
-app.include_router(assistente.router)
+# Assistente Claude (protótipo): aberto a qualquer usuário logado — cada
+# ferramenta interna é oferecida só conforme os módulos liberados dele.
+app.include_router(assistente.router, dependencies=_protegido)
 
 
 @app.get("/")
