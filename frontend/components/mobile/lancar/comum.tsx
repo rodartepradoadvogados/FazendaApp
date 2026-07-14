@@ -112,6 +112,33 @@ export function LinhaPills({ children }: { children: ReactNode }) {
   return <div style={{ display: "flex", gap: "0.5rem", flexWrap: "wrap", marginBottom: "0.9rem" }}>{children}</div>;
 }
 
+/**
+ * Grade de blocos grandes e coloridos para escolher uma sub-ação real (ex.:
+ * dentro de Reprodutivo: Inseminação/Diagnóstico/Parto/Protocolo IATF) — abre
+ * o formulário só depois do toque no bloco, no lugar de pílulas de texto
+ * pequenas disfarçando uma navegação de verdade. Mesmo visual dos 6 blocos da
+ * tela raiz de Lançar (`.mob-bloco`), com o ícone tingido por categoria.
+ */
+export type OpcaoAcao = { id: string; label: string; icone: ReactNode; cor?: string };
+
+export function GradeAcoes({ opcoes, onEscolher }: { opcoes: OpcaoAcao[]; onEscolher: (id: string) => void }) {
+  return (
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
+      {opcoes.map((o) => {
+        const cor = o.cor || "var(--mob-dourado-2)";
+        return (
+          <button key={o.id} type="button" className="mob-bloco" onClick={() => onEscolher(o.id)}>
+            <span className="icone" style={{ background: `color-mix(in srgb, ${cor} 16%, transparent)`, color: cor }}>
+              {o.icone}
+            </span>
+            {o.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Dois botões grandes exclusivos (ex.: Positivo/Negativo, M/F, Entrada/Saída). */
 export function BotoesEscolha<T extends string>({ opcoes, valor, onChange }:
   { opcoes: { valor: T; label: string; cor?: string }[]; valor: T | ""; onChange: (v: T) => void }) {
