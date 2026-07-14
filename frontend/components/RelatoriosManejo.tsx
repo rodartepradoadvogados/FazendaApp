@@ -224,7 +224,7 @@ export default function RelatoriosManejo() {
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
             <ClipboardList size={22} style={{ color: "var(--dourado-light)" }} />
-            Relatórios de Manejo
+            Listas de Trabalho
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Listas de trabalho da reprodução com semáforo de urgência — clique em cada seção para expandir.

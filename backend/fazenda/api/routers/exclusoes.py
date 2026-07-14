@@ -228,7 +228,7 @@ def buscar(
 
     if tipo == "pessoa":
         rows = session.exec(select(Pessoa)).all()
-        out = [{"id": p.id, "titulo": p.nome, "subtitulo": p.tipo} for p in rows if _contem(termo, p.nome, p.tipo)]
+        out = [{"id": p.id, "titulo": p.nome, "subtitulo": (p.tipo or "").replace(",", ", ")} for p in rows if _contem(termo, p.nome, p.tipo)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "principio_ativo":

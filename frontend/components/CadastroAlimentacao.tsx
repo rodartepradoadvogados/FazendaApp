@@ -25,11 +25,18 @@ const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
-type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string };
+type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null };
 type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
-const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN" });
+const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null });
+// Quantidade física (matéria natural) a oferecer — converte de MS para MN
+// usando o %MS do ingrediente; só se aplica a kg/g (mesma regra do backend).
+function quantidadeFisica(it: ItemForm): number {
+  const q = Number(it.quantidade) || 0;
+  if (it.base === "MS" && it.ms_pct && ["kg", "g"].includes(it.unidade)) return q / (it.ms_pct / 100);
+  return q;
+}
 const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", itens: [itemVazio()] });
 
 function num(v?: number | null, casas = 2): string {
@@ -111,6 +118,7 @@ function MateriaSeca() {
 function CadastrarNovaDieta() {
   const [lotes, setLotes] = useState<LoteRow[]>([]);
   const [alimentos, setAlimentos] = useState<string[]>([]);
+  const [msPorAlimento, setMsPorAlimento] = useState<Record<string, number | null>>({});
   const [contextos, setContextos] = useState<Record<number, ContextoDieta | null>>({});
   const [forms, setForms] = useState<Record<number, LoteForm>>({});
   const [aberto, setAberto] = useState<Set<number>>(new Set());
@@ -121,6 +129,7 @@ function CadastrarNovaDieta() {
   useEffect(() => {
     fetchLotes().then((ls: LoteRow[]) => setLotes(ls.filter((l) => /^\d\d/.test(l.codigo)))).catch((e) => setErro(e.message));
     fetchAlimentosPadrao().then(setAlimentos).catch(() => {});
+    fetchMateriaSeca().then((itens) => setMsPorAlimento(Object.fromEntries(itens.map((i) => [i.nome, i.ms_pct])))).catch(() => {});
   }, []);
 
   const loteNum = (l: LoteRow) => Number(l.codigo.slice(0, 2));
@@ -180,7 +189,7 @@ function CadastrarNovaDieta() {
             lote: ln, responsavel: f.responsavel || undefined, data_abertura: f.dataAbertura, base_quantidade: f.baseQuantidade,
             leite_bezerros_kg_dia: f.leiteBezerros ? Number(f.leiteBezerros) : null,
             data_prevista_encerramento: f.dataPrevista || undefined,
-            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base })),
+            itens: itensValidos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade, base: it.base, ms_pct: it.ms_pct })),
             encerrar_anterior: encerrar,
           });
           salvos.push(ln);
@@ -218,7 +227,7 @@ function CadastrarNovaDieta() {
           const ctx = contextos[ln];
           const f = forms[ln];
           const nAnimais = ctx?.qtd_animais ?? l.qtd_animais ?? 0;
-          const vagaoKg = f ? f.itens.reduce((s, it) => (["kg", "g"].includes(it.unidade) ? s + (Number(it.quantidade) || 0) : s), 0) : 0;
+          const vagaoKg = f ? f.itens.reduce((s, it) => (["kg", "g"].includes(it.unidade) ? s + quantidadeFisica(it) : s), 0) : 0;
           const preenchido = lotesPreenchidos.includes(ln);
           return (
             <div key={l.codigo} style={{ border: "1px solid " + (preenchido ? "var(--dourado)" : "var(--border)"), borderRadius: 10, overflow: "hidden" }}>
@@ -274,15 +283,20 @@ function CadastrarNovaDieta() {
 
                   <div className="space-y-2 mt-3">
                     {(f?.itens || []).map((it, idx) => {
-                      const q = Number(it.quantidade) || 0;
-                      const porCab = nAnimais ? q / nAnimais : null;
-                      const porTrato = q / NUM_TRATOS;
+                      const qLancado = Number(it.quantidade) || 0;
+                      const qFisica = quantidadeFisica(it);
+                      const porCab = nAnimais ? qFisica / nAnimais : null;
+                      const porTrato = qFisica / NUM_TRATOS;
+                      const msConhecido = it.alimento in msPorAlimento;
+                      const semMsCadastrado = it.base === "MS" && msConhecido && !msPorAlimento[it.alimento];
                       return (
                         <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem", position: "relative" }}>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <div>
                               <label style={lbl}>Produto {idx + 1}</label>
-                              <input style={input} list="alimentos-cad-dieta" value={it.alimento} onChange={(e) => patchItem(ln, idx, { alimento: e.target.value })} placeholder="ex.: Silagem de milho" />
+                              <input style={input} list="alimentos-cad-dieta" value={it.alimento}
+                                onChange={(e) => patchItem(ln, idx, { alimento: e.target.value, ms_pct: msPorAlimento[e.target.value] ?? null })}
+                                placeholder="ex.: Silagem de milho" />
                             </div>
                             <div>
                               <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>
@@ -300,12 +314,21 @@ function CadastrarNovaDieta() {
                               </select>
                             </div>
                           </div>
-                          {/* Cálculo automático enquanto edita */}
+                          {/* Cálculo automático enquanto edita — já convertido para o físico
+                              (matéria natural) quando lançado em base MS. */}
                           <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap", fontSize: "0.76rem" }}>
                             <span style={{ color: "var(--green-light)", fontWeight: 700 }}>{num(porTrato)} {it.unidade}/trato</span>
-                            <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(q)} {it.unidade}/dia</span>
+                            <span style={{ color: "var(--amber)", fontWeight: 600 }}>{num(qFisica)} {it.unidade}/dia</span>
                             <span style={{ color: "var(--text-muted)" }}>{porCab != null ? `${num(porCab, 3)} ${it.unidade}/cab` : "—/cab"}</span>
+                            {it.base === "MS" && it.ms_pct && qFisica !== qLancado && (
+                              <span style={{ color: "var(--text-muted)" }}>({num(qLancado)} {it.unidade} MS a {num(it.ms_pct, 1)}% MS)</span>
+                            )}
                           </div>
+                          {semMsCadastrado && (
+                            <p style={{ color: "var(--red)", fontSize: "0.72rem", marginTop: "0.3rem" }}>
+                              Cadastre o % de matéria seca de "{it.alimento}" na aba Matéria seca antes de salvar em base MS.
+                            </p>
+                          )}
                           {(f?.itens.length || 0) > 1 && (
                             <button onClick={() => delItem(ln, idx)} title="Remover produto" aria-label="Remover produto" className="btn-ghost"
                               style={{ position: "absolute", top: "0.4rem", right: "0.4rem", color: "var(--red)" }}><Trash2 size={13} /></button>

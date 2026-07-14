@@ -1664,7 +1664,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
  * Pessoas (funcionário, veterinário, diarista etc.) vêm do cadastro em
  * Configurações > Cadastro > Pessoas; aqui só lançamos e damos baixa.
  */
-type PessoaFolha = { id: number; nome: string; tipo: string };
+type PessoaFolha = { id: number; nome: string; tipos: string[] };
 type RegistroFolha = {
   id: number; pessoa_id: number; pessoa_nome: string; competencia: string;
   valor_bruto: number; descontos: number;
@@ -1885,13 +1885,13 @@ function FolhaPagamentoView() {
     }
   }
 
-  // Tipo (vínculo) por pessoa, para o filtro de salário/diárias/prestador etc.
-  const tipoPorPessoa = useMemo(() => { const m: Record<number, string> = {}; pessoas.forEach((p) => { m[p.id] = p.tipo; }); return m; }, [pessoas]);
-  const tiposVinculo = useMemo(() => Array.from(new Set(pessoas.map((p) => p.tipo).filter(Boolean))).sort(), [pessoas]);
+  // Tipo(s) (vínculo) por pessoa, para o filtro de salário/diárias/prestador etc.
+  const tipoPorPessoa = useMemo(() => { const m: Record<number, string[]> = {}; pessoas.forEach((p) => { m[p.id] = p.tipos; }); return m; }, [pessoas]);
+  const tiposVinculo = useMemo(() => Array.from(new Set(pessoas.flatMap((p) => p.tipos).filter(Boolean))).sort(), [pessoas]);
   const regsFiltrados = useMemo(() => (regs || []).filter((r) =>
     (!fStatus || r.status === fStatus) &&
     (!fPessoa || String(r.pessoa_id) === fPessoa) &&
-    (!fTipoVinculo || tipoPorPessoa[r.pessoa_id] === fTipoVinculo) &&
+    (!fTipoVinculo || (tipoPorPessoa[r.pessoa_id] || []).includes(fTipoVinculo)) &&
     (!fCompDe || r.competencia >= fCompDe) &&
     (!fCompAte || r.competencia <= fCompAte)
   ), [regs, fStatus, fPessoa, fTipoVinculo, fCompDe, fCompAte, tipoPorPessoa]);
@@ -1925,7 +1925,7 @@ function FolhaPagamentoView() {
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <div><label style={labelStyleLote}>Pessoa</label>
             <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
-              <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+              <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipos.join(", ")})</option>)}
             </select></div>
           <div><label style={labelStyleLote}>Competência (mês)</label>
             <input type="month" style={selStyleLote} value={competencia} onChange={(e) => setCompetencia(e.target.value)} /></div>
@@ -2136,7 +2136,7 @@ function FolhaPagamentoView() {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Pessoa</label>
                               <select style={selStyleLote} value={editPessoaId} onChange={(e) => setEditPessoaId(e.target.value)}>
-                                {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+                                {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipos.join(", ")})</option>)}
                               </select></div>
                             <div><label style={labelStyleLote}>Competência (mês)</label>
                               <input type="month" style={selStyleLote} value={editCompetencia} onChange={(e) => setEditCompetencia(e.target.value)} /></div>
@@ -2256,7 +2256,7 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={labelStyleLote}>Pessoa</label>
           <select style={selStyleLote} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
-            <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipo})</option>)}
+            <option value="">Selecione…</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.tipos.join(", ")})</option>)}
           </select></div>
         <div><label style={labelStyleLote}>Valor total (R$)</label>
           <input type="number" inputMode="decimal" style={selStyleLote} value={valorTotal} onChange={(e) => setValorTotal(e.target.value)} /></div>

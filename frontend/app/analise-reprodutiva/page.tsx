@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
-import { fetchServicosAnalise, ehAdmin } from "@/lib/api";
+import { fetchServicosAnalise, fetchInseminadores, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import AnaliseInterativa from "@/components/AnaliseInterativa";
 
 function comparaNumero(a: string, b: string) {
   return isNaN(+a) || isNaN(+b) ? a.localeCompare(b) : +a - +b;
@@ -50,49 +51,6 @@ function taxa(regs: Reg[]) {
   return { diag, pos, pct: diag ? Math.round((1000 * pos) / diag) / 10 : null };
 }
 
-// Gráfico combo: colunas = serviços diagnosticados, linha = taxa de concepção (%).
-function ComboChart({ dados }: { dados: { mes: string; diag: number; pct: number | null }[] }) {
-  const W = 760, H = 260, m = { t: 16, r: 44, b: 46, l: 40 };
-  const iw = W - m.l - m.r, ih = H - m.t - m.b;
-  const maxDiag = Math.max(1, ...dados.map((d) => d.diag));
-  const bw = dados.length ? (iw / dados.length) * 0.6 : 0;
-  const x = (i: number) => m.l + (iw / Math.max(1, dados.length)) * (i + 0.5);
-  const yBar = (v: number) => m.t + ih - (v / maxDiag) * ih;
-  const yPct = (v: number) => m.t + ih - (v / 100) * ih;
-  const pts = dados.map((d, i) => (d.pct === null ? null : `${x(i)},${yPct(d.pct)}`)).filter(Boolean) as string[];
-
-  return (
-    <div style={{ overflowX: "auto" }}>
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" style={{ minWidth: 520 }} role="img">
-        {[0, 25, 50, 75, 100].map((g) => (
-          <g key={g}>
-            <line x1={m.l} x2={W - m.r} y1={yPct(g)} y2={yPct(g)} stroke="var(--border)" strokeWidth="1" />
-            <text x={W - m.r + 6} y={yPct(g) + 3} fontSize="9" fill="var(--text-muted)">{g}%</text>
-          </g>
-        ))}
-        {dados.map((d, i) => (
-          <rect key={i} x={x(i) - bw / 2} y={yBar(d.diag)} width={bw} height={m.t + ih - yBar(d.diag)}
-            fill="var(--blue)" opacity="0.55" rx="2">
-            <title>{d.mes}: {d.diag} serviços{d.pct !== null ? `, ${d.pct}% concepção` : ""}</title>
-          </rect>
-        ))}
-        {pts.length > 1 && <polyline points={pts.join(" ")} fill="none" stroke="var(--dourado-light)" strokeWidth="2" />}
-        {dados.map((d, i) => d.pct === null ? null : (
-          <circle key={i} cx={x(i)} cy={yPct(d.pct)} r="3" fill="var(--dourado-light)"><title>{d.mes}: {d.pct}%</title></circle>
-        ))}
-        {dados.map((d, i) => (
-          <text key={i} x={x(i)} y={H - m.b + 14} fontSize="8" fill="var(--text-muted)" textAnchor="middle"
-            transform={`rotate(45 ${x(i)} ${H - m.b + 14})`}>{d.mes.slice(2)}</text>
-        ))}
-      </svg>
-      <div style={{ display: "flex", gap: "1rem", fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
-        <span><span style={{ color: "var(--blue)" }}>▬</span> serviços diagnosticados</span>
-        <span><span style={{ color: "var(--dourado-light)" }}>▬</span> taxa de concepção</span>
-      </div>
-    </div>
-  );
-}
-
 export default function AnaliseReprodutivaPage() {
   const [regs, setRegs] = useState<Reg[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -100,12 +58,14 @@ export default function AnaliseReprodutivaPage() {
   const [dimensao, setDimensao] = useState<keyof Reg>("tipo_servico");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
+  const [inseminadoresCadastrados, setInseminadoresCadastrados] = useState<string[]>([]);
   const admin = ehAdmin();
 
   useEffect(() => {
     fetchServicosAnalise()
       .then((d) => setRegs(d.servicos))
       .catch((e) => setError(e.message));
+    fetchInseminadores().then(setInseminadoresCadastrados).catch(() => setInseminadoresCadastrados([]));
   }, []);
 
   const filtrados = useMemo(() => {
@@ -124,15 +84,6 @@ export default function AnaliseReprodutivaPage() {
 
   const filtradosOrdenadosBase = useMemo(() => [...filtrados].sort((a, b) => comparaNumero(a.numero, b.numero)), [filtrados]);
   const ordFiltrados = useOrdenacao(filtradosOrdenadosBase);
-
-  const serieMes = useMemo(() => {
-    const byMes = new Map<string, Reg[]>();
-    filtrados.forEach((r) => { if (r.mes) { (byMes.get(r.mes) ?? byMes.set(r.mes, []).get(r.mes)!).push(r); } });
-    return Array.from(byMes.keys()).sort().slice(-18).map((mes) => {
-      const t = taxa(byMes.get(mes)!);
-      return { mes, diag: t.diag, pct: t.pct };
-    });
-  }, [filtrados]);
 
   const quebra = useMemo(() => {
     const by = new Map<string, Reg[]>();
@@ -185,11 +136,17 @@ export default function AnaliseReprodutivaPage() {
                 <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>até</label>
                 <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} />
               </div>
-              {DIMENSOES.map(({ key, label }) => (
-                <MultiFiltro key={key as string} label={label} opcoes={opcoes(regs, key)}
-                  selecionados={filtros[key as string] ?? []}
-                  onChange={(v) => setFiltros((p) => ({ ...p, [key as string]: v }))} />
-              ))}
+              {DIMENSOES.map(({ key, label }) => {
+                const opcoesBase = opcoes(regs, key);
+                const opcoesFinais = key === "inseminador"
+                  ? Array.from(new Set([...opcoesBase, ...inseminadoresCadastrados])).sort()
+                  : opcoesBase;
+                return (
+                  <MultiFiltro key={key as string} label={label} opcoes={opcoesFinais}
+                    selecionados={filtros[key as string] ?? []}
+                    onChange={(v) => setFiltros((p) => ({ ...p, [key as string]: v }))} />
+                );
+              })}
             </div>
             {Object.values(filtros).some((v) => v && v.length) && (
               <button onClick={() => setFiltros({})} className="btn-ghost" title="Remover todos os filtros de dimensão aplicados" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }}>
@@ -206,14 +163,11 @@ export default function AnaliseReprodutivaPage() {
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{perdas}</p><p className="kpi-label">Perdas de prenhez</p></div>
           </div>
 
-          {/* Combo por mês */}
-          <div className="card mb-4">
-            <div className="card-header mb-2 flex items-center justify-between">
-              <span>Concepção por Mês (serviços × taxa)</span>
-              <ExportarBotoes titulo="Análise Reprodutiva — Serviços" nomeArquivoBase="analise_reprodutiva" colunas={COLUNAS_SERVICOS} linhas={filtrados} />
-            </div>
-            {serieMes.length ? <ComboChart dados={serieMes} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem serviços no filtro atual.</p>}
+          {/* Análise interativa configurável (cruzamento de métricas) */}
+          <div className="flex justify-end mb-2">
+            <ExportarBotoes titulo="Análise Reprodutiva — Serviços" nomeArquivoBase="analise_reprodutiva" colunas={COLUNAS_SERVICOS} linhas={filtrados} />
           </div>
+          <AnaliseInterativa />
 
           {/* Quebra por dimensão */}
           <div className="card">

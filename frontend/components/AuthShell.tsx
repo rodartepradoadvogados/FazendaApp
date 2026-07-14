@@ -6,6 +6,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { SubNavProvider } from "@/components/SubNavContext";
+import AssistenteClaude from "@/components/AssistenteClaude";
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -52,6 +53,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           <ThemeSwitcher />
         </div>
         <NotificationBell />
+        <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
       </div>
     </SubNavProvider>

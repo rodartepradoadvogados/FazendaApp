@@ -173,6 +173,38 @@ class Servico(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Tipo de serviço / Método reprodutivo — cadastro (Configurações > Cadastro)
+# do vocabulário usado no lançamento de Serviço/Inseminação. Um Método sempre
+# pertence a um Tipo de serviço (ex.: "Monta Natural" → Cobertura; "IA em cio
+# natural" e "IATF" → IA). `codigo_interno` identifica os 3 métodos que o
+# motor de lançamento/análise reprodutiva já sabe tratar de forma especial
+# (nenhum novo método customizado tem código — fica só informativo/rótulo).
+# ---------------------------------------------------------------------------
+class TipoServicoReprodutivo(SQLModel, table=True):
+    """Tipo de serviço reprodutivo cadastrado (ex.: Cobertura, IA)."""
+
+    __tablename__ = "tipo_servico_reprodutivo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MetodoServicoReprodutivo(SQLModel, table=True):
+    """Método de um tipo de serviço (ex.: Monta Natural, IA em cio natural, IATF)."""
+
+    __tablename__ = "metodo_servico_reprodutivo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    tipo_servico_id: int = Field(foreign_key="tipo_servico_reprodutivo.id")
+    codigo_interno: Optional[str] = None  # "monta_natural" | "cio_natural" | "iatf" | None (customizado)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Protocolo IATF — lançamento do protocolo hormonal (D0/D7/D9/D11) em um ou
 # vários animais de uma vez. Cada etapa de cada animal vira uma "aplicação"
 # rastreável (aparece agrupada na Agenda, marcada como realizada individualmente).

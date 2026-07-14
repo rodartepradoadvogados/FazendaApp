@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna } from "lucide-react";
 import { fetchAnimais, fetchEstratificacaoRebanho, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -9,6 +9,7 @@ import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
+import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
@@ -264,12 +265,13 @@ function RebanhoVisaoGeral() {
 
 // Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
 // Rebanho é só consulta (visão, ficha e sugestões).
-type Aba = "visao" | "sugestoes" | "ficha";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha"];
+type Aba = "visao" | "sugestoes" | "ficha" | "touros";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
+  { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
@@ -294,6 +296,7 @@ export default function RebanhoPage() {
         {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "ficha" && <FichaAnimal />}
+        {aba === "touros" && <RebanhoTouros />}
       </div>
     </div>
   );

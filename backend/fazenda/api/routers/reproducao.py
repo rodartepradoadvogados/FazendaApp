@@ -13,12 +13,13 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento, SeedFlag, Servico, Usuario,
+    Animal, ControleLeiteiro, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
-from fazenda.rules.reproducao_analise import analisar_servicos
+from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
 
@@ -95,6 +96,21 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
     for r in registros:
         r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
     return {"servicos": registros, "total": len(registros)}
+
+
+@router.get("/indicadores-mensais")
+def indicadores_mensais_analise(session: Session = Depends(get_session)) -> dict:
+    """
+    Série mensal cruzando métricas reprodutivas (serviços, métodos, concepção,
+    perdas) e produtivas (secagens, produção de leite, DEL) — alimenta o
+    gráfico interativo configurável de Análise reprodutiva (escolha de
+    métricas e eixo ano/mês).
+    """
+    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
+    registros = analisar_servicos(servicos)
+    secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
+    controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+    return agregar_mensal(registros, secagens, controles)
 
 
 class DiagnosticoIn(BaseModel):

@@ -20,8 +20,8 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
-    Lote, MotivoBaixa, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa,
-    SeedFlag, ServicoCadastro, Touro, Usuario, ValeFuncionario, ValeParcela,
+    Lote, MetodoServicoReprodutivo, MotivoBaixa, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
+    ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -32,7 +32,7 @@ FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
-TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços"]
+TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços", "Inseminador"]
 
 # Seed inicial — funcionários já conhecidos da fazenda (ver seed_pessoas,
 # chamada uma vez no startup, mesmo padrão de seed_motivos_movimentacao).
@@ -110,7 +110,7 @@ def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Sessi
 # ---------------------------------------------------------------------------
 class PessoaIn(BaseModel):
     nome: str
-    tipo: str
+    tipos: list[str]
     telefone: str | None = None
     email: str | None = None
     observacoes: str | None = None
@@ -118,37 +118,59 @@ class PessoaIn(BaseModel):
     salario_base: float | None = None
 
 
+def _serializar_pessoa(p: Pessoa) -> dict:
+    return {**p.model_dump(exclude={"tipo"}), "tipos": [t for t in (p.tipo or "").split(",") if t]}
+
+
+def _validar_tipos(tipos: list[str]) -> str:
+    """Valida e serializa a lista de tipos de uma pessoa como CSV (mesmo
+    padrão de Usuario.permissoes) — permite marcar mais de um tipo (ex.:
+    Funcionário + Inseminador)."""
+    if not tipos or any(t not in TIPOS_PESSOA for t in tipos):
+        raise HTTPException(status_code=400, detail="Tipo inválido")
+    return ",".join(dict.fromkeys(tipos))  # remove duplicatas mantendo a ordem
+
+
 @router.get("/pessoas")
 def listar_pessoas(session: Session = Depends(get_session)) -> list[dict]:
-    return [p.model_dump() for p in session.exec(select(Pessoa).order_by(Pessoa.nome)).all()]
+    return [_serializar_pessoa(p) for p in session.exec(select(Pessoa).order_by(Pessoa.nome)).all()]
 
 
 @router.post("/pessoas")
 def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
-    if dados.tipo not in TIPOS_PESSOA:
-        raise HTTPException(status_code=400, detail="Tipo inválido")
+    tipo_csv = _validar_tipos(dados.tipos)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    p = Pessoa(**dados.model_dump())
+    campos = dados.model_dump(exclude={"tipos"})
+    p = Pessoa(**campos, tipo=tipo_csv)
     session.add(p)
     session.commit()
     session.refresh(p)
-    return p.model_dump()
+    return _serializar_pessoa(p)
 
 
 @router.put("/pessoas/{pessoa_id}")
 def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
-    if dados.tipo not in TIPOS_PESSOA:
-        raise HTTPException(status_code=400, detail="Tipo inválido")
+    tipo_csv = _validar_tipos(dados.tipos)
     p = session.get(Pessoa, pessoa_id)
     if not p:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
-    for campo, valor in dados.model_dump().items():
+    for campo, valor in dados.model_dump(exclude={"tipos"}).items():
         setattr(p, campo, valor)
+    p.tipo = tipo_csv
     session.add(p)
     session.commit()
     session.refresh(p)
-    return p.model_dump()
+    return _serializar_pessoa(p)
+
+
+@router.get("/pessoas/inseminadores")
+def listar_inseminadores(session: Session = Depends(get_session)) -> list[str]:
+    """Nomes das pessoas cadastradas com o tipo Inseminador (ativas) — usado
+    para alimentar os filtros de inseminador em Análise reprodutiva/
+    Indicadores/Relatórios, mesmo antes de qualquer serviço lançado."""
+    pessoas = session.exec(select(Pessoa).where(Pessoa.ativo == True)).all()  # noqa: E712
+    return sorted({p.nome for p in pessoas if "Inseminador" in (p.tipo or "").split(",")})
 
 
 # ---------------------------------------------------------------------------
@@ -1878,6 +1900,106 @@ def seed_protocolos_inducao_lactacao(session: Session) -> None:
         "Protocolo intensivo (63 animais) — aplicações em dias alternados; nos dias de INTERVALO não há nenhuma etapa.",
         SEED_ETAPAS_INDUCAO_2,
     )
+
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Tipo de serviço / Método reprodutivo — cadastro do vocabulário do lançamento
+# de Serviço/Inseminação (Lançamentos > Reprodutivo). "Monta Natural",
+# "IA em cio natural" e "IATF" são os 3 métodos que o motor de lançamento já
+# trata de forma especial (dose de hormônio, protocolo etc.) — por isso vêm
+# pré-cadastrados; o usuário pode renomear os rótulos, desativar ou criar
+# métodos adicionais (informativos, sem lógica especial própria).
+# ---------------------------------------------------------------------------
+_listar_tipos_servico, _criar_tipo_servico, _atualizar_tipo_servico = _crud_nome_ativo(TipoServicoReprodutivo)
+router.get("/tipos-servico")(_listar_tipos_servico)
+router.post("/tipos-servico")(_criar_tipo_servico)
+router.put("/tipos-servico/{item_id}")(_atualizar_tipo_servico)
+
+
+class MetodoServicoIn(BaseModel):
+    nome: str
+    tipo_servico_id: int
+    ativo: bool = True
+
+
+def _serializar_metodo(m: MetodoServicoReprodutivo, tipos: dict[int, str]) -> dict:
+    return {**m.model_dump(), "tipo_servico_nome": tipos.get(m.tipo_servico_id)}
+
+
+@router.get("/metodos-servico")
+def listar_metodos_servico(session: Session = Depends(get_session)) -> list[dict]:
+    tipos = {t.id: t.nome for t in session.exec(select(TipoServicoReprodutivo)).all()}
+    metodos = session.exec(select(MetodoServicoReprodutivo).order_by(MetodoServicoReprodutivo.nome)).all()
+    return [_serializar_metodo(m, tipos) for m in metodos]
+
+
+@router.post("/metodos-servico")
+def criar_metodo_servico(dados: MetodoServicoIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if not session.get(TipoServicoReprodutivo, dados.tipo_servico_id):
+        raise HTTPException(status_code=400, detail="Tipo de serviço não encontrado")
+    if session.exec(select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um método com o nome '{nome}'")
+    metodo = MetodoServicoReprodutivo(nome=nome, tipo_servico_id=dados.tipo_servico_id, ativo=dados.ativo)
+    session.add(metodo)
+    session.commit()
+    session.refresh(metodo)
+    tipos = {t.id: t.nome for t in session.exec(select(TipoServicoReprodutivo)).all()}
+    return _serializar_metodo(metodo, tipos)
+
+
+@router.put("/metodos-servico/{item_id}")
+def atualizar_metodo_servico(item_id: int, dados: MetodoServicoIn, session: Session = Depends(get_session)) -> dict:
+    metodo = session.get(MetodoServicoReprodutivo, item_id)
+    if not metodo:
+        raise HTTPException(status_code=404, detail="Método não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if not session.get(TipoServicoReprodutivo, dados.tipo_servico_id):
+        raise HTTPException(status_code=400, detail="Tipo de serviço não encontrado")
+    metodo.nome = nome
+    metodo.tipo_servico_id = dados.tipo_servico_id
+    metodo.ativo = dados.ativo
+    session.add(metodo)
+    session.commit()
+    session.refresh(metodo)
+    tipos = {t.id: t.nome for t in session.exec(select(TipoServicoReprodutivo)).all()}
+    return _serializar_metodo(metodo, tipos)
+
+
+def seed_tipos_metodos_servico(session: Session) -> None:
+    """Cadastra Cobertura/IA e os 3 métodos já suportados pelo sistema. Roda
+    uma vez (SeedFlag) — depois disso os rótulos ficam livres para o usuário
+    editar em Configurações > Cadastro."""
+    chave = "tipos_metodos_servico_v1"
+    if session.get(SeedFlag, chave):
+        return
+
+    def _tipo(nome: str) -> TipoServicoReprodutivo:
+        t = session.exec(select(TipoServicoReprodutivo).where(TipoServicoReprodutivo.nome == nome)).first()
+        if not t:
+            t = TipoServicoReprodutivo(nome=nome)
+            session.add(t)
+            session.commit()
+            session.refresh(t)
+        return t
+
+    cobertura = _tipo("Cobertura")
+    ia = _tipo("IA")
+
+    for nome, tipo, codigo in [
+        ("Monta Natural", cobertura, "monta_natural"),
+        ("IA em cio natural", ia, "cio_natural"),
+        ("IATF", ia, "iatf"),
+    ]:
+        if not session.exec(select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)).first():
+            session.add(MetodoServicoReprodutivo(nome=nome, tipo_servico_id=tipo.id, codigo_interno=codigo))
 
     session.add(SeedFlag(chave=chave))
     session.commit()

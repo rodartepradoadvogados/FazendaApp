@@ -195,6 +195,13 @@ export async function fetchServicosAnalise() {
   return res.json();
 }
 
+export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]> };
+export async function fetchIndicadoresMensais(): Promise<IndicadoresMensais> {
+  const res = await authFetch(`${API}/reproducao/indicadores-mensais`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Indicadores mensais error: ${res.status}`);
+  return res.json();
+}
+
 // ── Relatórios gerenciais e de manejo (Reprodução) ──
 export async function fetchRelatoriosManejo() {
   const res = await authFetch(`${API}/relatorios/manejo`, { cache: "no-store" });
@@ -309,18 +316,24 @@ export async function fetchPessoas() {
   if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
   return res.json();
 }
-export async function criarPessoa(dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number }) {
+type PessoaDados = { nome: string; tipos: string[]; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number };
+export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pessoa"); }
   return res.json();
 }
-export async function atualizarPessoa(id: number, dados: { nome: string; tipo: string; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number }) {
+export async function atualizarPessoa(id: number, dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pessoa"); }
+  return res.json();
+}
+export async function fetchInseminadores(): Promise<string[]> {
+  const res = await authFetch(`${API}/cadastro/pessoas/inseminadores`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Inseminadores error: ${res.status}`);
   return res.json();
 }
 
@@ -537,6 +550,47 @@ export async function atualizarServicoCadastro(id: number, dados: { nome: string
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  return res.json();
+}
+
+// ── Tipos de serviço / Métodos reprodutivos (Configurações > Cadastro) ──
+export async function fetchTiposServico() {
+  const res = await authFetch(`${API}/cadastro/tipos-servico`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tipos de serviço error: ${res.status}`);
+  return res.json() as Promise<{ id: number; nome: string; ativo: boolean }[]>;
+}
+export async function criarTipoServico(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/tipos-servico`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de serviço"); }
+  return res.json();
+}
+export async function atualizarTipoServico(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/tipos-servico/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de serviço"); }
+  return res.json();
+}
+export type MetodoServico = { id: number; nome: string; tipo_servico_id: number; tipo_servico_nome?: string | null; codigo_interno: string | null; ativo: boolean };
+export async function fetchMetodosServico() {
+  const res = await authFetch(`${API}/cadastro/metodos-servico`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Métodos de serviço error: ${res.status}`);
+  return res.json() as Promise<MetodoServico[]>;
+}
+export async function criarMetodoServico(dados: { nome: string; tipo_servico_id: number; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/metodos-servico`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar método"); }
+  return res.json();
+}
+export async function atualizarMetodoServico(id: number, dados: { nome: string; tipo_servico_id: number; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/metodos-servico/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar método"); }
   return res.json();
 }
 
@@ -1711,3 +1765,9 @@ export const criarTouro = (d: TouroIn): Promise<Touro> => _rSend(`/cadastro/tour
 export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend(`/cadastro/touros/${id}`, "PUT", d);
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
 export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
+
+// ── Assistente Claude (protótipo, admin-only) ──
+export type AssistenteResposta = { resposta: string; historico: any[] };
+export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {
+  return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico });
+}
