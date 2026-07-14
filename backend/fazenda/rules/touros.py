@@ -305,7 +305,12 @@ def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:
     `forcar=True` reimporta mesmo com a flag já marcada (upsert por NAAB,
     nunca apaga touros existentes) — usado pelo botão de autoatendimento."""
     if not forcar and session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
-        return
+        # A flag só marca que o import já rodou uma vez — se a tabela estiver
+        # vazia mesmo assim (ex.: perda de dados independente da flag), o
+        # catálogo nunca voltaria sozinho; confere o dado real antes de confiar
+        # na flag (upsert por NAAB é seguro, nunca apaga touros existentes).
+        if session.exec(select(Touro)).first() is not None:
+            return
     caminho = Path(__file__).resolve().parent.parent / "seed_data" / "touros_naab_alta.xlsx"
     if not caminho.exists():
         logger.error(

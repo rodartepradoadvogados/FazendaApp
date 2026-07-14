@@ -171,6 +171,7 @@ export function Sidebar() {
                   background: active ? "var(--sidebar-active-bg)" : "transparent",
                   color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
                   borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+                  fontSize: "11px",
                 }}
               >
                 <Icon size={16} />
@@ -183,7 +184,7 @@ export function Sidebar() {
 
       {/* Footer */}
       <div
-        className="p-4 border-t text-center"
+        className="p-2 border-t text-center"
         style={{ borderColor: "var(--sidebar-border)", fontSize: "0.65rem", color: "var(--sidebar-muted)" }}
       >
         <div className="flex items-center justify-center gap-1.5" style={{ color: statusColor }}>
@@ -198,7 +199,7 @@ export function Sidebar() {
           {statusLabel}
         </div>
         <UsuarioLogado />
-        <p className="mt-1">v1.0.0 · Sprint 1</p>
+        <p className="mt-0.5">v1.0.0 · Sprint 1</p>
       </div>
       </aside>
     </>
@@ -275,13 +276,13 @@ function UsuarioLogado() {
   useEffect(() => { const u = getUsuario(); setNome(u?.nome || u?.username || null); }, []);
   if (!nome) return null;
   return (
-    <div className="mt-2" style={{ fontSize: "0.68rem" }}>
-      <div className="flex items-center justify-center gap-1.5 mb-1.5" style={{ color: "var(--sidebar-fg)" }}>
+    <div className="mt-1" style={{ fontSize: "0.68rem" }}>
+      <div className="flex items-center justify-center gap-1.5 mb-1" style={{ color: "var(--sidebar-fg)" }}>
         <UserCircle size={13} /> {nome}
       </div>
       <button onClick={logout} title="Encerra a sessão — a próxima pessoa faz login com o próprio usuário"
         className="flex items-center justify-center gap-1.5 mx-auto"
-        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "6px", padding: "0.3rem 0.6rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
+        style={{ background: "none", border: "1px solid var(--sidebar-border)", borderRadius: "6px", padding: "0.2rem 0.55rem", color: "var(--sidebar-muted)", cursor: "pointer" }}>
         <LogOut size={12} /> Sair / trocar de usuário
       </button>
     </div>

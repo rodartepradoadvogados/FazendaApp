@@ -32,6 +32,7 @@ export default function RebanhoTouros() {
   const [origemSemen, setOrigemSemen] = useState<OrigemSemen | null>(null);
   const [estoque, setEstoque] = useState<EstoqueSemenItem[] | null>(null);
   const [naab, setNaab] = useState<Touro[] | null>(null);
+  const [erroNaab, setErroNaab] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [tourosFazenda, setTourosFazenda] = useState<string[]>([]);
 
@@ -41,7 +42,8 @@ export default function RebanhoTouros() {
 
   useEffect(() => {
     if (origemSemen === "naab" && naab === null) {
-      fetchTouros().then(setNaab).catch(() => setNaab([]));
+      setErroNaab(null);
+      fetchTouros().then(setNaab).catch((e: any) => { setNaab([]); setErroNaab(e.message || "Erro ao carregar o catálogo NAAB"); });
     }
   }, [origemSemen, naab]);
 
@@ -172,7 +174,8 @@ export default function RebanhoTouros() {
 
           {origemSemen === "naab" && (
             <div className="overflow-x-auto">
-              {!naab && <p style={{ color: "var(--text-muted)" }}>Carregando catálogo NAAB…</p>}
+              {erroNaab && <p style={{ color: "var(--red)" }}>Não foi possível carregar o catálogo NAAB: {erroNaab}. Se você não tem acesso ao módulo "Configurações", peça a um administrador para verificar suas permissões.</p>}
+              {!naab && !erroNaab && <p style={{ color: "var(--text-muted)" }}>Carregando catálogo NAAB…</p>}
               {naab && (
                 <table className="fazenda-table" style={{ margin: 0 }}>
                   <thead><tr><th>NAAB</th><th>Touro</th><th>Central</th><th>Raça</th><th style={{ textAlign: "right" }}>TPI</th><th style={{ textAlign: "right" }}>Leite (kg)</th></tr></thead>

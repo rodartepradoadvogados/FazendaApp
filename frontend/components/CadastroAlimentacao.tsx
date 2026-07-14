@@ -115,7 +115,12 @@ function MateriaSeca() {
 }
 
 // ─────────────────────────── Cadastrar nova dieta ───────────────────────────
-function CadastrarNovaDieta() {
+// Exportado para ser reaproveitado por Lançamentos > Alimentação > Cadastro de
+// dieta — mesma tela do Configurações > Cadastro > Alimentação (`onSalvo`
+// deixa quem incorpora este formulário atualizar sua própria lista de dietas
+// lançadas depois de um salvamento, já que este componente só cuida da
+// criação).
+export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [lotes, setLotes] = useState<LoteRow[]>([]);
   const [alimentos, setAlimentos] = useState<string[]>([]);
   const [msPorAlimento, setMsPorAlimento] = useState<Record<string, number | null>>({});
@@ -203,6 +208,7 @@ function CadastrarNovaDieta() {
         setForms((f) => { const n = { ...f }; salvos.forEach((ln) => delete n[ln]); return n; });
         setAberto((prev) => { const n = new Set(prev); salvos.forEach((ln) => n.delete(ln)); return n; });
         salvos.forEach((ln) => fetchContextoDieta(ln).then((ctx) => setContextos((c) => ({ ...c, [ln]: ctx }))).catch(() => {}));
+        onSalvo?.();
       }
       if (falhas.length) setErro(falhas.join(" · "));
     } finally {

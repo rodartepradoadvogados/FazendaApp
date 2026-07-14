@@ -10,7 +10,7 @@ import {
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
-  fetchAlimentosPadrao, fetchDietas, criarDieta, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
+  fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
   fetchApresentacoesFarmacia, fetchTouros,
@@ -37,6 +37,7 @@ import { TabBar, SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Modal } from "@/components/Modal";
 import { CadastroProtocolosSanitarios, CadastroEventosSanitarios } from "@/components/CadastroSanitario";
+import { CadastrarNovaDieta } from "@/components/CadastroAlimentacao";
 
 type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
 
@@ -928,6 +929,40 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
     return null;
   }
 
+  // Nascimento: o bezerro cai automaticamente no lote sugerido (bezerreiro),
+  // sem perguntar — diferente da mãe, aqui não há confirmação nenhuma.
+  async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
+    try {
+      const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
+      if (lote_sugerido) {
+        await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
+        return lote_sugerido.rotulo as string;
+      }
+    } catch (e: any) {
+      falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
+    }
+    return null;
+  }
+
+  // Todo parto pergunta se a mãe muda para o lote 3 — independentemente de
+  // critério, ao contrário da sugestão genérica (que só age quando o animal
+  // ainda não tem lote). Confirmando, move; não confirmando, ela permanece no
+  // lote em que já estava.
+  async function confirmarMudancaLote3(numero: string, falhas: string[]) {
+    try {
+      const lotes = await fetchLotes();
+      const lote3 = (lotes as any[]).find((l) => l.codigo === "03");
+      if (!lote3) return null;
+      if (window.confirm(`Confirmar mudança de lote da vaca ${numero} para o lote 3 — ${lote3.nome}?`)) {
+        await criarMovimentacao({ data_movimento: dataParto, motivo: "Parto", lote_destino_codigo: lote3.codigo, animais: [numero] });
+        return lote3.rotulo as string;
+      }
+    } catch (e: any) {
+      falhas.push(`mudança de lote da vaca ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
+    }
+    return null;
+  }
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!matriz) { setErro("Selecione a matriz que pariu."); return; }
@@ -947,11 +982,11 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       // coletadas para avisar o usuário no fim, em vez de sumirem em silêncio.
       const falhasEfeito: string[] = [];
       const alocacoes: string[] = [];
-      const rotuloMae = await alocarSeConfirmado(matriz, "Vaca", { del_dias: 0 }, "Parto", falhasEfeito);
+      const rotuloMae = await confirmarMudancaLote3(matriz, falhasEfeito);
       if (rotuloMae) alocacoes.push(`${matriz} → ${rotuloMae}`);
       for (const c of r.crias_criadas as string[]) {
         const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-        const rotulo = await alocarSeConfirmado(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhasEfeito);
+        const rotulo = await alocarSemConfirmar(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhasEfeito);
         if (rotulo) alocacoes.push(`${c} → ${rotulo}`);
       }
       // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
@@ -2350,20 +2385,11 @@ type DietaLote = {
 };
 type ItemComparativo = { alimento: string; unidade: string; programado: number; real_total: number; real_dias: number; real_media_dia: number | null };
 
-function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
+function FormAlimentacaoDieta() {
   const [dietas, setDietas] = useState<DietaLote[] | null>(null);
   const [alimentosPadrao, setAlimentosPadrao] = useState<string[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
-
-  // Nova dieta
-  const [loteNovo, setLoteNovo] = useState("");
-  const [responsavel, setResponsavel] = useState("Alexandre Scarpa");
-  const [dataAbertura, setDataAbertura] = useState(() => new Date().toISOString().slice(0, 10));
-  const [dataPrevista, setDataPrevista] = useState("");
-  const [observacaoNova, setObservacaoNova] = useState("");
-  const [itens, setItens] = useState<ItemDieta[]>([itemDietaVazio()]);
-  const [salvando, setSalvando] = useState(false);
 
   // Encerrar / registrar real / comparativo
   const [encerrando, setEncerrando] = useState<number | null>(null);
@@ -2390,51 +2416,17 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
     if (ativa) setEncerrando(ativa.id);
   }, [dietas]);
 
-  const atualizarItem = (idx: number, patch: Partial<ItemDieta>) => setItens((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
-  const acrescentarItem = () => setItens((p) => [...p, itemDietaVazio()]);
-  const removerItem = (idx: number) => setItens((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
-
   const atualizarItemReal = (idx: number, patch: Partial<ItemDieta>) => setItensReal((p) => { const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n; });
   const acrescentarItemReal = () => setItensReal((p) => [...p, itemDietaVazio()]);
   const removerItemReal = (idx: number) => setItensReal((p) => (p.length > 1 ? p.filter((_, i) => i !== idx) : p));
-
-  async function salvarDieta() {
-    setErro(null); setSucesso(null);
-    const loteNum = Number(cod(loteNovo));
-    if (!loteNovo || !loteNum) { setErro("Selecione o lote."); return; }
-    if (!dataAbertura) { setErro("Informe a data de abertura."); return; }
-    const itensValidos = itens.filter((i) => i.alimento && Number(i.quantidade) > 0 && i.unidade);
-    if (!itensValidos.length) { setErro("Adicione ao menos um alimento com quantidade e unidade."); return; }
-
-    setSalvando(true);
-    try {
-      await criarDieta({
-        lote: loteNum, responsavel: responsavel || undefined, data_abertura: dataAbertura,
-        data_prevista_encerramento: dataPrevista || undefined, observacao: observacaoNova || undefined,
-        itens: itensValidos.map((i) => ({ alimento: i.alimento, quantidade: Number(i.quantidade), unidade: i.unidade })),
-      });
-      setSucesso(`Dieta lançada para o lote ${loteNovo}.`);
-      setLoteNovo(""); setDataPrevista(""); setObservacaoNova(""); setItens([itemDietaVazio()]);
-      carregar();
-    } catch (e: any) {
-      setErro(e.message || "Erro ao lançar dieta");
-    } finally {
-      setSalvando(false);
-    }
-  }
 
   async function confirmarEncerramento(dieta: DietaLote) {
     setErro(null); setSucesso(null);
     try {
       await encerrarDieta(dieta.id, dataEncerramento);
       setEncerrando(null);
-      setSucesso(`Dieta do lote ${dieta.lote} encerrada.`);
+      setSucesso(`Dieta do lote ${dieta.lote} encerrada. Para lançar uma nova, use "Cadastrar nova dieta" acima.`);
       carregar();
-      if (window.confirm(`Dieta do lote ${dieta.lote} encerrada. Deseja lançar uma nova dieta para este lote agora?`)) {
-        const loteLabel = lotes.find((l) => Number(cod(l)) === dieta.lote) || "";
-        setLoteNovo(loteLabel);
-        setDataAbertura(dataEncerramento);
-      }
     } catch (e: any) {
       setErro(e.message || "Erro ao encerrar dieta");
     }
@@ -2463,59 +2455,17 @@ function FormAlimentacaoDieta({ lotes }: { lotes: string[] }) {
     }
   };
 
-  const listaAlimentos = alimentosPadrao;
-
   return (
     <>
+      {/* Mesma tela de Configurações > Cadastro > Alimentação — quantidade só
+          por animal/dia, cálculo automático de lote/dia e lote/trato (nota
+          explicativa dentro do próprio componente). */}
       <div className="flex justify-end mb-2"><TabelaNutricionalBotao /></div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Lote">
-          <select style={inputStyle} value={loteNovo} onChange={(e) => setLoteNovo(e.target.value)}>
-            <option value="">Selecione…</option>{lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Responsável (nutricionista)">
-          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
-            <option value="">—</option>{RESPONSAVEIS.map((r) => <option key={r}>{r}</option>)}
-          </select>
-        </Campo>
-        <Campo label="Data de abertura"><input type="date" style={inputStyle} value={dataAbertura} onChange={(e) => setDataAbertura(e.target.value)} /></Campo>
-        <Campo label="Data prevista de encerramento (opcional)"><input type="date" style={inputStyle} value={dataPrevista} onChange={(e) => setDataPrevista(e.target.value)} /></Campo>
-        <Campo label="Observação" full><input style={inputStyle} value={observacaoNova} onChange={(e) => setObservacaoNova(e.target.value)} /></Campo>
-      </div>
-      <p style={nota}>A data prevista de encerramento entra na Agenda como um evento para análise. Só uma dieta pode ficar ativa por lote — encerre a atual antes de lançar outra.</p>
-
-      <Secao>Plano programado (formulado)</Secao>
-      <div className="space-y-3">
-        {itens.map((item, idx) => (
-          <div key={idx} style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.75rem", position: "relative" }}>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-              <Campo label={`Alimento ${idx + 1}`}>
-                <input style={inputStyle} list="alimentos-padrao-dieta" value={item.alimento} onChange={(e) => atualizarItem(idx, { alimento: e.target.value })} placeholder="ex.: Silagem" />
-              </Campo>
-              <Campo label="Quantidade total do lote/dia"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItem(idx, { quantidade: e.target.value })} /></Campo>
-              <Campo label="Unidade">
-                <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItem(idx, { unidade: e.target.value })}>
-                  {UNIDADES.map((u) => <option key={u}>{u}</option>)}
-                </select>
-              </Campo>
-            </div>
-            {itens.length > 1 && (
-              <button onClick={() => removerItem(idx)} title="Remover este item" aria-label="Remover este item" className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", color: "var(--red)", fontSize: "0.72rem" }}>
-                <Trash2 size={13} />
-              </button>
-            )}
-          </div>
-        ))}
-      </div>
-      <datalist id="alimentos-padrao-dieta">{listaAlimentos.map((a) => <option key={a} value={a} />)}</datalist>
-      <button onClick={acrescentarItem} className="btn-ghost flex items-center gap-1 mt-2" style={{ fontSize: "0.78rem" }}><Plus size={14} /> Acrescentar alimento</button>
+      <CadastrarNovaDieta onSalvo={carregar} />
+      <datalist id="alimentos-padrao-dieta">{alimentosPadrao.map((a) => <option key={a} value={a} />)}</datalist>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvarDieta} disabled={salvando}>{salvando ? "Salvando…" : "Lançar dieta"}</button>
-      </div>
 
       {dietas && (
         <div className="mt-4">
@@ -3250,7 +3200,7 @@ export default function LancamentosPage() {
         {sel === "mover_animais" && <MovimentarAnimais />}
         {sel === "comprar_animal" && <ComprarAnimal />}
         {sel === "baixar_animal" && <BaixarAnimal />}
-        {sel === "alimentacao_dieta" && <FormAlimentacaoDieta lotes={lotes} />}
+        {sel === "alimentacao_dieta" && <FormAlimentacaoDieta />}
         {sel === "exclusao" && <FormExclusao />}
       </div>
     </div>

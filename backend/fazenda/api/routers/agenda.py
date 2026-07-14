@@ -43,6 +43,12 @@ MODULO_POR_CATEGORIA = {
     "Atividades": "agenda",
 }
 
+# Prefixos de eventos "comunicado" (aviso informativo, ex.: nova dieta) — ao
+# contrário de uma atividade (alguém executa e dá baixa), um comunicado só
+# informa: fica fixo enquanto vigora e some sozinho depois, sem poder ser
+# marcado como realizado/excluído pelo usuário (ver marcar_realizado abaixo).
+COMUNICADO_PREFIXOS = ("nova_dieta_",)
+
 TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"]
 
 
@@ -481,6 +487,7 @@ def calcular_agenda(
                 "descricao": f"Atenção — nova dieta {'HOJE' if hoje_alerta else 'para AMANHÃ'} — lote {d.lote}",
                 "numero_animal": None, "observacao": "Toque para ver a nova dieta (produtos, por trato e kg no vagão).",
                 "fonte": "auto", "cor": "var(--dourado)", "ref": str(d.id), "tipo": "nova_dieta", "lote": d.lote,
+                "comunicado": True,
             })
 
     # Pesagem do rebanho (acompanhamento da evolução de peso): cada agendamento
@@ -912,6 +919,8 @@ def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> 
 @router.post("/realizados")
 def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
+    if dados.evento_id.startswith(COMUNICADO_PREFIXOS):
+        raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
     if dados.evento_id.startswith("protocolo_iatf_"):
         _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
         return {"marcado": True}
@@ -1014,6 +1023,8 @@ def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session))
 @router.delete("/realizados/{evento_id}")
 def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session)) -> dict:
     """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
+    if evento_id.startswith(COMUNICADO_PREFIXOS):
+        raise HTTPException(status_code=400, detail="Comunicados não podem ser excluídos — eles somem sozinhos no dia seguinte.")
     if evento_id.startswith("protocolo_iatf_"):
         _desmarcar_protocolo_iatf_realizado(session, evento_id)
         return {"desmarcado": True}

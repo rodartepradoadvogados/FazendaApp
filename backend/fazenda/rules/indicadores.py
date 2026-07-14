@@ -251,6 +251,7 @@ def calcular_indicadores(
     partos: list[dict],
     data_ref: date | None = None,
     peso_por_animal: dict[str, float] | None = None,
+    lotes: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -258,9 +259,22 @@ def calcular_indicadores(
     recente) é opcional — sem ele, "aptas" (novilhas nulíparas com peso
     mínimo de 1ª cobertura) sempre dá zero, já que peso é indispensável para
     essa aptidão. Ver `fazenda.api.routers.indicadores` para como é montado
-    (mesmo padrão de `coletar_dados_criterios` em `routers/lotes.py`)."""
+    (mesmo padrão de `coletar_dados_criterios` em `routers/lotes.py`).
+
+    `lotes` (dicts do cadastro de Lote — `codigo`, `status_lactacao`,
+    `pre_parto`) identifica QUAL lote é "Secas"/"Pré-parto" pelo cadastro real,
+    não por um número fixo — o cadastro pode renomear/renumerar os lotes a
+    qualquer momento (ex.: o usuário já trocou qual código é Secas ×
+    Pré-parto). Sem `lotes` (chamada isolada, ex. testes), cai no número
+    histórico 04/05 só para não quebrar quem não passa o cadastro."""
     hoje = data_ref or date.today()
     peso_por_animal = peso_por_animal or {}
+    if lotes:
+        codigos_secas = {l.get("codigo") for l in lotes if l.get("status_lactacao") == "seca"}
+        codigos_pre_parto = {l.get("codigo") for l in lotes if l.get("pre_parto")}
+    else:
+        codigos_secas = {GRUPO_SECAS}
+        codigos_pre_parto = {GRUPO_PRE_PARTO}
 
     # ---------------------------------------------------------------
     # Composição do rebanho
@@ -273,8 +287,8 @@ def calcular_indicadores(
 
     codigos = [_codigo_grupo(a.get("grupo_primario")) for a in animais]
     vacas_lactacao = sum(1 for c in codigos if c in GRUPOS_LACTACAO)
-    vacas_secas = sum(1 for c in codigos if c == GRUPO_SECAS)
-    pre_parto = sum(1 for c in codigos if c == GRUPO_PRE_PARTO)
+    vacas_secas = sum(1 for c in codigos if c in codigos_secas)
+    pre_parto = sum(1 for c in codigos if c in codigos_pre_parto)
 
     # ---------------------------------------------------------------
     # Situação reprodutiva do rebanho — herd-wide e por categoria (todas /

@@ -123,6 +123,17 @@ def exigir_modulo(modulo: str):
     return _dep
 
 
+def exigir_modulo_qualquer(*modulos: str):
+    """Dependência: exige acesso a QUALQUER UM dos módulos — para dados lidos
+    por mais de uma área do site (ex.: banco de touros, usado tanto em
+    Configurações > Cadastro quanto em Rebanho > Touros)."""
+    def _dep(user: Usuario = Depends(get_current_user)) -> Usuario:
+        if not any(tem_modulo(user, m) for m in modulos):
+            raise HTTPException(status_code=403, detail=f"Sem acesso a nenhum dos módulos: {', '.join(modulos)}")
+        return user
+    return _dep
+
+
 # ---------------------------------------------------------------------------
 # Seed do administrador inicial
 # ---------------------------------------------------------------------------

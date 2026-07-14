@@ -23,6 +23,38 @@ def _rotulo(codigo: str, nome: str) -> str:
     return f"{codigo} - {nome}"
 
 
+def _normalizar_codigo(codigo: str) -> str:
+    """Códigos numéricos sempre com 2 dígitos (ex.: '5' -> '05') — o resto do
+    sistema (indicadores, alimentação, Fêmeas por grupo) extrai o código de um
+    grupo pelos 2 primeiros caracteres; um código de 1 dígito faz esse animal
+    "sumir" de todo lugar que conta por código."""
+    codigo = codigo.strip()
+    return codigo.zfill(2) if codigo.isdigit() else codigo
+
+
+def _codigo_do_grupo(grupo: str | None) -> str | None:
+    """Extrai o código do início de um grupo_primario ('04 - Secas' -> '04'),
+    pelo separador " - " (não por posição fixa) — robusto a códigos com
+    quantidade de dígitos diferente do padrão de 2."""
+    if not grupo:
+        return None
+    return grupo.split(" - ", 1)[0].strip() or None
+
+
+def _mesmo_codigo(a: str | None, b: str | None) -> bool:
+    """Compara códigos de lote tolerando zero à esquerda ('5' == '05') — cobre
+    o caso de um lote antigo com código não normalizado sendo comparado com o
+    valor já normalizado."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    try:
+        return int(a) == int(b)
+    except ValueError:
+        return False
+
+
 class LoteIn(BaseModel):
     codigo: str
     nome: str
@@ -85,14 +117,16 @@ def listar_lotes(session: Session = Depends(get_session)) -> list[dict]:
     for a in animais:
         if a.eh_semen or a.sexo == "M" or not a.grupo_primario:
             continue
-        codigo = a.grupo_primario[:2] if a.grupo_primario[:2].isdigit() else a.grupo_primario
-        contagem[codigo] = contagem.get(codigo, 0) + 1
+        codigo = _codigo_do_grupo(a.grupo_primario)
+        if codigo:
+            contagem[codigo] = contagem.get(codigo, 0) + 1
 
     saida = []
     for lote in lotes:
         d = lote.model_dump()
         d["rotulo"] = _rotulo(lote.codigo, lote.nome)
-        d["qtd_animais"] = contagem.get(lote.codigo, 0)
+        # Tolera código gravado sem zero à esquerda (ver _mesmo_codigo).
+        d["qtd_animais"] = sum(n for cod, n in contagem.items() if _mesmo_codigo(cod, lote.codigo))
         saida.append(d)
     return saida
 
@@ -100,7 +134,7 @@ def listar_lotes(session: Session = Depends(get_session)) -> list[dict]:
 @router.post("/")
 def criar_lote(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
     _validar_faixas(dados)
-    codigo = dados.codigo.strip()
+    codigo = _normalizar_codigo(dados.codigo)
     if not codigo or not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
     existente = session.exec(select(Lote).where(Lote.codigo == codigo)).first()
@@ -122,7 +156,7 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     if not lote:
         raise HTTPException(status_code=404, detail="Lote não encontrado")
 
-    codigo_novo = dados.codigo.strip() or lote.codigo
+    codigo_novo = _normalizar_codigo(dados.codigo) if dados.codigo.strip() else lote.codigo
     if codigo_novo != lote.codigo:
         existente = session.exec(select(Lote).where(Lote.codigo == codigo_novo)).first()
         if existente and existente.id != lote.id:
@@ -137,16 +171,19 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     lote.atualizado_em = datetime.utcnow()
     session.add(lote)
 
-    # Mudou o código e/ou o nome: atualiza o rótulo de todos os animais que
-    # estavam no lote (pelo código ANTIGO), para o cadastro e o rebanho não
-    # ficarem com rótulos divergentes.
-    if lote.codigo != codigo_antigo or lote.nome != nome_antigo:
-        rotulo_novo = _rotulo(lote.codigo, lote.nome)
-        animais = session.exec(select(Animal).where(Animal.grupo_primario != None)).all()  # noqa: E711
-        for a in animais:
-            if (a.grupo_primario or "")[:2] == codigo_antigo:
-                a.grupo_primario = rotulo_novo
-                session.add(a)
+    # Reconcilia o rótulo de todos os animais deste lote (pelo código ANTIGO
+    # OU NOVO, tolerando zero à esquerda — ex.: um código gravado sem o zero
+    # à esquerda antes de uma correção) com o nome/código atuais. Roda mesmo
+    # sem mudança nesta chamada, para curar qualquer divergência que tenha
+    # ficado de uma edição anterior (cadastro e Rebanho > Fêmeas por grupo não
+    # podem exibir um rótulo diferente do cadastro).
+    rotulo_novo = _rotulo(lote.codigo, lote.nome)
+    animais = session.exec(select(Animal).where(Animal.grupo_primario != None)).all()  # noqa: E711
+    for a in animais:
+        cod_animal = _codigo_do_grupo(a.grupo_primario)
+        if (_mesmo_codigo(cod_animal, codigo_antigo) or _mesmo_codigo(cod_animal, codigo_novo)) and a.grupo_primario != rotulo_novo:
+            a.grupo_primario = rotulo_novo
+            session.add(a)
 
     session.commit()
     session.refresh(lote)

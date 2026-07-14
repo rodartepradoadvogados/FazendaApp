@@ -30,21 +30,50 @@ def _efetivo_por_lote(animais: list[dict]) -> dict[int, int]:
     return contagem
 
 
-def calcular_consumo(dietas: list[dict], animais: list[dict]) -> dict:
+def _remapear_lote_pela_categoria(dieta_lote: int, categoria: str | None, lotes_cadastro: list[dict]) -> int:
+    """
+    `Dieta.lote` vem congelado do DIETA.csv importado uma vez. Se o cadastro de
+    lotes (Configurações > Cadastro > Lotes) foi renumerado/renomeado depois —
+    ex.: qual nº de lote é "Secas" mudou —, o nº congelado fica desatualizado
+    e o efetivo soma o grupo de animais errado. Para as categorias com
+    identidade clara no cadastro (Secas via `status_lactacao`, Pré-parto via
+    o flag `pre_parto`), re-associa ao lote ATUAL do cadastro; do contrário
+    mantém o nº congelado.
+    """
+    cat = (categoria or "").strip().lower()
+    atual = None
+    if "seca" in cat:
+        atual = next((l for l in lotes_cadastro if l.get("status_lactacao") == "seca"), None)
+    elif "pré-parto" in cat or "pre-parto" in cat or "pre_parto" in cat or "preparto" in cat:
+        atual = next((l for l in lotes_cadastro if l.get("pre_parto")), None)
+    codigo = atual.get("codigo") if atual else None
+    return int(codigo) if codigo and codigo.isdigit() else dieta_lote
+
+
+def calcular_consumo(dietas: list[dict], animais: list[dict], lotes_cadastro: list[dict] | None = None) -> dict:
     """
     Retorna:
       - por_lote: plano de cada lote com efetivo e consumo do lote por ingrediente
       - consumo_total: soma por ingrediente (kg ou L/dia) no rebanho inteiro
+
+    `lotes_cadastro` (dicts do cadastro de Lote — `codigo`, `nome`,
+    `status_lactacao`, `pre_parto`) mantém o nº de lote e o nome exibido
+    sincronizados com Configurações > Cadastro > Lotes, mesmo que o cadastro
+    tenha sido renumerado/renomeado depois do DIETA.csv importado.
     """
+    lotes_cadastro = lotes_cadastro or []
+    nome_por_codigo = {l["codigo"]: l["nome"] for l in lotes_cadastro if l.get("codigo")}
     efetivo = _efetivo_por_lote(animais)
 
     # Agrupa dietas por lote
     lotes: dict[int, dict] = {}
     for d in dietas:
-        lote = d.get("lote")
-        if lote is None:
+        lote_original = d.get("lote")
+        if lote_original is None:
             continue
-        info = lotes.setdefault(lote, {"lote": lote, "categoria": d.get("categoria"), "ingredientes": []})
+        lote = _remapear_lote_pela_categoria(lote_original, d.get("categoria"), lotes_cadastro)
+        categoria_atual = nome_por_codigo.get(f"{lote:02d}", d.get("categoria"))
+        info = lotes.setdefault(lote, {"lote": lote, "categoria": categoria_atual, "ingredientes": []})
         info["ingredientes"].append({
             "ingrediente": d.get("ingrediente"),
             "por_cabeca": d.get("quantidade"),

@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import exigir_modulo, get_current_user, seed_admin
+from fazenda.auth import exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -150,6 +150,10 @@ app.include_router(recria.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])
+# Leitura do banco de touros: Rebanho > Touros também consulta este catálogo
+# (módulo "rebanho"), então aceita "parametros" OU "rebanho" — só a listagem,
+# não o cadastro/edição (que fica no router acima, exigindo "parametros").
+app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho"))])
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])

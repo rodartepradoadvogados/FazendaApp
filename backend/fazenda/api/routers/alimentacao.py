@@ -47,6 +47,10 @@ def _dietas_e_animais(session: Session) -> tuple[list[dict], list[dict]]:
     return dietas, animais
 
 
+def _lotes_cadastro(session: Session) -> list[dict]:
+    return [l.model_dump() for l in session.exec(select(Lote)).all()]
+
+
 def _dar_baixa_automatica(session: Session) -> dict:
     """
     Baixa automática de estoque por dias decorridos (opção A). Usa uma trava
@@ -84,7 +88,7 @@ def _dar_baixa_automatica(session: Session) -> dict:
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
     dietas, animais = _dietas_e_animais(session)
-    consumo_total = calcular_consumo(dietas, animais)["consumo_total"]
+    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
 
     itens_baixados = []
     for item in consumo_total:
@@ -117,7 +121,7 @@ def obter_alimentacao(session: Session = Depends(get_session)) -> dict:
     """Plano de dieta por lote cruzado com o efetivo atual → consumo/dia por ingrediente."""
     _dar_baixa_automatica(session)
     dietas, animais = _dietas_e_animais(session)
-    return calcular_consumo(dietas, animais)
+    return calcular_consumo(dietas, animais, _lotes_cadastro(session))
 
 
 @router.get("/necessidade-mensal")
@@ -125,7 +129,7 @@ def necessidade_mensal(session: Session = Depends(get_session)) -> dict:
     """Projeção de 30 dias por ingrediente, convertida em sacos quando o item é ensacado."""
     _dar_baixa_automatica(session)
     dietas, animais = _dietas_e_animais(session)
-    consumo_total = calcular_consumo(dietas, animais)["consumo_total"]
+    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
     estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(select(Estoque)).all()}
     return {"itens": calcular_necessidade_mensal(consumo_total, estoque_por_nome)}
 
