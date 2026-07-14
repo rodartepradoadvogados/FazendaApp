@@ -2,7 +2,7 @@
 // Peças compartilhadas da tela LANÇAR (app móvel de campo):
 // tipos, helpers, cache offline de listas para selects, envio padrão
 // (enviarOuEnfileirar) e um seletor de animal por busca (número/nome).
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
@@ -137,17 +137,13 @@ export type OpcaoAcao = { id: string; label: string; icone: ReactNode; cor?: str
 export function GradeAcoes({ opcoes, onEscolher }: { opcoes: OpcaoAcao[]; onEscolher: (id: string) => void }) {
   return (
     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
-      {opcoes.map((o) => {
-        const cor = o.cor || "var(--mob-dourado-2)";
-        return (
-          <button key={o.id} type="button" className="mob-bloco" onClick={() => onEscolher(o.id)}>
-            <span className="icone" style={{ background: `color-mix(in srgb, ${cor} 16%, transparent)`, color: cor }}>
-              {o.icone}
-            </span>
-            {o.label}
-          </button>
-        );
-      })}
+      {opcoes.map((o) => (
+        <button key={o.id} type="button" className="mob-bloco" onClick={() => onEscolher(o.id)}
+          style={o.cor ? ({ "--c": o.cor } as CSSProperties) : undefined}>
+          <span className="icone">{o.icone}</span>
+          {o.label}
+        </button>
+      ))}
     </div>
   );
 }

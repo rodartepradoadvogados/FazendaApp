@@ -51,10 +51,11 @@ export function MobCheck({ feito, onClick, title }: { feito: boolean; onClick?: 
   );
 }
 
-/** Bloco grande do Lançamento Rápido. */
-export function MobBloco({ icone, label, destaque, onClick }: { icone: ReactNode; label: string; destaque?: boolean; onClick: () => void }) {
+/** Bloco grande do Lançamento Rápido — `cor` tinge o contorno e o fundo leve
+ * do círculo do ícone (ex.: "var(--mob-roxo)"); sem `cor`, cai no dourado da marca. */
+export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; label: string; cor?: string; onClick: () => void }) {
   return (
-    <button type="button" className={`mob-bloco${destaque ? " destaque" : ""}`} onClick={onClick}>
+    <button type="button" className="mob-bloco" onClick={onClick} style={cor ? ({ "--c": cor } as CSSProperties) : undefined}>
       <span className="icone">{icone}</span>
       {label}
     </button>

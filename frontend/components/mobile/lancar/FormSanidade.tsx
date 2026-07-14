@@ -116,7 +116,7 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
       <GradeAcoes
         opcoes={[
           { id: "aplicacao", label: "Aplicação de remédio", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
-          { id: "protocolo", label: "Protocolo sanitário", icone: <ClipboardList size={28} />, cor: "var(--mob-vinho)" },
+          { id: "protocolo", label: "Protocolo sanitário", icone: <ClipboardList size={28} />, cor: "var(--mob-roxo)" },
         ]}
         onEscolher={(id) => setTipo(id as "aplicacao" | "protocolo")}
       />

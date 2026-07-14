@@ -37,8 +37,8 @@ export function FormReprodutivo({ animais, animalFixado }: { animais: Animal[]; 
         opcoes={[
           { id: "inseminacao", label: "Inseminação", icone: <Syringe size={28} />, cor: "var(--mob-azul)" },
           { id: "diagnostico", label: "Diagnóstico", icone: <Stethoscope size={28} />, cor: "var(--mob-verde)" },
-          { id: "parto", label: "Parto", icone: <Baby size={28} />, cor: "var(--mob-vinho)" },
-          { id: "iatf", label: "Protocolo IATF", icone: <CalendarClock size={28} />, cor: "var(--mob-dourado-2)" },
+          { id: "parto", label: "Parto", icone: <Baby size={28} />, cor: "var(--mob-roxo)" },
+          { id: "iatf", label: "Protocolo IATF", icone: <CalendarClock size={28} />, cor: "var(--mob-laranja)" },
         ]}
         onEscolher={(id) => setAba(id as Aba)}
       />
