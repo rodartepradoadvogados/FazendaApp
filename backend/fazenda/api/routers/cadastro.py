@@ -32,6 +32,12 @@ FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
+# Leitura do banco de touros: usada tanto em Configurações > Cadastro (módulo
+# "parametros") quanto em Rebanho > Touros (módulo "rebanho") — roteador à
+# parte porque `router` acima é montado em main.py exigindo só "parametros",
+# e essa consulta específica precisa aceitar qualquer um dos dois módulos.
+router_touros_leitura = APIRouter(prefix="/cadastro", tags=["cadastro"])
+
 TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços", "Inseminador"]
 
 # Seed inicial — funcionários já conhecidos da fazenda (ver seed_pessoas,
@@ -1562,7 +1568,7 @@ def excluir_estoque_semen(item_id: int, session: Session = Depends(get_session))
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────
-@router.get("/touros")
+@router_touros_leitura.get("/touros")
 def listar_touros(session: Session = Depends(get_session)) -> list[dict]:
     """Banco de touros importado do catálogo do fornecedor, ordenado por TPI
     (maior primeiro) e depois por nome."""
