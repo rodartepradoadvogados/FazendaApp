@@ -75,14 +75,16 @@ class TestCadastroProtocolo:
     def test_rejeita_via_fora_da_lista_fixa(self, client):
         c, engine = client
         r = c.post("/cadastro/protocolos-sanitarios", json={
-            "nome": "Via inválida", "etapas": [_etapa(1, via="Tópica")],
+            "nome": "Via inválida", "etapas": [_etapa(1, via="Retal")],
         })
         assert r.status_code == 400
         assert "Via inválida" in r.json()["detail"]
 
     def test_aceita_cada_via_da_lista_fixa(self, client):
         c, engine = client
-        for i, via in enumerate(["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]):
+        # Mesma lista usada em todo o site (frontend/lib/constants.ts) — as duas
+        # devem ficar sempre em sincronia.
+        for i, via in enumerate(["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]):
             r = c.post("/cadastro/protocolos-sanitarios", json={
                 "nome": f"Via {via}", "etapas": [_etapa(1, via=via)],
             })
@@ -105,6 +107,91 @@ class TestCadastroProtocolo:
         assert r.status_code == 200
         assert len(r.json()["etapas"]) == 1
         assert r.json()["etapas"][0]["produto"] == "Novo produto"
+
+
+class TestImportarProtocolo:
+    def test_importa_csv_agrupando_por_nome(self, client):
+        c, engine = client
+        csv = (
+            "Nome do protocolo,Dia da aplicação,Definido por,Medicamento,Dosagem,Unidade,Via\n"
+            "Mastite - Protocolo 1,1,Medicamento,Borgal,40,ml,Intramuscular\n"
+            "Mastite - Protocolo 1,1,Medicamento,Spectramast,2,unidade,Intramamária\n"
+            "Mastite - Protocolo 1,2,Medicamento,Spectramast,2,unidade,Intramamária\n"
+            "Retenção de Placenta,5,Medicamento,Excede (10ml por orelha),20,ml,Subcutânea\n"
+            "Retenção de Placenta,30,Medicamento,Lutalyse (Se necessário),5,ml,Intramuscular\n"
+        ).encode("utf-8")
+        r = c.post("/cadastro/protocolos-sanitarios/importar", files={"file": ("protocolos.csv", csv, "text/csv")})
+        assert r.status_code == 200, r.json()
+        corpo = r.json()
+        assert set(corpo["criados"]) == {"Mastite - Protocolo 1", "Retenção de Placenta"}
+        assert not corpo["atualizados"]
+        assert not corpo["erros"]
+
+        protocolos = {p["nome"]: p for p in c.get("/cadastro/protocolos-sanitarios").json()}
+        mastite = protocolos["Mastite - Protocolo 1"]
+        assert mastite["eh_mastite"] is True
+        assert [e["dia"] for e in mastite["etapas"]] == [1, 1, 2]
+
+        reten = protocolos["Retenção de Placenta"]
+        assert reten["eh_mastite"] is False
+        por_dia = {e["dia"]: e for e in reten["etapas"]}
+        assert por_dia[5]["produto"] == "Excede"
+        assert por_dia[5]["observacao"] == "10ml por orelha"
+        assert por_dia[30]["produto"] == "Lutalyse"
+        assert por_dia[30]["observacao"] == "Se necessário"
+
+    def test_reimportar_atualiza_em_vez_de_duplicar(self, client):
+        c, engine = client
+        csv_v1 = (
+            "Nome do protocolo,Dia da aplicação,Definido por,Medicamento,Dosagem,Unidade,Via\n"
+            "Diarreia - Protocolo 1,1,Medicamento,Biobac,4,g,Oral\n"
+        ).encode("utf-8")
+        r1 = c.post("/cadastro/protocolos-sanitarios/importar", files={"file": ("v1.csv", csv_v1, "text/csv")})
+        assert r1.json()["criados"] == ["Diarreia - Protocolo 1"]
+
+        csv_v2 = (
+            "Nome do protocolo,Dia da aplicação,Definido por,Medicamento,Dosagem,Unidade,Via\n"
+            "Diarreia - Protocolo 1,1,Medicamento,Biobac,4,g,Oral\n"
+            "Diarreia - Protocolo 1,2,Medicamento,Biobac,4,g,Oral\n"
+        ).encode("utf-8")
+        r2 = c.post("/cadastro/protocolos-sanitarios/importar", files={"file": ("v2.csv", csv_v2, "text/csv")})
+        assert r2.json()["atualizados"] == ["Diarreia - Protocolo 1"]
+        assert not r2.json()["criados"]
+
+        protocolos = c.get("/cadastro/protocolos-sanitarios").json()
+        assert sum(1 for p in protocolos if p["nome"] == "Diarreia - Protocolo 1") == 1
+        etapas = next(p for p in protocolos if p["nome"] == "Diarreia - Protocolo 1")["etapas"]
+        assert len(etapas) == 2
+
+    def test_importa_xlsx_multiplas_abas(self, client):
+        c, engine = client
+        import io
+        import openpyxl
+
+        wb = openpyxl.Workbook()
+        cabecalho = ["Nome do protocolo", "Dia da aplicação", "Definido por", "Medicamento", "Dosagem", "Unidade", "Via"]
+        ws1 = wb.active
+        ws1.title = "Protocolo A"
+        ws1.append(cabecalho)
+        ws1.append(["Pneumonia - Protocolo A", 1, "Medicamento", "Resflor", 2, "ml / 15kg PV", "Subcutânea"])
+        ws2 = wb.create_sheet("Protocolo B")
+        ws2.append(cabecalho)
+        ws2.append(["Pneumonia - Protocolo B", 1, "Medicamento", "Advocin", 1, "ml / 30kg PV", "Intramuscular"])
+        buf = io.BytesIO()
+        wb.save(buf)
+
+        r = c.post(
+            "/cadastro/protocolos-sanitarios/importar",
+            files={"file": ("protocolos.xlsx", buf.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.json()
+        assert set(r.json()["criados"]) == {"Pneumonia - Protocolo A", "Pneumonia - Protocolo B"}
+
+    def test_importar_planilha_sem_colunas_reconheciveis(self, client):
+        c, engine = client
+        csv = "Coluna qualquer,Outra coluna\nx,y\n".encode("utf-8")
+        r = c.post("/cadastro/protocolos-sanitarios/importar", files={"file": ("ruim.csv", csv, "text/csv")})
+        assert r.status_code == 400
 
 
 class TestLancamentoProtocolo:

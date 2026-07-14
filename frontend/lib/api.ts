@@ -827,10 +827,17 @@ export async function excluirAgendamentoPesagem(id: number) {
 // ── Protocolo sanitário (cadastro + lançamento) ──
 // criterio_tipo: "medicamento" (produto = item de estoque), "principio_ativo"
 // ou "classificacao" (produto = o valor do critério; medicamento escolhido no lançamento).
-export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null };
+export type ProtocoloEtapa = { dia: number; criterio_tipo?: string; produto: string; dosagem: number; unidade: string; via?: string | null; observacao?: string | null };
 export async function fetchProtocolosSanitarios() {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos sanitários error: ${res.status}`);
+  return res.json();
+}
+export async function importarProtocoloSanitarioExcel(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
   return res.json();
 }
 export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; ativo?: boolean; etapas: ProtocoloEtapa[] }) {

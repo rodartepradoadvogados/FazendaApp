@@ -45,7 +45,7 @@ from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
-    seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico,
+    seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos,
 )
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
@@ -80,6 +80,9 @@ async def lifespan(app: FastAPI):
         # Protocolo de indução de lactação (18 e 28 dias) — cronograma por
         # princípio ativo, editável depois em Configurações > Cadastro.
         seed_protocolos_inducao_lactacao(session)
+        # Protocolos sanitários curativos (mastite, pós-parto/retenção de
+        # placenta, pneumonia, diarreia) das planilhas do produtor.
+        seed_protocolos_sanitarios_curativos(session)
         # Farmácia: catálogo de princípios ativos/marcas + compatibilização do
         # estoque já existente (idempotente, sem perda de dados).
         bootstrap_farmacia(session)

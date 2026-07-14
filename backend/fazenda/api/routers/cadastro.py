@@ -8,11 +8,15 @@ site — não há tabela paralela/inerte.
 """
 from __future__ import annotations
 
+import io
 import json
+import logging
+import re
+import unicodedata
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -21,7 +25,8 @@ from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
     Lote, MetodoServicoReprodutivo, MotivoBaixa, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
-    ProtocoloSanitario, ProtocoloSanitarioEtapa, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
+    ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario,
+    ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -29,6 +34,8 @@ from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
@@ -1244,7 +1251,10 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # dia), a exemplo do tratamento de mastite. Etapas começam em D1 — protocolos
 # sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
 # ---------------------------------------------------------------------------
-VIAS_APLICACAO = ["Intramamária", "Intramuscular", "Intravenosa", "Subdérmica", "Oral"]
+# Igual à lista usada no restante do site (frontend/lib/constants.ts) — as
+# duas listas divergiam (esta faltava Subcutânea/Intrauterina), o que rejeitava
+# no backend vias que o formulário deixava escolher.
+VIAS_APLICACAO = ["Intramuscular", "Subcutânea", "Intravenosa", "Intramamária", "Oral", "Tópica", "Subdérmica", "Intrauterina"]
 CRITERIOS_MEDICAMENTO = ["medicamento", "principio_ativo", "classificacao", "doenca"]
 CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"]
 
@@ -1256,6 +1266,7 @@ class ProtocoloEtapaIn(BaseModel):
     dosagem: float
     unidade: str
     via: str | None = None
+    observacao: str | None = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
 
 
 class ProtocoloSanitarioIn(BaseModel):
@@ -1350,6 +1361,199 @@ def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn
 
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
     return _serializar_protocolo(session, protocolo, doencas)
+
+
+def _upsert_protocolo_sanitario(
+    session: Session, nome: str, etapas: list[dict], *, doenca_id: int | None = None, eh_mastite: bool | None = None,
+) -> ProtocoloSanitario:
+    """Cria o protocolo se ele ainda não existir, ou substitui as etapas se já
+    existir (mesma regra do PUT manual) — usado tanto pela importação de
+    planilha quanto pelo cadastro automático dos protocolos padrão."""
+    etapas_in = [ProtocoloEtapaIn(**e) for e in etapas]
+    _validar_etapas(etapas_in)
+
+    protocolo = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first()
+    if protocolo is None:
+        protocolo = ProtocoloSanitario(
+            nome=nome, doenca_id=doenca_id,
+            eh_mastite=eh_mastite if eh_mastite is not None else ("mastite" in nome.lower()),
+        )
+        session.add(protocolo)
+        session.commit()
+        session.refresh(protocolo)
+    else:
+        if doenca_id is not None:
+            protocolo.doenca_id = doenca_id
+        if eh_mastite is not None:
+            protocolo.eh_mastite = eh_mastite
+        session.add(protocolo)
+        for antiga in session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == protocolo.id)).all():
+            session.delete(antiga)
+        session.commit()
+
+    for etapa in etapas_in:
+        session.add(ProtocoloSanitarioEtapa(protocolo_id=protocolo.id, **etapa.model_dump()))
+    session.commit()
+    return protocolo
+
+
+# ---------------------------------------------------------------------------
+# Importação de protocolo sanitário via Excel/CSV — mesmas 7 colunas do
+# cadastro manual (Nome do protocolo, Dia da aplicação, Definido por,
+# Medicamento, Dosagem, Unidade, Via). Cada linha é uma etapa; várias linhas
+# com o mesmo nome formam um único protocolo — como nas planilhas de
+# mastite/pós-parto/pneumonia/diarreia do produtor, que trazem um protocolo
+# por aba. Upsert por nome: nunca apaga um protocolo ausente da planilha.
+# ---------------------------------------------------------------------------
+_ALIASES_COLUNA_PROTOCOLO = {
+    "nome": ["nome do protocolo", "protocolo", "nome"],
+    "dia": ["dia da aplicacao", "dia", "dia aplicacao"],
+    "definido_por": ["definido por", "criterio", "criterio tipo"],
+    "produto": ["medicamento", "produto"],
+    "dosagem": ["dosagem", "dose"],
+    "unidade": ["unidade", "unidade de medida"],
+    "via": ["via", "via de aplicacao"],
+}
+_CRITERIO_POR_TEXTO = {
+    "medicamento": "medicamento",
+    "principio ativo": "principio_ativo",
+    "doenca": "doenca",
+    "classificacao": "classificacao",
+}
+
+
+def _norm_cabecalho(s: str | None) -> str:
+    if not s:
+        return ""
+    s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def _mapear_colunas_protocolo(cabecalhos: list) -> dict[str, int]:
+    disponiveis = {_norm_cabecalho(str(c)) if c is not None else "": i for i, c in enumerate(cabecalhos)}
+    mapa: dict[str, int] = {}
+    for campo, apelidos in _ALIASES_COLUNA_PROTOCOLO.items():
+        for ap in apelidos:
+            if ap in disponiveis:
+                mapa[campo] = disponiveis[ap]
+                break
+    return mapa
+
+
+def _extrair_observacao(texto: str) -> tuple[str, str | None]:
+    """Separa uma nota entre parênteses (ex.: "Lutalyse (Se necessário)") do
+    valor principal, para não quebrar o casamento por nome exato do produto/via."""
+    m = re.match(r"^(.*?)\s*\(([^)]+)\)\s*$", texto.strip())
+    if m:
+        return m.group(1).strip(), m.group(2).strip()
+    return texto.strip(), None
+
+
+def _casar_via(texto: str) -> tuple[str | None, str | None]:
+    """Acha a via cadastrada (VIAS_APLICACAO) mais próxima do texto da
+    planilha, devolvendo o que sobrar (ex.: "10ml por orelha") como observação."""
+    base, obs = _extrair_observacao(texto)
+    base_norm = _norm_cabecalho(base)
+    for via in VIAS_APLICACAO:
+        if _norm_cabecalho(via) == base_norm:
+            return via, obs
+    for via in VIAS_APLICACAO:
+        via_norm = _norm_cabecalho(via)
+        if via_norm and via_norm in base_norm:
+            resto = base_norm.replace(via_norm, "").strip()
+            extra = f"{resto} {obs}".strip() if resto else obs
+            return via, (extra or None)
+    return (base or None), obs
+
+
+def ler_planilha_protocolos_sanitarios(content: bytes, filename: str | None) -> dict[str, list[dict]]:
+    """Lê um Excel (todas as abas) ou CSV com uma linha por etapa e agrupa as
+    etapas por nome de protocolo, na ordem em que aparecem na planilha."""
+    nome_arquivo = (filename or "").lower()
+    linhas: list[tuple[dict[str, int], tuple]] = []
+    if nome_arquivo.endswith((".xlsx", ".xlsm")):
+        import openpyxl
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        for ws in wb.worksheets:
+            it = ws.iter_rows(values_only=True)
+            try:
+                cabecalho = list(next(it))
+            except StopIteration:
+                continue
+            mapa = _mapear_colunas_protocolo(cabecalho)
+            if "nome" not in mapa or "produto" not in mapa:
+                continue
+            for row in it:
+                if row is None or all(c is None or str(c).strip() == "" for c in row):
+                    continue
+                linhas.append((mapa, row))
+    else:
+        import csv as _csv
+        texto = content.decode("utf-8-sig", errors="replace")
+        primeira = texto.splitlines()[0] if texto.strip() else ""
+        delim = ";" if primeira.count(";") >= primeira.count(",") else ","
+        leitor = list(_csv.reader(io.StringIO(texto), delimiter=delim))
+        if leitor:
+            mapa = _mapear_colunas_protocolo(leitor[0])
+            for row in leitor[1:]:
+                if not row or all(not (c or "").strip() for c in row):
+                    continue
+                linhas.append((mapa, row))
+
+    protocolos: dict[str, list[dict]] = {}
+    for mapa, row in linhas:
+        def _cell(campo: str):
+            i = mapa.get(campo)
+            return row[i] if i is not None and i < len(row) else None
+
+        nome = str(_cell("nome") or "").strip()
+        produto_bruto = str(_cell("produto") or "").strip()
+        if not nome or not produto_bruto:
+            continue
+        try:
+            dia = int(float(_cell("dia") or 0))
+        except (TypeError, ValueError):
+            continue
+        try:
+            dosagem = float(_cell("dosagem") or 0)
+        except (TypeError, ValueError):
+            dosagem = 0.0
+        unidade = str(_cell("unidade") or "").strip()
+        via_bruta = str(_cell("via") or "").strip()
+        definido_por = _norm_cabecalho(str(_cell("definido_por") or "medicamento"))
+        criterio_tipo = _CRITERIO_POR_TEXTO.get(definido_por, "medicamento")
+
+        produto, obs_produto = _extrair_observacao(produto_bruto)
+        via, obs_via = (_casar_via(via_bruta) if via_bruta else (None, None))
+        observacao = " / ".join(x for x in [obs_produto, obs_via] if x) or None
+
+        protocolos.setdefault(nome, []).append({
+            "dia": dia, "criterio_tipo": criterio_tipo, "produto": produto,
+            "dosagem": dosagem, "unidade": unidade, "via": via, "observacao": observacao,
+        })
+    return protocolos
+
+
+@router.post("/protocolos-sanitarios/importar")
+async def importar_protocolos_sanitarios(file: UploadFile = File(...), session: Session = Depends(get_session)) -> dict:
+    conteudo = await file.read()
+    protocolos = ler_planilha_protocolos_sanitarios(conteudo, file.filename)
+    if not protocolos:
+        raise HTTPException(
+            status_code=400,
+            detail="Não encontrei nenhuma linha reconhecível na planilha — confira se o cabeçalho tem as colunas: "
+                   "Nome do protocolo, Dia da aplicação, Definido por, Medicamento, Dosagem, Unidade, Via.",
+        )
+    criados, atualizados, erros = [], [], []
+    for nome, etapas in protocolos.items():
+        etapas.sort(key=lambda e: e["dia"])
+        existia = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first() is not None
+        try:
+            _upsert_protocolo_sanitario(session, nome, etapas)
+            (atualizados if existia else criados).append(nome)
+        except HTTPException as e:
+            erros.append(f"{nome}: {e.detail}")
+    return {"criados": criados, "atualizados": atualizados, "erros": erros}
 
 
 # ---------------------------------------------------------------------------
@@ -1908,6 +2112,270 @@ def seed_protocolos_inducao_lactacao(session: Session) -> None:
     )
 
     session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Protocolos sanitários curativos — mastite, pós-parto/retenção de placenta,
+# pneumonia e diarreia, cadastrados a partir das planilhas do produtor (uma
+# aba por protocolo, uma linha por etapa: dia, medicamento, dosagem, unidade,
+# via). Mesmo formato aceito pela importação manual em
+# POST /cadastro/protocolos-sanitarios/importar.
+# ---------------------------------------------------------------------------
+SEED_PROTOCOLOS_SANITARIOS_CURATIVOS = "protocolos_sanitarios_curativos_v1"
+
+
+def _tuplas_para_etapas(tuplas: list[tuple]) -> list[dict]:
+    return [
+        {"dia": dia, "criterio_tipo": "medicamento", "produto": produto, "dosagem": float(dose),
+         "unidade": unidade, "via": via, "observacao": obs}
+        for dia, produto, dose, unidade, via, obs in tuplas
+    ]
+
+
+_PROTOCOLOS_SANITARIOS_CURATIVOS: list[dict] = [
+    {
+        "nome": "Mastite - Protocolo 1", "doenca": "Mastite", "eh_mastite": True,
+        "etapas": _tuplas_para_etapas([
+            (1, "Borgal", 40, "ml", "Intramuscular", None),
+            (1, "Spectramast", 2, "unidade", "Intramamária", None),
+            (2, "Spectramast", 2, "unidade", "Intramamária", None),
+            (3, "Borgal", 40, "ml", "Intramuscular", None),
+            (3, "Spectramast", 2, "unidade", "Intramamária", None),
+            (4, "Spectramast", 2, "unidade", "Intramamária", None),
+            (5, "Spectramast", 2, "unidade", "Intramamária", None),
+        ]),
+    },
+    {
+        "nome": "Mastite - Protocolo 2", "doenca": "Mastite", "eh_mastite": True,
+        "etapas": _tuplas_para_etapas([
+            (1, "Agemoxi", 50, "ml", "Intramuscular", None),
+            (1, "Mastijet", 2, "unidade", "Intramamária", None),
+            (2, "Mastijet", 2, "unidade", "Intramamária", None),
+            (3, "Agemoxi", 50, "ml", "Intramuscular", None),
+            (3, "Mastijet", 2, "unidade", "Intramamária", None),
+            (4, "Mastijet", 2, "unidade", "Intramamária", None),
+            (5, "Mastijet", 2, "unidade", "Intramamária", None),
+        ]),
+    },
+    {
+        "nome": "Mastite - Protocolo 3", "doenca": "Mastite", "eh_mastite": True,
+        "etapas": _tuplas_para_etapas([
+            (1, "Gentopen", 30, "ml", "Intramuscular", None),
+            (1, "Mastite Clínica VL", 2, "unidade", "Intramamária", None),
+            (2, "Gentopen", 30, "ml", "Intramuscular", None),
+            (2, "Mastite Clínica VL", 2, "unidade", "Intramamária", None),
+            (3, "Gentopen", 30, "ml", "Intramuscular", None),
+            (3, "Mastite Clínica VL", 2, "unidade", "Intramamária", None),
+            (4, "Gentopen", 30, "ml", "Intramuscular", None),
+            (4, "Mastite Clínica VL", 2, "unidade", "Intramamária", None),
+            (5, "Gentopen", 30, "ml", "Intramuscular", None),
+            (5, "Mastite Clínica VL", 2, "unidade", "Intramamária", None),
+        ]),
+    },
+    {
+        "nome": "Pós-Parto - Vaca Grande", "doenca": None, "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Drench", 1, "ml", "Oral", None),
+            (1, "Lutalyse", 5, "ml", "Intravenosa", None),
+            (1, "TurboCA", 250, "ml", "Intravenosa", None),
+            (1, "Mercepton", 100, "ml", "Intravenosa", None),
+        ]),
+    },
+    {
+        "nome": "Pós-Parto - Novilha Grande", "doenca": None, "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Propileno", 110, "ml", "Oral", None),
+            (1, "Lutalyse", 5, "ml", "Intramuscular", None),
+        ]),
+    },
+    {
+        "nome": "Pós-Parto - Aborto", "doenca": None, "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Terramicina LA", 1, "frasco", "Intramuscular", None),
+        ]),
+    },
+    {
+        "nome": "Retenção de Placenta", "doenca": "Retenção de Placenta", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Terramicina LA", 1, "frasco", "Intramuscular", None),
+            (5, "Excede", 20, "ml", "Subcutânea", "10ml por orelha"),
+            (30, "Lutalyse", 5, "ml", "Intramuscular", "Se necessário"),
+            (30, "Metricure", 1, "unidade", "Intrauterina", "Se necessário"),
+        ]),
+    },
+    {
+        "nome": "Pneumonia - Protocolo A", "doenca": "Pneumonia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Resflor", 2, "ml / 15kg PV", "Subcutânea", None),
+            (1, "Aliv V", 10, "ml", "Intramuscular", None),
+            (2, "Banamine", 2, "ml / 40kg PV", "Intramuscular", None),
+            (2, "Aliv V", 10, "ml", "Intramuscular", None),
+            (3, "Resflor", 2, "ml / 15kg PV", "Subcutânea", None),
+            (3, "Aliv V", 10, "ml", "Intramuscular", None),
+            (4, "Aliv V", 10, "ml", "Intramuscular", None),
+            (5, "Aliv V", 10, "ml", "Intramuscular", None),
+        ]),
+    },
+    {
+        "nome": "Pneumonia - Protocolo B", "doenca": "Pneumonia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Advocin", 1, "ml / 30kg PV", "Intramuscular", None),
+            (1, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (2, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (3, "Advocin", 1, "ml / 30kg PV", "Intramuscular", None),
+            (3, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (4, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (5, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+        ]),
+    },
+    {
+        "nome": "Pneumonia - Protocolo C", "doenca": "Pneumonia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Pencivet", 1, "ml / 25kg PV", "Intramuscular", None),
+            (1, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (2, "Pencivet", 1, "ml / 25kg PV", "Intramuscular", None),
+            (2, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (3, "Pencivet", 1, "ml / 25kg PV", "Intramuscular", None),
+            (3, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (4, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (5, "Maxicam 2%", 2.5, "ml / 100kg PV", "Intramuscular", None),
+        ]),
+    },
+    {
+        "nome": "Diarreia - Protocolo 1", "doenca": "Diarreia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (1, "Borgal", 3, "ml / 50kg PV", "Intramuscular", None),
+            (2, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (2, "Biobac", 4, "g", "Oral", None),
+            (3, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (3, "Borgal", 3, "ml / 50kg PV", "Intramuscular", None),
+            (3, "Biobac", 4, "g", "Oral", None),
+            (4, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (4, "Biobac", 4, "g", "Oral", None),
+            (5, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (5, "Biobac", 4, "g", "Oral", None),
+        ]),
+    },
+    {
+        "nome": "Diarreia - Protocolo 2", "doenca": "Diarreia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Advocin", 1, "ml / 30kg PV", "Intramuscular", None),
+            (1, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (1, "Trigental", 4, "g", "Oral", None),
+            (2, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (2, "Biobac", 4, "g", "Oral", None),
+            (3, "Advocin", 1, "ml / 30kg PV", "Intramuscular", None),
+            (3, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (3, "Biobac", 4, "g", "Oral", None),
+            (4, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (4, "Biobac", 4, "g", "Oral", None),
+            (5, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (5, "Biobac", 4, "g", "Oral", None),
+        ]),
+    },
+    {
+        "nome": "Diarreia - Protocolo 3", "doenca": "Diarreia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Resflor", 2, "ml / 15kg PV", "Subcutânea", None),
+            (2, "Biobac", 4, "g", "Oral", None),
+            (3, "Resflor", 2, "ml / 15kg PV", "Subcutânea", None),
+            (3, "Biobac", 4, "g", "Oral", None),
+            (4, "Biobac", 4, "g", "Oral", None),
+            (5, "Biobac", 4, "g", "Oral", None),
+        ]),
+    },
+    {
+        "nome": "Diarreia - Protocolo 4", "doenca": "Diarreia", "eh_mastite": False,
+        "etapas": _tuplas_para_etapas([
+            (1, "Trigental", 4, "g", "Oral", None),
+            (1, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (2, "Trigental", 4, "g", "Oral", None),
+            (2, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (3, "Trigental", 4, "g", "Oral", None),
+            (3, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (4, "Trigental", 4, "g", "Oral", None),
+            (4, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+            (5, "Trigental", 4, "g", "Oral", None),
+            (5, "Maxican", 2.5, "ml / 100kg PV", "Intramuscular", None),
+        ]),
+    },
+]
+
+
+def seed_protocolos_sanitarios_curativos(session: Session) -> None:
+    """
+    Cadastra os protocolos sanitários curativos das planilhas do produtor
+    (mastite, pós-parto/retenção de placenta, pneumonia e diarreia) e remove o
+    protocolo de mastite único que existia antes das 3 variantes acima — só
+    quando ele nunca foi usado num lançamento (histórico nunca é apagado).
+    Roda uma vez (SeedFlag); depois disso os protocolos ficam livres para o
+    usuário editar/excluir em Configurações > Cadastro (mesma convenção de
+    seed_protocolos_inducao_lactacao).
+    """
+    chave = SEED_PROTOCOLOS_SANITARIOS_CURATIVOS
+    nomes_novos = {p["nome"] for p in _PROTOCOLOS_SANITARIOS_CURATIVOS}
+    if session.get(SeedFlag, chave):
+        # A flag só marca que já rodou uma vez — confere se os protocolos
+        # ainda existem antes de confiar nela (mesma cautela do bootstrap de
+        # touros: perda de dados independente da flag nunca se autocorrigiria).
+        existentes = {
+            p.nome for p in session.exec(
+                select(ProtocoloSanitario).where(ProtocoloSanitario.nome.in_(nomes_novos))
+            ).all()
+        }
+        if existentes == nomes_novos:
+            return
+
+    # Remove o(s) protocolo(s) de mastite antigo(s) — cadastrado(s) manualmente
+    # antes desta importação, com um nome fora do conjunto novo — só se nunca
+    # foi usado num lançamento; do contrário deixa como está (o histórico não
+    # pode sumir) e ele continua disponível para exclusão manual em
+    # Configurações > Cadastro > Excluir cadastros.
+    antigos = session.exec(
+        select(ProtocoloSanitario).where(
+            ProtocoloSanitario.eh_mastite == True,  # noqa: E712
+            ~ProtocoloSanitario.nome.in_(nomes_novos),
+        )
+    ).all()
+    for antigo in antigos:
+        tem_lancamento = session.exec(
+            select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.protocolo_id == antigo.id)
+        ).first()
+        if tem_lancamento:
+            logger.warning(
+                "Protocolo de mastite antigo '%s' (id=%s) tem lançamentos e não foi removido automaticamente — "
+                "exclua manualmente em Configurações > Cadastro > Excluir cadastros, se ainda fizer sentido.",
+                antigo.nome, antigo.id,
+            )
+            continue
+        for etapa in session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == antigo.id)).all():
+            session.delete(etapa)
+        session.delete(antigo)
+    session.commit()
+
+    doencas_por_nome = {d.nome: d.id for d in session.exec(select(Doenca)).all()}
+
+    def _doenca_id(nome: str | None) -> int | None:
+        if not nome:
+            return None
+        if nome not in doencas_por_nome:
+            doenca = Doenca(nome=nome)
+            session.add(doenca)
+            session.commit()
+            session.refresh(doenca)
+            doencas_por_nome[nome] = doenca.id
+        return doencas_por_nome[nome]
+
+    for spec in _PROTOCOLOS_SANITARIOS_CURATIVOS:
+        _upsert_protocolo_sanitario(
+            session, spec["nome"], spec["etapas"],
+            doenca_id=_doenca_id(spec["doenca"]), eh_mastite=spec["eh_mastite"],
+        )
+
+    if not session.get(SeedFlag, chave):
+        session.add(SeedFlag(chave=chave))
     session.commit()
 
 
