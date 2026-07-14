@@ -2,7 +2,15 @@
 
 import React, { useEffect, useState, useCallback } from "react";
 import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone } from "lucide-react";
-import { fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos, fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today } from "@/lib/api";
+import {
+  fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
+  fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
+  cadastrarPreventivo,
+} from "@/lib/api";
+import { VIAS_APLICACAO } from "@/lib/constants";
+
+// Unidades aceitas na aplicação (mesma lista usada em Sanidade/Cadastro).
+const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
@@ -33,6 +41,17 @@ const BADGE_CLASS: Record<string, string> = {
   "Gestão/Financeiro": "badge-financeiro",
   "Atividades":        "badge-atividades",
 };
+// Várias pendências (sanidade, protocolo_sanitario, aplicacao_agendada...) chegam
+// com `categoria` em minúsculo ("sanidade"), enquanto o filtro/badge acima usa a
+// forma capitalizada — sem isto, o filtro "Sanidade" nunca as encontra e a pílula
+// cai no estilo padrão. Normaliza os dois lados por comparação/lookup.
+const BADGE_CLASS_LC: Record<string, string> = Object.fromEntries(Object.entries(BADGE_CLASS).map(([k, v]) => [k.toLowerCase(), v]));
+function badgeClasse(categoria: string): string {
+  return BADGE_CLASS_LC[(categoria || "").toLowerCase()] || "badge-atividades";
+}
+function categoriaLabel(categoria: string): string {
+  return categoria ? categoria.charAt(0).toUpperCase() + categoria.slice(1) : categoria;
+}
 
 export default function AgendaPage() {
   const [data, setData] = useState(today());
@@ -156,7 +175,7 @@ export default function AgendaPage() {
   const comunicados = (agenda?.eventos || []).filter((e: any) => e.comunicado);
   const eventosBase = (agenda?.eventos || []).filter((e: any) => {
     if (e.comunicado) return false;
-    if (fCat && e.categoria !== fCat) return false;
+    if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
     if (de && e.data < de) return false;
     if (ate && e.data > ate) return false;
     if (filtro && !(e.descricao + e.numero_animal + e.categoria).toLowerCase().includes(filtro.toLowerCase())) return false;
@@ -167,6 +186,130 @@ export default function AgendaPage() {
   const limiteFuturo = ate || addDias(hoje, DIAS_PADRAO_FUTURO);
   const eventosFuturos = eventosBase.filter((e: any) => e.data >= hoje && e.data <= limiteFuturo);
   const eventosPendentes = eventosBase.filter((e: any) => e.data < hoje);
+  // Localiza um evento pelo id independente da seção (pendentes/futuros) em
+  // que ele está renderizado — usado pela confirmação em lote por dia.
+  const eventoPorId = new Map<string, any>((agenda?.eventos || []).map((e: any) => [e.id, e]));
+
+  // ── Dar baixa em sanidade (evento_sanitario / calendario_sanitario) sem sair
+  // da Agenda — individual (1º clique confirma os dados, 2º confirma a baixa)
+  // ou em lote (várias pendências da MESMA categoria de uma vez, cada uma com
+  // seus próprios dados, pré-preenchidos do cadastro/lançamento e editáveis).
+  type CampoBaixaSanidade = {
+    produto: string; dose: string; unidade: string; via: string;
+    principioAtivoId: string; veterinario: string; freqValor: string; freqUnidade: string;
+  };
+  const CAMPOS_VAZIOS: CampoBaixaSanidade = { produto: "", dose: "", unidade: "", via: "", principioAtivoId: "", veterinario: "", freqValor: "1", freqUnidade: "meses" };
+  const [principiosAtivos, setPrincipiosAtivos] = useState<{ id: number; nome: string }[]>([]);
+  const [eventosSanitarios, setEventosSanitarios] = useState<any[]>([]);
+  useEffect(() => {
+    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosAtivos(d.filter((p) => p.ativo !== false))).catch(() => {});
+    fetchEventosSanitarios().then(setEventosSanitarios).catch(() => {});
+  }, []);
+  function ehExameSanitario(e: any): boolean {
+    if (e.categoria_preventiva != null) return e.categoria_preventiva === "exame";
+    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.categoria_preventiva === "exame";
+  }
+  function nomeEventoSanitario(e: any): string {
+    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.nome || (e.descricao || "").split(" — ")[0];
+  }
+  function elegivelBaixaInline(e: any): boolean {
+    // Só quando a pendência já mira uma matriz específica — sem isso não há
+    // como resolver sem escolher os animais (aí vale mais abrir o lançamento).
+    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario") && !!e.numero_animal;
+  }
+  const camposIniciais = (e: any): CampoBaixaSanidade => ({
+    produto: e.produto || "", dose: e.dose != null ? String(e.dose) : "", unidade: e.unidade || "",
+    via: e.via || "", principioAtivoId: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
+    veterinario: e.veterinario || "", freqValor: "1", freqUnidade: "meses",
+  });
+  const [camposBaixa, setCamposBaixa] = useState<Record<string, CampoBaixaSanidade>>({});
+  const abrirCampos = (e: any) => setCamposBaixa((p) => (p[e.id] ? p : { ...p, [e.id]: camposIniciais(e) }));
+  const atualizarCampo = (id: string, campo: keyof CampoBaixaSanidade, valor: string) =>
+    setCamposBaixa((p) => ({ ...p, [id]: { ...(p[id] || CAMPOS_VAZIOS), [campo]: valor } }));
+
+  const [expandidoBaixa, setExpandidoBaixa] = useState<Set<string>>(new Set());
+  const [abrirLancamento, setAbrirLancamento] = useState<Record<string, boolean>>({});
+  const [resolvendoBaixa, setResolvendoBaixa] = useState<Set<string>>(new Set());
+
+  const [loteDia, setLoteDia] = useState<Record<string, boolean>>({});
+  const [categoriaLoteDia, setCategoriaLoteDia] = useState<Record<string, string>>({});
+  const [selecionadosLote, setSelecionadosLote] = useState<Record<string, Set<string>>>({});
+  const [resolvendoLoteDia, setResolvendoLoteDia] = useState<Set<string>>(new Set());
+  const toggleLoteDia = (dia: string) => setLoteDia((p) => {
+    const ligado = !p[dia];
+    if (!ligado) {
+      setSelecionadosLote((s) => { const n = { ...s }; delete n[dia]; return n; });
+      setCategoriaLoteDia((c) => { const n = { ...c }; delete n[dia]; return n; });
+    }
+    return { ...p, [dia]: ligado };
+  });
+  const toggleSelecaoLote = (dia: string, e: any) => {
+    setSelecionadosLote((p) => {
+      const atual = new Set(p[dia] || []);
+      if (atual.has(e.id)) atual.delete(e.id); else { atual.add(e.id); abrirCampos(e); }
+      return { ...p, [dia]: atual };
+    });
+    setCategoriaLoteDia((p) => (p[dia] ? p : { ...p, [dia]: e.categoria }));
+  };
+
+  // Chama o mesmo endpoint que a tela de Lançamentos usa para "Preventivo" —
+  // cria/atualiza a regra recorrente e, se não for exame, registra a aplicação
+  // (com baixa de estoque) já com os dados confirmados/editados aqui mesmo.
+  async function resolverSanidade(e: any): Promise<boolean> {
+    const c = camposBaixa[e.id] || camposIniciais(e);
+    const exame = ehExameSanitario(e);
+    try {
+      await cadastrarPreventivo({
+        evento_sanitario_id: e.evento_sanitario_id,
+        categoria_alvo: e.categoria_alvo || undefined,
+        data_evento: e.data,
+        frequencia_valor: Number(c.freqValor) || 1,
+        frequencia_unidade: c.freqUnidade,
+        animais: e.numero_animal ? [e.numero_animal] : [],
+        aplicar: !exame,
+        veterinario: exame ? (c.veterinario || undefined) : undefined,
+        produto: exame ? undefined : (c.produto || undefined),
+        dose: exame || !c.dose ? undefined : Number(c.dose),
+        unidade: exame ? undefined : (c.unidade || undefined),
+        via: exame ? undefined : (c.via || undefined),
+        principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
+      });
+      await marcarEventoRealizado(e.id);
+      return true;
+    } catch (err: any) {
+      mostrarFeedback(err.message || "Erro ao dar baixa", true);
+      return false;
+    }
+  }
+
+  const confirmarBaixaIndividual = async (e: any) => {
+    setResolvendoBaixa((p) => new Set(p).add(e.id));
+    const ok = await resolverSanidade(e);
+    setResolvendoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    if (ok) {
+      setExpandidoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      await carregar();
+      mostrarFeedback("Baixa registrada.");
+    }
+  };
+
+  const confirmarLoteDia = async (dia: string) => {
+    const ids = Array.from(selecionadosLote[dia] || []);
+    if (!ids.length) return;
+    setResolvendoLoteDia((p) => new Set(p).add(dia));
+    let falhas = 0;
+    for (const id of ids) {
+      const e = eventoPorId.get(id);
+      if (!e) continue;
+      if (!(await resolverSanidade(e))) falhas++;
+    }
+    setResolvendoLoteDia((p) => { const n = new Set(p); n.delete(dia); return n; });
+    setSelecionadosLote((p) => { const n = { ...p }; delete n[dia]; return n; });
+    setCategoriaLoteDia((p) => { const n = { ...p }; delete n[dia]; return n; });
+    setLoteDia((p) => ({ ...p, [dia]: false }));
+    await carregar();
+    mostrarFeedback(falhas ? `Baixa em lote concluída com ${falhas} erro(s).` : "Baixa em lote registrada para todos os selecionados.", falhas > 0);
+  };
 
   // Protocolo IATF: qual medicamento/frasco foi aplicado em cada hormônio do
   // dia (ex.: D9). Chave = eventoId → índice do hormônio → estoque_id escolhido.
@@ -213,6 +356,86 @@ export default function AgendaPage() {
       <button className="btn-ghost" style={{ fontSize: "0.68rem" }} title="Marcar como realizado" disabled={marcando.has(chave)} onClick={(e) => { e.stopPropagation(); pedirConfirmacao(chave); }}>
         <CheckCircle2 size={12} /> {compacto ? "" : "Realizado"}
       </button>
+    );
+  };
+
+  // Linha de confirmação de uma pendência de sanidade (evento_sanitario /
+  // calendario_sanitario) — os campos vêm do cadastro/lançamento (produto,
+  // dose, unidade, via, princípio ativo, veterinário), pré-preenchidos e
+  // editáveis. Em modo lote, some o botão individual (a confirmação é única,
+  // via "Confirmar baixa em lote" no rodapé do dia).
+  const inputInline: React.CSSProperties = { width: "100%", fontSize: "0.78rem", padding: "0.3rem 0.5rem", borderRadius: 6, background: "var(--surface)", border: "1px solid var(--border)", color: "var(--text)" };
+  const rotuloInline: React.CSSProperties = { fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+  const PainelConfirmarBaixa = ({ e, loteModo }: { e: any; loteModo: boolean }) => {
+    const campos = camposBaixa[e.id] || camposIniciais(e);
+    const exame = ehExameSanitario(e);
+    const set = (campo: keyof typeof campos, valor: string) => atualizarCampo(e.id, campo, valor);
+    return (
+      <div style={{ padding: "0.6rem 0" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: "0.6rem" }}>
+          <div>
+            <label style={rotuloInline}>Evento sanitário</label>
+            <div style={{ fontSize: "0.8rem", fontWeight: 700 }}>{nomeEventoSanitario(e)}</div>
+          </div>
+          {exame ? (
+            <div>
+              <label style={rotuloInline}>Veterinário</label>
+              <input style={inputInline} value={campos.veterinario} onChange={(ev) => set("veterinario", ev.target.value)} placeholder="ex.: Dr. Carlos" />
+            </div>
+          ) : (
+            <>
+              <div>
+                <label style={rotuloInline}>Medicamento</label>
+                <input style={inputInline} value={campos.produto} onChange={(ev) => set("produto", ev.target.value)} placeholder="ex.: VACINA RB 51" />
+              </div>
+              <div>
+                <label style={rotuloInline}>Princípio ativo</label>
+                <select style={inputInline} value={campos.principioAtivoId} onChange={(ev) => set("principioAtivoId", ev.target.value)}>
+                  <option value="">—</option>
+                  {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={rotuloInline}>Dosagem</label>
+                <input type="number" inputMode="decimal" style={inputInline} value={campos.dose} onChange={(ev) => set("dose", ev.target.value)} />
+              </div>
+              <div>
+                <label style={rotuloInline}>Unidade</label>
+                <select style={inputInline} value={campos.unidade} onChange={(ev) => set("unidade", ev.target.value)}>
+                  <option value="">—</option>
+                  {UNIDADES_APLICACAO.map((u) => <option key={u} value={u}>{u}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={rotuloInline}>Via</label>
+                <select style={inputInline} value={campos.via} onChange={(ev) => set("via", ev.target.value)}>
+                  <option value="">—</option>
+                  {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                </select>
+              </div>
+            </>
+          )}
+          <div>
+            <label style={rotuloInline}>Repetir a cada</label>
+            <div style={{ display: "flex", gap: "0.3rem" }}>
+              <input type="number" inputMode="numeric" style={{ ...inputInline, width: 60 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} />
+              <select style={inputInline} value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
+                <option value="dias">dia(s)</option>
+                <option value="meses">mês(es)</option>
+                <option value="anos">ano(s)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+        {!loteModo && (
+          <div className="flex items-center gap-2 mt-2">
+            <button className="btn-primary" style={{ fontSize: "0.72rem" }} disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaIndividual(e)}>
+              <Check size={12} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setExpandidoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; })}>Cancelar</button>
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -271,13 +494,26 @@ export default function AgendaPage() {
       });
       financeiroPorRef.forEach((itens, ref) => linhas.push({ tipo: "grupo", ref, itens }));
 
+      // Pendências elegíveis para o fluxo "dar baixa em lote" (mesmo dia) —
+      // só sanidade com matriz definida (ver elegivelBaixaInline).
+      const elegiveisDia = evs.filter((e: any) => elegivelBaixaInline(e));
+      const loteAtivoDia = !!loteDia[d];
+
       return (
         <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-          <button onClick={() => toggleData(d)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
-            {aberto ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
-            <span style={{ fontWeight: 700, minWidth: "8rem" }}>{new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", year: "2-digit" })}</span>
-            <span style={{ flex: 1, fontSize: "0.78rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
-          </button>
+          <div style={{ display: "flex", alignItems: "center", background: "var(--surface-2)" }}>
+            <button onClick={() => toggleData(d)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+              {aberto ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+              <span style={{ fontWeight: 700, minWidth: "8rem" }}>{new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", year: "2-digit" })}</span>
+              <span style={{ flex: 1, fontSize: "0.78rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+            </button>
+            {elegiveisDia.length > 1 && (
+              <label className="flex items-center gap-1" style={{ fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", padding: "0 0.9rem", whiteSpace: "nowrap" }}
+                title="Selecione várias pendências da mesma categoria e confirme a baixa de todas juntas, sem sair da Agenda">
+                <input type="checkbox" checked={loteAtivoDia} onChange={() => toggleLoteDia(d)} /> Dar baixa em lote
+              </label>
+            )}
+          </div>
           {aberto && (
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
@@ -286,46 +522,88 @@ export default function AgendaPage() {
                   {linhas.map((linha, i) => {
                     if (linha.tipo === "simples") {
                       const e = linha.e;
+                      const elegivel = elegivelBaixaInline(e);
+                      const selecionadoLote = elegivel && (selecionadosLote[d]?.has(e.id) ?? false);
+                      const painelAberto = elegivel && (loteAtivoDia ? selecionadoLote : expandidoBaixa.has(e.id));
+                      const linkFormularioCompleto = (numeroObrigatorio: boolean) => {
+                        const ev = e as any;
+                        const p = new URLSearchParams({ ir: "preventivo_aplicacao", evento_agenda: e.id });
+                        if (ev.evento_sanitario_id) p.set("evento_sanitario_id", String(ev.evento_sanitario_id));
+                        if (numeroObrigatorio && e.numero_animal) p.set("numero_matriz", e.numero_animal);
+                        if (e.data) p.set("data", e.data);
+                        return `/lancamentos?${p.toString()}`;
+                      };
                       return (
-                        <tr key={i}>
-                          <td><span className={BADGE_CLASS[e.categoria] || "badge-atividades"} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{e.categoria}</span></td>
-                          <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
-                          <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
-                          <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
-                          <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                          <td>
-                            {(e as any).link ? (
-                              <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
-                                <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
-                                  <ExternalLink size={12} /> Importar agora
+                        <React.Fragment key={i}>
+                          <tr>
+                            <td><span className={badgeClasse(e.categoria)} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{categoriaLabel(e.categoria)}</span></td>
+                            <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
+                            <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
+                            <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
+                            <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
+                            <td>
+                              {(e as any).link ? (
+                                <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                  <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
+                                    <ExternalLink size={12} /> Importar agora
+                                  </a>
+                                  <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                                </div>
+                              ) : e.categoria === "alimentacao" ? (
+                                <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
+                                  <Wheat size={12} /> Ir para Dieta
                                 </a>
-                                <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
-                              </div>
-                            ) : e.categoria === "alimentacao" ? (
-                              <a href={`/lancamentos?ir=alimentacao_dieta&lote=${encodeURIComponent(e.lote ?? "")}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}>
-                                <Wheat size={12} /> Ir para Dieta
-                              </a>
-                            ) : (e as any).tipo === "evento_sanitario" || (e as any).tipo === "calendario_sanitario" ? (
-                              (() => {
-                                // Sempre vai para a tela de Preventiva (não a de Curativa) — é o
-                                // único formulário que já sabe tratar exame (sem produto/dose) e
-                                // vacina/tratamento (com baixa de estoque) da forma certa.
-                                const ev = e as any;
-                                const p = new URLSearchParams({ ir: "preventivo_aplicacao", evento_agenda: e.id });
-                                if (ev.evento_sanitario_id) p.set("evento_sanitario_id", String(ev.evento_sanitario_id));
-                                if (e.numero_animal) p.set("numero_matriz", e.numero_animal);
-                                if (e.data) p.set("data", e.data);
-                                return (
-                                  <a href={`/lancamentos?${p.toString()}`} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (gera a aplicação, a saída de estoque, ou só marca o exame como feito)">
+                              ) : (e as any).tipo === "evento_sanitario" || (e as any).tipo === "calendario_sanitario" ? (
+                                !elegivel ? (
+                                  // Sem matriz específica (gatilho de época/rebanho) — não dá pra
+                                  // resolver inline sem escolher os animais; segue para o formulário,
+                                  // que já sabe tratar exame (sem produto/dose) e vacina/tratamento.
+                                  <a href={linkFormularioCompleto(false)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
                                     <Syringe size={12} /> Dar baixa (aplicar)
                                   </a>
-                                );
-                              })()
-                            ) : (
-                              <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
-                            )}
-                          </td>
-                        </tr>
+                                ) : loteAtivoDia ? (
+                                  <label className="flex items-center gap-1" style={{ fontSize: "0.72rem", opacity: (!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? 1 : 0.4, cursor: (!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? "pointer" : "not-allowed" }}
+                                    title={(!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? "Selecionar para dar baixa em lote" : "Só é possível combinar pendências da mesma categoria"}>
+                                    <input type="checkbox" disabled={!!categoriaLoteDia[d] && categoriaLoteDia[d] !== e.categoria} checked={selecionadoLote}
+                                      onChange={() => toggleSelecaoLote(d, e)} />
+                                    Selecionar
+                                  </label>
+                                ) : (abrirLancamento[e.id] ?? false) ? (
+                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                    <a href={linkFormularioCompleto(true)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Abre a tela completa de lançamento">
+                                      <Syringe size={12} /> Dar baixa (aplicar)
+                                    </a>
+                                    <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
+                                      <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
+                                    </label>
+                                  </div>
+                                ) : (
+                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                    <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }}
+                                      disabled={resolvendoBaixa.has(e.id)}
+                                      onClick={() => { abrirCampos(e); setExpandidoBaixa((p) => new Set(p).add(e.id)); }}
+                                      title="Confirma os dados e dá baixa sem sair da Agenda">
+                                      <Syringe size={12} /> Dar baixa (aplicar)
+                                    </button>
+                                    <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
+                                      <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
+                                    </label>
+                                  </div>
+                                )
+                              ) : (
+                                <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
+                              )}
+                            </td>
+                          </tr>
+                          {painelAberto && (
+                            <tr style={{ background: "var(--surface-2)" }}>
+                              <td></td>
+                              <td colSpan={5}>
+                                <PainelConfirmarBaixa e={e} loteModo={loteAtivoDia} />
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
                       );
                     }
                     if (linha.tipo === "iatf") {
@@ -517,6 +795,15 @@ export default function AgendaPage() {
                       </React.Fragment>
                     );
                   })}
+                  {loteAtivoDia && (selecionadosLote[d]?.size ?? 0) > 0 && (
+                    <tr style={{ background: "var(--surface-2)" }}>
+                      <td colSpan={6} style={{ textAlign: "right", padding: "0.6rem 0.9rem" }}>
+                        <button className="btn-primary" style={{ fontSize: "0.75rem" }} disabled={resolvendoLoteDia.has(d)} onClick={() => confirmarLoteDia(d)}>
+                          <Check size={13} /> {resolvendoLoteDia.has(d) ? "Salvando…" : `Confirmar baixa em lote (${selecionadosLote[d]!.size})`}
+                        </button>
+                      </td>
+                    </tr>
+                  )}
                 </tbody>
               </table>
             </div>
