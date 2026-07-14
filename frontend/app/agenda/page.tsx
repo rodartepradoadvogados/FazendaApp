@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
@@ -12,7 +12,7 @@ import { VIAS_APLICACAO } from "@/lib/constants";
 // Unidades aceitas na aplicação (mesma lista usada em Sanidade/Cadastro).
 const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
-import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
@@ -78,15 +78,13 @@ export default function AgendaPage() {
   const [lotesSelecionados, setLotesSelecionados] = useState<Set<string>>(new Set());
   const [animaisTodos, setAnimaisTodos] = useState<AnimalRow[]>([]);
   const [lotesTodos, setLotesTodos] = useState<LoteRow[]>([]);
-  const [pickerAberto, setPickerAberto] = useState<"animal" | "lote" | null>(null);
-  const abrirPicker = async (tipo: "animal" | "lote") => {
-    if (tipo === "animal" && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {});
-    if (tipo === "lote" && !lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
-    setVinculo(tipo);
-    setPickerAberto(tipo);
+  const [pickerAberto, setPickerAberto] = useState<"lote" | null>(null);
+  useEffect(() => { if (vinculo === "animal" && !animaisTodos.length) fetchAnimais().then(setAnimaisTodos).catch(() => {}); }, [vinculo, animaisTodos.length]);
+  const abrirPickerLotes = async () => {
+    if (!lotesTodos.length) fetchLotes().then(setLotesTodos).catch(() => {});
+    setPickerAberto("lote");
   };
   const toggleAnimalSelecionado = (numero: string) => setAnimaisSelecionados((p) => { const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n; });
-  const toggleTodosAnimais = () => setAnimaisSelecionados((p) => (p.size === animaisTodos.length ? new Set() : new Set(animaisTodos.map((a) => a.numero))));
   const toggleLoteSelecionado = (codigo: string) => setLotesSelecionados((p) => { const n = new Set(p); n.has(codigo) ? n.delete(codigo) : n.add(codigo); return n; });
   const toggleTodosLotes = () => setLotesSelecionados((p) => (p.size === lotesTodos.length ? new Set() : new Set(lotesTodos.map((l) => l.codigo))));
   const pickerColunasAnimais = [
@@ -542,7 +540,16 @@ export default function AgendaPage() {
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                             <td>
-                              {(e as any).link ? (
+                              {(e as any).tipo === "colostragem_pendente" || (e as any).tipo === "igg_pendente" ? (
+                                // Sem "Cumpriu? Sim/Não" aqui de propósito: essa pendência só
+                                // desaparece de verdade quando o dado é preenchido na ficha (o
+                                // backend recalcula a falta a partir do registro de colostragem,
+                                // não de um "realizado" manual) — um botão de marcar-feito direto
+                                // mascararia o problema em vez de resolvê-lo.
+                                <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a ficha do animal para lançar o dado pendente">
+                                  <User size={12} /> Lançar
+                                </a>
+                              ) : (e as any).link ? (
                                 <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
                                   <a href={(e as any).link} className="btn-primary" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }} title="Abrir a tela de importação">
                                     <ExternalLink size={12} /> Importar agora
@@ -1263,14 +1270,12 @@ export default function AgendaPage() {
                 </div>
                 {vinculo === "animal" && (
                   <div className="mt-2">
-                    <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("animal")}>
-                      {animaisSelecionados.size ? `${animaisSelecionados.size} animal(is) selecionado(s) — alterar` : "Selecionar animais…"}
-                    </button>
+                    <AnimalPickerModal animais={animaisTodos} selecionados={animaisSelecionados} onToggle={toggleAnimalSelecionado} colunas={pickerColunasAnimais} titulo="Selecionar animal(is)" />
                   </div>
                 )}
                 {vinculo === "lote" && (
                   <div className="mt-2">
-                    <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => abrirPicker("lote")}>
+                    <button type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={abrirPickerLotes}>
                       {lotesSelecionados.size ? `${lotesSelecionados.size} lote(s) selecionado(s) — alterar` : "Selecionar lotes…"}
                     </button>
                   </div>
@@ -1337,16 +1342,12 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Picker de animais ou lotes para o vínculo do evento manual */}
-      {pickerAberto && (
+      {/* Picker de lotes para o vínculo do evento manual (animal usa AnimalPickerModal inline acima) */}
+      {pickerAberto === "lote" && (
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.75)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 55, padding: "1rem" }}>
           <div className="card" style={{ width: "640px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
-            <div className="card-header mb-3">{pickerAberto === "animal" ? "Selecionar animal(is)" : "Selecionar lote(s)"}</div>
-            {pickerAberto === "animal" ? (
-              <SelecaoAnimaisTabela animais={animaisTodos} selecionados={animaisSelecionados} toggle={toggleAnimalSelecionado} toggleTodos={toggleTodosAnimais} colunas={pickerColunasAnimais} />
-            ) : (
-              <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
-            )}
+            <div className="card-header mb-3">Selecionar lote(s)</div>
+            <SelecaoLotesTabela lotes={lotesTodos} selecionados={lotesSelecionados} toggle={toggleLoteSelecionado} toggleTodos={toggleTodosLotes} />
             <div className="flex justify-end gap-2 mt-4">
               <button onClick={() => setPickerAberto(null)} className="btn-primary">OK</button>
             </div>

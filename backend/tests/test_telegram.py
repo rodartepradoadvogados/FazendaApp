@@ -149,3 +149,35 @@ def test_webhook_rejeita_segredo_errado(client):
     c, _, _ = client
     r = c.post("/telegram/webhook", json={"message": {}}, headers={"X-Telegram-Bot-Api-Secret-Token": "errado"})
     assert r.status_code == 403
+
+
+def test_pdf_sem_mime_type_correto_ainda_e_reconhecido(client):
+    """Alguns clientes do Telegram enviam PDF sem preencher mime_type (ou com
+    um valor genérico) — antes, isso fazia o arquivo ser descartado em
+    silêncio; agora cai no fallback pela extensão .pdf, igual ao XML."""
+    c, engine, enviados = client
+    upd = {"message": {"chat": {"id": CHAT}, "document": {
+        "file_id": "FID-PDF", "file_name": "nota_fiscal.pdf", "mime_type": "application/octet-stream",
+    }}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        pend = s.exec(select(TelegramPendente)).first()
+        assert pend is not None and pend.kind == "documento"
+    assert any(e["metodo"] == "sendMessage" and "reply_markup" in e for e in enviados)
+
+
+def test_arquivo_tipo_nao_reconhecido_avisa_usuario(client):
+    """Um arquivo que não é XML/PDF/JPG/PNG nem por mime nem por extensão deve
+    avisar o usuário, não cair na mensagem genérica de comando (como se nada
+    tivesse sido enviado)."""
+    c, engine, enviados = client
+    upd = {"message": {"chat": {"id": CHAT}, "document": {
+        "file_id": "FID-ZIP", "file_name": "arquivo.zip", "mime_type": "application/zip",
+    }}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
+    ultima = enviados[-1]
+    assert "não reconheci" in ultima["text"].lower()

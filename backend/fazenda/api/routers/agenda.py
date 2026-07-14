@@ -459,6 +459,7 @@ def calcular_agenda(
                             "descricao": f"Preencher dados da colostragem — bezerra {cria.numero}",
                             "numero_animal": cria.numero, "observacao": "Colostro/Brix não lançados no parto — registre na ficha do animal.",
                             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "colostragem_pendente",
+                            "link": f"/rebanho?aba=ficha&numero={cria.numero}&destacar=colostragem",
                         })
                 if igg_falta:
                     chave = f"igg_pendente_{cria.numero}"
@@ -468,6 +469,7 @@ def calcular_agenda(
                             "descricao": f"Fazer exame de sangue (IgG) — bezerra {cria.numero}",
                             "numero_animal": cria.numero, "observacao": "Teste de sangue (Brix do soro) não lançado — registre na ficha do animal.",
                             "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "igg_pendente",
+                            "link": f"/rebanho?aba=ficha&numero={cria.numero}&destacar=igg",
                         })
 
     # Nova dieta: alerta um dia antes ("para amanhã") e no dia ("hoje"), com
