@@ -2,10 +2,14 @@
 Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
+import logging
+
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Railway/Heroku entregam DATABASE_URL como 'postgres://', que o SQLAlchemy 2.0
 # não reconhece (Can't load plugin: sqlalchemy.dialects:postgres). Normaliza.
@@ -64,7 +68,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("nome", "VARCHAR"), ("sisbov", "VARCHAR"), ("mae_numero", "VARCHAR"), ("mae_nome", "VARCHAR"),
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
-        ("a_descartar", "BOOLEAN DEFAULT 0"), ("excluir_bst", "BOOLEAN DEFAULT 0"),
+        ("a_descartar", "BOOLEAN DEFAULT false"), ("excluir_bst", "BOOLEAN DEFAULT false"),
     ],
     "estoque": [
         ("unidade_embalagem", "VARCHAR"), ("medida_embalagem", "VARCHAR"), ("quantidade_embalagem", "FLOAT"),
@@ -84,7 +88,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "principio_ativo": [
         ("categoria", "VARCHAR"),
         ("categoria_software", "VARCHAR"), ("uso_principal", "VARCHAR"), ("justificativa", "VARCHAR"),
-        ("doenca_id", "INTEGER"), ("eh_biologico", "BOOLEAN DEFAULT 0"),
+        ("doenca_id", "INTEGER"), ("eh_biologico", "BOOLEAN DEFAULT false"),
         ("unidade_base", "VARCHAR"), ("unidade_apresentacao", "VARCHAR"),
         ("estoque_minimo_apresentacoes", "FLOAT DEFAULT 1"),
     ],
@@ -177,7 +181,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("intervalo_dias", "INTEGER"),
         ("intervalo_meses", "INTEGER"),
         ("origem_recorrencia_id", "INTEGER"),
-        ("apenas_admin", "BOOLEAN DEFAULT 0"),
+        ("apenas_admin", "BOOLEAN DEFAULT false"),
         ("link", "VARCHAR"),
         ("usuario_id", "INTEGER"),
     ],
@@ -185,6 +189,11 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
 
 
 def _migrar_colunas() -> None:
+    """Cada coluna é adicionada na sua própria savepoint: um erro numa (ex.:
+    sintaxe incompatível com o dialeto do banco) só pula aquela coluna — não
+    aborta a transação inteira e não derruba o startup do app (já aconteceu:
+    um `BOOLEAN DEFAULT 0` incompatível com Postgres travou a inicialização
+    inteira em produção)."""
     insp = inspect(engine)
     tabelas = set(insp.get_table_names())
     with engine.begin() as conn:
@@ -194,7 +203,14 @@ def _migrar_colunas() -> None:
             existentes = {c["name"] for c in insp.get_columns(tabela)}
             for nome, tipo in colunas:
                 if nome not in existentes:
-                    conn.execute(text(f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}'))
+                    try:
+                        with conn.begin_nested():
+                            conn.execute(text(f'ALTER TABLE {tabela} ADD COLUMN {nome} {tipo}'))
+                    except Exception:
+                        logger.exception(
+                            "Falha ao adicionar a coluna %s.%s (%s) — seguindo com as demais migrações.",
+                            tabela, nome, tipo,
+                        )
 
 
 # Colunas que precisam virar BIGINT no Postgres: ids de chat do Telegram

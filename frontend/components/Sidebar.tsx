@@ -171,7 +171,7 @@ export function Sidebar() {
                   background: active ? "var(--sidebar-active-bg)" : "transparent",
                   color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
                   borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-                  fontSize: "11px",
+                  fontSize: "10px",
                 }}
               >
                 <Icon size={16} />
@@ -257,7 +257,7 @@ function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
                 border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
                 background: ativo ? "var(--sidebar-active-bg)" : "transparent",
                 color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                fontSize: depth ? "0.78rem" : "0.85rem", fontWeight: ativo ? 700 : 500,
+                fontSize: "10px", fontWeight: ativo ? 700 : 500,
               }}>
               <Icon size={depth ? 13 : 16} /> {n.label}
             </button>
