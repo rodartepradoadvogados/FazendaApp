@@ -2350,9 +2350,21 @@ def seed_protocolos_sanitarios_curativos(session: Session) -> None:
                 antigo.nome, antigo.id,
             )
             continue
-        for etapa in session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == antigo.id)).all():
-            session.delete(etapa)
-        session.delete(antigo)
+        # Savepoint isolado: qualquer falha ao apagar (ex.: alguma restrição do
+        # banco que não previmos) só pula este protocolo — nunca derruba o
+        # startup do app inteiro (já aconteceu: travou um deploy em produção).
+        try:
+            with session.begin_nested():
+                for etapa in session.exec(select(ProtocoloSanitarioEtapa).where(ProtocoloSanitarioEtapa.protocolo_id == antigo.id)).all():
+                    session.delete(etapa)
+                session.delete(antigo)
+                session.flush()
+        except Exception:
+            logger.exception(
+                "Falha ao remover o protocolo de mastite antigo '%s' (id=%s) — seguindo sem apagá-lo. "
+                "Exclua manualmente em Configurações > Cadastro > Excluir cadastros, se ainda fizer sentido.",
+                antigo.nome, antigo.id,
+            )
     session.commit()
 
     doencas_por_nome = {d.nome: d.id for d in session.exec(select(Doenca)).all()}
