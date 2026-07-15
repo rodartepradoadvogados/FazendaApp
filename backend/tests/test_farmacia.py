@@ -214,9 +214,9 @@ def test_bootstrap_popula_catalogo_completo_idempotente():
         bootstrap_farmacia(s)  # roda de novo: não pode duplicar
         pas = s.exec(select(PrincipioAtivo)).all()
         marcas = s.exec(select(MedicamentoComercial)).all()
-        assert len(pas) == 38
+        assert len(pas) == 39
         assert all(p.categoria_software for p in pas)   # todas com característica
-        assert len(marcas) == 111
+        assert len(marcas) == 112
         mel = next(p for p in pas if p.nome == "Meloxicam")
         assert mel.categoria_software == "AINE" and mel.uso_principal
 
