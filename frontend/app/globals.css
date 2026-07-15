@@ -158,6 +158,15 @@ body {
   font-family: 'Inter', sans-serif;
 }
 
+/* Estado de foco visível para navegação por teclado — anel duplo (contorno +
+   miolo na cor da página) para ler tanto sobre fundos claros quanto escuros.
+   :focus-visible (não :focus) para não aparecer em cliques de mouse/toque. */
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
+textarea:focus-visible, [tabindex]:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--dourado-light);
+}
+
 /* ── Scrollbar personalizada ── */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: var(--surface); }
@@ -179,7 +188,7 @@ body {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--card-header-fg);
 }
 
@@ -203,7 +212,7 @@ body {
   padding: 0.6rem 0.875rem;
   text-align: left;
   color: var(--thead-fg);
-  font-size: 0.7rem;
+  font-size: 0.8rem;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -278,7 +287,7 @@ body {
   line-height: 1;
 }
 .kpi-label {
-  font-size: 0.75rem;
+  font-size: 0.8rem;
   color: var(--text-muted);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -338,7 +347,15 @@ body {
 /* Linha clicável — affordance para linhas de tabela que abrem detalhe/seleção.
    A classe já era referenciada em Indicadores mas nunca existiu no CSS. */
 .row-clickable { cursor: pointer; }
-.row-clickable:hover { background: rgba(184, 134, 11, 0.10) !important; box-shadow: inset 3px 0 0 var(--dourado); }
+/* .fazenda-table tbody tr:hover já define um background (maior especificidade
+   por causa dos seletores de elemento); listamos a variante "tr" também aqui
+   para vencer sem !important — o seletor solto continua servindo o uso em
+   elementos fora de tabela (ex.: linhas de grupo em cards). */
+.row-clickable:hover,
+.fazenda-table tbody tr.row-clickable:hover {
+  background: rgba(184, 134, 11, 0.10);
+  box-shadow: inset 3px 0 0 var(--dourado);
+}
 
 /* ── Responsivo (celular / tablet) ── */
 /* Nunca deixar a página rolar para o lado; tabelas largas rolam dentro do card. */
@@ -351,7 +368,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   /* Menos respiro nas bordas no celular. */
   main .p-6 { padding: 1rem; }
   .card { padding: 0.9rem; }
-  .card-header { font-size: 0.72rem; }
+  .card-header { font-size: 0.8rem; }
   /* Títulos de página um pouco menores. */
   main h1.text-2xl { font-size: 1.35rem; }
   /* Tabelas mais compactas. */
@@ -377,8 +394,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-vinho:     #5E1A2E;
   --mob-dourado:   #B8860B;
   --mob-dourado-2: #D4A017;
-  --mob-acao:      #5E1A2E;         /* cor de destaque de botão/aba ativa */
-  --mob-acao-fg:   #F8E9B0;
+  /* Dourado sempre marca "ativo"/destaque — cor de marca estável entre temas
+     (antes vinho no claro/misto, dourado só no escuro; agora dourado nos dois). */
+  --mob-acao:      var(--mob-dourado);   /* #B8860B */
+  --mob-acao-fg:   #1A1A1A;              /* texto escuro — contraste sobre o dourado */
   --mob-sombra:    0 1px 3px rgba(16, 24, 40, 0.08), 0 1px 2px rgba(16, 24, 40, 0.06);
   --mob-verde:     #047857;         /* verde OK — escurecido p/ contraste AA em texto no sol forte (4.5:1+) */
   --mob-verde-neon:#00FF9D;
@@ -404,7 +423,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-border:    #2C2C2C;
   --mob-header:    linear-gradient(160deg, #340F1C, #200A12);
   --mob-header-fg: #F5EEF1;
-  --mob-acao:      #D4A017;         /* no escuro o destaque vira ouro (PDF) */
+  --mob-acao:      var(--mob-dourado-2);  /* dourado-claro no escuro (mesma marca, mais luminoso) */
   --mob-acao-fg:   #1A1A1A;
   --mob-sombra:    none;
   --mob-verde:     #00E08C;
@@ -466,11 +485,10 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 .mob-nav a {
   flex: 1; display: flex; flex-direction: column; align-items: center; gap: 2px;
-  padding: 0.55rem 0 0.5rem; font-size: 0.68rem; font-weight: 600;
+  padding: 0.55rem 0 0.5rem; font-size: 0.8rem; font-weight: 700;
   color: var(--mob-muted); text-decoration: none;
 }
 .mob-nav a.ativo { color: var(--mob-acao); }
-:root[data-theme="escuro"] .mob-nav a.ativo { color: var(--mob-dourado-2); }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {
