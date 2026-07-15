@@ -18,7 +18,6 @@ import {
   ClipboardList,
   FileBarChart,
   CheckCheck,
-  Baby,
   Menu,
   X,
 } from "lucide-react";
@@ -27,26 +26,30 @@ import { LogOut, UserCircle } from "lucide-react";
 import { BullLogo } from "@/components/BullLogo";
 import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
 
-// Ordem por fluxo de gestão: (1) ciclo diário — panorama, o que fazer e
-// registrar; (2) áreas de manejo do rebanho; (3) análise e administração;
-// (4) Configurações fica sempre por último (acrescentada dinamicamente).
+// Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
+// ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
+// insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) administração
+// (Aprovações/Configurações, sempre por último, acrescentados dinamicamente).
+// Recria não tem mais item próprio aqui — virou sub-aba de Indicadores.
+const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Análise", "Administração"] as const;
+
 const links = [
   // ── Ciclo diário ──
-  { href: "/",            label: "Capa",        icon: Home,          title: "Capa — visão geral da fazenda" },
-  { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir" },
-  { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia" },
+  { href: "/",            label: "Capa",        icon: Home,          title: "Capa — visão geral da fazenda", grupo: "Ciclo diário" },
+  { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir", grupo: "Ciclo diário" },
+  { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia", grupo: "Ciclo diário" },
   // ── Manejo do rebanho ──
-  { href: "/rebanho",     label: "Rebanho",      icon: Beef,          title: "Rebanho — animais, movimentações entre lotes e ficha do animal" },
-  { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva" },
-  { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite" },
-  { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário" },
-  { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote" },
-  { href: "/recria",      label: "Recria",       icon: Baby,          title: "Recria — Dossiê Zootécnico de bezerras e novilhas: saúde por idade, ponto crítico e crescimento" },
-  // ── Análise e administração ──
-  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro" },
-  { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)" },
-  { href: "/financeiro",  label: "Financeiro",   icon: BarChart3,     title: "Financeiro — contas a pagar/receber, folha e indicadores" },
-  { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo" },
+  { href: "/rebanho",     label: "Rebanho",      icon: Beef,          title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
+  { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva", grupo: "Manejo do rebanho" },
+  { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite", grupo: "Manejo do rebanho" },
+  // ── Insumos e sanidade ──
+  { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
+  { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
+  { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
+  // ── Análise ──
+  { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro", grupo: "Análise" },
+  { href: "/financeiro",  label: "Financeiro",   icon: BarChart3,     title: "Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Análise" },
+  { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)", grupo: "Análise" },
 ];
 
 export function Sidebar() {
@@ -156,29 +159,46 @@ export function Sidebar() {
           </div>
         )}
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
-          {[...visiveis,
-            ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" }] : []),
-            ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda" }] : []),
-          ].map(({ href, label, icon: Icon, title }) => {
-            const active = path === href || (href !== "/" && path.startsWith(href));
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={title || label}
-                className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
-                style={{
-                  background: active ? "var(--sidebar-active-bg)" : "transparent",
-                  color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                  borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-                  fontSize: "10px",
-                }}
-              >
-                <Icon size={16} />
-                {label}
-              </Link>
-            );
-          })}
+          {(() => {
+            const todos = [...visiveis,
+              ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram", grupo: "Administração" }] : []),
+              ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
+            ];
+            return GRUPOS.map((grupo, i) => {
+              const itens = todos.filter((l) => l.grupo === grupo);
+              if (!itens.length) return null;
+              return (
+                <div key={grupo}>
+                  <p style={{
+                    fontSize: "10px", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em",
+                    color: "var(--sidebar-muted)", margin: i === 0 ? "0 0 0.3rem 0.6rem" : "0.7rem 0 0.3rem 0.6rem",
+                  }}>
+                    {grupo}
+                  </p>
+                  {itens.map(({ href, label, icon: Icon, title }) => {
+                    const active = path === href || (href !== "/" && path.startsWith(href));
+                    return (
+                      <Link
+                        key={href}
+                        href={href}
+                        title={title || label}
+                        className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
+                        style={{
+                          background: active ? "var(--sidebar-active-bg)" : "transparent",
+                          color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                          borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+                          fontSize: "10px",
+                        }}
+                      >
+                        <Icon size={16} />
+                        {label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              );
+            });
+          })()}
         </div>
       </nav>
 

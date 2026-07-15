@@ -12,13 +12,19 @@ GRUPOS_UNIDADE: list[set[str]] = [
     {"L", "kg", "saca 30kg", "saca 60kg"},
 ]
 
+# Sinônimos/abreviações legadas (import de planilha, cadastro antigo) que
+# precisam cair no mesmo grupo do valor canônico — senão o item some das
+# opções de unidade compatível (ex.: "un" não batia com "unidade" e escondia "ml").
+_SINONIMOS_UNIDADE = {"un": "unidade", "und": "unidade", "unid": "unidade", "unidades": "unidade"}
+
 
 def unidades_compativeis(unidade_estoque: str | None) -> list[str]:
     """Unidades que fazem sentido escolher na aplicação, dado o produto guardar estoque em `unidade_estoque`."""
     if not unidade_estoque:
         return ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"]
+    normalizada = _SINONIMOS_UNIDADE.get(unidade_estoque.strip().lower(), unidade_estoque)
     for grupo in GRUPOS_UNIDADE:
-        if unidade_estoque in grupo:
+        if normalizada in grupo:
             return sorted(grupo)
     return [unidade_estoque]
 

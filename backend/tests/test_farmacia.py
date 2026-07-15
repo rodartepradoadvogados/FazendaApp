@@ -243,3 +243,31 @@ def test_backfill_finalidade_marca_medicamento_legado_sem_sobrescrever():
         assert terramicina.finalidade == "Medicamento"
         assert racao.finalidade is None  # sem sinal de medicamento — fica sem classificar
         assert equipamento.finalidade == "Outro"  # já definido, não é sobrescrito
+
+
+def test_normalizar_unidades_estoque_corrige_abreviacao_legada():
+    """Item cadastrado/importado com unidade abreviada ("un") ficava fora do
+    grupo de unidades compatíveis e escondia "ml" no seletor de dose — o
+    backfill corrige para a forma canônica "unidade", sem mexer em itens já corretos."""
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine, select
+    from fazenda.rules.farmacia import bootstrap_farmacia
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as s:
+        s.add(Estoque(nome="VACINA RB 51", quantidade=10, unidade="un"))
+        s.add(Estoque(nome="Borgal 50ml", quantidade=10, unidade="ml"))
+        s.commit()
+        bootstrap_farmacia(s)
+        vacina = s.exec(select(Estoque).where(Estoque.nome == "VACINA RB 51")).first()
+        borgal = s.exec(select(Estoque).where(Estoque.nome == "Borgal 50ml")).first()
+        assert vacina.unidade == "unidade"
+        assert borgal.unidade == "ml"
+
+
+class TestUnidadesCompativeis:
+    def test_sinonimo_un_cai_no_grupo_de_unidade(self):
+        from fazenda.rules.unidades import unidades_compativeis
+        assert "ml" in unidades_compativeis("un")
+        assert set(unidades_compativeis("un")) == set(unidades_compativeis("unidade"))

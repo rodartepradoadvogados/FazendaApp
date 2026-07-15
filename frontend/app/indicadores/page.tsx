@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart, Baby } from "lucide-react";
 import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
@@ -158,15 +159,24 @@ function IndicadoresGerais() {
 type Aba = "gerais" | "gerencial";
 
 export default function IndicadoresPage() {
+  const router = useRouter();
   const [aba, setAba] = useState<Aba>("gerais");
   const vePermiteGerencial = podeModulo("reproducao");
+  const vePermiteRecria = podeModulo("recria");
 
+  // Recria virou sub-aba de Indicadores (deixou de ter item próprio na
+  // Sidebar) — mas o Dossiê Zootécnico continua sendo sua própria página
+  // (rota /recria), então o clique nesse item navega em vez de trocar `aba`.
   const subNavTree: SubNavNode[] = useMemo(() => {
     const tree: SubNavNode[] = [{ id: "gerais", label: "Gerais", icon: Gauge }];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
+    if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
-  }, [vePermiteGerencial]);
-  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: (id: string) => setAba(id as Aba) }), [subNavTree, aba]));
+  }, [vePermiteGerencial, vePermiteRecria]);
+  useSubNavRegister(useMemo(() => ({
+    tree: subNavTree, activeId: aba,
+    onSelect: (id: string) => (id === "recria" ? router.push("/recria") : setAba(id as Aba)),
+  }), [subNavTree, aba, router]));
 
   return (
     <>

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, MovimentoLote, Sanidade
+from fazenda.models import Animal, Estoque, MovimentoLote, PrincipioAtivo, Sanidade
 
 
 @pytest.fixture
@@ -183,3 +183,81 @@ class TestCalendarioNaAgenda:
         rd = c.delete(f"/sanidade/calendario/{regra['id']}")
         assert rd.status_code == 200, rd.text
         assert not _agenda_calendario(c)
+
+
+class TestPrincipioAtivoNaAgenda:
+    """O evento sanitário por gatilho deve pré-preencher o princípio ativo do
+    produto padrão (resolvido via Estoque) — sem isso, o seletor "Princípio
+    ativo" da Agenda ficava sempre em branco para eventos por evento de vida."""
+
+    def test_produto_padrao_resolve_principio_ativo_id(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            pa = PrincipioAtivo(nome="Brucelose Bovina")
+            s.add(pa)
+            s.commit()
+            s.refresh(pa)
+            pa_id = pa.id
+            s.add(Estoque(nome="VACINA RB 51", quantidade=10, unidade="unidade", principio_ativo_id=pa_id))
+            s.add(Animal(numero="601", data_nasc=HOJE - timedelta(days=400), sexo="F"))
+            s.commit()
+        c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Brucelose RB51", "tipo_agendamento": "evento", "gatilho": "novilha_apta",
+            "gatilho_idade_meses": 13, "produto_padrao": "VACINA RB 51", "dose_padrao": 2, "unidade_padrao": "ml",
+        })
+        meus = [e for e in _agenda_sanidade(c) if e["numero_animal"] == "601"]
+        assert len(meus) == 1
+        assert meus[0]["principio_ativo_id"] == pa_id
+
+
+class TestCondicaoExclusaoMutua:
+    """Alternativas de vacina/estirpe para a mesma doença (ex.: Brucelose B19 ×
+    RB51): o evento com condicao_evento_id não deve ser agendado se o animal já
+    recebeu o evento apontado como condição — em qualquer data, não só desde o
+    gatilho atual."""
+
+    def _cadastrar_dois_eventos(self, c):
+        b19 = c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Brucelose B19", "tipo_agendamento": "evento", "gatilho": "novilha_apta",
+            "gatilho_idade_meses": 13, "produto_padrao": "VACINA B19", "dose_padrao": 2, "unidade_padrao": "ml",
+        })
+        assert b19.status_code == 200, b19.text
+        rb51 = c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Brucelose RB51", "tipo_agendamento": "evento", "gatilho": "novilha_apta",
+            "gatilho_idade_meses": 13, "produto_padrao": "VACINA RB 51", "dose_padrao": 2, "unidade_padrao": "ml",
+            "condicao_evento_id": b19.json()["id"],
+        })
+        assert rb51.status_code == 200, rb51.text
+        return b19.json(), rb51.json()
+
+    def test_sem_condicao_aplicada_agenda_normalmente(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="701", data_nasc=HOJE - timedelta(days=400), sexo="F"))
+            s.commit()
+        self._cadastrar_dois_eventos(c)
+        nomes = {e["descricao"].split(" — ")[0] for e in _agenda_sanidade(c) if e["numero_animal"] == "701"}
+        assert nomes == {"Brucelose B19", "Brucelose RB51"}
+
+    def test_ja_vacinada_com_condicao_esconde_o_evento(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="702", data_nasc=HOJE - timedelta(days=400), sexo="F"))
+            s.commit()
+        self._cadastrar_dois_eventos(c)
+        with Session(engine) as s:
+            # Aplicação bem antiga (fora da janela do gatilho atual) — não deduplica
+            # o próprio B19 (isso já é coberto por test_some_depois_de_aplicado),
+            # mas a condição de RB51 olha "alguma vez", não só desde o gatilho.
+            s.add(Sanidade(numero_matriz="702", data_aplicacao=HOJE - timedelta(days=1000), produto="VACINA B19", dose=2, unidade="ml"))
+            s.commit()
+        nomes = {e["descricao"].split(" — ")[0] for e in _agenda_sanidade(c) if e["numero_animal"] == "702"}
+        assert "Brucelose RB51" not in nomes  # bloqueado pela condição, mesmo com aplicação antiga
+
+    def test_condicao_invalida_da_400(self, client):
+        c, _ = client
+        r = c.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Evento X", "tipo_agendamento": "evento", "gatilho": "nascimento",
+            "condicao_evento_id": 99999,
+        })
+        assert r.status_code == 400

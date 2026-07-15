@@ -197,6 +197,26 @@ def bootstrap_farmacia(session: Session) -> None:
         session.add(SeedFlag(chave=chave))
         session.commit()
     backfill_finalidade_estoque(session)
+    normalizar_unidades_estoque(session)
+
+
+# Sinônimos/abreviações legadas (import de planilha, cadastro antigo) da
+# unidade canônica "unidade" — mantém em sincronia com
+# rules/unidades._SINONIMOS_UNIDADE (front e back precisam concordar).
+_SINONIMOS_UNIDADE_ESTOQUE = {"un", "und", "unid", "unidades"}
+
+
+def normalizar_unidades_estoque(session: Session) -> None:
+    """Corrige `Estoque.unidade` gravada com uma abreviação (ex.: "un" em vez de
+    "unidade") — itens assim ficavam fora do grupo de unidades compatíveis e
+    escondiam opções válidas (ex.: "ml") no seletor de dose. Roda em todo start
+    (idempotente: só normaliza, nunca perde dado)."""
+    itens = session.exec(select(Estoque)).all()
+    for item in itens:
+        if (item.unidade or "").strip().lower() in _SINONIMOS_UNIDADE_ESTOQUE:
+            item.unidade = "unidade"
+            session.add(item)
+    session.commit()
 
 
 def backfill_finalidade_estoque(session: Session) -> None:
@@ -282,7 +302,7 @@ def resumo_principios(session: Session) -> list[dict]:
         minimo = pa.estoque_minimo_apresentacoes if pa.estoque_minimo_apresentacoes is not None else 1.0
         abaixo_minimo = bool(grupo) and apresentacoes < minimo
         saida.append({
-            "id": pa.id, "nome": pa.nome, "categoria": pa.categoria, "categoria_software": pa.categoria_software,
+            "id": pa.id, "nome": pa.nome, "ativo": pa.ativo, "categoria": pa.categoria, "categoria_software": pa.categoria_software,
             "uso_principal": pa.uso_principal, "justificativa": pa.justificativa,
             "eh_biologico": pa.eh_biologico, "doenca_id": pa.doenca_id,
             "unidade_base": pa.unidade_base, "unidade_apresentacao": pa.unidade_apresentacao,

@@ -1015,6 +1015,12 @@ class EventoSanitario(SQLModel, table=True):
     # confirmar o exame com o veterinário (pendência distinta da do próprio dia).
     agenda_dias_antes: Optional[int] = None
 
+    # Condição de exclusão mútua — ex.: alternativas de vacina para a mesma
+    # doença (Brucelose B19 × Brucelose RB51): só agenda ESTE evento se o
+    # animal NUNCA tiver recebido o evento apontado aqui (ver
+    # rules/eventos_sanitarios.eventos_agenda).
+    condicao_evento_id: Optional[int] = Field(default=None, foreign_key="evento_sanitario.id")
+
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
