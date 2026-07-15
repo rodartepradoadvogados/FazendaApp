@@ -20,7 +20,7 @@ export const ROTA_MODULO: Record<string, string> = {
   "/": "capa", "/indicadores": "indicadores", "/agenda": "agenda", "/lancamentos": "lancamentos",
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
-  "/financeiro": "financeiro", "/estoque": "estoque", "/parametros": "parametros", "/upload": "upload",
+  "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
 };
 
 // Permissão de módulo para o usuário logado (admin tem tudo).
@@ -1135,6 +1135,7 @@ export async function fetchEstoque() {
 
 export async function movimentarEstoque(dados: {
   nome: string; movimento: string; quantidade: number; unidade?: string; data_movimento: string; observacao?: string;
+  pedido_id?: number | null; pedido_item_id?: number | null;
 }) {
   const res = await authFetch(`${API}/estoque/movimentar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1760,6 +1761,168 @@ export async function fetchDRE(params: {
   const res = await authFetch(`${API}/financeiro/dre?${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`DRE error: ${res.status}`);
   return res.json();
+}
+
+// ── Planejamento (Financeiro > Planejamento: Orçamento + Planejamento financeiro) ──
+export type OrcamentoItemPayload = {
+  ano: number; mes: number; codigo_conta_gerencial: string; centro_custo?: string | null;
+  tipo: "receita" | "despesa"; valor_orcado: number; observacao?: string | null;
+};
+export async function fetchOrcamento(ano?: number) {
+  const qs = ano ? `?ano=${ano}` : "";
+  const res = await authFetch(`${API}/planejamento/orcamento${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Orçamento error: ${res.status}`);
+  return res.json();
+}
+export async function criarItemOrcamento(dados: OrcamentoItemPayload) {
+  const res = await authFetch(`${API}/planejamento/orcamento`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item de orçamento"); }
+  return res.json();
+}
+export async function atualizarItemOrcamento(id: number, dados: OrcamentoItemPayload) {
+  const res = await authFetch(`${API}/planejamento/orcamento/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de orçamento"); }
+  return res.json();
+}
+export async function excluirItemOrcamento(id: number) {
+  const res = await authFetch(`${API}/planejamento/orcamento/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item de orçamento"); }
+}
+export async function fetchComparativoOrcado(params: { ano: number; mes_inicio?: number; mes_fim?: number; centro_custo?: string }) {
+  const qs = new URLSearchParams({ ano: String(params.ano) });
+  if (params.mes_inicio) qs.set("mes_inicio", String(params.mes_inicio));
+  if (params.mes_fim) qs.set("mes_fim", String(params.mes_fim));
+  if (params.centro_custo) qs.set("centro_custo", params.centro_custo);
+  const res = await authFetch(`${API}/planejamento/orcamento/comparativo?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Comparativo orçado x realizado error: ${res.status}`);
+  return res.json();
+}
+
+export type CenarioPayload = { nome: string; tipo?: "otimista" | "realista" | "pessimista" | "personalizado"; observacao?: string | null };
+export async function fetchCenarios() {
+  const res = await authFetch(`${API}/planejamento/cenarios`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Cenários error: ${res.status}`);
+  return res.json();
+}
+export async function criarCenario(dados: CenarioPayload) {
+  const res = await authFetch(`${API}/planejamento/cenarios`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cenário"); }
+  return res.json();
+}
+export async function atualizarCenario(id: number, dados: CenarioPayload) {
+  const res = await authFetch(`${API}/planejamento/cenarios/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar cenário"); }
+  return res.json();
+}
+export async function excluirCenario(id: number) {
+  const res = await authFetch(`${API}/planejamento/cenarios/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir cenário"); }
+}
+
+export type PlanejamentoItemPayload = {
+  mes_competencia: string; codigo_conta_gerencial: string; centro_custo?: string | null;
+  tipo: "receita" | "despesa"; valor_previsto: number; observacao?: string | null;
+};
+export async function fetchItensCenario(cenarioId: number) {
+  const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/itens`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Itens do cenário error: ${res.status}`);
+  return res.json();
+}
+export async function criarItemCenario(cenarioId: number, dados: PlanejamentoItemPayload) {
+  const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/itens`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar item do cenário"); }
+  return res.json();
+}
+export async function atualizarItemCenario(id: number, dados: PlanejamentoItemPayload) {
+  const res = await authFetch(`${API}/planejamento/itens/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item do cenário"); }
+  return res.json();
+}
+export async function excluirItemCenario(id: number) {
+  const res = await authFetch(`${API}/planejamento/itens/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir item do cenário"); }
+}
+export async function fetchProjecaoCenario(cenarioId: number) {
+  const res = await authFetch(`${API}/planejamento/cenarios/${cenarioId}/projecao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Projeção do cenário error: ${res.status}`);
+  return res.json();
+}
+
+export async function importarParaPedido(dados: {
+  origem_tipo: "orcamento" | "planejamento_financeiro"; origem_item_id: number;
+  tipo_pedido: "compra" | "venda"; fornecedor_cliente?: string | null; data_pedido?: string | null;
+}) {
+  const res = await authFetch(`${API}/planejamento/importar-para-pedido`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar para pedido"); }
+  return res.json();
+}
+
+// ── Pedidos (módulo próprio — só reflete em Estoque/Financeiro quando vinculado a um lançamento/movimento) ──
+export type PedidoItemPayload = {
+  tipo_item: "produto" | "servico"; produto_servico: string;
+  codigo_conta_gerencial?: string | null; nome_conta_gerencial?: string | null;
+  quantidade?: number | null; valor_unitario_estimado?: number | null; valor_total_estimado: number;
+};
+export type PedidoPayload = {
+  tipo: "compra" | "venda"; fornecedor_cliente?: string | null; centro_custo?: string | null;
+  data_pedido: string; data_prevista?: string | null; observacao?: string | null; responsavel?: string | null;
+  itens: PedidoItemPayload[]; origem_tipo?: string | null; origem_item_id?: number | null;
+};
+export async function fetchOpcoesPedidos() {
+  const res = await authFetch(`${API}/pedidos/opcoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Opções de pedidos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchPedidos(filtro?: { tipo?: string; status?: string; fornecedor_cliente?: string; data_inicio?: string; data_fim?: string }) {
+  const qs = new URLSearchParams();
+  Object.entries(filtro || {}).forEach(([k, v]) => { if (v) qs.set(k, v); });
+  const res = await authFetch(`${API}/pedidos/?${qs}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pedidos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchPedido(id: number) {
+  const res = await authFetch(`${API}/pedidos/${id}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Pedido error: ${res.status}`);
+  return res.json();
+}
+export async function criarPedido(dados: PedidoPayload) {
+  const res = await authFetch(`${API}/pedidos/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar pedido"); }
+  return res.json();
+}
+export async function atualizarPedido(id: number, dados: PedidoPayload) {
+  const res = await authFetch(`${API}/pedidos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar pedido"); }
+  return res.json();
+}
+export async function atualizarStatusPedido(id: number, status: string) {
+  const res = await authFetch(`${API}/pedidos/${id}/status`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar status do pedido"); }
+  return res.json();
+}
+export async function excluirPedido(id: number) {
+  const res = await authFetch(`${API}/pedidos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir pedido"); }
 }
 
 export async function fetchModelosImportar() {

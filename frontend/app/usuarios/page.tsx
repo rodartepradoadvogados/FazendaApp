@@ -9,6 +9,7 @@ const MODULOS = [
   { key: "vet", label: "Agenda do veterinário" },
   { key: "rebanho", label: "Rebanho" }, { key: "producao", label: "Produção" }, { key: "alimentacao", label: "Alimentação" },
   { key: "sanidade", label: "Sanidade" }, { key: "financeiro", label: "Financeiro" }, { key: "estoque", label: "Sanidade/Estoque" },
+  { key: "pedidos", label: "Pedidos" },
   { key: "parametros", label: "Parâmetros" }, { key: "upload", label: "Upload" },
 ];
 const TODOS = MODULOS.map((m) => m.key);
