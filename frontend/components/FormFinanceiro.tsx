@@ -71,11 +71,31 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const carregarOpcoes = () => { fetchOpcoesFinanceiro().then(setOpcoes).catch(() => {}); carregarPlano(); };
   useEffect(() => { carregarOpcoes(); }, []);
 
-  const [produtosEstoque, setProdutosEstoque] = useState<{ nome: string; fornecedor_nome: string | null }[]>([]);
-  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({ nome: i.nome, fornecedor_nome: i.fornecedor_nome ?? null })))).catch(() => {});
+  const [produtosEstoque, setProdutosEstoque] = useState<{
+    nome: string; fornecedor_nome: string | null;
+    conta_gerencial_despesa_padrao: string | null; conta_gerencial_receita_padrao: string | null;
+  }[]>([]);
+  const carregarEstoque = () => fetchEstoque().then((d) => setProdutosEstoque((d.itens || []).map((i: any) => ({
+    nome: i.nome,
+    fornecedor_nome: i.fornecedor_nome ?? null,
+    conta_gerencial_despesa_padrao: i.conta_gerencial_despesa_padrao ?? null,
+    conta_gerencial_receita_padrao: i.conta_gerencial_receita_padrao ?? null,
+  })))).catch(() => {});
   useEffect(() => { carregarEstoque(); }, []);
   const [fornecedoresCadastro, setFornecedoresCadastro] = useState<string[]>([]);
-  useEffect(() => { fetchFornecedores().then((d) => setFornecedoresCadastro((d || []).map((f: any) => f.nome))).catch(() => {}); }, []);
+  const [fornecedoresPorId, setFornecedoresPorId] = useState<Map<number, string>>(new Map());
+  useEffect(() => {
+    fetchFornecedores().then((d) => {
+      setFornecedoresCadastro((d || []).map((f: any) => f.nome));
+      setFornecedoresPorId(new Map((d || []).map((f: any) => [f.id, f.nome])));
+    }).catch(() => {});
+  }, []);
+  // Resolve o código de conta gerencial padrão (despesa/receita) do produto no plano de contas já carregado.
+  function contaGerencialPadrao(codigo: string | null | undefined) {
+    if (!codigo) return null;
+    const conta = planoContas.find((c) => c.codigo === codigo);
+    return conta ? { codigo, nome: conta.nome } : null;
+  }
   const fornecedoresDisponiveis = useMemo(
     () => Array.from(new Set([...opcoes.fornecedores, ...fornecedoresCadastro])).sort(),
     [opcoes.fornecedores, fornecedoresCadastro]
@@ -478,8 +498,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                 <Campo label="Produto">
                   <select style={inputStyle} value={it.produto} onChange={(e) => {
                     const nomeProduto = e.target.value;
-                    atualizarItem(idx, { produto: nomeProduto });
                     const match = produtosEstoque.find((p) => p.nome === nomeProduto);
+                    const patch: Partial<Item> = { produto: nomeProduto };
+                    const conta = contaGerencialPadrao(tipo === "despesa" ? match?.conta_gerencial_despesa_padrao : match?.conta_gerencial_receita_padrao);
+                    if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                    atualizarItem(idx, patch);
                     if (match?.fornecedor_nome) setFornecedor(match.fornecedor_nome);
                   }}>
                     <option value="">Selecione…</option>
@@ -698,7 +721,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
           {modoAdicionar === "produto" ? (
             <NovoItemEstoque
               onCriado={(item) => {
-                if (item?.nome && adicionarPara !== null) atualizarItem(adicionarPara, { produto: item.nome });
+                if (item?.nome && adicionarPara !== null) {
+                  const patch: Partial<Item> = { produto: item.nome };
+                  const conta = contaGerencialPadrao(tipo === "despesa" ? item.conta_gerencial_despesa_padrao : item.conta_gerencial_receita_padrao);
+                  if (conta) { patch.codigo_conta_gerencial = conta.codigo; patch.nome_conta_gerencial = conta.nome; }
+                  atualizarItem(adicionarPara, patch);
+                  const nomeFornecedor = item.fornecedor_id ? fornecedoresPorId.get(item.fornecedor_id) : null;
+                  if (nomeFornecedor) setFornecedor(nomeFornecedor);
+                }
                 carregarEstoque();
                 setAdicionarPara(null);
               }}

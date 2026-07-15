@@ -263,6 +263,101 @@ def excluir_aplicacao(aplicacao_id: int, session: Session = Depends(get_session)
     return {"excluido": True, "id": aplicacao_id}
 
 
+class MarcarCuraAplicacaoIn(BaseModel):
+    curada: bool
+
+
+@router.post("/aplicacoes/{aplicacao_id}/cura")
+def marcar_cura_aplicacao(aplicacao_id: int, dados: MarcarCuraAplicacaoIn, session: Session = Depends(get_session)) -> dict:
+    """Marca, no dia seguinte a uma aplicação curativa avulsa, se o animal foi
+    curado ou não — mesma ideia do /mastite/cura, mas para aplicação avulsa
+    (não um protocolo multi-dia). Alimenta o relatório Taxa de cura."""
+    s = session.get(Sanidade, aplicacao_id)
+    if not s:
+        raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    s.curada = dados.curada
+    session.add(s)
+    session.commit()
+    return {"id": s.id, "curada": s.curada}
+
+
+# Categoria simplificada do animal (mesmo padrão usado em lote_criterios.py e
+# agenda_veterinario.py — sem helper compartilhado hoje, ver dívida técnica
+# anotada nesses arquivos) — usada só para os filtros do relatório abaixo.
+def _categoria_animal(animal: Animal | None) -> str:
+    if not animal:
+        return ""
+    texto = (animal.categoria_abrev or animal.categoria_completa or "").strip().lower()
+    if "bezerr" in texto:
+        return "bezerra"
+    if "novilh" in texto:
+        return "novilha"
+    if "vaca" in texto:
+        return "vaca"
+    return ""
+
+
+def _status_lactacao(animal: Animal | None) -> str:
+    if not animal:
+        return ""
+    texto = (animal.categoria_completa or "").strip().lower()
+    if "seca" in texto:
+        return "seca"
+    if "lact" in texto:
+        return "lactacao"
+    return ""
+
+
+@router.get("/taxa-cura")
+def relatorio_taxa_cura(session: Session = Depends(get_session)) -> dict:
+    """
+    Casos de cura já avaliados (aplicação avulsa curativa + protocolo
+    sanitário), achatados para o dashboard interativo — filtra no cliente por
+    período, lote, lactação/seca e categoria, e permite comparar o mesmo
+    animal ao longo da vida (vários casos por número).
+    """
+    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
+    protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
+
+    casos = []
+    for s in session.exec(select(Sanidade).where(Sanidade.curada != None)).all():  # noqa: E711
+        animal = animais_por_numero.get(s.numero_matriz)
+        casos.append({
+            "origem": "aplicacao",
+            "id": s.id,
+            "numero": s.numero_matriz,
+            "tratamento": s.produto,
+            "data": s.data_aplicacao.isoformat() if s.data_aplicacao else None,
+            "curada": s.curada,
+            "lote": s.lote or (animal.grupo_primario if animal else None),
+            "categoria": _categoria_animal(animal),
+            "status_lactacao": _status_lactacao(animal),
+        })
+    for lanc in session.exec(select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada != None)).all():  # noqa: E711
+        animal = animais_por_numero.get(lanc.numero_matriz)
+        casos.append({
+            "origem": "protocolo",
+            "id": lanc.id,
+            "numero": lanc.numero_matriz,
+            "tratamento": protocolos_nomes.get(lanc.protocolo_id, "—"),
+            "data": lanc.data_inicio.isoformat() if lanc.data_inicio else None,
+            "curada": lanc.curada,
+            "lote": animal.grupo_primario if animal else None,
+            "categoria": _categoria_animal(animal),
+            "status_lactacao": _status_lactacao(animal),
+        })
+
+    casos.sort(key=lambda c: (c["numero"], c["data"] or ""))
+    total = len(casos)
+    curados = sum(1 for c in casos if c["curada"])
+    return {
+        "casos": casos,
+        "total": total,
+        "curados": curados,
+        "taxa_cura_pct": round(100 * curados / total, 1) if total else None,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Calendário sanitário — regras recorrentes (sazonal/de rebanho ou por fase
 # fisiológica), cadastradas aqui e acompanhadas com filtro por período/evento.

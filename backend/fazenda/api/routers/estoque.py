@@ -69,6 +69,7 @@ class EstoqueIn(BaseModel):
     estocavel: bool = True
     data_inicio_controle: date | None = None
     principio_ativo: str | None = None
+    principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
 
 
@@ -115,6 +116,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         estocavel=dados.estocavel,
         data_inicio_controle=dados.data_inicio_controle if dados.estocavel else None,
         principio_ativo=dados.principio_ativo,
+        principio_ativo_id=dados.principio_ativo_id,
         classificacao_medicamento=dados.classificacao_medicamento,
     )
     session.add(item)

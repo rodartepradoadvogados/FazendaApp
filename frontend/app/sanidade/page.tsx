@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate } from "@/lib/api";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
@@ -663,17 +663,138 @@ function ProtocolosSanitariosView() {
   );
 }
 
+// ─────────────────────────── Taxa de cura (curativa) ───────────────────────────
+const LABEL_CATEGORIA: Record<string, string> = { vaca: "Vaca", novilha: "Novilha", bezerra: "Bezerra" };
+const LABEL_LACTACAO: Record<string, string> = { lactacao: "Lactação", seca: "Seca" };
+
+function TaxaCuraView() {
+  const [dados, setDados] = useState<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null } | null>(null);
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
+  const [fLotes, setFLotes] = useState<string[]>([]);
+  const [fCategorias, setFCategorias] = useState<string[]>([]);
+  const [fLactacao, setFLactacao] = useState<string[]>([]);
+
+  useEffect(() => { fetchTaxaCura().then(setDados).catch(() => setDados({ casos: [], total: 0, curados: 0, taxa_cura_pct: null })); }, []);
+
+  const lotesOpc = useMemo(() => Array.from(new Set((dados?.casos || []).map((c) => c.lote).filter((v): v is string => !!v))).sort(), [dados]);
+
+  const filtrados = useMemo(() => (dados?.casos || []).filter((c) =>
+    (!ini || (c.data || "") >= ini) && (!fim || (c.data || "") <= fim) &&
+    (fLotes.length === 0 || (c.lote != null && fLotes.includes(c.lote))) &&
+    (fCategorias.length === 0 || fCategorias.includes(c.categoria)) &&
+    (fLactacao.length === 0 || fLactacao.includes(c.status_lactacao))
+  ), [dados, ini, fim, fLotes, fCategorias, fLactacao]);
+
+  const totalFiltro = filtrados.length;
+  const curadosFiltro = filtrados.filter((c) => c.curada).length;
+  const taxaFiltro = totalFiltro ? Math.round((1000 * curadosFiltro) / totalFiltro) / 10 : null;
+
+  // Comparação do próprio animal ao longo da vida: agrupa por número, mostra
+  // a taxa de cura individual — só faz sentido comparar quem já teve mais de 1 caso.
+  const porAnimal = useMemo(() => {
+    const by = new Map<string, CasoTaxaCura[]>();
+    filtrados.forEach((c) => { (by.get(c.numero) ?? by.set(c.numero, []).get(c.numero)!).push(c); });
+    return Array.from(by.entries())
+      .map(([numero, casos]) => {
+        const curados = casos.filter((c) => c.curada).length;
+        return { numero, casos: casos.length, curados, taxa: Math.round((1000 * curados) / casos.length) / 10 };
+      })
+      .filter((a) => a.casos > 1)
+      .sort((a, b) => a.taxa - b.taxa);
+  }, [filtrados]);
+
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Período — de</label>
+            <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>até</label>
+            <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+          <MultiFiltro label="Lote" opcoes={lotesOpc} selecionados={fLotes} onChange={setFLotes} />
+          <MultiFiltro label="Categoria" opcoes={["vaca", "novilha", "bezerra"]} selecionados={fCategorias} onChange={setFCategorias} formatar={(v) => LABEL_CATEGORIA[v] || v} />
+          <MultiFiltro label="Lactação/Seca" opcoes={["lactacao", "seca"]} selecionados={fLactacao} onChange={setFLactacao} formatar={(v) => LABEL_LACTACAO[v] || v} />
+        </div>
+      </div>
+
+      {!dados ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            <div className="kpi-card"><p className="kpi-value">{totalFiltro}</p><p className="kpi-label">Casos avaliados</p></div>
+            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{curadosFiltro}</p><p className="kpi-label">Curados</p></div>
+            <div className="kpi-card"><p className="kpi-value" style={{ color: taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)" }}>{taxaFiltro != null ? `${taxaFiltro}%` : "—"}</p><p className="kpi-label">Taxa de cura</p></div>
+          </div>
+
+          <div className="card mb-4">
+            <div className="card-header mb-3">Casos ({filtrados.length})</div>
+            <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr>
+                  <th>Animal</th><th>Tratamento</th><th>Data</th><th>Lote</th><th>Categoria</th><th>Lactação/Seca</th><th>Curado?</th>
+                </tr></thead>
+                <tbody>
+                  {filtrados.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).map((c) => (
+                    <tr key={`${c.origem}-${c.id}`}>
+                      <td style={{ fontWeight: 700 }}>{c.numero}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{c.tratamento}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{c.data ? formatDate(c.data) : "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{c.lote || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{LABEL_CATEGORIA[c.categoria] || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{LABEL_LACTACAO[c.status_lactacao] || "—"}</td>
+                      <td style={{ fontWeight: 700, color: c.curada ? "var(--green-light)" : "var(--red)" }}>{c.curada ? "Sim" : "Não"}</td>
+                    </tr>
+                  ))}
+                  {!filtrados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum caso avaliado com esses filtros.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-2">Comparação do próprio animal ao longo da vida</div>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+              Só animais com mais de um caso avaliado no filtro atual — a taxa de cura individual ajuda a identificar quem tem recidiva frequente.
+            </p>
+            {porAnimal.length ? (
+              <table className="fazenda-table">
+                <thead><tr><th>Animal</th><th style={{ textAlign: "right" }}>Casos</th><th style={{ textAlign: "right" }}>Curados</th><th style={{ textAlign: "right" }}>Taxa individual</th></tr></thead>
+                <tbody>
+                  {porAnimal.map((a) => (
+                    <tr key={a.numero}>
+                      <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                      <td style={{ textAlign: "right" }}>{a.casos}</td>
+                      <td style={{ textAlign: "right", color: "var(--green-light)" }}>{a.curados}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700, color: a.taxa < 70 ? "var(--red)" : "var(--green-light)" }}>{a.taxa}%</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal com mais de um caso no filtro atual.</p>
+            )}
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
 type AbaSanidade = "curativa" | "preventiva";
 const ABAS_SANIDADE = [
   { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
   { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
-type AbaCurativa = "curativo" | "doenca" | "protocolos";
+type AbaCurativa = "curativo" | "doenca" | "protocolos" | "taxa_cura";
 const ABAS_CURATIVA = [
   { id: "curativo", label: "Curativo (aplicações)", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
   { id: "doenca", label: "Doença / Motivo", icon: Activity, title: "Tratamentos por doença/motivo" },
   { id: "protocolos", label: "Protocolos sanitários", icon: ListChecks, title: "Protocolos multi-etapa lançados (mastite e outros)" },
+  { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
 
 type AbaPreventiva = "aplicacoes" | "calendario";
@@ -718,6 +839,7 @@ export default function SanidadePage() {
           {abaCur === "curativo" && <AplicacoesView natureza="curativo" />}
           {abaCur === "doenca" && <DoencaMotivoView />}
           {abaCur === "protocolos" && <ProtocolosSanitariosView />}
+          {abaCur === "taxa_cura" && <TaxaCuraView />}
         </>
       )}
       {aba === "preventiva" && (

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart, Baby, Sparkles } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby, Sparkles } from "lucide-react";
 import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
@@ -13,7 +13,7 @@ function pct(v: number | null | undefined) { return v === null || v === undefine
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
 
-function IndicadoresGerais() {
+export function IndicadoresGerais() {
   const [ind, setInd] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -158,19 +158,21 @@ function IndicadoresGerais() {
   );
 }
 
-type Aba = "gerais" | "gerencial" | "personalizado" | "bezerras";
+// "Indicadores do Rebanho" (IndicadoresGerais) virou sub-aba de Rebanho — não
+// fica mais aqui em Análise. Ver frontend/app/rebanho/page.tsx.
+type Aba = "gerencial" | "personalizado" | "bezerras";
 
 export default function IndicadoresPage() {
   const router = useRouter();
-  const [aba, setAba] = useState<Aba>("gerais");
   const vePermiteGerencial = podeModulo("reproducao");
   const vePermiteRecria = podeModulo("recria");
+  const [aba, setAba] = useState<Aba>(vePermiteGerencial ? "gerencial" : "personalizado");
 
   // Recria virou sub-aba de Indicadores (deixou de ter item próprio na
   // Sidebar) — mas o Dossiê Zootécnico continua sendo sua própria página
   // (rota /recria), então o clique nesse item navega em vez de trocar `aba`.
   const subNavTree: SubNavNode[] = useMemo(() => {
-    const tree: SubNavNode[] = [{ id: "gerais", label: "Gerais", icon: Gauge }];
+    const tree: SubNavNode[] = [];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
     tree.push({ id: "personalizado", label: "Relatório personalizado", icon: Sparkles });
     tree.push({ id: "bezerras", label: "Relatório de bezerras", icon: Baby });
@@ -184,7 +186,6 @@ export default function IndicadoresPage() {
 
   return (
     <>
-      {aba === "gerais" && <IndicadoresGerais />}
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
       {aba === "personalizado" && <RelatorioPersonalizado />}
       {aba === "bezerras" && <RelatorioBezerras />}

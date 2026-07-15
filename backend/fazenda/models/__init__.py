@@ -903,6 +903,9 @@ class Sanidade(SQLModel, table=True):
     # permite excluir o lançamento inteiro (protocolo + agenda + Sanidade) de uma vez.
     protocolo_sanitario_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lancamento.id")
     protocolo_iatf_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_iatf_lancamento.id")
+    # Avaliação de cura, pedida na Agenda no dia seguinte a uma aplicação
+    # curativa (None = ainda não respondida). Alimenta o relatório Taxa de cura.
+    curada: Optional[bool] = None
 
 
 class AplicacaoAgendada(SQLModel, table=True):
@@ -1439,6 +1442,30 @@ class IngredienteMS(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     ms_pct: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class TabelaNutricionalProduto(SQLModel, table=True):
+    """Um produto/alimento cadastrado na tabela nutricional (uma coluna da
+    matriz nutriente × produto) — editável em Alimentação > Tabela nutricional."""
+
+    __tablename__ = "tabela_nutricional_produto"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ordem: int = 0
+
+
+class TabelaNutricionalValor(SQLModel, table=True):
+    """Um valor (nutriente × produto) da tabela nutricional. Texto livre —
+    a planilha de referência mistura unidades diferentes na mesma célula
+    (ex.: "5.500,00 mg", "740,00 g (Mín)")."""
+
+    __tablename__ = "tabela_nutricional_valor"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    produto_id: int = Field(foreign_key="tabela_nutricional_produto.id", index=True)
+    nutriente: str = Field(index=True)
+    valor: str = ""
 
 
 class DietaRegistroReal(SQLModel, table=True):

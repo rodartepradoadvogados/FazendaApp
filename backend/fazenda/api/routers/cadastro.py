@@ -708,6 +708,7 @@ class EstoqueMetaIn(BaseModel):
     estocavel: bool | None = None
     considerar_rmca: bool | None = None
     principio_ativo: str | None = None
+    principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
 
 
@@ -735,6 +736,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.estocavel = dados.estocavel
     item.considerar_rmca = dados.considerar_rmca
     item.principio_ativo = dados.principio_ativo
+    item.principio_ativo_id = dados.principio_ativo_id
     item.classificacao_medicamento = dados.classificacao_medicamento
     session.add(item)
     session.commit()

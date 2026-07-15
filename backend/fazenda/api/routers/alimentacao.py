@@ -9,7 +9,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
@@ -203,12 +204,229 @@ def salvar_materia_seca(dados: IngredienteMSIn, session: Session = Depends(get_s
     return item.model_dump()
 
 
+def _seed_tabela_nutricional(session: Session) -> None:
+    from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+    from fazenda.rules.tabela_nutricional import ALIMENTOS, LINHAS
+    if session.exec(select(TabelaNutricionalProduto)).first():
+        return
+    produtos = [TabelaNutricionalProduto(nome=nome, ordem=i) for i, nome in enumerate(ALIMENTOS)]
+    for p in produtos:
+        session.add(p)
+    session.commit()
+    for p in produtos:
+        session.refresh(p)
+    for linha in LINHAS:
+        nutriente = linha[0]
+        for p, valor in zip(produtos, linha[1:]):
+            if valor:
+                session.add(TabelaNutricionalValor(produto_id=p.id, nutriente=nutriente, valor=valor))
+    session.commit()
+
+
+def _tabela_nutricional_montada(session: Session):
+    from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+    produtos = session.exec(select(TabelaNutricionalProduto).order_by(TabelaNutricionalProduto.ordem, TabelaNutricionalProduto.nome)).all()
+    valores = session.exec(select(TabelaNutricionalValor).order_by(TabelaNutricionalValor.id)).all()
+    por_produto: dict[int, dict[str, str]] = {}
+    nutrientes_ordem: list[str] = []
+    for v in valores:
+        por_produto.setdefault(v.produto_id, {})[v.nutriente] = v.valor
+        if v.nutriente not in nutrientes_ordem:
+            nutrientes_ordem.append(v.nutriente)
+    return produtos, nutrientes_ordem, por_produto
+
+
 @router.get("/tabela-nutricional")
-def obter_tabela_nutricional() -> dict:
-    """Tabela nutricional de referência (nutriente × alimento) — para o veterinário
-    consultar num modal, com calculadora ao lado."""
-    from fazenda.rules.tabela_nutricional import tabela_nutricional
-    return tabela_nutricional()
+def obter_tabela_nutricional(session: Session = Depends(get_session)) -> dict:
+    """Tabela nutricional (nutriente × produto), cadastrável em Alimentação >
+    Tabela nutricional — consulta rápida (modal + calculadora) e edição."""
+    _seed_tabela_nutricional(session)
+    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session)
+    linhas = [[nutriente] + [por_produto.get(p.id, {}).get(nutriente, "") for p in produtos] for nutriente in nutrientes_ordem]
+    return {"alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos], "linhas": linhas}
+
+
+class TabelaNutricionalProdutoIn(BaseModel):
+    nome: str
+
+
+@router.post("/tabela-nutricional/produtos", status_code=201)
+def criar_produto_tabela_nutricional(dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session)) -> dict:
+    from fazenda.models import TabelaNutricionalProduto
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
+    if session.exec(select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f'Já existe um produto chamado "{nome}" na tabela nutricional')
+    maior_ordem = session.exec(select(TabelaNutricionalProduto).order_by(TabelaNutricionalProduto.ordem.desc())).first()
+    produto = TabelaNutricionalProduto(nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0)
+    session.add(produto)
+    session.commit()
+    session.refresh(produto)
+    return produto.model_dump()
+
+
+@router.put("/tabela-nutricional/produtos/{produto_id}")
+def renomear_produto_tabela_nutricional(produto_id: int, dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session)) -> dict:
+    from fazenda.models import TabelaNutricionalProduto
+    produto = session.get(TabelaNutricionalProduto, produto_id)
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
+    produto.nome = nome
+    session.add(produto)
+    session.commit()
+    session.refresh(produto)
+    return produto.model_dump()
+
+
+@router.delete("/tabela-nutricional/produtos/{produto_id}")
+def excluir_produto_tabela_nutricional(produto_id: int, session: Session = Depends(get_session)) -> dict:
+    from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+    produto = session.get(TabelaNutricionalProduto, produto_id)
+    if not produto:
+        raise HTTPException(status_code=404, detail="Produto não encontrado")
+    for v in session.exec(select(TabelaNutricionalValor).where(TabelaNutricionalValor.produto_id == produto_id)).all():
+        session.delete(v)
+    session.delete(produto)
+    session.commit()
+    return {"excluido": True, "id": produto_id}
+
+
+class ValorTabelaNutricionalIn(BaseModel):
+    produto_id: int
+    nutriente: str
+    valor: str = ""
+
+
+class SalvarValoresTabelaNutricionalIn(BaseModel):
+    itens: list[ValorTabelaNutricionalIn]
+
+
+@router.put("/tabela-nutricional/valores")
+def salvar_valores_tabela_nutricional(dados: SalvarValoresTabelaNutricionalIn, session: Session = Depends(get_session)) -> dict:
+    """Upsert em lote — salva a grade inteira (nutriente × produto) de uma vez."""
+    from fazenda.models import TabelaNutricionalValor
+    existentes = {(v.produto_id, v.nutriente): v for v in session.exec(select(TabelaNutricionalValor)).all()}
+    salvos = 0
+    for item in dados.itens:
+        nutriente = item.nutriente.strip()
+        if not nutriente:
+            continue
+        chave = (item.produto_id, nutriente)
+        v = existentes.get(chave)
+        if v:
+            v.valor = item.valor
+            session.add(v)
+        elif item.valor.strip():
+            session.add(TabelaNutricionalValor(produto_id=item.produto_id, nutriente=nutriente, valor=item.valor))
+        salvos += 1
+    session.commit()
+    return {"salvos": salvos}
+
+
+@router.get("/tabela-nutricional/modelo")
+def baixar_modelo_tabela_nutricional(session: Session = Depends(get_session)) -> Response:
+    """Planilha (.xlsx) com os produtos e nutrientes já cadastrados — baixe,
+    edite/complete e reimporte em POST /tabela-nutricional/importar."""
+    import io
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+
+    _seed_tabela_nutricional(session)
+    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Tabela nutricional"
+    cabecalho = ["Nutriente"] + [p.nome for p in produtos]
+    ws.append(cabecalho)
+    for cel in ws[1]:
+        cel.font = Font(bold=True, color="FFFFFF")
+        cel.fill = PatternFill("solid", fgColor="4A6B3A")
+    for nutriente in nutrientes_ordem:
+        ws.append([nutriente] + [por_produto.get(p.id, {}).get(nutriente, "") for p in produtos])
+    for idx in range(1, len(cabecalho) + 1):
+        ws.column_dimensions[ws.cell(row=1, column=idx).column_letter].width = 22
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return Response(
+        content=buf.getvalue(),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": "attachment; filename=tabela_nutricional_modelo.xlsx"},
+    )
+
+
+@router.post("/tabela-nutricional/importar")
+async def importar_tabela_nutricional(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """
+    Importa a planilha no mesmo formato do modelo baixado: 1ª coluna =
+    nutriente, demais colunas = um produto cada (nome no cabeçalho). Produtos
+    com nome novo são criados; existentes (mesmo nome) têm os valores
+    atualizados/completados.
+    """
+    import io
+    from openpyxl import load_workbook
+    from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
+
+    content = await file.read()
+    try:
+        wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Não foi possível ler o arquivo — envie um .xlsx válido")
+    ws = wb.active
+    linhas = list(ws.iter_rows(values_only=True))
+    if not linhas:
+        raise HTTPException(status_code=400, detail="Planilha vazia")
+    cabecalho = [str(c).strip() if c is not None else "" for c in linhas[0]]
+    if len(cabecalho) < 2 or not any(cabecalho[1:]):
+        raise HTTPException(status_code=400, detail="A planilha precisa de ao menos uma coluna de produto (além de 'Nutriente')")
+
+    existentes = {p.nome: p for p in session.exec(select(TabelaNutricionalProduto)).all()}
+    maior_ordem = max([p.ordem for p in existentes.values()], default=-1)
+    produto_por_coluna: dict[int, "TabelaNutricionalProduto"] = {}
+    for idx, nome in enumerate(cabecalho[1:], start=1):
+        if not nome:
+            continue
+        produto = existentes.get(nome)
+        if not produto:
+            maior_ordem += 1
+            produto = TabelaNutricionalProduto(nome=nome, ordem=maior_ordem)
+            session.add(produto)
+            session.commit()
+            session.refresh(produto)
+            existentes[nome] = produto
+        produto_por_coluna[idx] = produto
+
+    valores_existentes = {(v.produto_id, v.nutriente): v for v in session.exec(select(TabelaNutricionalValor)).all()}
+    nutrientes_importados = 0
+    for row in linhas[1:]:
+        if not row or not row[0]:
+            continue
+        nutriente = str(row[0]).strip()
+        teve_valor = False
+        for idx, produto in produto_por_coluna.items():
+            valor_bruto = row[idx] if idx < len(row) else None
+            valor = "" if valor_bruto is None else str(valor_bruto).strip()
+            if not valor:
+                continue
+            teve_valor = True
+            chave = (produto.id, nutriente)
+            v = valores_existentes.get(chave)
+            if v:
+                v.valor = valor
+                session.add(v)
+            else:
+                v = TabelaNutricionalValor(produto_id=produto.id, nutriente=nutriente, valor=valor)
+                session.add(v)
+                valores_existentes[chave] = v
+        if teve_valor:
+            nutrientes_importados += 1
+    session.commit()
+    return {"produtos": len(produto_por_coluna), "nutrientes": nutrientes_importados}
 
 
 class ItemProgramadoIn(BaseModel):

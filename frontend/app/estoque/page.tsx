@@ -4,6 +4,7 @@ import { Package, AlertTriangle, Filter, Search } from "lucide-react";
 import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, formatDate, type MovimentoEstoqueRow } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { Modal } from "@/components/Modal";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -22,6 +23,7 @@ type Item = {
   categoria: string | null; nome: string; quantidade: number | null;
   estoque_minimo: number | null; unidade: string | null;
   valor_unitario: number | null; valor_total: number | null; abaixo_minimo: boolean | null;
+  principio_ativo: string | null; finalidade: string | null;
 };
 
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
@@ -35,6 +37,8 @@ export default function EstoquePage() {
   const [busca, setBusca] = useState("");
   const [soAbaixo, setSoAbaixo] = useState(false);
   const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const [modalAbaixo, setModalAbaixo] = useState(false);
+  const [modalCategorias, setModalCategorias] = useState(false);
   const admin = ehAdmin();
 
   useEffect(() => {
@@ -58,7 +62,14 @@ export default function EstoquePage() {
   }, [itens, fCat, busca, soAbaixo]);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
-  const abaixo = filtrados.filter((i) => i.abaixo_minimo === true).length;
+  const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
+  const abaixo = itensAbaixo.length;
+
+  const categoriasComContagem = useMemo(() => {
+    const by = new Map<string, number>();
+    filtrados.forEach((i) => { const c = i.categoria || "(sem categoria)"; by.set(c, (by.get(c) ?? 0) + 1); });
+    return Array.from(by.entries()).map(([categoria, n]) => ({ categoria, n })).sort((a, b) => a.categoria.localeCompare(b.categoria));
+  }, [filtrados]);
 
   const porCategoria = useMemo(() => {
     const by = new Map<string, number>();
@@ -121,8 +132,14 @@ export default function EstoquePage() {
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
             <div className="kpi-card"><p className="kpi-value">{filtrados.length}</p><p className="kpi-label">Itens (filtro)</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: "var(--dourado-light)" }}>{formatBRL(valorTotal)}</p><p className="kpi-label">Valor em estoque</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: abaixo ? "var(--red)" : "var(--green-light)" }}>{abaixo}</p><p className="kpi-label">Abaixo do mínimo</p></div>
-            <div className="kpi-card"><p className="kpi-value">{categorias.length}</p><p className="kpi-label">Categorias</p></div>
+            <button type="button" className="kpi-card" title="Ver quais produtos estão abaixo do mínimo" onClick={() => setModalAbaixo(true)}
+              style={{ cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}>
+              <p className="kpi-value" style={{ color: abaixo ? "var(--red)" : "var(--green-light)" }}>{abaixo}</p><p className="kpi-label">Abaixo do mínimo</p>
+            </button>
+            <button type="button" className="kpi-card" title="Ver as categorias e quantos itens cada uma tem" onClick={() => setModalCategorias(true)}
+              style={{ cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}>
+              <p className="kpi-value">{categorias.length}</p><p className="kpi-label">Categorias</p>
+            </button>
           </div>
 
           <div className="card mb-4">
@@ -202,6 +219,48 @@ export default function EstoquePage() {
             </div>
           )}
         </>
+      )}
+
+      {modalAbaixo && (
+        <Modal title="Produtos abaixo do mínimo" onClose={() => setModalAbaixo(false)} width="720px">
+          {itensAbaixo.length ? (
+            <div className="overflow-x-auto" style={{ maxHeight: "60vh" }}>
+              <table className="fazenda-table" style={{ margin: 0 }}>
+                <thead><tr><th>Produto</th><th>Princípio ativo</th><th>Uso principal (finalidade)</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <tbody>
+                  {itensAbaixo.map((i, idx) => (
+                    <tr key={idx}>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{i.nome}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{i.principio_ativo || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{i.finalidade || "—"}</td>
+                      <td style={{ textAlign: "right", color: "var(--red)", fontWeight: 700 }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum produto abaixo do mínimo no filtro atual.</p>
+          )}
+        </Modal>
+      )}
+
+      {modalCategorias && (
+        <Modal title="Categorias de estoque" onClose={() => setModalCategorias(false)} width="480px">
+          <div className="overflow-x-auto" style={{ maxHeight: "60vh" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th>Categoria</th><th style={{ textAlign: "right" }}>Itens</th></tr></thead>
+              <tbody>
+                {categoriasComContagem.map((c) => (
+                  <tr key={c.categoria}>
+                    <td style={{ fontSize: "0.82rem" }}>{c.categoria}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{c.n}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </Modal>
       )}
     </div>
   );
