@@ -74,6 +74,55 @@ def normalizar_plano_contas(session: Session) -> None:
     session.commit()
 
 
+# Heurística de classificação padrão da natureza (serviço/produto/ambos) de
+# cada conta gerencial, por palavra-chave no nome — roda a CADA start (não
+# precisa de SeedFlag: só preenche onde `natureza` ainda está vazio, então
+# nunca sobrescreve uma classificação que o usuário já ajustou manualmente
+# em Configurações > Parâmetros financeiros > Conta gerencial).
+_PALAVRAS_PRODUTO = (
+    "racao", "alimento", "concentrado", "mineral", "medicamento", "vacina", "farmaco",
+    "semen", "insumo", "combustivel", "oleo", "peca", "material", "equipamento",
+    "ferramenta", "animal", "fertilizante", "semente", "embalagem", "uniforme", "epi",
+    "graxa", "pneu", "bateria", "lubrificante", "ensacado", "suplemento", "silagem",
+    "feno", "sal mineral", "produto",
+)
+_PALAVRAS_SERVICO = (
+    "salario", "honorario", "comissao", "mao de obra", "frete", "transporte",
+    "consultoria", "assessoria", "contabilidade", "advocacia", "exame", "veterinario",
+    "manutencao", "aluguel", "energia", "agua", "telefone", "internet", "seguro",
+    "imposto", "taxa", "juros", "tarifa", "bancaria", "bancario", "corretagem",
+    "servico", "mensalidade", "assinatura", "publicidade", "marketing", "inseminacao",
+    "diaria", "deslocamento", "hospedagem", "cartorio", "auditoria",
+)
+
+
+def _sem_acento_nat(txt: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", txt) if unicodedata.category(c) != "Mn")
+
+
+def classificar_natureza_plano_contas(session: Session) -> None:
+    contas = session.exec(select(PlanoContaGerencial)).all()
+    for c in contas:
+        if c.natureza is not None:
+            continue
+        nome = _sem_acento_nat((c.nome or "").lower())
+        eh_produto = any(p in nome for p in _PALAVRAS_PRODUTO)
+        eh_servico = any(p in nome for p in _PALAVRAS_SERVICO)
+        if eh_produto and not eh_servico:
+            c.natureza = "produto"
+        elif eh_servico and not eh_produto:
+            c.natureza = "servico"
+        else:
+            # Nem bateu com nenhuma palavra-chave, nem bateu com as duas —
+            # "ambos" é o padrão mais seguro (nunca bloqueia um lançamento
+            # legítimo); o usuário pode restringir manualmente depois.
+            c.natureza = "ambos"
+        session.add(c)
+    if contas:
+        session.commit()
+
+
 def normalizar_centros_custo(session: Session) -> None:
     """Padroniza os centros de custo (uma vez, guardado por SeedFlag):
     PL → Pecuária Leiteira, C|26 → Financiamento 2026, ARR → Arrendamento.
@@ -400,6 +449,7 @@ def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
                 "nivel": c.codigo.count(".") + 1,
                 "fluxo": c.fluxo, "tipo_fixo_variavel": c.tipo_fixo_variavel,
                 "rmca_receita_leite": c.rmca_receita_leite, "rmca_custo_alimentacao": c.rmca_custo_alimentacao,
+                "natureza": c.natureza,
             }
             for c in plano
         ],
@@ -496,6 +546,9 @@ class PlanoContaGerencialIn(BaseModel):
     # Marcação para o indicador RMCA (ver GET /financeiro/rmca).
     rmca_receita_leite: bool | None = None
     rmca_custo_alimentacao: bool | None = None
+    # "servico" | "produto" | "ambos" — restringe o que pode ser lançado nesta
+    # conta em Financeiro > Contas a pagar/a receber (ver FormFinanceiro).
+    natureza: str | None = None
 
 
 @router.post("/plano-contas")

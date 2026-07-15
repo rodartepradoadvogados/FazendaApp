@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart, Baby } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, Gauge, LineChart, Baby, Sparkles } from "lucide-react";
 import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
+import RelatorioPersonalizado from "@/components/RelatorioPersonalizado";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
@@ -156,7 +157,7 @@ function IndicadoresGerais() {
   );
 }
 
-type Aba = "gerais" | "gerencial";
+type Aba = "gerais" | "gerencial" | "personalizado";
 
 export default function IndicadoresPage() {
   const router = useRouter();
@@ -170,6 +171,7 @@ export default function IndicadoresPage() {
   const subNavTree: SubNavNode[] = useMemo(() => {
     const tree: SubNavNode[] = [{ id: "gerais", label: "Gerais", icon: Gauge }];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
+    tree.push({ id: "personalizado", label: "Relatório personalizado", icon: Sparkles });
     if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
   }, [vePermiteGerencial, vePermiteRecria]);
@@ -182,6 +184,7 @@ export default function IndicadoresPage() {
     <>
       {aba === "gerais" && <IndicadoresGerais />}
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
+      {aba === "personalizado" && <RelatorioPersonalizado />}
     </>
   );
 }

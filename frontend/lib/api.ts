@@ -212,6 +212,21 @@ export async function fetchIndicadoresMensais(): Promise<IndicadoresMensais> {
   return res.json();
 }
 
+// ── Relatório personalizado (Análise > Relatório personalizado) ──
+export type ParametroRelatorioPersonalizado = { id: string; label: string; categoria: string; tipo: "texto" | "numero" | "data" | "booleano" };
+export async function fetchCatalogoRelatorioPersonalizado() {
+  const res = await authFetch(`${API}/indicadores/relatorio-personalizado/catalogo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Catálogo do relatório personalizado error: ${res.status}`);
+  return res.json() as Promise<ParametroRelatorioPersonalizado[]>;
+}
+export async function gerarRelatorioPersonalizado(dados: { parametros: string[]; data_de?: string; data_ate?: string }) {
+  const res = await authFetch(`${API}/indicadores/relatorio-personalizado`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar relatório personalizado"); }
+  return res.json() as Promise<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[] }>;
+}
+
 // ── Relatórios gerenciais e de manejo (Reprodução) ──
 export async function fetchRelatoriosManejo() {
   const res = await authFetch(`${API}/relatorios/manejo`, { cache: "no-store" });
@@ -542,6 +557,27 @@ export async function atualizarMotivoBaixa(id: number, dados: { nome: string; at
   return res.json();
 }
 
+// ── Motivos de venda de animal (Configurações > Parâmetros > Parâmetros gerais) ──
+export async function fetchMotivosVenda() {
+  const res = await authFetch(`${API}/cadastro/motivos-venda`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Motivos de venda error: ${res.status}`);
+  return res.json();
+}
+export async function criarMotivoVenda(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/motivos-venda`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar motivo de venda"); }
+  return res.json();
+}
+export async function atualizarMotivoVenda(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/motivos-venda/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar motivo de venda"); }
+  return res.json();
+}
+
 // ── Cadastro de Serviços (lançamento financeiro > produto ou serviço) ──
 export async function fetchServicosCadastro() {
   const res = await authFetch(`${API}/cadastro/servicos`, { cache: "no-store" });
@@ -635,22 +671,85 @@ export async function marcarADescartar(dados: { animais: string[]; descartar?: b
   return res.json();
 }
 
-// ── Compra de animal (Rebanho > Comprar animal) ──
+// ── Compra / Venda de animal (Lançamentos > Compra/Venda) ──
+type ParcelaPayload = { data_vencimento: string; valor: number };
+// Campos ricos comuns ao lançamento de compra e de venda de animal — espelha
+// CompraIn/VendaIn do backend (conta gerencial restrita, documento, datas,
+// parcelamento, pagamento, GTA, ICMS e comissão de corretagem opcional).
+type CompraVendaCamposComuns = {
+  codigo_conta_gerencial: string;
+  descricao?: string; centro_custo?: string; tipo_documento?: string; numero_documento?: string;
+  data_emissao?: string; data_vencimento?: string; data_pedido?: string; entregue?: boolean;
+  desconto?: number; acrescimo?: number; parcelas?: ParcelaPayload[];
+  data_pagamento?: string; valor_pago?: number; conta_bancaria?: string; numero_documento_pagamento?: string;
+  gta?: string; icms_incide?: boolean; icms_tipo?: string; icms_valor?: number;
+  pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
+  data_vencimento_comissao?: string; parcelas_comissao?: ParcelaPayload[];
+};
+
 export async function fetchComprasAnimais() {
   const res = await authFetch(`${API}/compras-animais/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Compras de animais error: ${res.status}`);
   return res.json();
 }
-export async function criarCompraAnimal(dados: {
+export async function criarCompraAnimal(dados: CompraVendaCamposComuns & {
   animais: string[]; vendedor: string; valor: number; tipo_valor: string; data_compra: string;
-  observacao?: string; responsavel?: string;
-  pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
+  observacao?: string; responsavel?: string; data_prevista_entrada?: string;
 }) {
   const res = await authFetch(`${API}/compras-animais/`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra"); }
   return res.json();
+}
+
+export async function fetchVendasAnimais() {
+  const res = await authFetch(`${API}/vendas-animais/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Vendas de animais error: ${res.status}`);
+  return res.json();
+}
+export async function criarVendaAnimal(dados: CompraVendaCamposComuns & {
+  animais: string[]; comprador: string; valor: number; tipo_valor: string; data_venda: string;
+  observacao?: string; responsavel?: string; categorias?: string[]; motivo_venda?: string; data_prevista_saida?: string;
+}) {
+  const res = await authFetch(`${API}/vendas-animais/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar venda"); }
+  return res.json();
+}
+
+export type LinhaRelatorioCompraVendaAnimal = {
+  tipo: "compra" | "venda";
+  numero_animal: string;
+  contraparte: string;
+  data: string;
+  valor: number;
+  tipo_valor: string;
+  gta: string | null;
+  icms_incide: boolean | null;
+  icms_tipo: string | null;
+  icms_valor: number | null;
+  numero_lancamento: string | null;
+  numero_documento: string | null;
+  centro_custo: string | null;
+  codigo_conta: string | null;
+  categorias: string | null;
+  motivo_venda: string | null;
+  usuario_nome?: string | null;
+};
+export async function fetchRelatorioCompraVendaAnimais(filtros: {
+  numero?: string; dataDe?: string; dataAte?: string; numeroDocumento?: string; gta?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filtros.numero) params.set("numero", filtros.numero);
+  if (filtros.dataDe) params.set("data_de", filtros.dataDe);
+  if (filtros.dataAte) params.set("data_ate", filtros.dataAte);
+  if (filtros.numeroDocumento) params.set("numero_documento", filtros.numeroDocumento);
+  if (filtros.gta) params.set("gta", filtros.gta);
+  const res = await authFetch(`${API}/relatorio-compra-venda-animais/?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de compra/venda de animais error: ${res.status}`);
+  return res.json() as Promise<LinhaRelatorioCompraVendaAnimal[]>;
 }
 
 export async function fetchSanidade() {

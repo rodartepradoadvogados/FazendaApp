@@ -24,7 +24,7 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
-    Lote, MetodoServicoReprodutivo, MotivoBaixa, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
+    Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
     ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario,
     ValeFuncionario, ValeParcela,
 )
@@ -974,6 +974,27 @@ def seed_motivos_baixa(session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Motivos de venda de animal (Lançamentos > Compra/Venda > Vender animal) —
+# lista padrão razoável, editável depois em Configurações > Parâmetros >
+# Parâmetros gerais.
+# ---------------------------------------------------------------------------
+SEED_MOTIVOS_VENDA = [
+    "Descarte (baixa produção)", "Problema reprodutivo", "Problema sanitário/mastite crônica",
+    "Excedente de rebanho", "Venda de touro/reprodutor", "Venda de recria/leite para outra propriedade",
+    "Idade avançada", "Seleção genética", "Comportamento/temperamento", "Ajuste de fluxo de caixa",
+]
+
+
+def seed_motivos_venda(session: Session) -> None:
+    """Cria os motivos de venda padrão se a tabela ainda estiver vazia (idempotente)."""
+    if session.exec(select(MotivoVenda)).first():
+        return
+    for nome in SEED_MOTIVOS_VENDA:
+        session.add(MotivoVenda(nome=nome))
+    session.commit()
+
+
+# ---------------------------------------------------------------------------
 # Cadastro de Serviços (lançamento financeiro > produto OU serviço) — ex.:
 # manutenção de trator, frete, quilometragem. Lista aberta/extensível.
 # ---------------------------------------------------------------------------
@@ -1251,6 +1272,11 @@ _listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome
 router.get("/motivos-baixa")(_listar_motivos_baixa)
 router.post("/motivos-baixa")(_criar_motivo_baixa)
 router.put("/motivos-baixa/{item_id}")(_atualizar_motivo_baixa)
+
+_listar_motivos_venda, _criar_motivo_venda, _atualizar_motivo_venda = _crud_nome_ativo(MotivoVenda)
+router.get("/motivos-venda")(_listar_motivos_venda)
+router.post("/motivos-venda")(_criar_motivo_venda)
+router.put("/motivos-venda/{item_id}")(_atualizar_motivo_venda)
 
 _listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoCadastro)
 router.get("/servicos")(_listar_servicos)

@@ -12,6 +12,7 @@ export type ContaPlano = {
   tipo_fixo_variavel?: string | null;
   rmca_receita_leite?: boolean | null;
   rmca_custo_alimentacao?: boolean | null;
+  natureza?: string | null; // "servico" | "produto" | "ambos"
 };
 
 /** Nível na hierarquia: "3" = 1, "3.01" = 2, "3.01.01" = 3, "3.01.01.01" = 4. */

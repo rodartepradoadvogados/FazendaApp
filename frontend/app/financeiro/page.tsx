@@ -2,12 +2,12 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight,
+  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight, ShoppingCart,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
-  criarVale, atualizarLancamentoFinanceiro, ehAdmin,
+  criarVale, atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -46,11 +46,12 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "compra_venda_animais";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
+  { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
 ];
 const INDICADORES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
@@ -436,7 +437,8 @@ export default function FinanceiroPage() {
         {rel === "patrimonio" ? <PatrimonioView />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
-          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView /> : <>
+          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
+          : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -1171,6 +1173,118 @@ function PatrimonioView() {
           </table>
         </div>
       </div>
+    </>
+  );
+}
+
+const inputStyleRelCompraVenda: React.CSSProperties = {
+  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+};
+const COLUNAS_REL_COMPRA_VENDA_ANIMAL = [
+  { header: "Tipo", key: "tipoLabel" }, { header: "Nº animal", key: "numero_animal" },
+  { header: "Contraparte", key: "contraparte" }, { header: "Data", key: "data" },
+  { header: "Valor (por animal)", key: "valor" }, { header: "GTA", key: "gta" },
+  { header: "Documento", key: "numero_documento" }, { header: "Lançamento", key: "numero_lancamento" },
+  { header: "Centro de custo", key: "centro_custo" },
+];
+
+/**
+ * Relatório financeiro de compra/venda de animais — consulta unificada das
+ * duas pontas (Comprar/Vender animal em Lançamentos), filtrável por número do
+ * animal, período (de/até), documento ou GTA.
+ */
+function RelatorioCompraVendaAnimaisView() {
+  const [numero, setNumero] = useState("");
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  const [numeroDocumento, setNumeroDocumento] = useState("");
+  const [gta, setGta] = useState("");
+  const [linhas, setLinhas] = useState<LinhaRelatorioCompraVendaAnimal[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  const buscar = () => {
+    setCarregando(true); setErro(null);
+    fetchRelatorioCompraVendaAnimais({ numero, dataDe, dataAte, numeroDocumento, gta })
+      .then(setLinhas)
+      .catch((e) => setErro(e.message))
+      .finally(() => setCarregando(false));
+  };
+  useEffect(buscar, []);
+
+  const totalCompra = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "compra").reduce((a, l) => a + l.valor, 0), [linhas]);
+  const totalVenda = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "venda").reduce((a, l) => a + l.valor, 0), [linhas]);
+  const linhasExport = useMemo(() => (linhas ?? []).map((l) => ({ ...l, tipoLabel: l.tipo === "compra" ? "Compra" : "Venda" })), [linhas]);
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Número do animal</label>
+            <input style={inputStyleRelCompraVenda} value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 950" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
+            <input type="date" style={inputStyleRelCompraVenda} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Nº do documento</label>
+            <input style={inputStyleRelCompraVenda} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>GTA</label>
+            <input style={inputStyleRelCompraVenda} value={gta} onChange={(e) => setGta(e.target.value)} /></div>
+          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
+            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
+
+      {linhas && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            <KPI v={String(linhas.length)} l="Lançamentos" />
+            <KPI v={formatBRL(totalCompra)} l="Total comprado" c="var(--red)" />
+            <KPI v={formatBRL(totalVenda)} l="Total vendido" c="var(--green-light)" />
+          </div>
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0 }}>Compras e vendas</div>
+              <ExportarBotoes titulo="Compra/Venda de animais" colunas={COLUNAS_REL_COMPRA_VENDA_ANIMAL} linhas={linhasExport} nomeArquivoBase="compra_venda_animais" disabled={!linhas.length} />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <th>Tipo</th><th>Nº animal</th><th>Contraparte</th><th>Data</th>
+                  <th style={{ textAlign: "right" }}>Valor (por animal)</th><th>GTA</th><th>Documento</th><th>Lançamento</th><th>Centro de custo</th>
+                </tr></thead>
+                <tbody>
+                  {linhas.map((l, i) => (
+                    <tr key={i}>
+                      <td>
+                        <span style={{
+                          fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: "999px", fontWeight: 700,
+                          background: l.tipo === "compra" ? "rgba(220,38,38,0.12)" : "rgba(22,163,74,0.12)",
+                          color: l.tipo === "compra" ? "var(--red)" : "var(--green-light)",
+                        }}>{l.tipo === "compra" ? "Compra" : "Venda"}</span>
+                      </td>
+                      <td style={{ fontWeight: 700 }}>{l.numero_animal}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.contraparte}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.data}</td>
+                      <td style={{ textAlign: "right" }}>{formatBRL(l.valor)}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.gta || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_documento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.numero_lancamento || "—"}</td>
+                      <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{l.centro_custo || "—"}</td>
+                    </tr>
+                  ))}
+                  {!linhas.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhuma compra ou venda de animal encontrada para o filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
     </>
   );
 }

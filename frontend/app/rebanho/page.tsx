@@ -7,7 +7,6 @@ import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
 import SugestoesMovimentacao from "@/components/SugestoesMovimentacao";
 import BaixarAnimal from "@/components/BaixarAnimal";
-import ComprarAnimal from "@/components/ComprarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";

@@ -11,10 +11,18 @@ import {
  * permite escolher a conta-FOLHA (o galho mais baixo). Com busca por nome/código.
  */
 export function SeletorContaGerencial({
-  contas, tipo, codigo, nome, onSelect, placeholder,
+  contas, tipo, natureza, prefixosPermitidos, codigo, nome, onSelect, placeholder,
 }: {
   contas: ContaPlano[];
   tipo: "receita" | "despesa";
+  // Quando informado ("servico" | "produto"), só mostra/permite escolher
+  // contas-folha marcadas com essa natureza ou "ambos" — contas de grupo
+  // (não-folha) continuam aparecendo para navegação da árvore.
+  natureza?: "servico" | "produto";
+  // Restringe a árvore a só estes ramos (e seus descendentes) — ex.: compra
+  // de animal só pode lançar em 3.10.06/3.10.07. Os próprios códigos listados
+  // viram as raízes visíveis (não mostra os ancestrais deles).
+  prefixosPermitidos?: string[];
   codigo: string;
   nome: string;
   onSelect: (codigo: string, nome: string) => void;
@@ -25,16 +33,37 @@ export function SeletorContaGerencial({
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
 
-  // Só as contas do tipo certo (receita "2" / despesa "3") e ativas.
+  // Só as contas do tipo certo (receita "2" / despesa "3"), ativas, e —
+  // quando `natureza` for informado — restritas às folhas compatíveis.
   const disponiveis = useMemo(() => {
-    const pref = prefixoDoTipo(tipo);
-    return contas.filter(
-      (c) => (c.ativa ?? true) && (c.codigo === pref || c.codigo.startsWith(pref + "."))
-    );
-  }, [contas, tipo]);
+    let doTipo: ContaPlano[];
+    if (prefixosPermitidos?.length) {
+      doTipo = contas.filter((c) => (c.ativa ?? true) &&
+        prefixosPermitidos.some((p) => c.codigo === p || c.codigo.startsWith(p + ".")));
+    } else {
+      const pref = prefixoDoTipo(tipo);
+      doTipo = contas.filter(
+        (c) => (c.ativa ?? true) && (c.codigo === pref || c.codigo.startsWith(pref + "."))
+      );
+    }
+    if (!natureza) return doTipo;
+    const codigosDoTipo = doTipo.map((c) => c.codigo);
+    return doTipo.filter((c) => {
+      if (!ehFolha(c.codigo, codigosDoTipo)) return true;
+      const nat = c.natureza || "ambos";
+      return nat === "ambos" || nat === natureza;
+    });
+  }, [contas, tipo, natureza, prefixosPermitidos]);
 
   const todosCodigos = useMemo(() => disponiveis.map((c) => c.codigo), [disponiveis]);
-  const raizes = useMemo(() => filhosDiretos("", disponiveis), [disponiveis]);
+  const raizes = useMemo(() => {
+    if (prefixosPermitidos?.length) {
+      return disponiveis
+        .filter((c) => prefixosPermitidos.includes(c.codigo))
+        .sort((a, b) => a.codigo.localeCompare(b.codigo, undefined, { numeric: true }));
+    }
+    return filhosDiretos("", disponiveis);
+  }, [disponiveis, prefixosPermitidos]);
 
   // Abre as raízes do tipo por padrão (mostra os grandes grupos de cara).
   useEffect(() => {
