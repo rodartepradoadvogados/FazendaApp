@@ -1,14 +1,11 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Baby, Pencil, Trash2, Check, X, Shield, Droplets, HeartPulse, Activity } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchAnimais, fetchRelatorioBezerras, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchAgenda } from "@/lib/api";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks } from "lucide-react";
+import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { AnimalRow } from "@/components/AnimalModal";
-import { AnimalPicker } from "@/components/AnimalPicker";
-import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
@@ -160,6 +157,7 @@ type Aplic = {
   id: number; numero: string; raca: string; produto: string; categoria: string;
   dose: number | null; unidade: string | null; via: string | null; responsavel: string | null;
   atividade: string | null; obs: string | null; ordem_parto: number | null;
+  lote: string | null; categoria_animal: string | null; natureza: string | null;
   data: string | null; ano: number | null; mes: string | null;
   usuario_nome?: string | null;
 };
@@ -167,7 +165,7 @@ type Aplic = {
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
 const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
-function AplicacoesView() {
+function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "preventivo" }) {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
@@ -181,8 +179,12 @@ function AplicacoesView() {
   const [ocupado, setOcupado] = useState<number | null>(null);
   const admin = ehAdmin();
 
-  const carregar = () => fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); }, []);
+  // Cada aba busca só o que é dela — legado/importado (natureza=null) conta
+  // como curativo (ver Sanidade.natureza).
+  const carregar = () => fetchSanidade().then((d) => setRegs(
+    (d.aplicacoes as Aplic[]).filter((a) => natureza === "preventivo" ? a.natureza === "preventivo" : a.natureza !== "preventivo")
+  )).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, [natureza]);
 
   const iniciarEdicao = (a: Aplic) => {
     setEditId(a.id);
@@ -419,82 +421,158 @@ function AplicacoesView() {
   );
 }
 
-/* ───────────────────────── Relatório sanitário de bezerras (colostragem + teste de sangue/IgG) ───────────────────────── */
-type LinhaBezerra = {
-  numero: string; nome: string | null; sexo: string | null; categoria_abrev: string | null;
-  grupo_primario: string | null; data_nasc: string | null; idade_meses: number | null; ativo: boolean;
-  tomou_colostro: boolean | null; litros_colostro: number | null; brix_colostro: number | null;
-  classe_colostro: "ouro" | "prata" | "bronze" | null; data_colostro: string | null;
-  hora_parto: string | null; hora_colostro: string | null; peso_nascer_kg: number | null;
-  brix_soro: number | null; proteina_serica: number | null;
-  classe_soro: "sucesso" | "alerta" | "falha" | null;
-  classe_colostragem: "excelente" | "boa" | "aceitavel" | "ruim" | null;
-  apenas_colostro_po: boolean; sem_mensuracao: boolean; data_teste_sangue: string | null;
-  usuario_nome?: string | null;
-};
+// ─────────────────────────── Doença / Motivo (curativa) ───────────────────────────
+// Resumo dos tratamentos curativos agrupados pelo motivo (atividade) — cada
+// doença/motivo é clicável e expande os casos, filtráveis por animal, lote,
+// período e categoria do animal.
+function DoencaMotivoView() {
+  const [regs, setRegs] = useState<Aplic[] | null>(null);
+  const [aberto, setAberto] = useState<string | null>(null);
+  const [buscaAnimal, setBuscaAnimal] = useState("");
+  const [fLote, setFLote] = useState("");
+  const [fCategoria, setFCategoria] = useState("");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
 
-const LABEL_CLASSE_COLOSTRO: Record<string, { txt: string; cor: string }> = {
-  ouro: { txt: "Ouro", cor: "var(--dourado-light)" }, prata: { txt: "Prata", cor: "var(--text-muted)" },
-  bronze: { txt: "Bronze", cor: "var(--red)" },
-};
-const LABEL_CLASSE_SORO: Record<string, { txt: string; cor: string }> = {
-  sucesso: { txt: "Sucesso", cor: "var(--green-light)" }, alerta: { txt: "Alerta", cor: "var(--amber)" },
-  falha: { txt: "Falha", cor: "var(--red)" },
-};
-const LABEL_CLASSE_COLOSTRAGEM: Record<string, { txt: string; cor: string }> = {
-  excelente: { txt: "Excelente", cor: "var(--green-light)" }, boa: { txt: "Boa", cor: "var(--dourado-light)" },
-  aceitavel: { txt: "Aceitável", cor: "var(--amber)" }, ruim: { txt: "Ruim", cor: "var(--red)" },
-};
+  useEffect(() => { fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch(() => setRegs([])); }, []);
 
-const COLUNAS_BEZERRAS = [
-  { header: "Data", key: "data_teste_sangue" }, { header: "Nº", key: "numero" }, { header: "Nome", key: "nome" },
-  { header: "Categoria", key: "categoria_abrev" }, { header: "Lote", key: "grupo_primario" }, { header: "Idade (meses)", key: "idade_meses" },
-  { header: "Tomou colostro", key: "tomou_colostroFmt" }, { header: "Litros", key: "litros_colostro" },
-  { header: "Brix colostro (%)", key: "brix_colostro" }, { header: "Classe colostro", key: "classe_colostroFmt" },
-  { header: "Brix soro (%)", key: "brix_soro" }, { header: "Proteína sérica (g/dL)", key: "proteina_serica" },
-  { header: "Eficiência colostragem", key: "classe_colostragemFmt" }, { header: "Classe soro", key: "classe_soroFmt" },
-];
+  // A aba "Curativa" mostra o que não veio do calendário preventivo — dados
+  // legados/importados (natureza=null) são tratados como curativo.
+  const curativos = useMemo(() => (regs || []).filter((r) => r.natureza !== "preventivo"), [regs]);
 
-function RelatorioBezerrasView() {
-  const [animais, setAnimais] = useState<AnimalRow[]>([]);
-  const [modo, setModo] = useState<"todos" | "animal" | "lote" | "selecao">("todos");
-  const [faixaEtaria, setFaixaEtaria] = useState("");
-  const [numeroFiltro, setNumeroFiltro] = useState("");
-  const [loteFiltro, setLoteFiltro] = useState("");
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
-  const [dados, setDados] = useState<LinhaBezerra[] | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-  const admin = ehAdmin();
+  const filtrados = useMemo(() => curativos.filter((r) =>
+    (!buscaAnimal || r.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+    (!fLote || r.lote === fLote) &&
+    (!fCategoria || r.categoria_animal === fCategoria) &&
+    (!ini || (r.data ? r.data >= ini : false)) &&
+    (!fim || (r.data ? r.data <= fim : false))
+  ), [curativos, buscaAnimal, fLote, fCategoria, ini, fim]);
 
-  useEffect(() => { fetchAnimais().then(setAnimais).catch(() => {}); }, []);
+  const lotesOpc = useMemo(() => Array.from(new Set(curativos.map((r) => r.lote).filter(Boolean))).sort() as string[], [curativos]);
+  const categoriasOpc = useMemo(() => Array.from(new Set(curativos.map((r) => r.categoria_animal).filter(Boolean))).sort() as string[], [curativos]);
 
-  useEffect(() => {
-    const filtros: { faixaEtaria?: string; numero?: string; lote?: string; numeros?: string[] } = {};
-    if (faixaEtaria) filtros.faixaEtaria = faixaEtaria;
-    if (modo === "animal" && numeroFiltro) filtros.numero = numeroFiltro;
-    if (modo === "lote" && loteFiltro) filtros.lote = loteFiltro;
-    if (modo === "selecao" && selecionados.size) filtros.numeros = Array.from(selecionados);
-    fetchRelatorioBezerras(filtros).then(setDados).catch((e) => setErro(e.message));
-  }, [faixaEtaria, modo, numeroFiltro, loteFiltro, selecionados]);
+  const grupos = useMemo(() => {
+    const m = new Map<string, { motivo: string; casos: Aplic[]; ultima: string | null }>();
+    for (const r of filtrados) {
+      const motivo = (r.atividade || r.categoria || "Não informado") as string;
+      const g = m.get(motivo) || { motivo, casos: [], ultima: null };
+      g.casos.push(r);
+      if (!g.ultima || (r.data && r.data > g.ultima)) g.ultima = r.data || g.ultima;
+      m.set(motivo, g);
+    }
+    return Array.from(m.values()).sort((a, b) => b.casos.length - a.casos.length);
+  }, [filtrados]);
 
-  const lotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter(Boolean))).sort() as string[],
-    [animais]
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+  const filtroAtivo = !!(buscaAnimal || fLote || fCategoria || ini || fim);
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
+            <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaAnimal} onChange={(e) => setBuscaAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote</label>
+            <select style={selStyle} value={fLote} onChange={(e) => setFLote(e.target.value)}><option value="">Todos</option>{lotesOpc.map((l) => <option key={l} value={l}>{l}</option>)}</select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Categoria do animal</label>
+            <select style={selStyle} value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}><option value="">Todas</option>{categoriasOpc.map((c) => <option key={c} value={c}>{c}</option>)}</select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+            <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+            <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={16} /> Doença / Motivo dos tratamentos</div>
+        {!regs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !grupos.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{filtroAtivo ? "Nenhum caso encontrado com esses filtros." : "Nenhum tratamento curativo lançado ainda."}</p>
+        ) : (
+          <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+            {grupos.map((g) => {
+              const expandido = aberto === g.motivo;
+              return (
+                <Fragment key={g.motivo}>
+                  <div
+                    className="flex items-center justify-between"
+                    style={{ padding: "0.55rem 0.8rem", borderBottom: "1px solid var(--border)", cursor: "pointer", background: expandido ? "var(--surface-2)" : "transparent" }}
+                    onClick={() => setAberto(expandido ? null : g.motivo)}
+                  >
+                    <span className="flex items-center gap-2" style={{ fontSize: "0.86rem", fontWeight: 600 }}>
+                      {expandido ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {g.motivo}
+                    </span>
+                    <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.casos.length} caso(s){g.ultima ? ` · último ${formatDate(g.ultima)}` : ""}</span>
+                  </div>
+                  {expandido && (
+                    <div style={{ borderBottom: "1px solid var(--border)", padding: "0.5rem 0.8rem", background: "var(--surface-1, var(--surface))" }}>
+                      <div className="overflow-x-auto">
+                        <table className="fazenda-table">
+                          <thead><tr><th>Data</th><th>Animal</th><th>Lote</th><th>Categoria</th><th>Produto</th><th style={{ textAlign: "right" }}>Dose</th><th>Obs.</th></tr></thead>
+                          <tbody>
+                            {g.casos.slice().sort((a, b) => (b.data || "").localeCompare(a.data || "")).map((c) => (
+                              <tr key={c.id}>
+                                <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{c.data ? formatDate(c.data) : "—"}</td>
+                                <td style={{ fontWeight: 700 }}>{c.numero}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{c.lote || "—"}</td>
+                                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{c.categoria_animal || "—"}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{c.produto}</td>
+                                <td style={{ textAlign: "right", fontSize: "0.75rem" }}>{c.dose ?? "—"}{c.unidade ? ` ${c.unidade}` : ""}</td>
+                                <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{c.obs || "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
+          </div>
+        )}
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+          O cadastro de doenças e princípios ativos fica em Configurações › Cadastro › Sanitário.
+        </p>
+      </div>
+    </>
   );
+}
 
-  const toggleSelecionado = (numero: string) => setSelecionados((prev) => {
-    const novo = new Set(prev);
-    novo.has(numero) ? novo.delete(numero) : novo.add(numero);
-    return novo;
-  });
-  const toggleTodos = () => setSelecionados((prev) => (prev.size === animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
+// ─────────────────────────── Protocolos sanitários (curativa) ───────────────────────────
+type EtapaProtocolo = { id: number; dia: number; produto: string; dosagem: number; unidade: string; via: string | null; observacao: string | null };
+type AplicacaoProtocolo = { id: number; data_prevista: string; produto: string | null; realizada: boolean; data_realizacao: string | null; etapa: EtapaProtocolo | null };
+type LancamentoProtocolo = {
+  id: number; protocolo_id: number; protocolo_nome: string; numero_matriz: string; data_inicio: string;
+  responsavel: string | null; observacao: string | null;
+  classificacao_mastite: string | null; grau_mastite: number | null; agente: string | null;
+  resultado_cmt: string | null; tetos_afetados: string | null; usuario_nome?: string | null;
+  aplicacoes: AplicacaoProtocolo[];
+};
 
-  const linhasExport = (dados || []).map((l) => ({
-    ...l, tomou_colostroFmt: l.tomou_colostro == null ? "—" : l.tomou_colostro ? "Sim" : "Não",
-    classe_colostroFmt: l.classe_colostro ? LABEL_CLASSE_COLOSTRO[l.classe_colostro].txt : "—",
-    classe_soroFmt: l.classe_soro ? LABEL_CLASSE_SORO[l.classe_soro].txt : "—",
-    classe_colostragemFmt: l.classe_colostragem ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].txt : (l.apenas_colostro_po ? "Só colostro em pó" : l.sem_mensuracao ? "Sem mensuração" : "—"),
-  }));
+function ProtocolosSanitariosView() {
+  const [lancs, setLancs] = useState<LancamentoProtocolo[] | null>(null);
+  const [aberto, setAberto] = useState<number | null>(null);
+  const [buscaAnimal, setBuscaAnimal] = useState("");
+  const [fProtocolo, setFProtocolo] = useState("");
+  const [fStatus, setFStatus] = useState<"" | "andamento" | "concluido">("");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
+
+  useEffect(() => { fetchLancamentosProtocolo().then(setLancs).catch(() => setLancs([])); }, []);
+
+  const protocolosOpc = useMemo(() => Array.from(new Set((lancs || []).map((l) => l.protocolo_nome))).sort(), [lancs]);
+
+  const statusDe = (l: LancamentoProtocolo): "andamento" | "concluido" =>
+    l.aplicacoes.length && l.aplicacoes.every((a) => a.realizada) ? "concluido" : "andamento";
+
+  const filtrados = useMemo(() => (lancs || []).filter((l) =>
+    (!buscaAnimal || l.numero_matriz.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+    (!fProtocolo || l.protocolo_nome === fProtocolo) &&
+    (!fStatus || statusDe(l) === fStatus) &&
+    (!ini || l.data_inicio >= ini) &&
+    (!fim || l.data_inicio <= fim)
+  ), [lancs, buscaAnimal, fProtocolo, fStatus, ini, fim]);
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
@@ -502,230 +580,152 @@ function RelatorioBezerrasView() {
     <>
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
-        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-          Indicadores de colostragem e teste de sangue (IgG) por animal — inclusive já adultos, para rastrear na fase
-          adulta problemas que vieram de má colostragem na cria.
-        </p>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Faixa etária</label>
-            <select style={selStyle} value={faixaEtaria} onChange={(e) => setFaixaEtaria(e.target.value)}>
-              <option value="">Todas</option>
-              <option value="ate_12">Bezerras (até 12 meses)</option>
-              <option value="acima_12">Acima de 12 meses (novilhas/vacas)</option>
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
+            <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaAnimal} onChange={(e) => setBuscaAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Protocolo</label>
+            <select style={selStyle} value={fProtocolo} onChange={(e) => setFProtocolo(e.target.value)}><option value="">Todos</option>{protocolosOpc.map((p) => <option key={p} value={p}>{p}</option>)}</select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Status</label>
+            <select style={selStyle} value={fStatus} onChange={(e) => setFStatus(e.target.value as typeof fStatus)}>
+              <option value="">Todos</option><option value="andamento">Em andamento</option><option value="concluido">Concluído</option>
             </select></div>
-          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ver</label>
-            <select style={selStyle} value={modo} onChange={(e) => setModo(e.target.value as typeof modo)}>
-              <option value="todos">Todos os animais</option>
-              <option value="animal">Um animal</option>
-              <option value="lote">Por lote atual</option>
-              <option value="selecao">Seleção de vários animais</option>
-            </select></div>
-          {modo === "animal" && (
-            <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <AnimalPicker animais={animais} value={numeroFiltro} onChange={setNumeroFiltro} /></div>
-          )}
-          {modo === "lote" && (
-            <div style={{ gridColumn: "span 2" }}><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote</label>
-              <select style={selStyle} value={loteFiltro} onChange={(e) => setLoteFiltro(e.target.value)}>
-                <option value="">Selecione…</option>
-                {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select></div>
-          )}
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+            <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+            <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
         </div>
-        {modo === "selecao" && (
-          <SelecaoAnimaisTabela
-            animais={animais} selecionados={selecionados} toggle={toggleSelecionado} toggleTodos={toggleTodos}
-            colunas={[
-              { header: "Grupo", render: (a) => a.grupo_primario || "—" },
-              { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
-            ]}
-          />
-        )}
       </div>
 
-      {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
-      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-
-      {dados && (
-        <div className="card">
-          <div className="card-header mb-3 flex items-center justify-between">
-            <span className="flex items-center gap-2"><Baby size={14} /> Relatório sanitário de bezerras ({dados.length})</span>
-            <ExportarBotoes titulo="Relatório sanitário de bezerras" nomeArquivoBase="relatorio_bezerras" colunas={COLUNAS_BEZERRAS} linhas={linhasExport} />
+      <div className="card">
+        <div className="card-header mb-3 flex items-center gap-2"><ListChecks size={16} /> Protocolos sanitários lançados ({filtrados.length})</div>
+        {!lancs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !filtrados.length ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum protocolo lançado com esses filtros.</p>
+        ) : (
+          <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
+            {filtrados.map((l) => {
+              const expandido = aberto === l.id;
+              const status = statusDe(l);
+              return (
+                <Fragment key={l.id}>
+                  <div
+                    className="flex items-center justify-between"
+                    style={{ padding: "0.55rem 0.8rem", borderBottom: "1px solid var(--border)", cursor: "pointer", background: expandido ? "var(--surface-2)" : "transparent" }}
+                    onClick={() => setAberto(expandido ? null : l.id)}
+                  >
+                    <span className="flex items-center gap-2" style={{ fontSize: "0.86rem", fontWeight: 600 }}>
+                      {expandido ? <ChevronDown size={14} /> : <ChevronRight size={14} />} {l.protocolo_nome} <span style={{ fontWeight: 400, color: "var(--text-muted)" }}>— animal {l.numero_matriz}</span>
+                    </span>
+                    <span className="flex items-center gap-3" style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                      {formatDate(l.data_inicio)}
+                      <span style={{ fontWeight: 700, color: status === "concluido" ? "var(--green-light)" : "var(--amber)" }}>
+                        {status === "concluido" ? "Concluído" : "Em andamento"}
+                      </span>
+                    </span>
+                  </div>
+                  {expandido && (
+                    <div style={{ borderBottom: "1px solid var(--border)", padding: "0.5rem 0.8rem", background: "var(--surface-1, var(--surface))" }}>
+                      {(l.classificacao_mastite || l.responsavel) && (
+                        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                          {l.classificacao_mastite && <>Mastite {l.classificacao_mastite}{l.grau_mastite ? ` (grau ${l.grau_mastite})` : ""}{l.tetos_afetados ? ` · tetos: ${l.tetos_afetados}` : ""}{l.agente ? ` · agente: ${l.agente}` : ""} · </>}
+                          {l.responsavel && <>Responsável: {l.responsavel}</>}
+                        </p>
+                      )}
+                      <div className="overflow-x-auto">
+                        <table className="fazenda-table">
+                          <thead><tr><th>Dia</th><th>Data prevista</th><th>Produto</th><th style={{ textAlign: "right" }}>Dose</th><th>Via</th><th>Realizada?</th><th>Data realização</th></tr></thead>
+                          <tbody>
+                            {l.aplicacoes.slice().sort((a, b) => (a.etapa?.dia ?? 0) - (b.etapa?.dia ?? 0)).map((a) => (
+                              <tr key={a.id}>
+                                <td>{a.etapa ? `D${a.etapa.dia}` : "—"}</td>
+                                <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(a.data_prevista)}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{a.produto || a.etapa?.produto || "—"}</td>
+                                <td style={{ textAlign: "right", fontSize: "0.75rem" }}>{a.etapa ? `${a.etapa.dosagem} ${a.etapa.unidade}` : "—"}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{a.etapa?.via || "—"}</td>
+                                <td style={{ fontSize: "0.75rem", fontWeight: 700, color: a.realizada ? "var(--green-light)" : "var(--text-muted)" }}>{a.realizada ? "Sim" : "Não"}</td>
+                                <td style={{ fontSize: "0.75rem" }}>{a.data_realizacao ? formatDate(a.data_realizacao) : "—"}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
+                </Fragment>
+              );
+            })}
           </div>
-          <div className="overflow-x-auto" style={{ maxHeight: "560px" }}>
-            <table className="fazenda-table">
-              <thead>
-                <tr>
-                  <th>Nº</th><th>Nome</th><th>Categoria</th><th>Lote</th><th style={{ textAlign: "right" }}>Idade (m)</th>
-                  <th>Colostro?</th><th style={{ textAlign: "right" }}>Litros</th><th style={{ textAlign: "right" }}>Brix colostro</th>
-                  <th>Classe colostro</th><th style={{ textAlign: "right" }}>Brix soro</th>
-                  <th style={{ textAlign: "right" }}>Prot. sérica</th><th>Eficiência (IgG)</th>
-                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
-                </tr>
-              </thead>
-              <tbody>
-                {dados.map((l) => {
-                  const grave = l.classe_soro === "falha" || l.classe_colostragem === "ruim" || l.classe_colostro === "bronze";
-                  const trStyle: React.CSSProperties = grave
-                    ? { background: "rgba(192,57,43,0.12)", borderLeft: "3px solid var(--red)" }
-                    : {};
-                  return (
-                    <tr key={l.numero} style={trStyle}>
-                      <td style={{ fontWeight: 700 }}>{l.numero}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{l.nome || "—"}</td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.categoria_abrev || "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{l.grupo_primario || "—"}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.idade_meses ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{l.tomou_colostro == null ? "—" : l.tomou_colostro ? "Sim" : "Não"}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.litros_colostro ?? "—"}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.brix_colostro ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem", fontWeight: 700, color: l.classe_colostro ? LABEL_CLASSE_COLOSTRO[l.classe_colostro].cor : "var(--text-muted)" }}>
-                        {l.classe_colostro ? LABEL_CLASSE_COLOSTRO[l.classe_colostro].txt : "—"}
-                      </td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.brix_soro ?? "—"}</td>
-                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{l.proteina_serica ?? "—"}</td>
-                      <td style={{ fontSize: "0.78rem", fontWeight: 700, color: l.classe_colostragem ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].cor : "var(--text-muted)" }}>
-                        {l.classe_colostragem
-                          ? LABEL_CLASSE_COLOSTRAGEM[l.classe_colostragem].txt
-                          : l.apenas_colostro_po
-                            ? <span style={{ color: "var(--blue)" }}>Só colostro em pó</span>
-                            : l.sem_mensuracao
-                              ? <span style={{ color: "var(--text-muted)" }}>Sem mensuração</span>
-                              : "—"}
-                      </td>
-                      {admin && <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.usuario_nome ?? "—"}</td>}
-                    </tr>
-                  );
-                })}
-                {!dados.length && <tr><td colSpan={admin ? 13 : 12} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado com esses filtros.</td></tr>}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+        )}
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
+          Lance um novo protocolo em Lançamentos › Sanitário › Curativa › Protocolo sanitário.
+        </p>
+      </div>
     </>
   );
 }
 
-// ─────────────────────────── Doença / Motivo (curativa) ───────────────────────────
-// Resumo dos tratamentos curativos agrupados pelo motivo (atividade) e pela
-// categoria do produto — uma leitura rápida do "por que" das aplicações.
-function DoencaMotivoView() {
-  const [regs, setRegs] = useState<any[] | null>(null);
-  useEffect(() => { fetchSanidade().then((d) => setRegs(d.aplicacoes)).catch(() => setRegs([])); }, []);
-  const grupos = useMemo(() => {
-    const m = new Map<string, { motivo: string; total: number; ultima: string | null }>();
-    for (const r of regs || []) {
-      const motivo = (r.atividade || r.categoria || "Não informado") as string;
-      const g = m.get(motivo) || { motivo, total: 0, ultima: null };
-      g.total += 1;
-      if (!g.ultima || (r.data_aplicacao && r.data_aplicacao > g.ultima)) g.ultima = r.data_aplicacao || g.ultima;
-      m.set(motivo, g);
-    }
-    return Array.from(m.values()).sort((a, b) => b.total - a.total);
-  }, [regs]);
-  return (
-    <div className="card">
-      <div className="card-header mb-3 flex items-center gap-2"><HeartPulse size={16} /> Doença / Motivo dos tratamentos</div>
-      {!regs ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !grupos.length ? (
-        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum tratamento curativo lançado ainda.</p>
-      ) : (
-        <div style={{ border: "1px solid var(--border)", borderRadius: 10, overflow: "hidden" }}>
-          {grupos.map((g) => (
-            <div key={g.motivo} className="flex items-center justify-between" style={{ padding: "0.55rem 0.8rem", borderBottom: "1px solid var(--border)" }}>
-              <span style={{ fontSize: "0.86rem", fontWeight: 600 }}>{g.motivo}</span>
-              <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.total} caso(s){g.ultima ? ` · último ${formatDate(g.ultima)}` : ""}</span>
-            </div>
-          ))}
-        </div>
-      )}
-      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.6rem" }}>
-        O cadastro de doenças e princípios ativos fica em Configurações › Cadastro › Sanitário.
-      </p>
-    </div>
-  );
-}
-
-// ─────────────────────────── BST (aba separada) ───────────────────────────
-function BstView() {
-  const [dados, setDados] = useState<any | null>(null);
-  useEffect(() => { fetchAgenda().then(setDados).catch(() => setDados(null)); }, []);
-  const aptos = dados?.bst_elegiveis || [];
-  const excl = dados?.bst_excluidos || [];
-  const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
-  const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
-  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
-    <div className="card">
-      <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
-      {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca.</p> : (
-        <div style={{ overflowX: "auto" }}>
-          <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead><tr><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th></tr></thead>
-            <tbody>{lista.map((b: any) => (
-              <tr key={b.numero_matriz}><td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td><td style={td}>{b.grupo || "—"}</td><td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td></tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-  return (
-    <div>
-      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-        BST (somatotropina bovina) — vacas aptas e excluídas do dia. Próxima visita BST: <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
-        <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
-      </div>
-    </div>
-  );
-}
-
-type AbaSanidade = "curativa" | "preventiva" | "bst";
+type AbaSanidade = "curativa" | "preventiva";
 const ABAS_SANIDADE = [
-  { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo, protocolos e mastite" },
-  { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: calendário/preventivo sanitário" },
-  { id: "bst", label: "BST", icon: Droplets, title: "Somatotropina bovina — aptas e excluídas" },
+  { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
+  { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
-type AbaCurativa = "curativo" | "doenca" | "bezerras";
+type AbaCurativa = "curativo" | "doenca" | "protocolos";
 const ABAS_CURATIVA = [
   { id: "curativo", label: "Curativo (aplicações)", icon: ClipboardList, title: "Medicamentos aplicados no rebanho" },
   { id: "doenca", label: "Doença / Motivo", icon: Activity, title: "Tratamentos por doença/motivo" },
-  { id: "bezerras", label: "Relatório de bezerras", icon: Baby, title: "Colostragem e teste de sangue (IgG) por animal" },
+  { id: "protocolos", label: "Protocolos sanitários", icon: ListChecks, title: "Protocolos multi-etapa lançados (mastite e outros)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
+
+type AbaPreventiva = "aplicacoes" | "calendario";
+const ABAS_PREVENTIVA = [
+  { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já lançadas" },
+  { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras recorrentes do calendário preventivo" },
+] as const satisfies readonly { id: AbaPreventiva; label: string; icon: any; title: string }[];
 
 export default function SanidadePage() {
   const [aba, setAba] = useState<AbaSanidade>("curativa");
   const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
+  const [abaPrev, setAbaPrev] = useState<AbaPreventiva>("aplicacoes");
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_SANIDADE.map((a) => ({
     id: a.id, label: a.label, icon: a.icon,
-    children: a.id === "curativa" ? ABAS_CURATIVA.map((c) => ({ id: c.id, label: c.label, icon: c.icon })) : undefined,
+    children: a.id === "curativa"
+      ? ABAS_CURATIVA.map((c) => ({ id: c.id, label: c.label, icon: c.icon }))
+      : a.id === "preventiva"
+        ? ABAS_PREVENTIVA.map((p) => ({ id: p.id, label: p.label, icon: p.icon }))
+        : undefined,
   })), []);
   const onSelectSubNav = useCallback((id: string) => {
     if (ABAS_CURATIVA.some((c) => c.id === id)) { setAba("curativa"); setAbaCur(id as AbaCurativa); }
+    else if (ABAS_PREVENTIVA.some((p) => p.id === id)) { setAba("preventiva"); setAbaPrev(id as AbaPreventiva); }
     else setAba(id as AbaSanidade);
   }, []);
-  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba === "curativa" ? abaCur : aba, onSelect: onSelectSubNav }), [subNavTree, aba, abaCur, onSelectSubNav]));
+  useSubNavRegister(useMemo(() => ({
+    tree: subNavTree,
+    activeId: aba === "curativa" ? abaCur : aba === "preventiva" ? abaPrev : aba,
+    onSelect: onSelectSubNav,
+  }), [subNavTree, aba, abaCur, abaPrev, onSelectSubNav]));
 
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Syringe size={22} style={{ color: "var(--dourado)" }} /> Sanidade</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Sanidade curativa e preventiva, mais o controle de BST.</p>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Sanidade curativa e preventiva. O controle de BST ficou em Produção › Relatórios de BST.</p>
       </div>
 
       {aba === "curativa" && (
         <>
-          {abaCur === "curativo" && <AplicacoesView />}
+          {abaCur === "curativo" && <AplicacoesView natureza="curativo" />}
           {abaCur === "doenca" && <DoencaMotivoView />}
-          {abaCur === "bezerras" && <RelatorioBezerrasView />}
+          {abaCur === "protocolos" && <ProtocolosSanitariosView />}
         </>
       )}
-      {aba === "preventiva" && <CalendarioSanitarioView />}
-      {aba === "bst" && <BstView />}
+      {aba === "preventiva" && (
+        <>
+          {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" />}
+          {abaPrev === "calendario" && <CalendarioSanitarioView />}
+        </>
+      )}
     </div>
   );
 }

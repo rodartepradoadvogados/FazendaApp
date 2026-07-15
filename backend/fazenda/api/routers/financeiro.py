@@ -14,7 +14,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
+    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
     PlanoContaGerencial, SeedFlag, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
@@ -22,6 +22,8 @@ from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, map
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
+from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
+from fazenda.rules.patrimonio import calcular_depreciacao
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -628,12 +630,67 @@ def rmca(
     }
 
 
+@router.get("/custo-litro-leite")
+def custo_litro_leite(
+    data_inicio: date = Query(..., description="Data inicial (competência)"),
+    data_fim: date = Query(..., description="Data final (competência)"),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Custo por litro de leite — total gasto com alimentação no período (as
+    mesmas contas marcadas em Configurações > Parâmetros financeiros para o
+    custo do RMCA) dividido pelos litros de leite entregues no período
+    (Entrega mensal do leite), projetados proporcionalmente por dia quando o
+    período não cobre o mês inteiro.
+    """
+    plano = session.exec(select(PlanoContaGerencial)).all()
+    codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
+
+    itens = [
+        it.model_dump() for it in session.exec(select(LancamentoItem)).all()
+        if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
+    ]
+    custo_total = round(sum(i["valor_total"] or 0 for i in itens if i["codigo_conta_gerencial"] in codigos_custo), 2)
+
+    entregas = {e.competencia: e.quantidade_litros for e in session.exec(select(EntregaLeiteMensal)).all()}
+    litros = litros_leite_no_periodo(entregas, data_inicio, data_fim)
+
+    return {
+        "periodo": {"inicio": data_inicio.isoformat(), "fim": data_fim.isoformat()},
+        "configurado": bool(codigos_custo),
+        "tem_entrega": bool(entregas),
+        "contas_custo": sorted(c.nome for c in plano if c.codigo in codigos_custo),
+        **calcular_custo_por_litro(custo_total, litros),
+    }
+
+
 @router.get("/patrimonio")
 def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
-    """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv)."""
-    itens = session.exec(select(Patrimonio)).all()
-    total = sum(i.valor_total or 0 for i in itens if not i.data_baixa)
-    return {"itens": [i.model_dump() for i in itens], "total": len(itens), "valor_total": round(total, 2)}
+    """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv),
+    já com a depreciação linear calculada (valor atual = valor total menos a
+    depreciação acumulada desde a imobilização)."""
+    hoje = date.today()
+    itens_raw = session.exec(select(Patrimonio)).all()
+    itens: list[dict] = []
+    inconsistencias: list[dict] = []
+    valor_total_bruto = 0.0
+    valor_atual_total = 0.0
+    for i in itens_raw:
+        d = i.model_dump()
+        dep = calcular_depreciacao(d, hoje)
+        d.update(dep)
+        itens.append(d)
+        if not i.data_baixa:
+            valor_total_bruto += i.valor_total or 0
+            valor_atual_total += dep["valor_atual"] or 0
+        if dep["inconsistencia"]:
+            inconsistencias.append({"item": i.nome, "numero": i.numero, "motivo": dep["inconsistencia"]})
+    return {
+        "itens": itens, "total": len(itens_raw),
+        "valor_total": round(valor_total_bruto, 2),
+        "valor_atual_total": round(valor_atual_total, 2),
+        "inconsistencias": inconsistencias,
+    }
 
 
 @router.post("/lancamentos", status_code=201)

@@ -52,11 +52,16 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
+    # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
+    # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto
+    # acima, que também reflete o estado de hoje, não o de quando aconteceu).
+    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
     sanidades = session.exec(select(Sanidade)).all()
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
     registros = []
     for s in sanidades:
         d = s.data_aplicacao
+        animal = animais_por_numero.get(s.numero_matriz)
         registros.append({
             "id": s.id,
             "numero": s.numero_matriz,
@@ -70,6 +75,9 @@ def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
             "atividade": s.atividade,
             "obs": s.obs,
             "ordem_parto": partos_por_numero.get(s.numero_matriz) or None,
+            "lote": s.lote or (animal.grupo_primario if animal else None),
+            "categoria_animal": animal.categoria_abrev or animal.categoria_completa if animal else None,
+            "natureza": s.natureza or "curativo",
             "data": d.isoformat() if d else None,
             "ano": d.year if d else None,
             "mes": f"{d.year}-{d.month:02d}" if d else None,
@@ -105,10 +113,16 @@ class AplicacaoIn(BaseModel):
     # "Já foi aplicado?" — quando False (ou a data é futura) NADA é baixado do
     # estoque: a aplicação fica programada na Agenda até ser confirmada.
     aplicado: bool = True
+    # "curativo" | "preventivo" — ver Sanidade.natureza.
+    natureza: str = "curativo"
 
 
 @router.post("/aplicacoes")
-def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_aplicacao(
+    dados: AplicacaoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -126,7 +140,7 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
                     numero_matriz=numero, data=dados.data_aplicacao, produto=item.produto,
                     dose=item.quantidade, unidade=item.unidade, via=item.via,
                     responsavel=dados.responsavel, observacao=dados.observacao,
-                    usuario_id=usuario_id_seguro(user),
+                    usuario_id=usuario_id_seguro(user), natureza=dados.natureza,
                 ))
                 agendadas += 1
         session.commit()
@@ -160,6 +174,7 @@ def registrar_aplicacao(dados: AplicacaoIn, session: Session = Depends(get_sessi
                 responsavel=dados.responsavel,
                 obs=dados.observacao,
                 usuario_id=usuario_id_seguro(user),
+                natureza=dados.natureza,
             ))
             criados += 1
 
@@ -444,7 +459,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
                 data_aplicacao=dados.data_evento, animais=dados.animais,
                 itens=[ItemAplicacaoIn(produto=produto, via=via, quantidade=dose, unidade=unidade)],
                 responsavel=dados.responsavel, observacao=dados.observacao or f"Preventivo: {ev.nome}",
-                aplicado=dados.aplicado,
+                aplicado=dados.aplicado, natureza="preventivo",
             ),
             session,
             user,

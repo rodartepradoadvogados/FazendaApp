@@ -6,6 +6,7 @@ import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioPersonalizado from "@/components/RelatorioPersonalizado";
+import RelatorioBezerras from "@/components/RelatorioBezerras";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
@@ -157,7 +158,7 @@ function IndicadoresGerais() {
   );
 }
 
-type Aba = "gerais" | "gerencial" | "personalizado";
+type Aba = "gerais" | "gerencial" | "personalizado" | "bezerras";
 
 export default function IndicadoresPage() {
   const router = useRouter();
@@ -172,6 +173,7 @@ export default function IndicadoresPage() {
     const tree: SubNavNode[] = [{ id: "gerais", label: "Gerais", icon: Gauge }];
     if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
     tree.push({ id: "personalizado", label: "Relatório personalizado", icon: Sparkles });
+    tree.push({ id: "bezerras", label: "Relatório de bezerras", icon: Baby });
     if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
   }, [vePermiteGerencial, vePermiteRecria]);
@@ -185,6 +187,7 @@ export default function IndicadoresPage() {
       {aba === "gerais" && <IndicadoresGerais />}
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
       {aba === "personalizado" && <RelatorioPersonalizado />}
+      {aba === "bezerras" && <RelatorioBezerras />}
     </>
   );
 }

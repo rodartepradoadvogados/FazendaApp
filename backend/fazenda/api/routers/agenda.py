@@ -26,6 +26,7 @@ from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitari
 from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
+from fazenda.rules.auditoria import usuario_id_seguro
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -714,6 +715,7 @@ def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
     session.add(Sanidade(
         numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
         dose=ag.dose, unidade=ag.unidade, via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+        natureza=ag.natureza or "curativo",
     ))
 
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == ag.produto)).first()
@@ -979,23 +981,43 @@ class AplicarBstIn(BaseModel):
     dose: float | None = None
     unidade: str | None = None
     responsavel: str | None = None
+    # "Já foi aplicado?" — igual a Sanidade/AplicacaoIn: quando a data é futura
+    # (ou aplicado=False), NADA é baixado do estoque agora — fica programada
+    # na Agenda até a visita ser confirmada.
+    aplicado: bool = True
 
 
 @router.post("/bst/aplicar")
 def aplicar_bst_lote(
-    dados: AplicarBstIn, session: Session = Depends(get_session),
+    dados: AplicarBstIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
-    """Confirma a aplicação de BST (Lactotropin/Boostin) na visita de hoje para
-    os animais informados — grava um registro de Sanidade por animal (e dá
-    baixa de estoque quando o produto casa com um item cadastrado). A próxima
-    visita (12 dias, ou o intervalo cadastrado em Configurações) recalcula
-    sozinha a partir da data de aplicação mais recente, já usada por /agenda."""
+    """Confirma (ou agenda) a aplicação de BST (Lactotropin/Boostin) para os
+    animais informados. Data retroativa/hoje + aplicado=True materializa na
+    hora (Sanidade + baixa de estoque); data futura sempre vira uma pendência
+    na Agenda (AplicacaoAgendada), confirmada depois como qualquer outra —
+    mesma regra de "aplicar agora vs. agendar" usada em /sanidade/aplicacoes.
+    A próxima visita (12 dias, ou o intervalo cadastrado em Configurações)
+    recalcula sozinha a partir da data de aplicação mais recente."""
     from fazenda.rules.parametros import get_param
+
+    materializar = dados.aplicado and dados.data_aplicacao <= date.today()
+
+    if not materializar:
+        for numero in dados.numeros_matriz:
+            session.add(AplicacaoAgendada(
+                numero_matriz=numero, data=dados.data_aplicacao, produto=dados.produto,
+                dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel,
+                usuario_id=usuario_id_seguro(user), natureza="preventivo",
+            ))
+        session.commit()
+        intervalo = get_param("intervalo_bst", 12)
+        return {"aplicados": 0, "agendados": len(dados.numeros_matriz), "programado": True, "intervalo_dias": intervalo}
 
     for numero in dados.numeros_matriz:
         session.add(Sanidade(
             numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
             dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
+            usuario_id=usuario_id_seguro(user), natureza="preventivo",
         ))
         if dados.dose:
             estoque_item = session.exec(select(Estoque).where(Estoque.nome == dados.produto)).first()
@@ -1010,9 +1032,35 @@ def aplicar_bst_lote(
     intervalo = get_param("intervalo_bst", 12)
     return {
         "aplicados": len(dados.numeros_matriz),
+        "agendados": 0,
+        "programado": False,
         "intervalo_dias": intervalo,
         "proxima_aplicacao_calculada": (dados.data_aplicacao + timedelta(days=intervalo)).isoformat(),
     }
+
+
+class MarcarInaptaBstIn(BaseModel):
+    numeros_matriz: list[str]
+    # True = marca como inapta para a próxima aplicação/retira voluntariamente
+    # (Animal.excluir_bst); False = reverte (volta a aparecer como apta).
+    inapta: bool = True
+
+
+@router.post("/bst/marcar-inapta")
+def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_session)) -> dict:
+    """Marca (ou reverte) animais como inaptos para a próxima aplicação de BST
+    — ação distinta de aplicar: não lança nenhuma Sanidade nem mexe em
+    estoque, só sinaliza para a Agenda/relatórios via Animal.excluir_bst."""
+    atualizados = 0
+    for numero in dados.numeros_matriz:
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if not animal:
+            continue
+        animal.excluir_bst = dados.inapta
+        session.add(animal)
+        atualizados += 1
+    session.commit()
+    return {"atualizados": atualizados, "inapta": dados.inapta}
 
 
 def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:

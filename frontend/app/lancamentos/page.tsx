@@ -9,7 +9,7 @@ import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
-  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda, aplicarBstLote,
+  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -38,6 +38,7 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Modal } from "@/components/Modal";
+import { PainelLancarBst } from "@/components/PainelLancarBst";
 import { CadastroProtocolosSanitarios, CadastroEventosSanitarios } from "@/components/CadastroSanitario";
 import { CadastrarNovaDieta } from "@/components/CadastroAlimentacao";
 
@@ -2234,111 +2235,15 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   );
 }
 
-// ─────────────────────── BST — aptas / excluídas ───────────────────────
+// ─────────────────────── BST — seleção nas tabelas (Aptas/Nunca aplicadas/Inaptas) ───────────────────────
 function BstLancamentoView() {
   const [dados, setDados] = useState<any | null>(null);
   const carregar = () => fetchAgenda().then(setDados).catch(() => setDados(null));
   useEffect(() => { carregar(); }, []);
-  const aptos = dados?.bst_elegiveis || [];
-  const excl = dados?.bst_excluidos || [];
-  const nuncaAplicados = dados?.bst_nunca_aplicados || [];
-
-  const proximaAgendada: string | null = dados?.proxima_visita_bst || null;
-  const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
-  useEffect(() => { if (proximaAgendada) setDataAplicacao(proximaAgendada); }, [proximaAgendada]);
-  const [confirmarRecalculo, setConfirmarRecalculo] = useState(false);
-  const [salvandoBst, setSalvandoBst] = useState(false);
-  const [erroBst, setErroBst] = useState<string | null>(null);
-  const [sucessoBst, setSucessoBst] = useState<string | null>(null);
-
-  const numerosParaAplicar = useMemo(() => {
-    const nums = [...aptos, ...nuncaAplicados].map((b: any) => b.numero_matriz);
-    return Array.from(new Set(nums));
-  }, [aptos, nuncaAplicados]);
-
-  async function confirmarAplicarBst() {
-    setSalvandoBst(true); setErroBst(null); setSucessoBst(null);
-    try {
-      const r = await aplicarBstLote({ numeros_matriz: numerosParaAplicar, data_aplicacao: dataAplicacao });
-      setSucessoBst(`BST lançado para ${r.aplicados} vaca(s). Próxima visita calculada: ${formatDate(r.proxima_aplicacao_calculada)} (intervalo de ${r.intervalo_dias} dias).`);
-      carregar();
-    } catch (e: any) {
-      setErroBst(e.message || "Erro ao lançar aplicação de BST");
-    } finally {
-      setSalvandoBst(false);
-      setConfirmarRecalculo(false);
-    }
-  }
-
-  function salvarBst() {
-    setErroBst(null); setSucessoBst(null);
-    if (!numerosParaAplicar.length) { setErroBst("Nenhuma vaca apta ou nunca aplicada para lançar."); return; }
-    if (proximaAgendada && dataAplicacao !== proximaAgendada) { setConfirmarRecalculo(true); return; }
-    confirmarAplicarBst();
-  }
-  const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
-    <div className="card">
-      <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
-      {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca.</p> : (
-        <div style={{ overflowX: "auto" }}>
-          <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>DEL</th><th>Já tomou BST?</th></tr></thead>
-            <tbody>{lista.map((b: any) => (
-              <tr key={b.numero_matriz}>
-                <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
-                <td>{b.grupo || "—"}</td>
-                <td style={{ textAlign: "right" }}>{b.del_dias ?? "—"}</td>
-                <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
-                  {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
-                </td>
-              </tr>
-            ))}</tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
   return (
     <>
-      <p style={nota}>BST (somatotropina bovina) — vacas aptas e excluídas do dia.</p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
-        <Campo label="Data da próxima aplicação (agenda)">
-          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={proximaAgendada ? formatDate(proximaAgendada) : "—"} />
-        </Campo>
-        <Campo label="Data da aplicação">
-          <input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} />
-        </Campo>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
-        <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
-        <Tabela titulo="BST — Nunca aplicadas" lista={nuncaAplicados} cor="var(--blue)" />
-        <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
-      </div>
-
-      {erroBst && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginTop: "0.6rem" }}>{erroBst}</p>}
-      {sucessoBst && <p style={{ color: "var(--green-light)", fontSize: "0.82rem", marginTop: "0.6rem" }}>{sucessoBst}</p>}
-
-      <div className="mt-3">
-        <button className="btn-primary" onClick={salvarBst} disabled={salvandoBst}>
-          {salvandoBst ? "Salvando…" : "Salvar aplicação de BST"}
-        </button>
-      </div>
-
-      {confirmarRecalculo && (
-        <Modal title="Alterar calendário de aplicação de BST?" onClose={() => setConfirmarRecalculo(false)} width="480px">
-          <p style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
-            A data da aplicação ({formatDate(dataAplicacao)}) é diferente da data já agendada ({proximaAgendada ? formatDate(proximaAgendada) : "—"}).
-            Deseja alterar o calendário de aplicação de BST? A próxima visita será recalculada a partir desta data (intervalo cadastrado em Configurações — hoje 12 dias).
-          </p>
-          <div className="flex items-center gap-3">
-            <button className="btn-primary" onClick={confirmarAplicarBst} disabled={salvandoBst}>
-              {salvandoBst ? "Salvando…" : "Sim, alterar e salvar"}
-            </button>
-            <button className="btn-ghost" onClick={() => setConfirmarRecalculo(false)}>Cancelar</button>
-          </div>
-        </Modal>
-      )}
+      <p style={nota}>BST (somatotropina bovina) — marque os animais direto nas tabelas e lance (aplicar, agendar ou marcar inapta).</p>
+      <PainelLancarBst agenda={dados} onAtualizado={carregar} />
     </>
   );
 }
@@ -3378,6 +3283,7 @@ const TIPOS_GRUPOS = [
       { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Entrega mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
+      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Nunca aplicadas/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
     ],
   },
   {
@@ -3394,11 +3300,10 @@ const TIPOS_GRUPOS = [
       },
       {
         id: "sanidade_preventiva", label: "Preventiva", icon: Shield,
-        desc: "Manejo preventivo: aplicações preventivas, calendário sanitário e BST.",
+        desc: "Manejo preventivo: aplicações preventivas e calendário sanitário.",
         subs: [
           { id: "preventivo_aplicacao", label: "Aplicações", icon: Syringe, desc: "Aplicar um preventivo (vacina/exame) a animais, categoria ou lote — registra e alimenta o calendário." },
           { id: "calendario_sanitario", label: "Calendário sanitário", icon: CalendarClock, desc: "Regra recorrente (sazonal/de rebanho ou por fase fisiológica): evento, frequência, produto e dosagem." },
-          { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — vacas aptas e excluídas do dia." },
         ],
       },
     ],
