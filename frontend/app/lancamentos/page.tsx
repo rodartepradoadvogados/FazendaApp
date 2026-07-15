@@ -1483,9 +1483,14 @@ function EstoqueRestante({ estoque, produto, quantidade }: { estoque: EstoqueIte
 // precisa ser compatível com a unidade de estoque do produto — ex.: um
 // produto guardado em "ml" pode ser aplicado em ml/unidade/dose, mas não em L.
 const GRUPOS_UNIDADE: string[][] = [["ml", "unidade", "dose"], ["L", "kg"]];
+// Sinônimos/abreviações legadas (import de planilha, cadastro antigo) que
+// precisam cair no mesmo grupo do valor canônico — senão o item some das
+// opções de unidade compatível (ex.: "un" não batia com "unidade" e escondia "ml").
+const SINONIMOS_UNIDADE: Record<string, string> = { un: "unidade", und: "unidade", unid: "unidade", unidades: "unidade" };
 function unidadesCompativeis(unidadeEstoque: string | null | undefined): string[] {
   if (!unidadeEstoque) return UNIDADES;
-  const grupo = GRUPOS_UNIDADE.find((g) => g.includes(unidadeEstoque));
+  const normalizada = SINONIMOS_UNIDADE[unidadeEstoque.trim().toLowerCase()] || unidadeEstoque;
+  const grupo = GRUPOS_UNIDADE.find((g) => g.includes(normalizada));
   return grupo || [unidadeEstoque];
 }
 

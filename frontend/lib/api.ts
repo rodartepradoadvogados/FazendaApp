@@ -757,6 +757,9 @@ export type EventoSanitarioPayload = {
   gatilho?: string | null; gatilho_lote?: string | null; gatilho_idade_meses?: number | null; offset_dias?: number | null;
   produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null; via_padrao?: string | null;
   agenda_dias_antes?: number | null;
+  // Exclusão mútua — ex.: não agendar se o animal já recebeu o evento apontado
+  // aqui (alternativas de vacina/estirpe para a mesma doença).
+  condicao_evento_id?: number | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
@@ -1085,11 +1088,13 @@ export type ApresentacaoFarmacia = {
   apresentacoes: number | null; estoque_inicializado: boolean;
 };
 export type PrincipioFarmacia = {
-  id: number; nome: string; categoria_software: string | null; uso_principal: string | null; justificativa: string | null;
+  id: number; nome: string; ativo: boolean; categoria: string | null; categoria_software: string | null;
+  uso_principal: string | null; justificativa: string | null;
   eh_biologico: boolean; doenca_id: number | null; unidade_base: string | null; unidade_apresentacao: string | null;
   estoque_minimo_apresentacoes: number; total_base: number | null; total_apresentacoes: number;
   qtd_marcas_estoque: number; abaixo_minimo: boolean; precisa_inicializar: boolean; itens: ApresentacaoFarmacia[];
 };
+export type MarcaComercial = { id: number; principio_ativo_id: number; nome_comercial: string; laboratorio: string | null; ativo: boolean };
 export async function fetchFarmaciaPrincipios() {
   const res = await authFetch(`${API}/farmacia/principios`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Farmácia error: ${res.status}`);

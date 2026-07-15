@@ -2,12 +2,14 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
 import {
-  fetchPrincipiosAtivos, criarPrincipioAtivo, atualizarPrincipioAtivo, restaurarCatalogoPrincipios,
+  fetchPrincipiosAtivos, restaurarCatalogoPrincipios,
+  fetchFarmaciaPrincipios, fetchFarmaciaDetalhe, criarPrincipioFarmacia, atualizarPrincipioFarmacia,
+  criarMarcaFarmacia, excluirMarcaFarmacia,
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
-  type ProtocoloEtapa, type EventoSanitarioPayload,
+  type ProtocoloEtapa, type EventoSanitarioPayload, type PrincipioFarmacia, type MarcaComercial,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
@@ -26,8 +28,15 @@ const CRITERIOS: [string, string][] = [
 // produto/estoque, oferece a lista padrão.
 const UNIDADES_PADRAO = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 const GRUPOS_UNIDADE = [["ml", "unidade", "dose"], ["L", "kg"]];
-const unidadesCompat = (u?: string | null): string[] =>
-  !u ? UNIDADES_PADRAO : (GRUPOS_UNIDADE.find((g) => g.includes(u)) || [u]);
+// Sinônimos/abreviações legadas (import de planilha, cadastro antigo) que
+// precisam cair no mesmo grupo do valor canônico — senão o item some das
+// opções de unidade compatível (ex.: "un" não batia com "unidade" e escondia "ml").
+const SINONIMOS_UNIDADE: Record<string, string> = { un: "unidade", und: "unidade", unid: "unidade", unidades: "unidade" };
+const unidadesCompat = (u?: string | null): string[] => {
+  if (!u) return UNIDADES_PADRAO;
+  const norm = SINONIMOS_UNIDADE[u.trim().toLowerCase()] || u;
+  return GRUPOS_UNIDADE.find((g) => g.includes(norm)) || [u];
+};
 
 const ABAS = [
   ["principios", "Princípio ativo", Syringe],
@@ -59,16 +68,7 @@ export default function CadastroSanitario({ abaControlada, onAbaChange }: {
 
   return (
     <div>
-      {aba === "principios" && (
-        <ListaNomeAtivo
-          titulo="Princípios ativos" icone={Syringe}
-          descricao="Hierarquia do estoque de medicamentos, hormônios e vacinas — agrupados por categoria, com uso principal e justificativa de estoque do documento base. Nomes comerciais/laboratórios ficam vinculados a cada princípio."
-          fetchFn={fetchPrincipiosAtivos} criarFn={criarPrincipioAtivo} atualizarFn={atualizarPrincipioAtivo}
-          semRegistros="Nenhum princípio ativo cadastrado ainda."
-          restaurarCatalogo={restaurarCatalogoPrincipios}
-          mostrarDetalhes
-        />
-      )}
+      {aba === "principios" && <ListaPrincipiosAtivos />}
       {aba === "doencas" && (
         <ListaNomeAtivo
           titulo="Doenças" icone={Bug}
@@ -384,7 +384,7 @@ const GATILHOS: [string, string][] = [
 ];
 const GATILHO_LABEL: Record<string, string> = Object.fromEntries(GATILHOS);
 
-type EventoSanitarioRow = EventoSanitarioPayload & { id: number; doenca_nome?: string | null; proxima_ocorrencia?: string | null };
+type EventoSanitarioRow = EventoSanitarioPayload & { id: number; doenca_nome?: string | null; condicao_evento_nome?: string | null; proxima_ocorrencia?: string | null };
 type EventoForm = {
   nome: string; ativo: boolean; tipo_agendamento: "nenhum" | "epoca" | "evento";
   categoria_alvo: string; categoria_preventiva: string; doenca_id: string;
@@ -392,6 +392,7 @@ type EventoForm = {
   gatilho: string; gatilho_lote: string; gatilho_idade_meses: string; offset_dias: string;
   produto_padrao: string; dose_padrao: string; unidade_padrao: string; via_padrao: string;
   avisar_veterinario_30_dias: boolean;
+  condicao_evento_id: string;
 };
 const eventoFormVazio = (): EventoForm => ({
   nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "", doenca_id: "",
@@ -399,6 +400,7 @@ const eventoFormVazio = (): EventoForm => ({
   gatilho: "nascimento", gatilho_lote: "", gatilho_idade_meses: "", offset_dias: "",
   produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
   avisar_veterinario_30_dias: false,
+  condicao_evento_id: "",
 });
 
 export function CadastroEventosSanitarios() {
@@ -433,6 +435,7 @@ export function CadastroEventosSanitarios() {
       produto_padrao: e.produto_padrao || "", dose_padrao: e.dose_padrao != null ? String(e.dose_padrao) : "",
       unidade_padrao: e.unidade_padrao || "", via_padrao: e.via_padrao || "",
       avisar_veterinario_30_dias: !!(e as any).agenda_dias_antes,
+      condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
     });
     setEditando(e.id); setMsg(null);
   };
@@ -454,6 +457,7 @@ export function CadastroEventosSanitarios() {
       produto_padrao: form.produto_padrao.trim() || null, dose_padrao: form.dose_padrao ? Number(form.dose_padrao) : null,
       unidade_padrao: form.unidade_padrao || null, via_padrao: form.via_padrao || null,
       agenda_dias_antes: form.categoria_preventiva === "exame" && form.avisar_veterinario_30_dias ? 30 : null,
+      condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -544,6 +548,15 @@ export function CadastroEventosSanitarios() {
           )}
           <div><label style={labelStyle}>Dias após o gatilho</label>
             <input type="number" min={0} style={inputStyle} value={form.offset_dias} onChange={(e) => setForm({ ...form, offset_dias: e.target.value })} placeholder="0" /></div>
+          <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Condição — só agendar se NÃO tiver recebido</label>
+            <select style={inputStyle} value={form.condicao_evento_id} onChange={(e) => setForm({ ...form, condicao_evento_id: e.target.value })}>
+              <option value="">— (sempre agendar)</option>
+              {(itens || []).filter((o) => o.id !== editando).map((o) => <option key={o.id} value={o.id}>{o.nome}</option>)}
+            </select>
+            <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+              Para alternativas de vacina/estirpe para a mesma doença — ex.: não agendar "Brucelose RB51" se o animal já recebeu "Brucelose B19".
+            </span>
+          </div>
         </div>
       )}
 
@@ -619,7 +632,14 @@ export function CadastroEventosSanitarios() {
                 {filtrados.map((e) => (
                   <Fragment key={e.id}>
                     <tr>
-                      <td style={{ fontWeight: 700 }}>{e.nome}{!e.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontWeight: 700 }}>
+                        {e.nome}{!e.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
+                        {e.condicao_evento_nome && (
+                          <span style={{ display: "block", fontWeight: 400, fontSize: "0.68rem", color: "var(--text-muted)" }}>
+                            se não recebeu: {e.condicao_evento_nome}
+                          </span>
+                        )}
+                      </td>
                       <td style={{ fontSize: "0.78rem" }}>{rotuloAgendamento(e)}</td>
                       <td style={{ fontSize: "0.78rem" }}>{e.produto_padrao ? `${e.produto_padrao}${e.dose_padrao != null ? ` — ${e.dose_padrao} ${e.unidade_padrao || ""}` : ""}` : "—"}</td>
                       <td style={{ fontSize: "0.78rem", color: "var(--dourado-light)" }}>{e.proxima_ocorrencia ? new Date(e.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
@@ -651,6 +671,9 @@ type Item = {
 };
 type Form = { nome: string; ativo: boolean };
 const formVazio: Form = { nome: "", ativo: true };
+type FormItemProps = {
+  form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
+};
 
 // Ordem canônica dos grupos do documento base — mantém a mesma sequência do
 // texto original em vez de ordenar alfabeticamente.
@@ -809,9 +832,7 @@ function ListaNomeAtivo({ titulo, icone: Icone, descricao, fetchFn, criarFn, atu
   );
 }
 
-function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
-  form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
-}) {
+function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: FormItemProps) {
   return (
     <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
@@ -828,6 +849,253 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
           <X size={14} /> Cancelar
         </button>
       </div>
+    </div>
+  );
+}
+
+// ── Princípio ativo — cadastro rico (categoria/uso/justificativa/doença e
+// marcas comerciais vinculadas) ─────────────────────────────────────────────
+// Usa os endpoints da Farmácia (/farmacia/principios e /farmacia/medicamentos),
+// que já suportam esses campos — a lista simples nome+ativo (ListaNomeAtivo)
+// continua servindo só para Doença, que não tem esse enriquecimento.
+type PrincipioForm = {
+  nome: string; ativo: boolean; categoria: string; categoria_software: string;
+  uso_principal: string; justificativa: string; eh_biologico: boolean; doenca_id: string;
+};
+const principioFormVazio = (): PrincipioForm => ({
+  nome: "", ativo: true, categoria: "", categoria_software: "",
+  uso_principal: "", justificativa: "", eh_biologico: false, doenca_id: "",
+});
+
+function ListaPrincipiosAtivos() {
+  const [itens, setItens] = useState<PrincipioFarmacia[] | null>(null);
+  const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [detalhado, setDetalhado] = useState<number | null>(null);
+  const [form, setForm] = useState<PrincipioForm>(principioFormVazio());
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
+  const [restaurando, setRestaurando] = useState(false);
+  const [marcas, setMarcas] = useState<Record<number, MarcaComercial[]>>({});
+  const [novaMarca, setNovaMarca] = useState({ nome_comercial: "", laboratorio: "" });
+
+  const carregar = () => fetchFarmaciaPrincipios().then(setItens).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); fetchDoencas().then(setDoencas).catch(() => {}); }, []);
+
+  const carregarMarcas = (id: number) =>
+    fetchFarmaciaDetalhe(id).then((d: any) => setMarcas((m) => ({ ...m, [id]: d.marcas || [] }))).catch(() => {});
+
+  const restaurar = async () => {
+    setRestaurando(true); setMsg(null);
+    try { const r = await restaurarCatalogoPrincipios(); await carregar(); setMsg(`Catálogo restaurado: ${r.criados} adicionado(s), ${r.total} no total.`); }
+    catch (e: any) { setMsg(e.message || "Erro ao restaurar catálogo"); }
+    finally { setRestaurando(false); }
+  };
+
+  const abrirNovo = () => { setForm(principioFormVazio()); setEditando("novo"); setMsg(null); };
+  const abrirEdicao = (i: PrincipioFarmacia) => {
+    setForm({
+      nome: i.nome, ativo: i.ativo, categoria: i.categoria || "",
+      categoria_software: i.categoria_software || "", uso_principal: i.uso_principal || "",
+      justificativa: i.justificativa || "", eh_biologico: i.eh_biologico, doenca_id: i.doenca_id ? String(i.doenca_id) : "",
+    });
+    setEditando(i.id); setMsg(null);
+    carregarMarcas(i.id);
+  };
+  const cancelar = () => { setEditando(null); setMsg(null); };
+
+  const salvar = async () => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
+    setSalvando(true); setMsg(null);
+    const dados = {
+      nome: form.nome.trim(), ativo: form.ativo, categoria: form.categoria || null,
+      categoria_software: form.categoria_software.trim() || null,
+      uso_principal: form.uso_principal.trim() || null, justificativa: form.justificativa.trim() || null,
+      eh_biologico: form.eh_biologico, doenca_id: form.eh_biologico && form.doenca_id ? Number(form.doenca_id) : null,
+    };
+    try {
+      if (editando === "novo") {
+        const criado = await criarPrincipioFarmacia(dados);
+        await carregar();
+        // Mantém aberto no registro recém-criado — permite cadastrar as marcas
+        // comerciais (ex.: "VACINA RB 51") na sequência, sem reabrir a edição.
+        setEditando(criado.id);
+        carregarMarcas(criado.id);
+      } else if (typeof editando === "number") {
+        await atualizarPrincipioFarmacia(editando, dados);
+        setEditando(null);
+        await carregar();
+      }
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao salvar");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  const adicionarMarca = async (principioId: number) => {
+    if (!novaMarca.nome_comercial.trim()) return;
+    try {
+      await criarMarcaFarmacia({
+        principio_ativo_id: principioId, nome_comercial: novaMarca.nome_comercial.trim(),
+        laboratorio: novaMarca.laboratorio.trim() || undefined,
+      });
+      setNovaMarca({ nome_comercial: "", laboratorio: "" });
+      await carregarMarcas(principioId);
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao adicionar marca comercial");
+    }
+  };
+  const removerMarca = async (principioId: number, marcaId: number) => {
+    try { await excluirMarcaFarmacia(marcaId); await carregarMarcas(principioId); }
+    catch (e: any) { setMsg(e.message || "Erro ao excluir marca comercial"); }
+  };
+
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((i) => !termoBusca || normalizar(i.nome).includes(termoBusca));
+  const grupos = ORDEM_CATEGORIAS
+    .map((nome) => ({ nome, itens: filtrados.filter((i) => i.categoria === nome) }))
+    .concat([{ nome: "Outros", itens: filtrados.filter((i) => !i.categoria || !ORDEM_CATEGORIAS.includes(i.categoria)) }])
+    .filter((g) => g.itens.length > 0);
+
+  const formEl = (
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
+        <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} /></div>
+        <div><label style={labelStyle}>Categoria</label>
+          <select style={inputStyle} value={form.categoria} onChange={(e) => setForm({ ...form, categoria: e.target.value })}>
+            <option value="">—</option>{ORDEM_CATEGORIAS.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select></div>
+        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
+        <div><label style={labelStyle}>Categoria (software)</label>
+          <input style={inputStyle} value={form.categoria_software} onChange={(e) => setForm({ ...form, categoria_software: e.target.value })} placeholder='ex.: "Antibiótico Sistêmico"' /></div>
+        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.eh_biologico} onChange={(e) => setForm({ ...form, eh_biologico: e.target.checked, doenca_id: e.target.checked ? form.doenca_id : "" })} /> É biológico (vacina/diagnóstico)</label></div>
+        {form.eh_biologico && (
+          <div><label style={labelStyle}>Doença combatida</label>
+            <select style={inputStyle} value={form.doenca_id} onChange={(e) => setForm({ ...form, doenca_id: e.target.value })}>
+              <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
+            </select></div>
+        )}
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Uso principal</label>
+          <textarea style={{ ...inputStyle, minHeight: "3.2rem", resize: "vertical" }} value={form.uso_principal} onChange={(e) => setForm({ ...form, uso_principal: e.target.value })} /></div>
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Justificativa de estoque</label>
+          <textarea style={{ ...inputStyle, minHeight: "3.2rem", resize: "vertical" }} value={form.justificativa} onChange={(e) => setForm({ ...form, justificativa: e.target.value })} /></div>
+      </div>
+
+      {typeof editando === "number" && (
+        <div style={{ marginBottom: "0.8rem" }}>
+          <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Marcas comerciais</p>
+          {(marcas[editando] || []).map((m) => (
+            <div key={m.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", marginBottom: "0.3rem" }}>
+              <span style={{ flex: 1 }}>{m.nome_comercial}{m.laboratorio ? ` — ${m.laboratorio}` : ""}</span>
+              <button className="btn-ghost" style={{ fontSize: "0.7rem" }} onClick={() => removerMarca(editando, m.id)}><Trash2 size={12} /></button>
+            </div>
+          ))}
+          {!(marcas[editando] || []).length && <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.3rem" }}>Nenhuma marca comercial cadastrada ainda.</p>}
+          <div className="flex items-center gap-2" style={{ marginTop: "0.4rem" }}>
+            <input style={{ ...inputStyle, flex: 1 }} placeholder='Nome comercial (ex.: "VACINA RB 51")' value={novaMarca.nome_comercial}
+              onChange={(e) => setNovaMarca({ ...novaMarca, nome_comercial: e.target.value })} />
+            <input style={{ ...inputStyle, flex: 1 }} placeholder="Laboratório (opcional)" value={novaMarca.laboratorio}
+              onChange={(e) => setNovaMarca({ ...novaMarca, laboratorio: e.target.value })} />
+            <button className="btn-ghost" style={{ fontSize: "0.76rem", whiteSpace: "nowrap" }} onClick={() => adicionarMarca(editando)}>
+              <Plus size={13} /> Adicionar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
+      <div className="flex items-center gap-2">
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
+          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
+        </button>
+        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}>
+          <X size={14} /> Cancelar
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="card">
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span className="flex items-center gap-2"><Syringe size={16} /> Princípios ativos</span>
+        <div className="flex items-center gap-2">
+          <button className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={restaurar} disabled={restaurando}
+            title="(Re)carrega o catálogo base de princípios ativos (documento base) — só adiciona os que faltam.">
+            {restaurando ? "Restaurando…" : "Restaurar catálogo base"}
+          </button>
+          <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+            <Plus size={14} /> Novo
+          </button>
+        </div>
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+        Hierarquia do estoque de medicamentos, hormônios e vacinas — agrupados por categoria, com uso principal e
+        justificativa de estoque do documento base. Marcas comerciais (ex.: "VACINA RB 51") ficam vinculadas a cada princípio.
+      </p>
+
+      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {msg && editando === null && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{msg}</p>}
+
+      {editando === "novo" && formEl}
+
+      {itens && (
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar em princípios ativos…" />
+          </div>
+          <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Nome</th><th>Categoria (software)</th><th>Marcas</th><th></th></tr></thead>
+            <tbody>
+              {grupos.map((g) => (
+                <Fragment key={g.nome}>
+                  <tr><td colSpan={4} style={{ background: "var(--surface-2)", fontWeight: 700, fontSize: "0.74rem", color: "var(--dourado-light)", padding: "0.4rem 0.7rem" }}>{g.nome}</td></tr>
+                  {g.itens.map((i) => (
+                    <Fragment key={i.id}>
+                      <tr>
+                        <td style={{ fontWeight: 700 }}>
+                          {(i.uso_principal || i.justificativa || i.categoria_software) ? (
+                            <button onClick={() => setDetalhado(detalhado === i.id ? null : i.id)}
+                              style={{ display: "flex", alignItems: "center", gap: "0.35rem", background: "none", border: "none", cursor: "pointer", color: "inherit", font: "inherit", padding: 0, textAlign: "left" }}>
+                              {detalhado === i.id ? <ChevronDown size={13} /> : <ChevronRight size={13} />} {i.nome}
+                            </button>
+                          ) : i.nome}
+                          {!i.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}
+                        </td>
+                        <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{i.categoria_software || "—"}</td>
+                        <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{i.qtd_marcas_estoque || 0}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(i)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                        </td>
+                      </tr>
+                      {detalhado === i.id && (
+                        <tr><td colSpan={4} style={{ background: "var(--surface-2)", fontSize: "0.8rem", padding: "0.7rem 1rem" }}>
+                          <div style={{ marginBottom: "0.4rem" }}><strong>Uso principal:</strong> {i.uso_principal || "—"}</div>
+                          <div><strong>Justificativa de estoque:</strong> {i.justificativa || "—"}</div>
+                        </td></tr>
+                      )}
+                      {editando === i.id && <tr><td colSpan={4} style={{ padding: 0 }}>{formEl}</td></tr>}
+                    </Fragment>
+                  ))}
+                </Fragment>
+              ))}
+              {!itens.length && !editando && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum princípio ativo cadastrado ainda.</td></tr>}
+              {!!itens.length && !filtrados.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+            </tbody>
+          </table>
+          </div>
+        </>
+      )}
     </div>
   );
 }

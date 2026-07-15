@@ -1162,6 +1162,9 @@ class EventoSanitarioIn(BaseModel):
     via_padrao: str | None = None
     # Só para exame: avisa na Agenda N dias antes, para confirmar com o veterinário.
     agenda_dias_antes: int | None = None
+    # Condição de exclusão mútua — ex.: não agendar "Brucelose RB51" se o
+    # animal já recebeu "Brucelose B19" (alternativas de vacina/estirpe).
+    condicao_evento_id: int | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
@@ -1170,6 +1173,10 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
     if ev.doenca_id:
         doenca = session.get(Doenca, ev.doenca_id)
         d["doenca_nome"] = doenca.nome if doenca else None
+    d["condicao_evento_nome"] = None
+    if ev.condicao_evento_id:
+        condicao = session.get(EventoSanitario, ev.condicao_evento_id)
+        d["condicao_evento_nome"] = condicao.nome if condicao else None
     if ev.tipo_agendamento == "epoca" and ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade:
         d["proxima_ocorrencia"] = proxima_ocorrencia(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade).isoformat()
     else:
@@ -1177,11 +1184,16 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
     return d
 
 
-def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session) -> None:
+def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, item_id: int | None = None) -> None:
     if dados.tipo_agendamento not in TIPOS_AGENDAMENTO:
         raise HTTPException(status_code=400, detail=f"Tipo de agendamento inválido (use: {', '.join(TIPOS_AGENDAMENTO)})")
     if dados.doenca_id is not None and not session.get(Doenca, dados.doenca_id):
         raise HTTPException(status_code=400, detail="Doença não encontrada")
+    if dados.condicao_evento_id is not None:
+        if dados.condicao_evento_id == item_id:
+            raise HTTPException(status_code=400, detail="Um evento não pode ser condição de si mesmo")
+        if not session.get(EventoSanitario, dados.condicao_evento_id):
+            raise HTTPException(status_code=400, detail="Evento sanitário da condição não encontrado")
     if dados.tipo_agendamento == "epoca":
         if not dados.data_primeiro:
             raise HTTPException(status_code=400, detail="Informe a data do primeiro evento (agendamento por época)")
@@ -1227,7 +1239,7 @@ def atualizar_evento_sanitario(item_id: int, dados: EventoSanitarioIn, session: 
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    _validar_evento_sanitario(dados, session)
+    _validar_evento_sanitario(dados, session, item_id=item_id)
     for campo, valor in {**dados.model_dump(), "nome": nome}.items():
         setattr(ev, campo, valor)
     session.add(ev)

@@ -19,7 +19,7 @@ from datetime import date, timedelta
 
 from sqlmodel import Session, select
 
-from fazenda.models import Animal, CalendarioSanitario, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
+from fazenda.models import Animal, CalendarioSanitario, Estoque, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
 
 # Janela de geração: um gatilho recente (até 120 dias atrás) ainda pendura na
@@ -125,7 +125,7 @@ def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str
     return saida
 
 
-def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str) -> dict:
+def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str, principio_ativo_id: int | None) -> dict:
     alvo = f"matriz {numero}" if numero else (ev.categoria_alvo or "rebanho")
     return {
         "id": f"evento_sanitario_{ev.id}__{numero or 'rebanho'}__{sufixo}",
@@ -143,18 +143,25 @@ def _base(ev: EventoSanitario, quando: date, numero: str | None, sufixo: str) ->
         "unidade": ev.unidade_padrao,
         "via": ev.via_padrao,
         "categoria_alvo": ev.categoria_alvo,
+        "principio_ativo_id": principio_ativo_id,
         "evento_sanitario_id": ev.id,
     }
 
 
 def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
     """Todos os eventos da Agenda vindos dos eventos sanitários agendados."""
-    eventos = session.exec(
-        select(EventoSanitario).where(
-            EventoSanitario.ativo == True,  # noqa: E712
-            EventoSanitario.tipo_agendamento != "nenhum",
-        )
-    ).all()
+    todos_eventos = {e.id: e for e in session.exec(select(EventoSanitario)).all()}
+    eventos = [
+        e for e in todos_eventos.values()
+        if e.ativo and e.tipo_agendamento != "nenhum"
+    ]
+
+    # Resolve o princípio ativo do produto padrão (nome do item de estoque) —
+    # alimenta o seletor "Princípio ativo" já pré-preenchido na Agenda, do
+    # mesmo jeito que as regras do calendário sanitário já fazem.
+    principio_por_nome = {
+        e.nome: e.principio_ativo_id for e in session.exec(select(Estoque)).all()
+    }
 
     # Pré-carrega Sanidade por animal (produto minúsculo, data) para deduplicar:
     # se já foi aplicado depois do gatilho, o evento some da Agenda.
@@ -168,14 +175,32 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
         alvo = produto.strip().lower()
         return any(p == alvo and dt and dt >= desde for p, dt in aplic_por_animal.get(numero, []))
 
+    def ja_aplicado_alguma_vez(numero: str, produto: str | None) -> bool:
+        if not produto:
+            return False
+        alvo = produto.strip().lower()
+        return any(p == alvo and dt for p, dt in aplic_por_animal.get(numero, []))
+
+    def bloqueado_pela_condicao(ev: EventoSanitario, numero: str) -> bool:
+        """Alternativas mutuamente exclusivas (ex.: Brucelose B19 × RB51): não
+        agenda ESTE evento se o animal já recebeu o evento apontado em
+        condicao_evento_id, em qualquer data (não só desde o gatilho atual)."""
+        if not ev.condicao_evento_id:
+            return False
+        condicao = todos_eventos.get(ev.condicao_evento_id)
+        if not condicao:
+            return False
+        return ja_aplicado_alguma_vez(numero, condicao.produto_padrao)
+
     saida: list[dict] = []
 
     for ev in eventos:
         offset = ev.offset_dias or 0
+        principio_ativo_id = principio_por_nome.get(ev.produto_padrao) if ev.produto_padrao else None
 
         if ev.tipo_agendamento == "epoca":
             for d in _ocorrencias_epoca(ev, hoje):
-                evt = _base(ev, d, None, d.isoformat())
+                evt = _base(ev, d, None, d.isoformat(), principio_ativo_id)
                 if evt["id"] not in realizados:
                     saida.append(evt)
             continue
@@ -215,7 +240,9 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
                 continue
             if ja_aplicado(numero, ev.produto_padrao, quando):
                 continue
-            evt = _base(ev, quando, numero, quando.isoformat())
+            if bloqueado_pela_condicao(ev, numero):
+                continue
+            evt = _base(ev, quando, numero, quando.isoformat(), principio_ativo_id)
             if evt["id"] in realizados:
                 continue
             vistos.add(numero)
