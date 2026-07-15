@@ -29,10 +29,13 @@ export default function RootLayout({
     <html lang="pt-BR" suppressHydrationWarning>
       <head>
         {/* Aplica o tema e a paleta salvos ANTES de pintar a tela (evita
-            "piscar" o tema/cor errado no carregamento). Padrão: misto/vinho. */}
+            "piscar" o tema/cor errado no carregamento). Padrão: misto/vinho.
+            Também sincroniza a <meta name="theme-color"> (a faixa do topo do
+            navegador/app instalado) com o cabeçalho do app — sem isso, ela
+            ficava sempre vinho mesmo com a paleta verde escolhida. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','misto');}try{var p=localStorage.getItem('paleta');if(p!=='vinho'&&p!=='verde')p='vinho';document.documentElement.setAttribute('data-paleta',p);}catch(e){document.documentElement.setAttribute('data-paleta','vinho');}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){t='misto';document.documentElement.setAttribute('data-theme','misto');}try{var p=localStorage.getItem('paleta');if(p!=='vinho'&&p!=='verde')p='vinho';document.documentElement.setAttribute('data-paleta',p);}catch(e){p='vinho';document.documentElement.setAttribute('data-paleta','vinho');}try{var m=document.querySelector('meta[name="theme-color"]');if(m){var escuro=t==='escuro';var cor=p==='verde'?(escuro?'#16402B':'#1F5C3D'):(escuro?'#340F1C':'#4A1525');m.setAttribute('content',cor);}}catch(e){}})();`,
           }}
         />
       </head>

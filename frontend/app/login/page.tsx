@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { LogIn, Loader2 } from "lucide-react";
 import { login } from "@/lib/api";
-import { BullLogo } from "@/components/BullLogo";
+import { CowDataWordmark } from "@/components/CowDataWordmark";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -35,12 +35,9 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", background: "var(--bg)" }}>
       <div className="card" style={{ width: "380px", maxWidth: "100%" }}>
-        <div className="flex items-center gap-2 mb-1" style={{ justifyContent: "center" }}>
-          <BullLogo size={30} />
-          <div style={{ textAlign: "center" }}>
-            <p style={{ color: "var(--dourado-light)", fontWeight: 800, letterSpacing: "0.05em" }}>FAZENDA ESTREITO PONTE DE PEDRA</p>
-            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>Jairo Nasser</p>
-          </div>
+        <div className="mb-1" style={{ textAlign: "center" }}>
+          <CowDataWordmark size="1.6rem" />
+          <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.2rem" }}>Estreito Ponte de Pedra · Jairo Nasser</p>
         </div>
         <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.82rem", margin: "0.75rem 0 1.25rem" }}>Entre com seu usuário e senha.</p>
 
