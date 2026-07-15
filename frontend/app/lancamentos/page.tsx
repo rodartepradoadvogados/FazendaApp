@@ -9,7 +9,7 @@ import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
-  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
+  fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda, aplicarBstLote,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -2237,19 +2237,61 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
 // ─────────────────────── BST — aptas / excluídas ───────────────────────
 function BstLancamentoView() {
   const [dados, setDados] = useState<any | null>(null);
-  useEffect(() => { fetchAgenda().then(setDados).catch(() => setDados(null)); }, []);
+  const carregar = () => fetchAgenda().then(setDados).catch(() => setDados(null));
+  useEffect(() => { carregar(); }, []);
   const aptos = dados?.bst_elegiveis || [];
   const excl = dados?.bst_excluidos || [];
   const nuncaAplicados = dados?.bst_nunca_aplicados || [];
+
+  const proximaAgendada: string | null = dados?.proxima_visita_bst || null;
+  const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
+  useEffect(() => { if (proximaAgendada) setDataAplicacao(proximaAgendada); }, [proximaAgendada]);
+  const [confirmarRecalculo, setConfirmarRecalculo] = useState(false);
+  const [salvandoBst, setSalvandoBst] = useState(false);
+  const [erroBst, setErroBst] = useState<string | null>(null);
+  const [sucessoBst, setSucessoBst] = useState<string | null>(null);
+
+  const numerosParaAplicar = useMemo(() => {
+    const nums = [...aptos, ...nuncaAplicados].map((b: any) => b.numero_matriz);
+    return Array.from(new Set(nums));
+  }, [aptos, nuncaAplicados]);
+
+  async function confirmarAplicarBst() {
+    setSalvandoBst(true); setErroBst(null); setSucessoBst(null);
+    try {
+      const r = await aplicarBstLote({ numeros_matriz: numerosParaAplicar, data_aplicacao: dataAplicacao });
+      setSucessoBst(`BST lançado para ${r.aplicados} vaca(s). Próxima visita calculada: ${formatDate(r.proxima_aplicacao_calculada)} (intervalo de ${r.intervalo_dias} dias).`);
+      carregar();
+    } catch (e: any) {
+      setErroBst(e.message || "Erro ao lançar aplicação de BST");
+    } finally {
+      setSalvandoBst(false);
+      setConfirmarRecalculo(false);
+    }
+  }
+
+  function salvarBst() {
+    setErroBst(null); setSucessoBst(null);
+    if (!numerosParaAplicar.length) { setErroBst("Nenhuma vaca apta ou nunca aplicada para lançar."); return; }
+    if (proximaAgendada && dataAplicacao !== proximaAgendada) { setConfirmarRecalculo(true); return; }
+    confirmarAplicarBst();
+  }
   const Tabela = ({ titulo, lista, cor }: { titulo: string; lista: any[]; cor: string }) => (
     <div className="card">
       <div className="card-header mb-2 flex items-center gap-2" style={{ color: cor }}><Droplets size={15} /> {titulo} ({lista.length})</div>
       {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca.</p> : (
         <div style={{ overflowX: "auto" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+            <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>DEL</th><th>Já tomou BST?</th></tr></thead>
             <tbody>{lista.map((b: any) => (
-              <tr key={b.numero_matriz}><td style={{ fontWeight: 700 }}>{b.numero_matriz}</td><td>{b.grupo || "—"}</td><td style={{ textAlign: "right" }}>{b.del_dias ?? "—"}</td></tr>
+              <tr key={b.numero_matriz}>
+                <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
+                <td>{b.grupo || "—"}</td>
+                <td style={{ textAlign: "right" }}>{b.del_dias ?? "—"}</td>
+                <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
+                  {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
+                </td>
+              </tr>
             ))}</tbody>
           </table>
         </div>
@@ -2258,12 +2300,45 @@ function BstLancamentoView() {
   );
   return (
     <>
-      <p style={nota}>BST (somatotropina bovina) — vacas aptas e excluídas do dia. Próxima visita BST: <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.</p>
+      <p style={nota}>BST (somatotropina bovina) — vacas aptas e excluídas do dia.</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+        <Campo label="Data da próxima aplicação (agenda)">
+          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={proximaAgendada ? formatDate(proximaAgendada) : "—"} />
+        </Campo>
+        <Campo label="Data da aplicação">
+          <input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} />
+        </Campo>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-2">
         <Tabela titulo="BST — Aptas" lista={aptos} cor="var(--green-light)" />
         <Tabela titulo="BST — Nunca aplicadas" lista={nuncaAplicados} cor="var(--blue)" />
         <Tabela titulo="BST — Excluídas" lista={excl} cor="var(--amber)" />
       </div>
+
+      {erroBst && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginTop: "0.6rem" }}>{erroBst}</p>}
+      {sucessoBst && <p style={{ color: "var(--green-light)", fontSize: "0.82rem", marginTop: "0.6rem" }}>{sucessoBst}</p>}
+
+      <div className="mt-3">
+        <button className="btn-primary" onClick={salvarBst} disabled={salvandoBst}>
+          {salvandoBst ? "Salvando…" : "Salvar aplicação de BST"}
+        </button>
+      </div>
+
+      {confirmarRecalculo && (
+        <Modal title="Alterar calendário de aplicação de BST?" onClose={() => setConfirmarRecalculo(false)} width="480px">
+          <p style={{ fontSize: "0.85rem", marginBottom: "1rem" }}>
+            A data da aplicação ({formatDate(dataAplicacao)}) é diferente da data já agendada ({proximaAgendada ? formatDate(proximaAgendada) : "—"}).
+            Deseja alterar o calendário de aplicação de BST? A próxima visita será recalculada a partir desta data (intervalo cadastrado em Configurações — hoje 12 dias).
+          </p>
+          <div className="flex items-center gap-3">
+            <button className="btn-primary" onClick={confirmarAplicarBst} disabled={salvandoBst}>
+              {salvandoBst ? "Salvando…" : "Sim, alterar e salvar"}
+            </button>
+            <button className="btn-ghost" onClick={() => setConfirmarRecalculo(false)}>Cancelar</button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
@@ -2857,6 +2932,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   const [vacinas, setVacinas] = useState<string[]>([]);
   const [aplicarVacinaPreParto, setAplicarVacinaPreParto] = useState(false);
   const [vacinasPreParto, setVacinasPreParto] = useState<string[]>([]);
+  const [vacinaPreParteAplicadaAgora, setVacinaPreParteAplicadaAgora] = useState(false);
   const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -2873,7 +2949,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
 
   // Vacinas (pré-parto).
   useEffect(() => {
-    fetchMedicamentos({ finalidade: "vacina", incluir_sem_estoque: incluirSemEstoque }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
+    fetchMedicamentos({ finalidade: "vacina_pre_parto", incluir_sem_estoque: incluirSemEstoque }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
   }, [incluirSemEstoque]);
 
   const nomesEstoque = estoque.map((e) => e.nome);
@@ -2903,6 +2979,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
         observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
         produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
         vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
+        vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
       });
       let msg = "Secagem lançada com sucesso.";
       if (r.avisos?.length) msg += " " + r.avisos.join(" ");
@@ -2912,7 +2989,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       }
       setSucesso(msg);
       setMatriz(""); setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
-      setAplicarVacinaPreParto(false); setVacinasPreParto([]);
+      setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar secagem");
     } finally {
@@ -3007,7 +3084,11 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
             <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
             Incluir itens sem estoque
           </label>
-          {!vacinas.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhuma vacina cadastrada.</p>}
+          {!vacinas.length && (
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+              Nenhuma vacina com estoque disponível. Marque "Incluir itens sem estoque" acima para ver também as vacinas sem saldo cadastrado.
+            </p>
+          )}
           {vacinas.map((v) => (
             <label key={v} className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer", padding: "0.15rem 0" }}>
               <input type="checkbox" checked={vacinasPreParto.includes(v)}
@@ -3015,8 +3096,21 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
               {v}
             </label>
           ))}
-          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-            Gera uma pendência na Agenda para o dia seguinte à secagem, com o animal e a(s) vacina(s) a aplicar.
+          {vacinasPreParto.length > 0 && (
+            <div className="flex items-center gap-4 mt-3" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
+              <span style={{ fontSize: "0.8rem" }}>Vacina(s) já aplicada(s) agora?</span>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer" }}>
+                <input type="radio" checked={!vacinaPreParteAplicadaAgora} onChange={() => setVacinaPreParteAplicadaAgora(false)} /> Não, aplico depois
+              </label>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer" }}>
+                <input type="radio" checked={vacinaPreParteAplicadaAgora} onChange={() => setVacinaPreParteAplicadaAgora(true)} /> Sim, já apliquei agora
+              </label>
+            </div>
+          )}
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+            {vacinaPreParteAplicadaAgora
+              ? "Registra a aplicação em Sanidade e dá baixa no estoque agora — não gera pendência na Agenda."
+              : "Gera uma pendência na Agenda para o dia seguinte à secagem, com o animal e a(s) vacina(s) a aplicar."}
           </p>
         </div>
       )}

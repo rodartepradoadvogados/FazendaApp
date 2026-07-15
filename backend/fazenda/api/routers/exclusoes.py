@@ -8,7 +8,7 @@ fato) ou rejeitar.
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
@@ -33,7 +33,11 @@ from fazenda.models import (
     Parto,
     Pessoa,
     PrincipioAtivo,
+    ProtocoloIatfAplicacao,
+    ProtocoloIatfHormonio,
+    ProtocoloIatfLancamento,
     ProtocoloSanitario,
+    ProtocoloSanitarioAplicacao,
     ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento,
     Sanidade,
@@ -51,6 +55,8 @@ TIPOS = [
     {"id": "parto", "label": "Parto / nascimento"},
     {"id": "controle", "label": "Controle leiteiro"},
     {"id": "sanidade", "label": "Sanidade"},
+    {"id": "protocolo_sanitario_lancamento", "label": "Aplicação de protocolo sanitário (curativo/vacina)"},
+    {"id": "protocolo_iatf_lancamento", "label": "Aplicação de protocolo hormonal (IATF)"},
     {"id": "financeiro", "label": "Financeiro"},
     {"id": "estoque", "label": "Estoque"},
     {"id": "evento_manual", "label": "Evento manual da agenda"},
@@ -63,12 +69,21 @@ TIPOS = [
     {"id": "evento_sanitario", "label": "Evento sanitário"},
     {"id": "protocolo_sanitario", "label": "Protocolo sanitário (cadastro)"},
     {"id": "calendario_sanitario", "label": "Evento do calendário sanitário"},
+    {"id": "todos_lancamentos", "label": "Todos os lançamentos (mais recentes primeiro)"},
+]
+
+# Tipos "de lançamento" (têm data) reunidos na busca combinada "todos_lancamentos" —
+# serve para achar algo que não constou em nenhuma das opções específicas acima.
+SUBTIPOS_TODOS = [
+    "servico", "parto", "controle", "sanidade",
+    "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
+    "evento_manual", "financeiro",
 ]
 
 
 @router.get("/tipos")
 def tipos() -> list[dict]:
-    return TIPOS
+    return sorted(TIPOS, key=lambda t: t["label"])
 
 
 def _br(data) -> str:
@@ -97,15 +112,11 @@ def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:
     return True
 
 
-@router.get("/buscar")
-def buscar(
-    tipo: str = Query(...),
-    termo: str = Query(""),
-    data_inicio: str = Query(""),
-    data_fim: str = Query(""),
-    session: Session = Depends(get_session),
-) -> list[dict]:
-    """Lista candidatos a exclusão de um tipo, filtrados por um termo de busca e, opcionalmente, por período."""
+def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: Session) -> list[dict]:
+    """Lista candidatos a exclusão de um único tipo (sem o catch-all "todos_lancamentos"),
+    filtrados por um termo de busca e, opcionalmente, por período. Cada item carrega um
+    campo interno "_data" (para ordenação cronológica) que a rota pública remove antes
+    de responder."""
     if tipo == "animal":
         rows = session.exec(select(Animal)).all()
         out = [
@@ -121,6 +132,7 @@ def buscar(
                 "id": s.id,
                 "titulo": f"{s.numero_matriz} — {_br(s.data_servico)}",
                 "subtitulo": f"{s.tipo_servico or '—'} · {s.reprodutor or '—'} · diag: {s.diagnostico or '—'}",
+                "_data": s.data_servico,
             }
             for s in rows
             if _contem(termo, s.numero_matriz, s.reprodutor, s.diagnostico, s.tipo_servico)
@@ -135,6 +147,7 @@ def buscar(
                 "id": p.id,
                 "titulo": f"{p.numero_matriz} — {_br(p.data_parto)}",
                 "subtitulo": f"Parto nº{p.ordem_parto or '?'} · {p.tipo_parto or '—'}",
+                "_data": p.data_parto,
             }
             for p in rows
             if _contem(termo, p.numero_matriz, p.tipo_parto) and _dentro_periodo(p.data_parto, data_inicio, data_fim)
@@ -148,6 +161,7 @@ def buscar(
                 "id": c.id,
                 "titulo": f"{c.numero_matriz} — {_br(c.data_controle)}",
                 "subtitulo": f"{c.producao_kg or 0} kg",
+                "_data": c.data_controle,
             }
             for c in rows
             if _contem(termo, c.numero_matriz) and _dentro_periodo(c.data_controle, data_inicio, data_fim)
@@ -161,10 +175,56 @@ def buscar(
                 "id": s.id,
                 "titulo": f"{s.numero_matriz} — {_br(s.data_aplicacao)}",
                 "subtitulo": s.produto,
+                "_data": s.data_aplicacao,
             }
             for s in rows
             if _contem(termo, s.numero_matriz, s.produto) and _dentro_periodo(s.data_aplicacao, data_inicio, data_fim)
         ]
+        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+
+    if tipo == "protocolo_sanitario_lancamento":
+        protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
+        rows = session.exec(select(ProtocoloSanitarioLancamento)).all()
+        aplicacoes_por_lancamento: dict[int, list] = {}
+        for ap in session.exec(select(ProtocoloSanitarioAplicacao)).all():
+            aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+        out = []
+        for l in rows:
+            nome_protocolo = protocolos.get(l.protocolo_id, "—")
+            aps = aplicacoes_por_lancamento.get(l.id, [])
+            realizadas = sum(1 for a in aps if a.realizada)
+            if not _contem(termo, l.numero_matriz, nome_protocolo, l.observacao):
+                continue
+            if not _dentro_periodo(l.data_inicio, data_inicio, data_fim):
+                continue
+            out.append({
+                "id": l.id,
+                "titulo": f"{l.numero_matriz} — {nome_protocolo} — {_br(l.data_inicio)}",
+                "subtitulo": f"{realizadas}/{len(aps)} etapa(s) realizada(s)" + (f" · {l.observacao}" if l.observacao else ""),
+                "_data": l.data_inicio,
+            })
+        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+
+    if tipo == "protocolo_iatf_lancamento":
+        rows = session.exec(select(ProtocoloIatfLancamento)).all()
+        aplicacoes_por_lancamento: dict[int, list] = {}
+        for ap in session.exec(select(ProtocoloIatfAplicacao)).all():
+            aplicacoes_por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+        out = []
+        for l in rows:
+            aps = aplicacoes_por_lancamento.get(l.id, [])
+            realizadas = sum(1 for a in aps if a.realizada)
+            matrizes = sorted({a.numero_matriz for a in aps})
+            if not _contem(termo, l.nome_protocolo, l.observacao, *matrizes):
+                continue
+            if not _dentro_periodo(l.data_d0, data_inicio, data_fim):
+                continue
+            out.append({
+                "id": l.id,
+                "titulo": f"{l.nome_protocolo or 'Protocolo IATF'} — D0 {_br(l.data_d0)}",
+                "subtitulo": f"{len(matrizes)} animal(is) · {realizadas}/{len(aps)} etapa(s) realizada(s)",
+                "_data": l.data_d0,
+            })
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "financeiro":
@@ -175,6 +235,7 @@ def buscar(
                 "titulo": f"{c.numero_lancamento or '(csv)'} — {c.descricao or '—'}",
                 "subtitulo": f"R$ {c.valor_total or 0:,.2f} · {c.fornecedor_cliente or '—'}"
                 + (f" · parcela {c.parcela_num}/{c.parcela_total}" if (c.parcela_total or 1) > 1 else ""),
+                "_data": c.data_vencimento or c.data_competencia or c.data_emissao,
             }
             for c in rows
             if _contem(termo, c.numero_lancamento, c.descricao, c.fornecedor_cliente, c.numero_nota)
@@ -199,6 +260,7 @@ def buscar(
                 "id": ev.id,
                 "titulo": f"{_br(ev.data_evento)} — {ev.descricao}",
                 "subtitulo": ev.categoria,
+                "_data": ev.data_evento,
             }
             for ev in rows
             if _contem(termo, ev.descricao, ev.numero_animal) and _dentro_periodo(ev.data_evento, data_inicio, data_fim)
@@ -271,6 +333,37 @@ def buscar(
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 
 
+@router.get("/buscar")
+def buscar(
+    tipo: str = Query(...),
+    termo: str = Query(""),
+    data_inicio: str = Query(""),
+    data_fim: str = Query(""),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    """Lista candidatos a exclusão. O tipo especial "todos_lancamentos" combina todos os
+    tipos de lançamento com data (serviço, parto, controle, sanidade, protocolos, evento
+    manual, financeiro) numa única lista em ordem decrescente — para achar um registro que
+    não constou em nenhuma das opções específicas. Cada item carrega "tipo_real" para que
+    a exclusão seja roteada ao tipo de origem de fato."""
+    if tipo != "todos_lancamentos":
+        out = _buscar_um(tipo, termo, data_inicio, data_fim, session)
+        for item in out:
+            item.pop("_data", None)
+        return out
+
+    combinados: list[dict] = []
+    for subtipo in SUBTIPOS_TODOS:
+        for item in _buscar_um(subtipo, termo, data_inicio, data_fim, session):
+            item["tipo_real"] = subtipo
+            combinados.append(item)
+
+    combinados.sort(key=lambda x: x.get("_data") or date.min, reverse=True)
+    for item in combinados:
+        item.pop("_data", None)
+    return combinados[:300]
+
+
 def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados)."""
     if tipo == "animal":
@@ -315,6 +408,67 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         if not s:
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         return [f"Aplicação de {s.produto} em {s.numero_matriz}"], [s]
+
+    if tipo == "protocolo_sanitario_lancamento":
+        lancamento = session.get(ProtocoloSanitarioLancamento, int(id_))
+        if not lancamento:
+            raise HTTPException(status_code=404, detail="Lançamento de protocolo não encontrado")
+        aplicacoes = session.exec(
+            select(ProtocoloSanitarioAplicacao).where(ProtocoloSanitarioAplicacao.lancamento_id == lancamento.id)
+        ).all()
+        # Registros de Sanidade gerados ao confirmar cada etapa — vinculados pela FK
+        # (lançamentos criados após esta correção) ou, em lançamentos mais antigos sem
+        # o vínculo, localizados heuristicamente por matriz + prefixo do texto de
+        # observação que a confirmação grava ("Protocolo sanitário — D...").
+        sanidades = session.exec(
+            select(Sanidade).where(Sanidade.protocolo_sanitario_lancamento_id == lancamento.id)
+        ).all()
+        if not sanidades:
+            candidatas = session.exec(
+                select(Sanidade).where(
+                    Sanidade.numero_matriz == lancamento.numero_matriz,
+                    Sanidade.data_aplicacao >= lancamento.data_inicio,
+                )
+            ).all()
+            sanidades = [s for s in candidatas if (s.obs or "").startswith("Protocolo sanitário — D")]
+        protocolo = session.get(ProtocoloSanitario, lancamento.protocolo_id)
+        impacto = [f"Lançamento do protocolo {protocolo.nome if protocolo else '—'} em {lancamento.numero_matriz} ({_br(lancamento.data_inicio)})"]
+        if aplicacoes:
+            impacto.append(f"{len(aplicacoes)} etapa(s) do protocolo (agenda)")
+        if sanidades:
+            impacto.append(f"{len(sanidades)} aplicação(ões) já registrada(s) em Sanidade")
+        return impacto, [lancamento, *aplicacoes, *sanidades]
+
+    if tipo == "protocolo_iatf_lancamento":
+        lancamento = session.get(ProtocoloIatfLancamento, int(id_))
+        if not lancamento:
+            raise HTTPException(status_code=404, detail="Lançamento de protocolo IATF não encontrado")
+        aplicacoes = session.exec(
+            select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.lancamento_id == lancamento.id)
+        ).all()
+        hormonios = session.exec(
+            select(ProtocoloIatfHormonio).where(ProtocoloIatfHormonio.lancamento_id == lancamento.id)
+        ).all()
+        sanidades = session.exec(
+            select(Sanidade).where(Sanidade.protocolo_iatf_lancamento_id == lancamento.id)
+        ).all()
+        if not sanidades:
+            matrizes = {a.numero_matriz for a in aplicacoes}
+            candidatas = session.exec(
+                select(Sanidade).where(
+                    Sanidade.data_aplicacao >= lancamento.data_d0,
+                )
+            ).all()
+            sanidades = [
+                s for s in candidatas
+                if s.numero_matriz in matrizes and (s.obs or "").startswith("Protocolo IATF — D")
+            ]
+        impacto = [f"Lançamento do protocolo IATF {lancamento.nome_protocolo or ''} — D0 {_br(lancamento.data_d0)}"]
+        if aplicacoes:
+            impacto.append(f"{len(aplicacoes)} aplicação(ões) programada(s) (agenda), {len({a.numero_matriz for a in aplicacoes})} animal(is)")
+        if sanidades:
+            impacto.append(f"{len(sanidades)} aplicação(ões) já registrada(s) em Sanidade")
+        return impacto, [lancamento, *aplicacoes, *hormonios, *sanidades]
 
     if tipo == "estoque":
         e = session.get(Estoque, int(id_))

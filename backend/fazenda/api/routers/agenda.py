@@ -615,9 +615,12 @@ def calcular_agenda(
         "proxima_visita_iatf": (result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None) if tem_reproducao else None,
         "proxima_visita_bst": (result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None) if tem_reproducao else None,
         "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
-        "bst_elegiveis": [b.__dict__ for b in result.bst_elegiveis] if tem_reproducao else [],
-        "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
-        "bst_nunca_aplicados": bst_nunca_aplicados if tem_reproducao else [],
+        # "ja_aplicado_antes": indica se o animal já recebeu alguma aplicação de
+        # BST no passado (produto casa MARCADORES_BST em Sanidade) — False =
+        # a próxima aplicação seria a primeira vez desse animal.
+        "bst_elegiveis": [{**b.__dict__, "ja_aplicado_antes": b.numero_matriz in animais_com_bst} for b in result.bst_elegiveis] if tem_reproducao else [],
+        "bst_excluidos": [{**b.__dict__, "ja_aplicado_antes": b.numero_matriz in animais_com_bst} for b in result.bst_excluidos] if tem_reproducao else [],
+        "bst_nunca_aplicados": [{**b, "ja_aplicado_antes": False} for b in bst_nunca_aplicados] if tem_reproducao else [],
         "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
@@ -678,6 +681,7 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
         numero_matriz=lancamento.numero_matriz, data_aplicacao=hoje, produto=produto,
         dose=etapa.dosagem, unidade=etapa.unidade, via=etapa.via, responsavel=lancamento.responsavel,
         obs=f"Protocolo sanitário — D{etapa.dia}" + (f" — {lancamento.observacao}" if lancamento.observacao else ""),
+        protocolo_sanitario_lancamento_id=lancamento.id,
     ))
 
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
@@ -815,6 +819,7 @@ def _marcar_protocolo_iatf_realizado(
                 numero_matriz=ap.numero_matriz, data_aplicacao=hoje, produto=m["produto"],
                 dose=m["dose"], unidade=m["unidade"], via=m["via"], responsavel=responsavel,
                 obs=f"Protocolo IATF — D{dia}",
+                protocolo_iatf_lancamento_id=lancamento_id,
             ))
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
@@ -965,6 +970,49 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
         elif dados.evento_id.startswith("vacina_pre_parto_"):
             _baixar_vacina_pre_parto(session, dados.evento_id)
     return {"marcado": True}
+
+
+class AplicarBstIn(BaseModel):
+    numeros_matriz: list[str]
+    data_aplicacao: date
+    produto: str = "Lactotropin"
+    dose: float | None = None
+    unidade: str | None = None
+    responsavel: str | None = None
+
+
+@router.post("/bst/aplicar")
+def aplicar_bst_lote(
+    dados: AplicarBstIn, session: Session = Depends(get_session),
+) -> dict:
+    """Confirma a aplicação de BST (Lactotropin/Boostin) na visita de hoje para
+    os animais informados — grava um registro de Sanidade por animal (e dá
+    baixa de estoque quando o produto casa com um item cadastrado). A próxima
+    visita (12 dias, ou o intervalo cadastrado em Configurações) recalcula
+    sozinha a partir da data de aplicação mais recente, já usada por /agenda."""
+    from fazenda.rules.parametros import get_param
+
+    for numero in dados.numeros_matriz:
+        session.add(Sanidade(
+            numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
+            dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
+        ))
+        if dados.dose:
+            estoque_item = session.exec(select(Estoque).where(Estoque.nome == dados.produto)).first()
+            if estoque_item and estoque_item.estocavel is not False and dados.unidade and pode_dar_baixa_direta(dados.unidade, estoque_item.unidade):
+                estoque_item.quantidade = (estoque_item.quantidade or 0) - dados.dose
+                if estoque_item.estoque_minimo is not None:
+                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+                estoque_item.atualizado_em = datetime.utcnow()
+                session.add(estoque_item)
+    session.commit()
+
+    intervalo = get_param("intervalo_bst", 12)
+    return {
+        "aplicados": len(dados.numeros_matriz),
+        "intervalo_dias": intervalo,
+        "proxima_aplicacao_calculada": (dados.data_aplicacao + timedelta(days=intervalo)).isoformat(),
+    }
 
 
 def _desmarcar_protocolo_iatf_realizado(session: Session, evento_id: str) -> None:
