@@ -334,8 +334,17 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
         )
 
     itens_doc = dados.get("itens") or []
+    if isinstance(itens_doc, str):
+        itens_doc = [itens_doc]
     itens: list[ItemIn] = []
     for it in itens_doc:
+        # A extração do documento (OCR/LLM) às vezes devolve os itens como
+        # texto solto em vez de objetos {produto, quantidade, ...} — trata
+        # como item único sem preço em vez de quebrar a aprovação.
+        if isinstance(it, str):
+            it = {"produto": it}
+        elif not isinstance(it, dict):
+            continue
         produto = (it.get("produto") or "").strip()
         if not produto:
             continue
@@ -344,7 +353,10 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
             vt = round(it["quantidade"] * it["valor_unitario"], 2)
         itens.append(ItemIn(produto=produto, quantidade=it.get("quantidade"),
                              valor_unitario=it.get("valor_unitario"), valor_total=float(vt or 0)))
-    if not itens:
+    # Sem itens, ou itens sem preço próprio (ex.: vieram como texto solto) —
+    # usa o valor total do documento inteiro num item único, em vez de deixar
+    # o lançamento com valor zero (rejeitado pela validação de valor líquido).
+    if not itens or not sum(i.valor_total for i in itens):
         itens = [ItemIn(produto=forn or "Documento recebido pelo Telegram", valor_total=float(dados.get("valor_total") or 0))]
 
     eh_recibo = dados.get("tipo_documento") == "recibo"
