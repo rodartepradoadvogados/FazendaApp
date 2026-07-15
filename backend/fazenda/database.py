@@ -121,7 +121,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "fornecedor": [("categoria", "VARCHAR")],
     "pessoa": [("salario_base", "FLOAT")],
-    "usuario": [("permissoes", "VARCHAR")],
+    "usuario": [("permissoes", "VARCHAR"), ("paleta", "VARCHAR")],
     "conta_gerencial": [
         ("numero_lancamento", "VARCHAR"),
         ("data_prevista_entrada", "DATE"),

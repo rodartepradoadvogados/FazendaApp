@@ -38,10 +38,14 @@ class EditarUsuario(BaseModel):
     senha: str | None = None
 
 
+class PreferenciasIn(BaseModel):
+    paleta: str | None = None
+
+
 def _publico(u: Usuario) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
-            "permissoes": perms, "ativo": u.ativo}
+            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho"}
 
 
 @router.post("/login")
@@ -106,3 +110,16 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
     session.commit()
     session.refresh(u)
     return _publico(u)
+
+
+@router.put("/preferencias")
+def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+    """Preferências pessoais (ex.: paleta de cores) — cada usuário edita as suas, sem precisar ser admin."""
+    if dados.paleta is not None:
+        if dados.paleta not in ("vinho", "verde"):
+            raise HTTPException(status_code=400, detail="Paleta inválida")
+        user.paleta = dados.paleta
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+    return _publico(user)

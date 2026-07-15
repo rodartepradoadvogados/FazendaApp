@@ -67,7 +67,27 @@ export async function login(username: string, senha: string) {
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
+  // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
+  if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde") {
+    document.documentElement.setAttribute("data-paleta", data.usuario.paleta);
+    localStorage.setItem("paleta", data.usuario.paleta);
+  }
   return data.usuario;
+}
+
+// Preferência pessoal de paleta de cores (Vinho/Verde) — cada usuário guarda a sua.
+export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde") {
+  const res = await fetch(`${API}/auth/preferencias`, {
+    method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify({ paleta }),
+  });
+  if (!res.ok) throw new Error("Erro ao salvar preferência de paleta");
+  const usuario = await res.json();
+  try {
+    const atual = getUsuario();
+    if (atual) localStorage.setItem("usuario", JSON.stringify({ ...atual, ...usuario }));
+  } catch { /* ignore */ }
+  return usuario;
 }
 
 // fetch com token; redireciona ao login se a sessão cair (401).

@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet, Palette } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
@@ -9,9 +9,10 @@ import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro
 import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
+import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -38,6 +39,8 @@ export default function ConfiguracoesPage() {
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
+    // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
+    abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
     // Respeita ?aba=... (ex.: link da Agenda para "Importar dados"), desde que
     // a sub-aba exista e o usuário tenha acesso a ela; senão cai na primeira.
@@ -91,6 +94,7 @@ export default function ConfiguracoesPage() {
         <h1 className="text-2xl font-bold flex items-center gap-2"><Settings size={22} style={{ color: "var(--dourado)" }} /> Configurações</h1>
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
+        {aba === "aparencia" && <div className="px-6"><AparenciaSelector variant="site" /></div>}
         {aba === "cadastro" && <Cadastro aba={cadastroAba} onAbaChange={setCadastroAba} abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba} />}
         {aba === "parametros" && parametrosAba === "gerais" && <ParametrosPage />}
         {aba === "parametros" && parametrosAba === "financeiro" && temFinanceiro && <ParametrosFinanceiros />}

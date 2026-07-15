@@ -28,11 +28,11 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" suppressHydrationWarning>
       <head>
-        {/* Aplica o tema salvo ANTES de pintar a tela (evita "piscar" o tema
-            errado no carregamento). Padrão: misto. */}
+        {/* Aplica o tema e a paleta salvos ANTES de pintar a tela (evita
+            "piscar" o tema/cor errado no carregamento). Padrão: misto/vinho. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','misto');}})();`,
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){document.documentElement.setAttribute('data-theme','misto');}try{var p=localStorage.getItem('paleta');if(p!=='vinho'&&p!=='verde')p='vinho';document.documentElement.setAttribute('data-paleta',p);}catch(e){document.documentElement.setAttribute('data-paleta','vinho');}})();`,
           }}
         />
       </head>

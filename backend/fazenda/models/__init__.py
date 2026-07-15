@@ -1576,6 +1576,8 @@ class Usuario(SQLModel, table=True):
     permissoes: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Preferência pessoal de paleta de cores — "vinho" (padrão) ou "verde".
+    paleta: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
