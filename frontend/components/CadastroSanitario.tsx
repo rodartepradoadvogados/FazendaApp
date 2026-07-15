@@ -26,7 +26,7 @@ const CRITERIOS: [string, string][] = [
 // Unidades para a etapa do protocolo — restringidas às compatíveis com a
 // unidade de estoque do produto (para a baixa automática funcionar). Sem
 // produto/estoque, oferece a lista padrão.
-const UNIDADES_PADRAO = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
+const UNIDADES_PADRAO = ["ml", "L", "unidade", "dose", "kg", "metro", "saca 30kg", "saca 60kg"];
 const GRUPOS_UNIDADE = [["ml", "unidade", "dose"], ["L", "kg"]];
 // Sinônimos/abreviações legadas (import de planilha, cadastro antigo) que
 // precisam cair no mesmo grupo do valor canônico — senão o item some das

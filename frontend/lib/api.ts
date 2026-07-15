@@ -927,6 +927,20 @@ export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório
 // equipamento deles. Sêmen não usa este campo (tabela própria).
 export const FINALIDADES_ESTOQUE = ["Medicamento", "Ração/Alimento", "Material/Insumo", "Equipamento", "Outro"];
 
+// Categoria do item de estoque — mesma lista de fazenda.rules.categorias.CATEGORIAS_FORNECEDOR
+// no backend (o produto e o fornecedor que o vende compartilham a mesma categoria).
+export const CATEGORIAS_ESTOQUE = [
+  "Ração e insumos alimentares",
+  "Sêmen e genética",
+  "Medicamentos e produtos veterinários",
+  "Equipamentos e manutenção",
+  "Combustível e transporte",
+  "Serviços veterinários/técnicos",
+  "Energia e utilidades",
+  "Embalagens e materiais",
+  "Outros",
+];
+
 // Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um
 // protocolo cadastrado por princípio ativo ou classificação. Sem nenhum
 // critério, vira o catálogo geral de medicamento/hormônio/vacina. Por padrão
