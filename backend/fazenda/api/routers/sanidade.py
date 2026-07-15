@@ -387,6 +387,10 @@ class CadastrarPreventivoIn(BaseModel):
     frequencia_unidade: str = "meses"
     animais: list[str] = []                  # animais marcados (individual ou todos)
     aplicar: bool = False                    # também registrar a aplicação do produto padrão
+    # "Já foi aplicado?" — só importa quando `aplicar` é True (vacina/tratamento;
+    # exame não passa por aqui). Quando False, a aplicação vira AplicacaoAgendada
+    # (pendência na Agenda) em vez de Sanidade — idêntico ao toggle de /sanidade/aplicacoes.
+    aplicado: bool = True
     veterinario: str | None = None           # p/ exames
     responsavel: str | None = None
     observacao: str | None = None
@@ -440,6 +444,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
                 data_aplicacao=dados.data_evento, animais=dados.animais,
                 itens=[ItemAplicacaoIn(produto=produto, via=via, quantidade=dose, unidade=unidade)],
                 responsavel=dados.responsavel, observacao=dados.observacao or f"Preventivo: {ev.nome}",
+                aplicado=dados.aplicado,
             ),
             session,
             user,

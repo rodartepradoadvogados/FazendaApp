@@ -921,6 +921,8 @@ export async function excluirCalendarioSanitario(id: number) {
 export type CadastrarPreventivoPayload = {
   evento_sanitario_id: number; categoria_alvo?: string | null; data_evento: string;
   frequencia_valor: number; frequencia_unidade: string; animais: string[]; aplicar?: boolean;
+  // "Já foi aplicado?" — só importa quando aplicar=true; default true (comportamento antigo).
+  aplicado?: boolean;
   veterinario?: string | null; responsavel?: string | null; observacao?: string | null;
   // Overrides opcionais do produto/dose/via/princípio ativo padrão do evento —
   // usados na confirmação inline da Agenda ("dar baixa" sem abrir Lançamentos).
@@ -1153,6 +1155,36 @@ export async function criarControlesLeiteiros(dados: {
   return res.json();
 }
 
+// Baixa um arquivo binário autenticado (o backend exige Bearer token, então não
+// dá pra usar um <a href> direto) — dispara o download no navegador via blob.
+async function baixarArquivoAutenticado(path: string, nomeArquivoFallback: string) {
+  const res = await authFetch(`${API}${path}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar arquivo"); }
+  const blob = await res.blob();
+  const cd = res.headers.get("Content-Disposition") || "";
+  const nome = /filename="?([^"]+)"?/.exec(cd)?.[1] || nomeArquivoFallback;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nome;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export function baixarModeloControleLeiteiro(modo: "animal" | "lote") {
+  return baixarArquivoAutenticado(
+    `/producao/controle-leiteiro/modelo-excel?modo=${modo}`,
+    `modelo_controle_leiteiro_${modo}.xlsx`,
+  );
+}
+
+export async function importarControleLeiteiroPlanilha(file: File): Promise<{ criados: number; erros: string[]; modo: "animal" | "lote" }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/producao/controle-leiteiro/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  return res.json();
+}
+
 // ── Pesagem corporal (peso vivo) ──
 export async function criarPesagensCorporais(dados: {
   data_pesagem: string;
@@ -1179,6 +1211,18 @@ export async function criarQualidadeLeite(dados: {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar qualidade do leite"); }
+  return res.json();
+}
+
+export function baixarModeloQualidadeLeite() {
+  return baixarArquivoAutenticado("/producao/qualidade-leite/modelo-excel", "modelo_qualidade_leite.xlsx");
+}
+
+export async function importarQualidadeLeitePlanilha(file: File): Promise<{ criados: number; erros: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/producao/qualidade-leite/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
   return res.json();
 }
 

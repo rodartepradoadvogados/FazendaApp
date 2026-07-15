@@ -3,7 +3,7 @@ import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
-  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check,
+  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check, Download,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
@@ -15,6 +15,7 @@ import {
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
   fetchApresentacoesFarmacia, fetchTouros,
   fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
+  baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -1237,8 +1238,63 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
   );
 }
 
+// Upload de planilha (Excel/.xlsx ou CSV) — usado tanto em Controle leiteiro
+// (por animal ou por lote, um botão de modelo cada) quanto em Qualidade do
+// leite (um modelo só). O parser do backend identifica o formato sozinho.
+function UploadPlanilha({ modelos, onImportar }: {
+  modelos: { label: string; baixar: () => Promise<void> }[];
+  onImportar: (file: File) => Promise<{ criados: number; erros: string[] }>;
+}) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [enviando, setEnviando] = useState(false);
+  const [resultado, setResultado] = useState<{ criados: number; erros: string[] } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function importar() {
+    if (!arquivo) return;
+    setEnviando(true); setErro(null); setResultado(null);
+    try {
+      const r = await onImportar(arquivo);
+      setResultado(r);
+      setArquivo(null);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao importar planilha");
+    } finally {
+      setEnviando(false);
+    }
+  }
+
+  return (
+    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+      <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Importar de planilha (Excel ou CSV)</p>
+      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+        {modelos.map((m) => (
+          <button key={m.label} type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => m.baixar().catch(() => setErro("Erro ao baixar o modelo."))}>
+            <Download size={13} /> {m.label}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+        <input type="file" accept=".xlsx,.xlsm,.csv" onChange={(e) => { setArquivo(e.target.files?.[0] || null); setResultado(null); setErro(null); }} style={{ fontSize: "0.8rem" }} />
+        <button type="button" className="btn-primary" disabled={!arquivo || enviando} onClick={importar}>{enviando ? "Importando…" : "Importar"}</button>
+      </div>
+      {resultado && (
+        <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: resultado.erros.length ? "var(--amber)" : "var(--green-light)" }}>
+          {resultado.criados} lançamento(s) criado(s){resultado.erros.length ? ` — ${resultado.erros.length} linha(s) com erro:` : "."}
+          {resultado.erros.length > 0 && (
+            <ul style={{ marginTop: "0.3rem", paddingLeft: "1.1rem", color: "var(--text-muted)" }}>
+              {resultado.erros.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
+            </ul>
+          )}
+        </p>
+      )}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
+    </div>
+  );
+}
+
 function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact: string[] }) {
-  const [modo, setModo] = useState<"vaca" | "lote">("vaca");
+  const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
   const [vaca, setVaca] = useState("");
   const [lote, setLote] = useState("");
   const [nOrd, setNOrd] = useState(2);
@@ -1297,20 +1353,24 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
           <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
             <option value="vaca">Por vaca</option>
             <option value="lote">Por lote</option>
+            <option value="planilha">Importar de planilha</option>
           </select>
         </Campo>
-        <Campo label="Nº de ordenhas">
-          <select style={inputStyle} value={nOrd} onChange={(e) => setNOrd(Number(e.target.value))}>
-            <option value={2}>2 ordenhas</option>
-            <option value={3}>3 ordenhas</option>
-          </select>
-        </Campo>
-        {modo === "vaca" ? (
+        {modo !== "planilha" && (
+          <Campo label="Nº de ordenhas">
+            <select style={inputStyle} value={nOrd} onChange={(e) => setNOrd(Number(e.target.value))}>
+              <option value={2}>2 ordenhas</option>
+              <option value={3}>3 ordenhas</option>
+            </select>
+          </Campo>
+        )}
+        {modo === "vaca" && (
           <>
             <Campo label="Vaca (só em lactação)"><SelectAnimal animais={animaisLact} value={vaca} onChange={setVaca} placeholder="Selecione a vaca em lactação…" /></Campo>
             <Campo label="DEL (automático)"><input style={{ ...inputStyle, opacity: 0.8 }} value={del != null ? `${del} dias` : "—"} readOnly /></Campo>
           </>
-        ) : (
+        )}
+        {modo === "lote" && (
           <Campo label="Lote">
             <select style={inputStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
               <option value="">Selecione…</option>
@@ -1318,10 +1378,22 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
             </select>
           </Campo>
         )}
-        <Campo label="Data do controle"><input type="date" style={inputStyle} value={dataControle} onChange={(e) => setDataControle(e.target.value)} /></Campo>
+        {modo !== "planilha" && (
+          <Campo label="Data do controle"><input type="date" style={inputStyle} value={dataControle} onChange={(e) => setDataControle(e.target.value)} /></Campo>
+        )}
       </div>
 
-      {modo === "vaca" ? (
+      {modo === "planilha" && (
+        <UploadPlanilha
+          modelos={[
+            { label: "Modelo por animal", baixar: () => baixarModeloControleLeiteiro("animal") },
+            { label: "Modelo por lote", baixar: () => baixarModeloControleLeiteiro("lote") },
+          ]}
+          onImportar={importarControleLeiteiroPlanilha}
+        />
+      )}
+
+      {modo !== "planilha" && (modo === "vaca" ? (
         <div className="mt-3">
           <label style={lbl}>Quilos por ordenha</label>
           <div className="flex gap-3" style={{ flexWrap: "wrap" }}>
@@ -1375,14 +1447,16 @@ function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact:
         </div>
       ) : (
         <p style={nota}>Selecione um lote para ver a listagem de vacas e lançar a pesagem individual de todas de uma vez.</p>
+      ))}
+
+      {modo !== "planilha" && erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {modo !== "planilha" && sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+
+      {modo !== "planilha" && (
+        <div className="flex items-center gap-3 mt-4">
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
       )}
-
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
     </>
   );
 }
@@ -1931,6 +2005,10 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
   const [categoria, setCategoria] = useState("");
   const [animaisCategoria, setAnimaisCategoria] = useState<string[] | null>(null);
   const [realizado, setRealizado] = useState(false);
+  // "Já foi aplicado?" — só para vacina/tratamento (exame usa o checkbox "realizado" abaixo,
+  // já que não existe uma aplicação de produto para exame). Não aplicado ainda vira
+  // pendência (AplicacaoAgendada) em vez de Sanidade — mesmo padrão de FormSanidade.
+  const [aplicado, setAplicado] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
   // Vindo da Agenda ("Dar baixa" de um evento/regra sanitária preventiva): ao
@@ -1991,20 +2069,23 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
       const r = await cadastrarPreventivo({
         evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
         frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
-        animais: numeros, aplicar: !ehExame, veterinario: veterinario || null,
+        animais: numeros, aplicar: !ehExame, aplicado, veterinario: veterinario || null,
       });
-      // "Já foi realizado?" — marca a ocorrência como feita (some da agenda de pendências).
-      if (realizado && r?.regra?.id) {
+      // Para vacina/tratamento, "aplicado" já diz se aconteceu (some da Agenda) ou
+      // não (continua pendente); exame usa o checkbox "realizado" independente.
+      const marcarOcorrenciaFeita = ehExame ? realizado : aplicado;
+      if (marcarOcorrenciaFeita && r?.regra?.id) {
         await marcarEventoRealizado(`calendario_sanitario_${r.regra.id}__${dataEvento}`).catch(() => {});
       }
       // Veio da Agenda (link "Dar baixa") — marca a pendência de origem como
-      // realizada, senão ela continuaria aparecendo mesmo já resolvida.
-      if (eventoAgenda) {
+      // realizada só se de fato foi feito, senão ela deve continuar aparecendo.
+      if (eventoAgenda && marcarOcorrenciaFeita) {
         await marcarEventoRealizado(eventoAgenda).catch(() => {});
         setEventoAgenda(null);
       }
       const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
-      setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
+      const agendado = !ehExame && !aplicado && nApl > 0;
+      setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)${agendado ? " programada(s) na Agenda" : ""}` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
       setAnimaisSel(new Set());
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
     finally { setSalvando(false); }
@@ -2074,9 +2155,18 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
         </div>
       )}
 
-      <label className="flex items-center gap-2 mt-3" style={{ fontSize: "0.8rem" }}>
-        <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
-      </label>
+      {ehExame ? (
+        <label className="flex items-center gap-2 mt-3" style={{ fontSize: "0.8rem" }}>
+          <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
+        </label>
+      ) : (
+        <Campo label="Já foi aplicado?" full>
+          <div className="flex items-center gap-4 mt-1">
+            <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={aplicado} onChange={() => setAplicado(true)} /> Sim — aplicar e baixar o estoque agora</label>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", cursor: "pointer" }}><input type="radio" checked={!aplicado} onChange={() => setAplicado(false)} /> Não — só programar na Agenda</label>
+          </div>
+        </Campo>
+      )}
 
       {msg && <p style={{ fontSize: "0.8rem", marginTop: "0.6rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</p>}
       <div className="flex items-center gap-3 mt-3">
@@ -2827,7 +2917,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
 }
 
 function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
-  const [alvo, setAlvo] = useState<"tanque" | "vaca">("tanque");
+  const [alvo, setAlvo] = useState<"tanque" | "vaca" | "planilha">("tanque");
   const [matriz, setMatriz] = useState("");
   const [dataColeta, setDataColeta] = useState(() => new Date().toISOString().slice(0, 10));
   const [ccs, setCcs] = useState("");
@@ -2870,38 +2960,49 @@ function FormQualidadeLeite({ animais }: { animais: AnimalRow[] }) {
 
   return (
     <>
-      <TabBar<"tanque" | "vaca">
+      <TabBar<"tanque" | "vaca" | "planilha">
         abas={[
           { id: "tanque", label: "Todas as vacas em lactação (tanque)", title: "Coleta única representando o rebanho em lactação (amostra do tanque)" },
           { id: "vaca", label: "Uma vaca", title: "Coleta individual de uma vaca" },
+          { id: "planilha", label: "Importar de planilha", title: "Lançar várias coletas de uma vez, a partir de uma planilha (Excel ou CSV)" },
         ]}
         ativa={alvo}
         onChange={setAlvo}
       />
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        {alvo === "vaca" && <Campo label="Vaca" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>}
-        <Campo label="Data da coleta"><input type="date" style={inputStyle} value={dataColeta} onChange={(e) => setDataColeta(e.target.value)} /></Campo>
-      </div>
 
-      <Secao>Índices de qualidade</Secao>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-        <Campo label="CCS (mil céls./mL)"><input type="number" inputMode="decimal" style={inputStyle} value={ccs} onChange={(e) => setCcs(e.target.value)} /></Campo>
-        <Campo label="CBT (mil UFC/mL)"><input type="number" inputMode="decimal" style={inputStyle} value={cbt} onChange={(e) => setCbt(e.target.value)} /></Campo>
-        <Campo label="Gordura (%)"><input type="number" inputMode="decimal" style={inputStyle} value={gordura} onChange={(e) => setGordura(e.target.value)} /></Campo>
-        <Campo label="Proteína (%)"><input type="number" inputMode="decimal" style={inputStyle} value={proteina} onChange={(e) => setProteina(e.target.value)} /></Campo>
-        <Campo label="Sólidos totais — ST (%)"><input type="number" inputMode="decimal" style={inputStyle} value={solidosTotais} onChange={(e) => setSolidosTotais(e.target.value)} /></Campo>
-        <Campo label="ESD (%)"><input type="number" inputMode="decimal" style={inputStyle} value={esd} onChange={(e) => setEsd(e.target.value)} /></Campo>
-        <Campo label="Lactose (%) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={lactose} onChange={(e) => setLactose(e.target.value)} /></Campo>
-        <Campo label="NUL / ureia (mg/dL) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={nul} onChange={(e) => setNul(e.target.value)} /></Campo>
-      </div>
-      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.4rem" }}>Todos os índices são opcionais — preencha só os que o laudo trouxer.</p>
-      <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+      {alvo === "planilha" ? (
+        <UploadPlanilha
+          modelos={[{ label: "Baixar modelo", baixar: baixarModeloQualidadeLeite }]}
+          onImportar={importarQualidadeLeitePlanilha}
+        />
+      ) : (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {alvo === "vaca" && <Campo label="Vaca" full><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>}
+            <Campo label="Data da coleta"><input type="date" style={inputStyle} value={dataColeta} onChange={(e) => setDataColeta(e.target.value)} /></Campo>
+          </div>
 
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-      <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
+          <Secao>Índices de qualidade</Secao>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+            <Campo label="CCS (mil céls./mL)"><input type="number" inputMode="decimal" style={inputStyle} value={ccs} onChange={(e) => setCcs(e.target.value)} /></Campo>
+            <Campo label="CBT (mil UFC/mL)"><input type="number" inputMode="decimal" style={inputStyle} value={cbt} onChange={(e) => setCbt(e.target.value)} /></Campo>
+            <Campo label="Gordura (%)"><input type="number" inputMode="decimal" style={inputStyle} value={gordura} onChange={(e) => setGordura(e.target.value)} /></Campo>
+            <Campo label="Proteína (%)"><input type="number" inputMode="decimal" style={inputStyle} value={proteina} onChange={(e) => setProteina(e.target.value)} /></Campo>
+            <Campo label="Sólidos totais — ST (%)"><input type="number" inputMode="decimal" style={inputStyle} value={solidosTotais} onChange={(e) => setSolidosTotais(e.target.value)} /></Campo>
+            <Campo label="ESD (%)"><input type="number" inputMode="decimal" style={inputStyle} value={esd} onChange={(e) => setEsd(e.target.value)} /></Campo>
+            <Campo label="Lactose (%) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={lactose} onChange={(e) => setLactose(e.target.value)} /></Campo>
+            <Campo label="NUL / ureia (mg/dL) — opcional"><input type="number" inputMode="decimal" style={inputStyle} value={nul} onChange={(e) => setNul(e.target.value)} /></Campo>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.4rem" }}>Todos os índices são opcionais — preencha só os que o laudo trouxer.</p>
+          <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
+
+          {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+          {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+          <div className="flex items-center gap-3 mt-4">
+            <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+          </div>
+        </>
+      )}
     </>
   );
 }

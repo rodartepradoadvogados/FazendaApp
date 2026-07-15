@@ -8,11 +8,12 @@ import calendar
 import re
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.api.routers.lotes import coletar_dados_criterios
+from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
@@ -22,11 +23,13 @@ from fazenda.models import (
     ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.alimentacao import calcular_consumo
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
+from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
@@ -129,6 +132,134 @@ def criar_controles(
         criados.append(registro)
     session.commit()
     return {"criados": len(criados)}
+
+
+# ---------------------------------------------------------------------------
+# Importação de planilha (Excel ou CSV) de controle leiteiro — usada direto na
+# tela de Lançamentos (não é a mesma coisa da CSV genérica de Configurações >
+# Importar dados). O sistema identifica sozinho, pelo cabeçalho, se a planilha
+# é "por animal" (coluna número) ou "por lote" (coluna lote, sem número
+# individual — a pesagem do lote é distribuída igualmente entre os animais
+# hoje naquele lote e grava um ControleLeiteiro por vaca, igual ao lançamento
+# manual "em lote" já existente — nenhuma tabela/relatório precisa mudar).
+# ---------------------------------------------------------------------------
+CONTROLE_LEITEIRO_APELIDOS = {
+    "numero_matriz": ["numero", "numero matriz", "no", "n", "vaca", "animal", "brinco", "id"],
+    "lote": ["lote", "grupo", "pen", "curral"],
+    "data_controle": ["data", "data controle", "data do controle"],
+    "ordenha1_kg": ["primeira ordenha kg", "1 ordenha kg", "ordenha1 kg", "ordenha1"],
+    "ordenha2_kg": ["segunda ordenha kg", "2 ordenha kg", "ordenha2 kg", "ordenha2"],
+    "ordenha3_kg": ["terceira ordenha kg", "3 ordenha kg", "ordenha3 kg", "ordenha3"],
+}
+MODELO_CONTROLE_LEITEIRO_ANIMAL = {
+    "colunas": ["Número", "Data", "Primeira ordenha (kg)", "Segunda ordenha (kg)", "Terceira ordenha (kg)", "Total"],
+    "exemplo": ["464", "05/07/2026", "14,5", "13,0", "", "27,5"],
+}
+MODELO_CONTROLE_LEITEIRO_LOTE = {
+    "colunas": ["Lote", "Data", "Primeira ordenha (kg)", "Segunda ordenha (kg)", "Terceira ordenha (kg)", "Total"],
+    "exemplo": ["01 - Lactação Alta", "05/07/2026", "320,0", "290,0", "", "610,0"],
+}
+
+
+def _xlsx_response(colunas: list[str], exemplo: list[str], aba: str, nome_arquivo: str) -> Response:
+    conteudo = gerar_modelo_xlsx(colunas, exemplo, aba=aba)
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
+    )
+
+
+@router.get("/controle-leiteiro/modelo-excel")
+def modelo_excel_controle_leiteiro(modo: str = "animal") -> Response:
+    modelo = MODELO_CONTROLE_LEITEIRO_LOTE if modo == "lote" else MODELO_CONTROLE_LEITEIRO_ANIMAL
+    nome = "modelo_controle_leiteiro_lote.xlsx" if modo == "lote" else "modelo_controle_leiteiro_animal.xlsx"
+    return _xlsx_response(modelo["colunas"], modelo["exemplo"], "Controle leiteiro", nome)
+
+
+def _resolver_lote(session: Session, valor: str) -> Lote | None:
+    valor = (valor or "").strip()
+    if not valor:
+        return None
+    codigo_extraido = _codigo_do_grupo(valor) or valor
+    lotes = session.exec(select(Lote)).all()
+    for l in lotes:
+        if _mesmo_codigo(l.codigo, codigo_extraido):
+            return l
+    valor_norm = valor.lower()
+    for l in lotes:
+        if l.nome.lower() == valor_norm:
+            return l
+    return None
+
+
+@router.post("/controle-leiteiro/importar")
+async def importar_controle_leiteiro(
+    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    content = await file.read()
+    linhas = list(iter_planilha_rows(file.filename or "", content))
+    if not linhas:
+        return {"criados": 0, "erros": ["Planilha vazia ou em formato não reconhecido."]}
+
+    linhas_norm = [{normalizar_cabecalho(k): v for k, v in row.items()} for row in linhas]
+    cabecalho_norm = set(linhas_norm[0].keys())
+    tem_numero = any(a in cabecalho_norm for a in CONTROLE_LEITEIRO_APELIDOS["numero_matriz"])
+    tem_lote = any(a in cabecalho_norm for a in CONTROLE_LEITEIRO_APELIDOS["lote"])
+    if not tem_numero and not tem_lote:
+        raise HTTPException(
+            status_code=400,
+            detail='Não identifiquei o tipo da planilha — inclua uma coluna "Número" (lançamento por animal) '
+                   'ou "Lote" (lançamento por lote).',
+        )
+
+    erros: list[str] = []
+    por_data: dict[date, list[OrdenhaIn]] = {}
+
+    def _ordenhas(row_norm: dict) -> list[float] | None:
+        o1 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha1_kg"]))
+        o2 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha2_kg"]))
+        o3 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha3_kg"]))
+        if o1 is None and o2 is None and o3 is None:
+            return None
+        return [o1 or 0, o2 or 0, o3 or 0] if o3 is not None else [o1 or 0, o2 or 0]
+
+    if tem_numero:
+        for i, row_norm in enumerate(linhas_norm, start=2):
+            numero = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["numero_matriz"]).strip()
+            data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
+            ordenhas = _ordenhas(row_norm)
+            if not numero or not data_linha or ordenhas is None:
+                erros.append(f"Linha {i}: número, data e ao menos uma ordenha são obrigatórios.")
+                continue
+            por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=numero, ordenhas=ordenhas))
+    else:
+        for i, row_norm in enumerate(linhas_norm, start=2):
+            lote_valor = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["lote"]).strip()
+            data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
+            ordenhas = _ordenhas(row_norm)
+            if not lote_valor or not data_linha or ordenhas is None:
+                erros.append(f"Linha {i}: lote, data e ao menos uma ordenha são obrigatórios.")
+                continue
+            lote = _resolver_lote(session, lote_valor)
+            if not lote:
+                erros.append(f'Linha {i}: lote "{lote_valor}" não encontrado no cadastro.')
+                continue
+            rotulo = f"{lote.codigo} - {lote.nome}"
+            animais_lote = session.exec(select(Animal).where(Animal.grupo_primario == rotulo)).all()
+            if not animais_lote:
+                erros.append(f'Linha {i}: lote "{lote_valor}" não tem nenhum animal no momento — pesagem não distribuída.')
+                continue
+            n = len(animais_lote)
+            ordenhas_por_vaca = [round(v / n, 2) for v in ordenhas]
+            for a in animais_lote:
+                por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, ordenhas=ordenhas_por_vaca))
+
+    criados = 0
+    for dia, entradas in por_data.items():
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user)
+        criados += resultado["criados"]
+    return {"criados": criados, "erros": erros, "modo": "animal" if tem_numero else "lote"}
 
 
 class PesoIn(BaseModel):
@@ -287,6 +418,70 @@ def criar_qualidade_leite(
     session.commit()
     session.refresh(registro)
     return registro.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Importação de planilha (Excel ou CSV) de qualidade do leite — atalho direto
+# na tela de Lançamentos (distinto do CSV genérico de Configurações > Importar
+# dados). Tolera cabeçalhos variados (mesmos apelidos usados lá).
+# ---------------------------------------------------------------------------
+QUALIDADE_LEITE_APELIDOS = {
+    "numero_matriz": ["numero matriz", "numero", "vaca", "animal", "id", "brinco"],
+    "data_coleta": ["data coleta", "data", "data da coleta", "coleta"],
+    "ccs": ["ccs", "ccs mil ml", "ccs x1000", "celulas somaticas"],
+    "cbt": ["cbt", "cpp", "cbt mil ufc ml", "contagem bacteriana", "ufc"],
+    "gordura_pct": ["gordura pct", "gordura", "gordura g", "teor de gordura"],
+    "proteina_pct": ["proteina pct", "proteina", "proteina g", "teor de proteina"],
+    "solidos_totais_pct": ["solidos totais pct", "solidos totais", "est", "extrato seco total"],
+    "esd_pct": ["esd pct", "esd", "extrato seco desengordurado"],
+    "lactose_pct": ["lactose pct", "lactose"],
+    "nul": ["nul", "ureia", "mun", "num", "nitrogenio ureico", "nitrogenio ureico no leite"],
+}
+MODELO_QUALIDADE_LEITE = {
+    "colunas": [
+        "Número (vazio = tanque)", "Data da coleta", "CCS", "CBT", "Gordura (%)", "Proteína (%)",
+        "Sólidos totais (%)", "ESD (%)", "Lactose (%)", "NUL/ureia",
+    ],
+    "exemplo": ["", "05/07/2026", "181", "11", "3,69", "3,42", "12,69", "9,00", "4,69", "14,0"],
+}
+
+
+@router.get("/qualidade-leite/modelo-excel")
+def modelo_excel_qualidade_leite() -> Response:
+    return _xlsx_response(
+        MODELO_QUALIDADE_LEITE["colunas"], MODELO_QUALIDADE_LEITE["exemplo"],
+        "Qualidade do leite", "modelo_qualidade_leite.xlsx",
+    )
+
+
+@router.post("/qualidade-leite/importar")
+async def importar_qualidade_leite_planilha(
+    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    content = await file.read()
+    criados = 0
+    erros: list[str] = []
+    for i, row in enumerate(iter_planilha_rows(file.filename or "", content), start=2):
+        row_norm = {normalizar_cabecalho(k): v for k, v in row.items()}
+        data_coleta = parse_date(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["data_coleta"]))
+        if not data_coleta:
+            erros.append(f"Linha {i}: data da coleta é obrigatória.")
+            continue
+        dados = QualidadeLeiteIn(
+            numero_matriz=valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["numero_matriz"]).strip() or None,
+            data_coleta=data_coleta,
+            ccs=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["ccs"])),
+            cbt=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["cbt"])),
+            gordura_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["gordura_pct"])),
+            proteina_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["proteina_pct"])),
+            solidos_totais_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["solidos_totais_pct"])),
+            esd_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["esd_pct"])),
+            lactose_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["lactose_pct"])),
+            nul=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["nul"])),
+        )
+        criar_qualidade_leite(dados, session, user)
+        criados += 1
+    return {"criados": criados, "erros": erros}
 
 
 class EntregaLeiteMensalIn(BaseModel):
