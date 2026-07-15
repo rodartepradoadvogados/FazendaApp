@@ -10,7 +10,8 @@ from __future__ import annotations
 import csv
 import io
 import re
-from datetime import date
+import unicodedata
+from datetime import date, datetime
 from typing import Any, Iterator
 
 
@@ -30,6 +31,66 @@ def iter_csv_rows(content: bytes) -> Iterator[dict[str, str]]:
         if all(v.strip() == "" for v in row.values()):
             continue
         yield {k.strip(): v.strip() for k, v in row.items()}
+
+
+def _celula_para_texto(v: Any) -> str:
+    if v is None:
+        return ""
+    if isinstance(v, datetime):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, date):
+        return v.strftime("%d/%m/%Y")
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+
+def iter_planilha_rows(nome_arquivo: str, content: bytes) -> Iterator[dict[str, str]]:
+    """
+    Lê linhas de um upload que pode ser Excel (.xlsx/.xlsm) ou CSV — detecta
+    pela extensão do nome do arquivo e itera como dicionários {coluna: valor}
+    (sempre string, célula vazia é ""), no mesmo formato de `iter_csv_rows`,
+    para os dois formatos serem intercambiáveis nos parsers.
+    """
+    if (nome_arquivo or "").lower().endswith((".xlsx", ".xlsm")):
+        import openpyxl
+
+        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        try:
+            linhas = wb.active.iter_rows(values_only=True)
+            try:
+                cabecalho = [_celula_para_texto(c) for c in next(linhas)]
+            except StopIteration:
+                return
+            for valores in linhas:
+                if valores is None or all(v is None or str(v).strip() == "" for v in valores):
+                    continue
+                row: dict[str, str] = {}
+                for idx, col in enumerate(cabecalho):
+                    if not col:
+                        continue
+                    row[col] = _celula_para_texto(valores[idx]) if idx < len(valores) else ""
+                yield row
+        finally:
+            wb.close()
+        return
+    yield from iter_csv_rows(content)
+
+
+def normalizar_cabecalho(s: str) -> str:
+    """Normaliza um nome de coluna p/ comparação tolerante: sem acento, minúsculo,
+    só letras/números separados por espaço (ex.: '1ª Ordenha (Kg)' -> '1 ordenha kg')."""
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()
+
+
+def valor_por_apelido(row_norm: dict[str, str], apelidos: list[str]) -> str:
+    """Busca o valor de uma coluna por uma lista de nomes alternativos já
+    normalizados (ver `normalizar_cabecalho`) — tolera cabeçalhos variados."""
+    for ap in apelidos:
+        if ap in row_norm and (row_norm[ap] or "").strip() != "":
+            return row_norm[ap]
+    return ""
 
 
 def parse_date(value: str) -> date | None:

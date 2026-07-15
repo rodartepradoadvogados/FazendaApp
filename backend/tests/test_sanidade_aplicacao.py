@@ -235,3 +235,57 @@ class TestAplicadoSimNao:
         assert r.json()["programado"] is False
         item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
         assert item["quantidade"] == 990
+
+
+class TestPreventivoAplicadoSimNao:
+    """Mesmo toggle 'aplicado? sim/não' do lançamento avulso, agora também no
+    fluxo de Preventivo/calendário sanitário (cadastrar-preventivo) — se não
+    aplicado, vira pendência (AplicacaoAgendada) em vez de Sanidade real."""
+
+    def _criar_evento(self, client) -> int:
+        r = client.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vacina Aftosa", "categoria_preventiva": "vacina",
+            "produto_padrao": "Vacina X", "dose_padrao": 2, "unidade_padrao": "unidade", "via_padrao": "IM",
+        })
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def test_preventivo_nao_aplicado_nao_baixa_e_vira_pendencia(self, client):
+        from datetime import date
+        ev_id = self._criar_evento(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "aplicar": True, "aplicado": False,
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["aplicacao"]["programado"] is True
+        # Estoque intacto — nada foi baixado.
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
+        assert item["quantidade"] == 20
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
+
+    def test_preventivo_aplicado_baixa_na_hora(self, client):
+        from datetime import date
+        ev_id = self._criar_evento(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "aplicar": True, "aplicado": True,
+        })
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["aplicacao"]["programado"] is False
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
+        assert item["quantidade"] == 18  # baixou 2
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 1
+
+    def test_preventivo_aplicado_default_true_retrocompativel(self, client):
+        """Sem enviar 'aplicado' no payload (clientes antigos), comportamento
+        continua sendo aplicar de verdade — igual a antes desta feature."""
+        from datetime import date
+        ev_id = self._criar_evento(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"], "aplicar": True,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["aplicacao"]["programado"] is False
