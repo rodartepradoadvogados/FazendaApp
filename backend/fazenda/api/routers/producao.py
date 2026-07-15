@@ -736,9 +736,12 @@ class SecagemIn(BaseModel):
     # aplicado (ou a data é futura), não baixa estoque agora — vira uma
     # aplicação programada na Agenda, que baixa ao confirmar.
     aplicado: bool = True
-    # Vacina(s) pré-parto escolhidas (sim/não + quais) — nunca aplicadas na
-    # hora; sempre viram pendência na Agenda para o dia seguinte à secagem.
+    # Vacina(s) pré-parto escolhidas (sim/não + quais). Por padrão viram
+    # pendência na Agenda para o dia seguinte à secagem; se o funcionário já
+    # aplicou na hora (vacina_pre_parto_aplicada_agora=True), gera Sanidade +
+    # baixa de estoque direto, sem duplicar a pendência na Agenda.
     vacinas_pre_parto: list[str] = []
+    vacina_pre_parto_aplicada_agora: bool = False
 
 
 @router.post("/secagem")
@@ -804,9 +807,24 @@ def registrar_secagem(
     if dados.produtos and not materializar:
         avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
 
-    # Vacina(s) pré-parto: nunca aplica na hora — sempre vira pendência na
-    # Agenda para o dia seguinte à secagem (o funcionário aplica e dá baixa lá).
-    if dados.vacinas_pre_parto:
+    # Vacina(s) pré-parto: por padrão vira pendência na Agenda para o dia
+    # seguinte à secagem. Se já foi aplicada na hora (mesmo lançamento), grava
+    # direto em Sanidade e dá baixa de estoque — sem duplicar na Agenda.
+    if dados.vacinas_pre_parto and dados.vacina_pre_parto_aplicada_agora:
+        for vacina in dados.vacinas_pre_parto:
+            session.add(Sanidade(
+                numero_matriz=dados.numero_matriz, data_aplicacao=dados.data_secagem, produto=vacina,
+                dose=1, unidade="dose", responsavel=dados.responsavel, atividade="Vacina pré-parto",
+            ))
+            estoque_item = session.exec(select(Estoque).where(Estoque.nome == vacina)).first()
+            if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta("dose", estoque_item.unidade):
+                estoque_item.quantidade = (estoque_item.quantidade or 0) - 1
+                if estoque_item.estoque_minimo is not None:
+                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
+                estoque_item.atualizado_em = datetime.utcnow()
+                session.add(estoque_item)
+        avisos.append("Vacina(s) pré-parto registrada(s) em Sanidade e baixada(s) do estoque.")
+    elif dados.vacinas_pre_parto:
         data_vacina = dados.data_secagem + timedelta(days=1)
         for vacina in dados.vacinas_pre_parto:
             session.add(AplicacaoAgendada(

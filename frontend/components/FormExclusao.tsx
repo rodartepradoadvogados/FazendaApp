@@ -11,7 +11,7 @@ const inputStyle: React.CSSProperties = {
   border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
 };
 
-type Candidato = { id: string; titulo: string; subtitulo: string };
+type Candidato = { id: string; titulo: string; subtitulo: string; tipo_real?: string };
 type Tipo = { id: string; label: string };
 type Pendente = { id: number; tipo: string; id_alvo: string; titulo: string | null; solicitado_por: string | null; criado_em: string };
 
@@ -33,6 +33,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   const [msg, setMsg] = useState<string | null>(null);
 
   const [alvo, setAlvo] = useState<Candidato | null>(null);
+  const [tipoAlvo, setTipoAlvo] = useState<string>("");
   const [impacto, setImpacto] = useState<string[] | null>(null);
   const [carregandoImpacto, setCarregandoImpacto] = useState(false);
   const [excluindo, setExcluindo] = useState(false);
@@ -90,8 +91,9 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   }, [tipo, termo, dataInicio, dataFim]);
 
   const escolher = async (c: Candidato) => {
-    setAlvo(c); setImpacto(null); setErro(null); setMsg(null); setCarregandoImpacto(true);
-    try { setImpacto((await impactoExclusao(tipo, String(c.id))).impacto); }
+    const tipoReal = c.tipo_real || tipo;
+    setAlvo(c); setTipoAlvo(tipoReal); setImpacto(null); setErro(null); setMsg(null); setCarregandoImpacto(true);
+    try { setImpacto((await impactoExclusao(tipoReal, String(c.id))).impacto); }
     catch (e: any) { setErro(e.message); setAlvo(null); }
     finally { setCarregandoImpacto(false); }
   };
@@ -100,7 +102,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
     if (!alvo) return;
     setExcluindo(true); setErro(null);
     try {
-      const r = await confirmarExclusao(tipo, String(alvo.id));
+      const r = await confirmarExclusao(tipoAlvo, String(alvo.id));
       setMsg(r.status === "excluido" ? `Excluído: ${alvo.titulo}` : `Solicitação enviada: ${alvo.titulo}. Aguarda aprovação de um administrador.`);
       setAlvo(null); setImpacto(null);
       buscar(tipo, termo, dataInicio, dataFim);
@@ -193,10 +195,13 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
               <thead><tr><th>Registro</th><th></th></tr></thead>
               <tbody>
                 {resultados.map((c) => (
-                  <tr key={c.id}>
+                  <tr key={`${c.tipo_real || tipo}-${c.id}`}>
                     <td>
                       <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>{c.titulo}</div>
-                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{c.subtitulo}</div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                        {c.tipo_real && <span style={{ color: "var(--dourado-light)", fontWeight: 600 }}>{tipos.find((t) => t.id === c.tipo_real)?.label || c.tipo_real} · </span>}
+                        {c.subtitulo}
+                      </div>
                     </td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.75rem" }} onClick={() => escolher(c)}>

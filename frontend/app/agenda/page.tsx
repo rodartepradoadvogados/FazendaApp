@@ -1016,6 +1016,7 @@ export default function AgendaPage() {
                   <ThOrdenavel label="Nº Animal" campo="numero_matriz" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
                   <ThOrdenavel label="Grupo" campo="grupo" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
                   <ThOrdenavel label="DEL" campo="del_dias" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
+                  <ThOrdenavel label="Já tomou BST?" campo="ja_aplicado_antes" coluna={ordBstAptos.coluna} dir={ordBstAptos.dir} ordenar={ordBstAptos.ordenar} />
                   <th></th>
                 </tr></thead>
                 <tbody>
@@ -1024,6 +1025,9 @@ export default function AgendaPage() {
                       <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
+                        {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
+                      </td>
                       <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin)" categoria="Sanidade" /></td>
                     </tr>
                   ))}

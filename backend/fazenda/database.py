@@ -53,7 +53,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT")],
     "dieta_registro_real": [("usuario_id", "INTEGER")],
     "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER")],
-    "sanidade": [("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER")],
+    "sanidade": [
+        ("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER"),
+        ("protocolo_sanitario_lancamento_id", "INTEGER"), ("protocolo_iatf_lancamento_id", "INTEGER"),
+    ],
     "aplicacao_agendada": [("usuario_id", "INTEGER")],
     "entrega_leite_mensal": [("usuario_id", "INTEGER")],
     "vale_funcionario": [("usuario_id", "INTEGER")],

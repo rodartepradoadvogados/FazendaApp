@@ -133,6 +133,16 @@ export async function desmarcarEventoRealizado(eventoId: string) {
   return res.json();
 }
 
+export async function aplicarBstLote(dados: {
+  numeros_matriz: string[]; data_aplicacao: string; produto?: string; dose?: number | null; unidade?: string | null; responsavel?: string;
+}) {
+  const res = await authFetch(`${API}/agenda/bst/aplicar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de BST"); }
+  return res.json();
+}
+
 export async function fetchProtocoloIatfConcluidos() {
   const res = await authFetch(`${API}/agenda/protocolo-iatf/concluidos`, { cache: "no-store" });
   if (!res.ok) throw new Error("Erro ao buscar protocolos IATF concluídos");
@@ -1283,6 +1293,7 @@ export async function criarSecagem(dados: {
   observacao?: string; responsavel?: string; aplicado?: boolean;
   produtos: { produto: string; via?: string; quantidade: number; unidade: string }[];
   vacinas_pre_parto?: string[];
+  vacina_pre_parto_aplicada_agora?: boolean;
 }) {
   const res = await authFetch(`${API}/producao/secagem`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

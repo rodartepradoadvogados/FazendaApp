@@ -891,6 +891,10 @@ class Sanidade(SQLModel, table=True):
     obs: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Origem da aplicação quando veio da confirmação de um protocolo agrupado —
+    # permite excluir o lançamento inteiro (protocolo + agenda + Sanidade) de uma vez.
+    protocolo_sanitario_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_sanitario_lancamento.id")
+    protocolo_iatf_lancamento_id: Optional[int] = Field(default=None, foreign_key="protocolo_iatf_lancamento.id")
 
 
 class AplicacaoAgendada(SQLModel, table=True):

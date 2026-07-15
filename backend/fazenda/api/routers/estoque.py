@@ -177,17 +177,29 @@ def listar_medicamentos(
                 pa_ids_doenca.add(pa.id)
 
     # Finalidade: "secagem" = antimicrobianos intramamários de vaca seca;
-    # "vacina" = biológicos. Casa pela categoria da Farmácia (categoria_software
-    # / eh_biologico) e, como reforço, pelo texto da classificação do estoque.
+    # "vacina" = todos os biológicos; "vacina_pre_parto" = só as vacinas
+    # aplicadas na vaca seca/pré-parto (Clostridiose, Diarreia Neonatal,
+    # Reprodutiva/Leptospirose — primovacinação — e Pasteurelose/Paratifo dos
+    # Bezerros), excluindo biológicos que não são pré-parto (Brucelose,
+    # Tuberculina). Casa pela categoria da Farmácia (categoria_software /
+    # eh_biologico / doença) e, como reforço, pelo texto da classificação do
+    # estoque.
+    DOENCAS_VACINA_PRE_PARTO = {
+        "clostridiose", "diarreia neonatal", "leptospirose", "pasteurelose e paratifo dos bezerros",
+    }
     pa_ids_secagem: set[int] = set()
     pa_ids_vacina: set[int] = set()
-    if finalidade in ("secagem", "vacina"):
+    pa_ids_vacina_pre_parto: set[int] = set()
+    if finalidade in ("secagem", "vacina", "vacina_pre_parto"):
+        doencas_por_id = {d.id: (d.nome or "").strip().lower() for d in session.exec(select(Doenca)).all()}
         for pa in session.exec(select(PrincipioAtivo)).all():
             cat = (getattr(pa, "categoria_software", "") or "").lower()
             if ("vaca seca" in cat) or ("intramamario" in _sem_acento(cat)):
                 pa_ids_secagem.add(pa.id)
             if getattr(pa, "eh_biologico", False) or "vacina" in cat:
                 pa_ids_vacina.add(pa.id)
+            if getattr(pa, "eh_biologico", False) and doencas_por_id.get(pa.doenca_id) in DOENCAS_VACINA_PRE_PARTO:
+                pa_ids_vacina_pre_parto.add(pa.id)
 
     itens = session.exec(select(Estoque)).all()
     saida = []
@@ -213,6 +225,8 @@ def listar_medicamentos(
             classe = (e.classificacao_medicamento or "").lower()
             if e.principio_ativo_id not in pa_ids_vacina and "vacina" not in classe:
                 continue
+        if finalidade == "vacina_pre_parto" and e.principio_ativo_id not in pa_ids_vacina_pre_parto:
+            continue
         # Saldo None = item nunca inventariado (não é a mesma coisa que
         # confirmadamente zerado) — só esconde quando o saldo é conhecido e
         # <= 0, para não sumir com itens legados sem saldo lançado ainda.
