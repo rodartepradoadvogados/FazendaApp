@@ -135,6 +135,53 @@ def test_documento_pergunta_e_lanca_despesa(client):
         assert p.status == "aprovado"
 
 
+def test_aprovar_despesa_com_itens_em_texto_solto(client, monkeypatch):
+    """Bug relatado: a extração do documento às vezes devolve "itens" como uma
+    lista de textos soltos (ex.: ["Impressora", "Brother"]) em vez de objetos
+    {produto, quantidade, ...} — isso derrubava a aprovação com
+    "'str' object has no attribute 'get'". Aprovar deve funcionar mesmo assim,
+    tratando cada texto como um item sem preço."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+        "tipo_documento": "recibo",
+        "fornecedor_cliente": "Kalunga S.A.",
+        "numero_documento": "0000000071501",
+        "data_emissao": "2026-07-15",
+        "data_pagamento": "2026-07-15",
+        "valor_total": 1355.7,
+        "conta_bancaria": "Banco do Brasil ag 3775-3 cc 3615-3",
+        "itens": ["Impressora", "Brother"],
+        "observacao": None,
+    })
+    with Session(engine) as s:
+        s.add(Fornecedor(nome="Kalunga S.A.", tipo="fornecedor"))
+        s.commit()
+
+    upd_msg = {"message": {"chat": {"id": CHAT}, "document": {"file_id": "FID-ITENS", "file_name": "recibo.pdf", "mime_type": "application/pdf"}}}
+    r = c.post("/telegram/webhook", json=upd_msg, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+
+    upd_cb = {"callback_query": {"id": "cb1", "message": {"chat": {"id": CHAT}}, "data": f"lanc:{pid}:despesa"}}
+    r = c.post("/telegram/webhook", json=upd_cb, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        pendente = s.exec(select(LancamentoPendente)).first()
+
+    import main
+    admin = _criar_admin(engine)
+    main.app.dependency_overrides[get_current_user] = lambda: admin
+    r = c.post(f"/aprovacoes/{pendente.id}/aprovar")
+    assert r.status_code == 200, r.json()
+    with Session(engine) as s:
+        conta = s.exec(select(ContaGerencial)).first()
+        assert conta is not None
+        assert conta.tipo == "despesa"
+        p = s.get(LancamentoPendente, pendente.id)
+        assert p.status == "aprovado"
+
+
 def test_chat_nao_liberado_nao_lanca(client, monkeypatch):
     c, engine, enviados = client
     monkeypatch.setattr(settings, "telegram_allowed_chat_ids", "999")  # CHAT não está liberado
