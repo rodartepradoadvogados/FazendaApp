@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
-  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, formatBRL, formatDate,
+  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, fetchCustoLitroLeite, formatBRL, formatDate,
   criarVale, atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
 } from "@/lib/api";
 import {
@@ -46,22 +46,28 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "compra_venda_animais";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
   { id: "livro", label: "Livro Caixa", icon: BookOpen, desc: "Lançamentos com saldo acumulado" },
-  { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
-];
-const INDICADORES: { id: Rel; label: string; icon: any; desc: string }[] = [
+  { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
+  { id: "custo_litro_leite", label: "Custo p/L de leite", icon: BarChart3, desc: "Custo de alimentação do período dividido pelos litros de leite entregues" },
+  { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_pagar", label: "Contas a pagar", icon: Clock, desc: "Despesas em aberto (sem data de pagamento)" },
   { id: "a_receber", label: "Contas a receber", icon: Clock, desc: "Receitas em aberto (sem data de recebimento)" },
   { id: "pagas", label: "Contas pagas", icon: CheckCircle2, desc: "Despesas já quitadas" },
   { id: "recebidas", label: "Contas recebidas", icon: CheckCircle2, desc: "Receitas já recebidas" },
-  { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
+  { id: "extrato", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
+];
+const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
+  { id: "pagamento", label: "Pagamento", icon: Wallet, desc: "Lançar/quitar uma nota de despesa" },
+  { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
+  { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
+  { id: "folha", label: "Folha de pagamento", icon: Users, desc: "Lançamento e acompanhamento da folha" },
 ];
 const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
@@ -218,14 +224,10 @@ export default function FinanceiroPage() {
   // módulos enquanto Financeiro estiver aberto (mesmo padrão de Lançamentos).
   const subNavTree: SubNavNode[] = useMemo(() => [
     { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    { id: "indicadores-grupo", label: "Indicadores", icon: BarChart3, children: INDICADORES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    { id: "patrimonio-grupo", label: "Patrimônio e ações", icon: Building2, children: [
+    { id: "patrimonio-grupo", label: "Patrimônio", icon: Building2, children: [
       { id: "patrimonio", label: "Patrimônio", icon: Building2 },
-      { id: "pagamento", label: "Pagamento", icon: Wallet },
-      { id: "recebimento", label: "Recebimento", icon: Wallet },
-      { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers },
-      { id: "folha", label: "Folha de pagamento", icon: Users },
     ] },
   ], []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
@@ -438,6 +440,7 @@ export default function FinanceiroPage() {
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
+          : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView /> : <>
         {/* Filtros */}
         <div className="card mb-4">
@@ -1111,13 +1114,15 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
 
 type ItemPatrimonio = {
   id: number; tipo: string | null; nome: string; numero: string | null;
-  atividade_cultura: string | null; placa: string | null; data_imobilizacao: string | null;
+  atividade_cultura: string | null; data_imobilizacao: string | null;
   metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
   quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
+  depreciacao_acumulada: number | null; valor_atual: number | null; vida_util_anos: number | null; inconsistencia: string | null;
 };
+type InconsistenciaPatrimonio = { item: string; numero: string | null; motivo: string };
 
 function PatrimonioView() {
-  const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number } | null>(null);
+  const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   useEffect(() => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); }, []);
 
@@ -1137,20 +1142,32 @@ function PatrimonioView() {
 
   return (
     <>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
         <KPI v={String(dados.total)} l="Itens" />
-        <KPI v={formatBRL(dados.valor_total)} l="Valor total (ativo)" c="var(--dourado-light)" />
+        <KPI v={formatBRL(dados.valor_total)} l="Valor total (histórico)" c="var(--text-muted)" />
+        <KPI v={formatBRL(dados.valor_atual_total)} l="Valor atual (após depreciação)" c="var(--dourado-light)" />
         <KPI v={String(dados.itens.filter((i) => i.data_baixa).length)} l="Com baixa" c="var(--text-muted)" />
       </div>
+      {dados.inconsistencias.length > 0 && (
+        <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+          <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
+          <ul style={{ fontSize: "0.8rem", color: "var(--text-muted)", paddingLeft: "1.2rem" }}>
+            {dados.inconsistencias.map((inc, i) => (
+              <li key={i}>{inc.item}{inc.numero ? ` (Nº ${inc.numero})` : ""}: {inc.motivo}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div className="card">
         <div className="card-header mb-3">Bens</div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead>
               <tr>
-                <th>Tipo</th><th>Nome</th><th>Nº</th><th>Placa</th><th>Imobilização</th>
-                <th>Depreciação</th><th>Vida útil</th><th style={{ textAlign: "right" }}>Vlr. residual</th>
-                <th style={{ textAlign: "right" }}>Qtd.</th><th style={{ textAlign: "right" }}>Vlr. total</th><th>Baixa</th>
+                <th>Tipo</th><th>Nome</th><th>Nº</th><th>Imobilização</th>
+                <th>Método</th><th>Vida útil</th><th style={{ textAlign: "right" }}>Vlr. residual</th>
+                <th style={{ textAlign: "right" }}>Qtd.</th><th style={{ textAlign: "right" }}>Vlr. total</th>
+                <th style={{ textAlign: "right" }}>Depreciação acum.</th><th style={{ textAlign: "right" }}>Valor atual</th><th>Baixa</th>
               </tr>
             </thead>
             <tbody>
@@ -1159,13 +1176,16 @@ function PatrimonioView() {
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
                   <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{i.nome}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.numero || "—"}</td>
-                  <td style={{ fontSize: "0.78rem" }}>{i.placa || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.data_imobilizacao ? formatDate(i.data_imobilizacao) : "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.metodo_depreciacao || "—"}</td>
                   <td style={{ fontSize: "0.78rem" }}>{i.vida_util || "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.valor_residual != null ? formatBRL(i.valor_residual) : "—"}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{i.quantidade ?? "—"} {i.unidade || ""}</td>
                   <td style={{ textAlign: "right", fontWeight: 600, fontSize: "0.83rem" }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>
+                    {i.depreciacao_acumulada != null ? formatBRL(i.depreciacao_acumulada) : <span title={i.inconsistencia || undefined} style={{ color: "var(--amber)" }}>—</span>}
+                  </td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
                   <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
                 </tr>
               ))}
@@ -2530,6 +2550,69 @@ function RmcaView() {
               )}
               {!dados.fisico.itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Sem consumo registrado pela Alimentação no período.</p>}
             </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type CustoLitroLeiteResp = {
+  periodo: { inicio: string; fim: string }; configurado: boolean; tem_entrega: boolean;
+  contas_custo: string[]; litros: number; custo_total: number; custo_por_litro: number | null;
+};
+
+function CustoLitroLeiteView() {
+  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dados, setDados] = useState<CustoLitroLeiteResp | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchCustoLitroLeite(dataInicio, dataFim).then(setDados).catch((e) => setErro(e.message)); }, [dataInicio, dataFim]);
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (
+        <>
+          {!dados.configurado && (
+            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
+                Nenhuma conta gerencial está marcada como custo de alimentação — o custo fica zerado até a configuração ser feita.
+                Marque em <strong>Configurações → Parâmetros financeiros → Conta gerencial</strong>.
+              </p>
+            </div>
+          )}
+          {!dados.tem_entrega && (
+            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
+                Nenhuma entrega mensal de leite cadastrada — sem litros no período, o custo por litro fica indefinido.
+                Lance em <strong>Lançamentos → Produção → Entrega mensal do leite</strong>.
+              </p>
+            </div>
+          )}
+          <div className="card">
+            <div className="card-header mb-3">Custo por litro de leite</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Custo de alimentação do período (mesmas contas marcadas para o RMCA) dividido pelos litros de leite entregues
+              no período (Entrega mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <KPI v={formatBRL(dados.custo_total)} l="Custo de alimentação" c="var(--red)" />
+              <KPI v={`${dados.litros.toLocaleString("pt-BR")} L`} l="Litros entregues" c="var(--dourado-light)" />
+              <KPI v={dados.custo_por_litro != null ? formatBRL(dados.custo_por_litro) : "—"} l="Custo por litro" c="var(--green-light)" />
+            </div>
+            {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
           </div>
         </>
       )}

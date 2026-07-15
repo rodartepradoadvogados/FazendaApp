@@ -9,6 +9,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
+import { PainelLancarBst } from "@/components/PainelLancarBst";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -662,10 +663,11 @@ function RelatoriosBstView() {
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
 
-  useEffect(() => {
+  const carregar = () => {
     fetchRelatorioBst().then((d) => setHistorico(d.aplicacoes)).catch((e) => setErro(e.message));
     fetchAgenda().then(setAgenda).catch(() => setAgenda(null));
-  }, []);
+  };
+  useEffect(() => { carregar(); }, []);
 
   const opcoesLote = useMemo(
     () => Array.from(new Set((historico ?? []).map((r) => r.lote).filter(Boolean))).sort() as string[],
@@ -696,6 +698,8 @@ function RelatoriosBstView() {
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Vacas distintas aplicadas</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{vacasDistintas}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Nunca aplicadas / reanálise</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
       </div>
+
+      <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
 
       <div className="card">
         <div className="card-header mb-2 flex items-center gap-2"><Filter size={14} /> Filtrar histórico</div>
@@ -731,28 +735,6 @@ function RelatoriosBstView() {
             </tbody>
           </table>
         </div>
-      </div>
-
-      <div className="card">
-        <div className="card-header mb-2 flex items-center gap-2" style={{ color: "var(--amber)" }}><Droplets size={14} /> BST nunca aplicadas / para reanálise ({nuncaAplicadas.length})</div>
-        {!nuncaAplicadas.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma vaca nesta condição.</p> : (
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead><tr><th style={th}></th><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th><th style={th}>Motivo</th></tr></thead>
-              <tbody>
-                {nuncaAplicadas.map((b: any) => (
-                  <tr key={b.numero_matriz}>
-                    <td style={td}>{b.requer_reanalise && <span style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--amber)" }} title="Excluída manualmente — revisar" />}</td>
-                    <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
-                    <td style={td}>{b.grupo || "—"}</td>
-                    <td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td>
-                    <td style={{ ...td, color: "var(--text-muted)" }}>{b.motivo_exclusao || "Nunca aplicada — apta na próxima"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
       </div>
     </div>
   );

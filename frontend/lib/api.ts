@@ -134,12 +134,20 @@ export async function desmarcarEventoRealizado(eventoId: string) {
 }
 
 export async function aplicarBstLote(dados: {
-  numeros_matriz: string[]; data_aplicacao: string; produto?: string; dose?: number | null; unidade?: string | null; responsavel?: string;
+  numeros_matriz: string[]; data_aplicacao: string; produto?: string; dose?: number | null; unidade?: string | null; responsavel?: string; aplicado?: boolean;
 }) {
   const res = await authFetch(`${API}/agenda/bst/aplicar`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar aplicação de BST"); }
+  return res.json();
+}
+
+export async function marcarInaptaBst(dados: { numeros_matriz: string[]; inapta?: boolean }) {
+  const res = await authFetch(`${API}/agenda/bst/marcar-inapta`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar animal como inapto"); }
   return res.json();
 }
 
@@ -1516,6 +1524,12 @@ export async function atualizarContaGerencial(id: number, dados: ContaGerencialP
 export async function fetchRmca(dataInicio: string, dataFim: string) {
   const res = await authFetch(`${API}/financeiro/rmca?data_inicio=${dataInicio}&data_fim=${dataFim}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`RMCA error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCustoLitroLeite(dataInicio: string, dataFim: string) {
+  const res = await authFetch(`${API}/financeiro/custo-litro-leite?data_inicio=${dataInicio}&data_fim=${dataFim}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Custo por litro de leite error: ${res.status}`);
   return res.json();
 }
 

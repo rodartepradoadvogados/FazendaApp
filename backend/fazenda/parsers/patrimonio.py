@@ -28,7 +28,6 @@ def parse_patrimonio(content: bytes) -> list[Patrimonio]:
             nome=nome,
             numero=(_get(row, "N° patr", "Nº patr", "N. patr").strip() or None),
             atividade_cultura=(_get(row, "Ativ. cul", "Ativ cul").strip() or None),
-            placa=(_get(row, "Placa").strip() or None),
             data_imobilizacao=parse_date(_get(row, "Dt. imob", "Dt imob")),
             metodo_depreciacao=(_get(row, "Mét. depr", "Met. depr", "Metodo depr").strip() or None),
             vida_util=(_get(row, "Vd. útil", "Vd util", "Vida util").strip() or None),

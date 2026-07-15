@@ -586,7 +586,6 @@ class Patrimonio(SQLModel, table=True):
     nome: str
     numero: Optional[str] = None
     atividade_cultura: Optional[str] = None
-    placa: Optional[str] = None
     data_imobilizacao: Optional[date] = None
     metodo_depreciacao: Optional[str] = None
     vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
@@ -894,6 +893,10 @@ class Sanidade(SQLModel, table=True):
     lote: Optional[str] = None
     atividade: Optional[str] = None
     obs: Optional[str] = None
+    # "curativo" | "preventivo" — distingue o lançamento avulso (Curativa) da
+    # aplicação que veio de uma regra do calendário sanitário (Preventiva).
+    # None (dado legado/importado do CSV) é tratado como "curativo" na leitura.
+    natureza: Optional[str] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     # Origem da aplicação quando veio da confirmação de um protocolo agrupado —
@@ -923,6 +926,9 @@ class AplicacaoAgendada(SQLModel, table=True):
     observacao: Optional[str] = None
     aplicado: bool = Field(default=False, index=True)
     data_aplicacao: Optional[date] = None
+    # "curativo" | "preventivo" — propagado para o Sanidade.natureza quando a
+    # pendência é confirmada (ver _baixar_aplicacao_agendada).
+    natureza: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
