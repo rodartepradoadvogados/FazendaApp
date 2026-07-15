@@ -439,6 +439,12 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-roxo:      #7C3AED;
   --mob-laranja:   #C2410C;
   --mob-amarelo:   #A16207;
+  /* Vinho/verde "fixos" — para a alternância de cor dos cartões (Agenda, Ficha
+     do animal) no modo escuro. Ao contrário de --mob-vinho, NÃO são trocados
+     pelo bloco de paleta "verde" abaixo: o contorno alterna vinho/verde sempre,
+     independentemente da paleta que o usuário escolheu. */
+  --mob-vinho-fixo: #5E1A2E;
+  --mob-verde-fixo: #047857;
 
   min-height: 100dvh;
   background: var(--mob-bg);
@@ -464,6 +470,8 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-roxo:      #A78BFA;
   --mob-laranja:   #FB923C;
   --mob-amarelo:   #FBBF24;
+  --mob-vinho-fixo: #9C3F5F;
+  --mob-verde-fixo: #00E08C;
 }
 
 /* ── PALETA "Verde" no app móvel — mesma dimensão independente do tema
@@ -489,6 +497,26 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 1px solid var(--mob-border);
   border-radius: 16px;
   box-shadow: var(--mob-sombra);
+}
+
+/* Alternância de cor dos cartões em sequência (Agenda, Ficha do animal):
+   .mob-card-a = 1º, 3º, 5º...; .mob-card-b = 2º, 4º, 6º...
+   Claro: A fica branco (igual a .mob-card); B ganha um tom leve da PALETA
+   ativa (vinho ou verde — var(--mob-vinho) já reflete a paleta escolhida),
+   com transparência sobre o branco para não atrapalhar a leitura.
+   Escuro: os dois ficam pretos (--mob-surface); o que muda é o contorno —
+   A sempre vinho, B sempre verde, usando os tokens *-fixo (não seguem a
+   paleta escolhida, conforme pedido). */
+.mob-card-b {
+  background: color-mix(in srgb, var(--mob-vinho) 14%, var(--mob-surface));
+  border-color: color-mix(in srgb, var(--mob-vinho) 32%, var(--mob-border));
+}
+:root[data-theme="escuro"] .mob-card-a {
+  border: 2px solid var(--mob-vinho-fixo);
+}
+:root[data-theme="escuro"] .mob-card-b {
+  background: var(--mob-surface);
+  border: 2px solid var(--mob-verde-fixo);
 }
 
 /* Inputs grandes (dedo no campo, fonte ≥16px para o iPhone não dar zoom). */
@@ -597,3 +625,15 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 
 .mob select.mob-input, .mob input.mob-input, .mob textarea.mob-input { -webkit-appearance: none; appearance: none; }
+
+/* Formulário do site (FormFinanceiro) reaproveitado dentro do app — mesma
+   lógica/campos, só com toque maior (>= 44px) e fonte >= 16px (evita zoom
+   automático do iOS ao focar um campo). */
+.mob-form-embutido input, .mob-form-embutido select, .mob-form-embutido textarea {
+  font-size: 16px !important;
+  padding: 0.7rem 0.8rem !important;
+  min-height: 44px;
+}
+.mob-form-embutido button {
+  min-height: 44px;
+}

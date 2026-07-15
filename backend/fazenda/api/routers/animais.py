@@ -3,7 +3,7 @@ Router de animais — listagem e consulta de animais.
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
@@ -15,6 +15,8 @@ from fazenda.models import (
     Sanidade, Secagem, Servico, Touro,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.parametros import get_param
+from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
 
@@ -270,9 +272,29 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
     baixa = session.exec(select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)).first()
     compra = session.exec(select(CompraAnimal).where(CompraAnimal.numero_animal == numero)).first()
 
+    # Previsão de parto / secagem: gestação em curso = último serviço positivo
+    # (sem perda registrada) posterior ao último parto — mesma regra usada nas
+    # Listas de manejo (relatorios_gerenciais), aqui aplicada a um único animal.
+    previsao_parto = None
+    previsao_secagem = None
+    ultimo_parto_data = partos_dump[-1]["data_parto"] if partos_dump else None
+    servicos_positivos = [
+        s for s in servicos
+        if (s.diagnostico or "").strip().upper() == "POSITIVO" and not s.data_perda_prenhez
+        and s.data_servico and (not ultimo_parto_data or s.data_servico > ultimo_parto_data)
+    ]
+    if servicos_positivos:
+        concepcao = servicos_positivos[-1].data_servico
+        previsao_parto = concepcao + timedelta(days=GESTACAO_DIAS)
+        if (animal.del_dias or 0) > 0:
+            seco = int(get_param("periodo_seco_dias", 60) or 60)
+            previsao_secagem = concepcao + timedelta(days=GESTACAO_DIAS - seco)
+
     return {
         "animal": animal.model_dump(),
         "pai": pai,
+        "previsao_parto": previsao_parto,
+        "previsao_secagem": previsao_secagem,
         "partos": partos_dump,
         "servicos": servicos_dump,
         "protocolos_iatf": _dump(protocolos_iatf),
