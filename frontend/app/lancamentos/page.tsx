@@ -41,7 +41,10 @@ import { Modal } from "@/components/Modal";
 import { CadastroProtocolosSanitarios, CadastroEventosSanitarios } from "@/components/CadastroSanitario";
 import { CadastrarNovaDieta } from "@/components/CadastroAlimentacao";
 
-type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
+type EstoqueItem = {
+  nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;
+  estoque_minimo?: number | null; classificacao_medicamento?: string | null; principio_ativo?: string | null;
+};
 
 /**
  * Tela de Lançamentos — entrada de dados operacionais no sistema.
@@ -1516,6 +1519,15 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
   const [principiosNomes, setPrincipiosNomes] = useState<string[]>([]);
   const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
   const [opcoesPorItem, setOpcoesPorItem] = useState<Record<number, string[]>>({});
+  // Catálogo geral de medicamento/hormônio/vacina (finalidade "Medicamento",
+  // com saldo em estoque) para o modo "Medicamento (todos)" — ração/material/
+  // equipamento não aparecem mais aqui. "Incluir itens sem estoque" resolve o
+  // problema na hora (mesmo padrão do "incluir touros sem estoque").
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
+  const [catalogoMedicamentos, setCatalogoMedicamentos] = useState<string[]>([]);
+  useEffect(() => {
+    fetchMedicamentos({ incluir_sem_estoque: incluirSemEstoque }).then((m: any[]) => setCatalogoMedicamentos(m.map((x) => x.nome))).catch(() => {});
+  }, [incluirSemEstoque]);
   useEffect(() => {
     fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosNomes(d.map((p) => p.nome))).catch(() => {});
     fetchDoencas().then((d: any[]) => setDoencasNomes(d.map((x) => x.nome))).catch(() => {});
@@ -1541,9 +1553,8 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
 
   const toggleLote = (l: string) => setLotesSel((p) => { const s = new Set(p); s.has(l) ? s.delete(l) : s.add(l); return s; });
   // Lista de produtos vem do relatório de sanidade (medicamentos já aplicados),
-  // complementada pelos itens do estoque que ainda não apareceram na sanidade.
-  const nomesEstoque = estoque.map((e) => e.nome);
-  const listaProdutos = Array.from(new Set([...produtos, ...nomesEstoque])).sort();
+  // complementada pelo catálogo geral de medicamento/hormônio/vacina em estoque.
+  const listaProdutos = Array.from(new Set([...produtos, ...catalogoMedicamentos])).sort();
 
   const atualizarItem = (idx: number, patch: Partial<ItemSanidade>) => setItens((p) => {
     const n = [...p]; n[idx] = { ...n[idx], ...patch }; return n;
@@ -1571,7 +1582,7 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
     if (!criterio) { setOpcoesPorItem((o) => ({ ...o, [idx]: [] })); return; }
     const def = itens[idx].definirPor;
     const filtro = def === "principio_ativo" ? { principio_ativo: criterio } : { doenca: criterio };
-    fetchMedicamentos(filtro)
+    fetchMedicamentos({ ...filtro, incluir_sem_estoque: incluirSemEstoque })
       .then((m: any[]) => setOpcoesPorItem((o) => ({ ...o, [idx]: m.map((x) => x.nome) })))
       .catch(() => setOpcoesPorItem((o) => ({ ...o, [idx]: [] })));
   };
@@ -1635,6 +1646,10 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
       </div>
 
       <Secao>Produtos aplicados</Secao>
+      <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.78rem", color: "var(--text-muted)", cursor: "pointer" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Incluir itens sem estoque
+      </label>
       <div className="space-y-3">
         {itens.map((item, idx) => {
           const estoqueItem = estoque.find((e) => e.nome === item.produto);
@@ -1992,7 +2007,7 @@ type EventoPrev = {
 };
 const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", outros: "Outros" };
 
-function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
+function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
   const [dataEvento, setDataEvento] = useState("");
@@ -2034,6 +2049,25 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
 
+  // Produto padrão do evento zerado/negativo/no mínimo — oferece a opção de
+  // escolher um medicamento substituto na hora do lançamento.
+  const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
+  const itemPadrao = evento?.produto_padrao ? estoquePorNome.get(evento.produto_padrao) : undefined;
+  const produtoPadraoBaixo = !!itemPadrao && ((itemPadrao.quantidade ?? 0) <= 0 || (itemPadrao.estoque_minimo != null && (itemPadrao.quantidade ?? 0) < itemPadrao.estoque_minimo));
+  const [usarSubstituto, setUsarSubstituto] = useState(false);
+  const [produtoSubstituto, setProdutoSubstituto] = useState("");
+  const [opcoesSubstituto, setOpcoesSubstituto] = useState<{ nome: string; quantidade?: number | null; unidade?: string | null }[]>([]);
+  useEffect(() => {
+    setUsarSubstituto(false); setProdutoSubstituto(""); setOpcoesSubstituto([]);
+  }, [eventoId]);
+  useEffect(() => {
+    if (!usarSubstituto) return;
+    const filtro = itemPadrao?.classificacao_medicamento ? { classificacao: itemPadrao.classificacao_medicamento }
+      : itemPadrao?.principio_ativo ? { principio_ativo: itemPadrao.principio_ativo } : {};
+    fetchMedicamentos(filtro).then((m: any[]) => setOpcoesSubstituto(m)).catch(() => setOpcoesSubstituto([]));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [usarSubstituto]);
+
   useEffect(() => {
     if (vinculo !== "categoria" || !categoria) { setAnimaisCategoria(null); return; }
     const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === categoria);
@@ -2066,10 +2100,12 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
     if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
     setSalvando(true);
     try {
+      const substituto = usarSubstituto && produtoSubstituto ? estoquePorNome.get(produtoSubstituto) : undefined;
       const r = await cadastrarPreventivo({
         evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
         frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
         animais: numeros, aplicar: !ehExame, aplicado, veterinario: veterinario || null,
+        produto: substituto?.nome, unidade: substituto?.unidade,
       });
       // Para vacina/tratamento, "aplicado" já diz se aconteceu (some da Agenda) ou
       // não (continua pendente); exame usa o checkbox "realizado" independente.
@@ -2121,6 +2157,21 @@ function FormPreventivoAplicacao({ animais, lotes }: { animais: AnimalRow[]; lot
           {!ehExame && evento.produto_padrao && <>Produto padrão: <strong>{evento.produto_padrao}</strong>{evento.dose_padrao != null ? ` (${evento.dose_padrao}${evento.unidade_padrao ? " " + evento.unidade_padrao : ""})` : ""}.</>}
           {ehExame && <span style={{ color: "var(--blue)" }}> Exame — sem baixa de estoque, só agendamento.</span>}
         </p>
+      )}
+      {!ehExame && produtoPadraoBaixo && (
+        <div style={{ marginTop: "0.4rem" }}>
+          <p style={{ fontSize: "0.72rem", color: "var(--amber)", margin: 0 }}>⚠ Estoque de "{evento?.produto_padrao}" zerado, negativo ou no mínimo.</p>
+          <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={usarSubstituto} onChange={(e) => { setUsarSubstituto(e.target.checked); setProdutoSubstituto(""); }} />
+            Selecionar medicamento substituto
+          </label>
+          {usarSubstituto && (
+            <select style={{ ...inputStyle, marginTop: "0.25rem", maxWidth: 320 }} value={produtoSubstituto} onChange={(e) => setProdutoSubstituto(e.target.value)}>
+              <option value="">Selecione o substituto…</option>
+              {opcoesSubstituto.map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
+            </select>
+          )}
+        </div>
       )}
 
       <div style={{ marginTop: "0.85rem" }}>
@@ -2212,7 +2263,7 @@ function BstLancamentoView() {
   );
 }
 
-function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
+function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRow[]; estoque: EstoqueItem[] }) {
   const [protocolos, setProtocolos] = useState<ProtocoloLocal[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
   const [matriz, setMatriz] = useState("");
@@ -2229,6 +2280,8 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
   // Etapas cadastradas por princípio ativo/classificação: escolher o medicamento agora.
   const [escolhasMed, setEscolhasMed] = useState<Record<number, string>>({});
   const [medOpcoes, setMedOpcoes] = useState<Record<number, { nome: string; quantidade?: number | null; unidade?: string | null }[]>>({});
+  // "Incluir itens sem estoque" — mesmo padrão da Inseminação/Sanidade avulsa.
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -2296,17 +2349,53 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
     () => (protocolo?.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") !== "medicamento" && e.id != null),
     [protocolo]
   );
+  // Etapas de produto FIXO (cadastrado direto no protocolo, não por critério)
+  // — pode faltar o medicamento cadastrado; se estiver zerado/negativo/no
+  // mínimo, oferece a opção de escolher um substituto na hora do lançamento.
+  const etapasFixas = useMemo(
+    () => (protocolo?.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") === "medicamento" && e.id != null),
+    [protocolo]
+  );
+  const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
+  const estoqueBaixo = (produto: string) => {
+    const item = estoquePorNome.get(produto);
+    if (!item) return false;
+    const qtd = item.quantidade ?? 0;
+    return qtd <= 0 || (item.estoque_minimo != null && qtd < item.estoque_minimo);
+  };
+  const [substitutosAtivos, setSubstitutosAtivos] = useState<Set<number>>(new Set());
+  const [medOpcoesSubstituto, setMedOpcoesSubstituto] = useState<Record<number, { nome: string; quantidade?: number | null; unidade?: string | null }[]>>({});
+  const toggleSubstituto = (etapaId: number, produtoOriginal: string) => {
+    setSubstitutosAtivos((p) => {
+      const n = new Set(p);
+      if (n.has(etapaId)) {
+        n.delete(etapaId);
+        setEscolhasMed((s) => { const c = { ...s }; delete c[etapaId]; return c; });
+      } else {
+        n.add(etapaId);
+        const item = estoquePorNome.get(produtoOriginal);
+        const filtro = item?.classificacao_medicamento ? { classificacao: item.classificacao_medicamento }
+          : item?.principio_ativo ? { principio_ativo: item.principio_ativo } : {};
+        fetchMedicamentos({ ...filtro, incluir_sem_estoque: incluirSemEstoque })
+          .then((m) => setMedOpcoesSubstituto((o) => ({ ...o, [etapaId]: m as any[] })))
+          .catch(() => setMedOpcoesSubstituto((o) => ({ ...o, [etapaId]: [] })));
+      }
+      return n;
+    });
+  };
   useEffect(() => {
     setEscolhasMed({});
+    setSubstitutosAtivos(new Set());
+    setMedOpcoesSubstituto({});
     if (!protocolo) { setMedOpcoes({}); return; }
     const crit = (protocolo.etapas || []).filter((e) => (e.criterio_tipo || "medicamento") !== "medicamento" && e.id != null);
     if (!crit.length) { setMedOpcoes({}); return; }
     Promise.all(crit.map((e) =>
-      fetchMedicamentos(e.criterio_tipo === "principio_ativo" ? { principio_ativo: e.produto } : e.criterio_tipo === "doenca" ? { doenca: e.produto } : { classificacao: e.produto })
+      fetchMedicamentos({ ...(e.criterio_tipo === "principio_ativo" ? { principio_ativo: e.produto } : e.criterio_tipo === "doenca" ? { doenca: e.produto } : { classificacao: e.produto }), incluir_sem_estoque: incluirSemEstoque })
         .then((m) => [e.id as number, m] as const).catch(() => [e.id as number, [] as any[]] as const)
     )).then((pares) => setMedOpcoes(Object.fromEntries(pares)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [protocoloId]);
+  }, [protocoloId, incluirSemEstoque]);
 
   const cronograma = useMemo(() => {
     if (!protocolo || !dataInicio) return [];
@@ -2333,7 +2422,10 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
         grau_mastite: grauMastite ? Number(grauMastite) : undefined, agente: agente || undefined,
         resultado_cmt: resultadoCmt || undefined,
         tetos_afetados: Array.from(tetosSel),
-        escolhas_medicamento: Object.fromEntries(etapasCriterio.map((e) => [String(e.id), escolhasMed[e.id as number]])),
+        escolhas_medicamento: Object.fromEntries([
+          ...etapasCriterio.map((e) => [String(e.id), escolhasMed[e.id as number]]),
+          ...etapasFixas.filter((e) => substitutosAtivos.has(e.id as number) && escolhasMed[e.id as number]).map((e) => [String(e.id), escolhasMed[e.id as number]]),
+        ]),
       });
       const avisoTxt = (r.avisos && r.avisos.length) ? " ⚠️ " + r.avisos.join(" ") : "";
       setSucesso(`Protocolo "${protocolo.nome}" lançado para ${r.criados} animal(is) — ${protocolo.etapas.length} evento(s) na Agenda por animal.${avisoTxt}`);
@@ -2370,6 +2462,10 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
         {etapasCriterio.length > 0 && (
           <div style={{ gridColumn: "1 / -1", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "0.75rem" }}>
             <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Escolha o medicamento de cada etapa (cadastrada por critério)</p>
+            <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
+              <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+              Incluir itens sem estoque
+            </label>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {etapasCriterio.map((e) => (
                 <div key={e.id}>
@@ -2478,15 +2574,36 @@ function FormProtocoloSanitario({ animais }: { animais: AnimalRow[] }) {
           <table className="fazenda-table">
             <thead><tr><th>Dia</th><th>Data</th><th>Produto</th><th>Dosagem</th><th>Via</th></tr></thead>
             <tbody>
-              {cronograma.map((e, i) => (
-                <tr key={i}>
-                  <td>D{e.dia}</td>
-                  <td>{e.data}</td>
-                  <td>{e.produto}</td>
-                  <td>{e.dosagem} {e.unidade}</td>
-                  <td>{e.via || "—"}</td>
-                </tr>
-              ))}
+              {cronograma.map((e, i) => {
+                const fixa = (e.criterio_tipo || "medicamento") === "medicamento" && e.id != null;
+                const baixo = fixa && estoqueBaixo(e.produto);
+                return (
+                  <tr key={i}>
+                    <td>D{e.dia}</td>
+                    <td>{e.data}</td>
+                    <td>
+                      {e.produto}
+                      {baixo && (
+                        <div style={{ marginTop: "0.3rem" }}>
+                          <p style={{ fontSize: "0.7rem", color: "var(--amber)", margin: 0 }}>⚠ Estoque zerado, negativo ou no mínimo.</p>
+                          <label className="flex items-center gap-2" style={{ fontSize: "0.72rem", color: "var(--text-muted)", cursor: "pointer" }}>
+                            <input type="checkbox" checked={substitutosAtivos.has(e.id as number)} onChange={() => toggleSubstituto(e.id as number, e.produto)} />
+                            Selecionar medicamento substituto
+                          </label>
+                          {substitutosAtivos.has(e.id as number) && (
+                            <select style={{ ...inputStyle, marginTop: "0.25rem" }} value={escolhasMed[e.id as number] || ""} onChange={(ev) => setEscolhasMed((s) => ({ ...s, [e.id as number]: ev.target.value }))}>
+                              <option value="">Selecione o substituto…</option>
+                              {(medOpcoesSubstituto[e.id as number] || []).map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
+                            </select>
+                          )}
+                        </div>
+                      )}
+                    </td>
+                    <td>{e.dosagem} {e.unidade}</td>
+                    <td>{e.via || "—"}</td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
           <p style={nota}>Ao salvar, cria um evento na Agenda por dia — marcar "realizado" dá baixa automática do produto no Estoque.</p>
@@ -2735,6 +2852,7 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
   const [vacinas, setVacinas] = useState<string[]>([]);
   const [aplicarVacinaPreParto, setAplicarVacinaPreParto] = useState(false);
   const [vacinasPreParto, setVacinasPreParto] = useState<string[]>([]);
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -2748,10 +2866,10 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       .finally(() => setCarregandoInfo(false));
   }, [matriz]);
 
-  // Vacinas (pré-parto). Carregadas uma vez.
+  // Vacinas (pré-parto).
   useEffect(() => {
-    fetchMedicamentos({ finalidade: "vacina" }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
-  }, []);
+    fetchMedicamentos({ finalidade: "vacina", incluir_sem_estoque: incluirSemEstoque }).then((d) => setVacinas((d as any[]).map((m) => m.nome))).catch(() => {});
+  }, [incluirSemEstoque]);
 
   const nomesEstoque = estoque.map((e) => e.nome);
   // Produto de secagem é de livre escolha — não trava na lista de "aptos
@@ -2880,6 +2998,10 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       </div>
       {aplicarVacinaPreParto && (
         <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.75rem" }}>
+          <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
+            <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+            Incluir itens sem estoque
+          </label>
           {!vacinas.length && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Nenhuma vacina cadastrada.</p>}
           {vacinas.map((v) => (
             <label key={v} className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer", padding: "0.15rem 0" }}>
@@ -3344,10 +3466,10 @@ export default function LancamentosPage() {
         {sel === "qualidade_leite" && <FormQualidadeLeite animais={animais} />}
         {sel === "entrega_leite" && <FormEntregaLeite />}
         {sel === "sanidade_aplicacao" && <FormSanidade animais={animais} lotes={lotes} estoque={estoque} produtos={produtosSanidade} />}
-        {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} />}
+        {sel === "preventivo_aplicacao" && <FormPreventivoAplicacao animais={animais} lotes={lotes} estoque={estoque} />}
         {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
         {sel === "bst" && <BstLancamentoView />}
-        {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} />}
+        {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
         {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
         {sel === "estoque" && <FormEstoque estoque={estoque} />}

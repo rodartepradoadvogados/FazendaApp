@@ -171,6 +171,10 @@ export default function AgendaPage() {
   // baixa, e somem sozinhos no dia seguinte — por isso vivem numa seção
   // própria, sempre visível, sem passar pelos filtros da agenda cronológica.
   const comunicados = (agenda?.eventos || []).filter((e: any) => e.comunicado);
+  // Estoque negativo/abaixo do mínimo — informação sempre visível (não é uma
+  // pendência que se "resolve", é um alerta que só some quando o saldo normalizar.
+  const estoqueNegativo: any[] = agenda?.estoque_negativo || [];
+  const estoqueAbaixoMinimo: any[] = agenda?.estoque_abaixo_minimo || [];
   const eventosBase = (agenda?.eventos || []).filter((e: any) => {
     if (e.comunicado) return false;
     if (fCat && (e.categoria || "").toLowerCase() !== fCat.toLowerCase()) return false;
@@ -1165,6 +1169,33 @@ export default function AgendaPage() {
         </div>
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
+
+      {/* Estoque — alertas de saldo negativo/abaixo do mínimo. Sempre visível
+          (informação, não pendência a marcar como feita) — some sozinho
+          quando o saldo normalizar. */}
+      {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
+        <div className="card mb-4" style={{ border: "1px solid var(--red)" }}>
+          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--red)" }}>
+            <AlertTriangle size={15} /> Estoque — alertas ({estoqueNegativo.length + estoqueAbaixoMinimo.length})
+          </div>
+          <div className="space-y-2">
+            {estoqueNegativo.map((i) => (
+              <div key={`neg_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)" }}>
+                <span style={{ fontSize: "0.83rem" }}>
+                  <strong>{i.nome}</strong> — saldo <strong style={{ color: "var(--red)" }}>negativo</strong> ({i.quantidade} {i.unidade || ""})
+                </span>
+              </div>
+            ))}
+            {estoqueAbaixoMinimo.map((i) => (
+              <div key={`min_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--amber)" }}>
+                <span style={{ fontSize: "0.83rem" }}>
+                  <strong>{i.nome}</strong> — abaixo do mínimo ({i.quantidade} de {i.estoque_minimo} {i.unidade || ""})
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
           de uma atividade: não têm botão de excluir/realizado, ficam fixos

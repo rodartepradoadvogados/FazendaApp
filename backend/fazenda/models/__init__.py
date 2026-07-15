@@ -603,6 +603,12 @@ class Estoque(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     categoria: Optional[str] = None
+    # Finalidade de uso do item — distinta de `categoria` (texto livre): um
+    # enum fechado (ver rules.categorias.FINALIDADES_ESTOQUE) que decide se o
+    # item pode aparecer nos seletores de "aplicação de medicamento"/hormônio
+    # (Medicamento) ou fica de fora deles (Ração/Alimento, Material/Insumo,
+    # Equipamento, Outro). Sêmen não usa este campo — vive em EstoqueSemen.
+    finalidade: Optional[str] = None
     numero_produto: Optional[str] = None
     nome: str = Field(index=True)
     # Metadados de medicamento — permitem cadastrar/protocolar por princípio

@@ -412,8 +412,61 @@ class TestCadastroPorCriterio:
         assert "Terramicina" in alvo["descricao"]
         c.post("/agenda/realizados", json={"evento_id": alvo["id"]})
 
+    def test_medicamentos_sem_criterio_exclui_itens_nao_medicamento(self, client):
+        """Sem nenhum critério (principio_ativo/classificacao/doenca/finalidade),
+        vira o catálogo geral — ração/material não devem aparecer, só itens
+        marcados como finalidade "Medicamento" (ou com sinal de que são)."""
+        c, engine = client
         with Session(engine) as s:
-            item = s.exec(select(Estoque).where(Estoque.nome == "Terramicina")).first()
-            assert item.quantidade == 95.0  # baixou 5 ml do medicamento escolhido
-            san = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "700")).first()
-            assert san.produto == "Terramicina"
+            s.add(Estoque(nome="Terramicina", quantidade=10, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.add(Estoque(nome="Ração Milho", quantidade=500, unidade="kg", finalidade="Ração/Alimento"))
+            s.commit()
+        r = c.get("/estoque/medicamentos")
+        assert r.status_code == 200
+        nomes = [m["nome"] for m in r.json()]
+        assert "Terramicina" in nomes
+        assert "Ração Milho" not in nomes
+
+    def test_medicamentos_esconde_sem_estoque_por_padrao_e_inclui_com_flag(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Terramicina", quantidade=0, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.commit()
+        r = c.get("/estoque/medicamentos", params={"classificacao": "Antibiótico"})
+        assert [m["nome"] for m in r.json()] == []
+        r2 = c.get("/estoque/medicamentos", params={"classificacao": "Antibiótico", "incluir_sem_estoque": "true"})
+        assert [m["nome"] for m in r2.json()] == ["Terramicina"]
+
+    def test_lancar_com_medicamento_fixo_zerado_aceita_substituto(self, client):
+        """Etapa com produto FIXO (criterio_tipo="medicamento") cujo item está
+        zerado: o front pode mandar um substituto em escolhas_medicamento mesmo
+        essa etapa não sendo "por critério" — a baixa usa o substituto."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Mastite Injetável", quantidade=0, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.add(Estoque(nome="Mastite Injetável 2", quantidade=50, unidade="ml", classificacao_medicamento="Antibiótico"))
+            s.commit()
+        r = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Mastite substituível", "etapas": [_etapa(1, produto="Mastite Injetável", unidade="ml", dosagem=10.0)],
+        })
+        assert r.status_code == 200, r.text
+        pid = r.json()["id"]
+        etapa_id = r.json()["etapas"][0]["id"]
+
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2025-12-01",
+            "escolhas_medicamento": {str(etapa_id): "Mastite Injetável 2"},
+        })
+        assert r.status_code == 201, r.text
+
+        eventos = c.get("/agenda/", params={"data": "2025-12-01", "dias": 60}).json()["eventos"]
+        alvo = next(e for e in eventos if e["id"].startswith("protocolo_sanitario_"))
+        assert "Mastite Injetável 2" in alvo["descricao"]
+
+        r = c.post("/agenda/realizados", json={"evento_id": alvo["id"]})
+        assert r.status_code == 200
+        with Session(engine) as s:
+            substituto = s.exec(select(Estoque).where(Estoque.nome == "Mastite Injetável 2")).first()
+            assert substituto.quantidade == 40.0
+            original = s.exec(select(Estoque).where(Estoque.nome == "Mastite Injetável")).first()
+            assert original.quantidade == 0  # não mexeu no item zerado

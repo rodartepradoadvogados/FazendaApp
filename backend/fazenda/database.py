@@ -71,6 +71,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("a_descartar", "BOOLEAN DEFAULT false"), ("excluir_bst", "BOOLEAN DEFAULT false"),
     ],
     "estoque": [
+        ("finalidade", "VARCHAR"),
         ("unidade_embalagem", "VARCHAR"), ("medida_embalagem", "VARCHAR"), ("quantidade_embalagem", "FLOAT"),
         ("fornecedor_id", "INTEGER"),
         ("ativo", "BOOLEAN"), ("observacao", "VARCHAR"), ("carencia_dias", "INTEGER"),

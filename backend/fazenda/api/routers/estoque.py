@@ -47,6 +47,7 @@ def listar_estoque(session: Session = Depends(get_session)) -> dict:
 class EstoqueIn(BaseModel):
     nome: str
     categoria: str | None = None
+    finalidade: str | None = None
     numero_produto: str | None = None
     unidade: str | None = None
     quantidade: float | None = None
@@ -90,6 +91,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
     item = Estoque(
         nome=dados.nome,
         categoria=dados.categoria,
+        finalidade=dados.finalidade,
         numero_produto=dados.numero_produto,
         unidade=dados.unidade,
         quantidade=dados.quantidade,
@@ -121,20 +123,42 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
     return item.model_dump()
 
 
+def _eh_medicamento(e: Estoque) -> bool:
+    """Item "candidato a medicamento" — usado quando NENHUM critério (princípio
+    ativo/classificação/doença/secagem/vacina) foi passado, para que os
+    seletores gerais de medicamento/hormônio (ex.: EditorHormoniosIatf, "todos"
+    em Sanidade avulsa) não mostrem ração/material/equipamento junto."""
+    return (
+        e.finalidade == "Medicamento"
+        or e.classificacao_medicamento is not None
+        or e.principio_ativo_id is not None
+        or bool((e.principio_ativo or "").strip())
+    )
+
+
 @router.get("/medicamentos")
 def listar_medicamentos(
     principio_ativo: str = "", classificacao: str = "", doenca: str = "",
-    finalidade: str = "",
+    finalidade: str = "", incluir_sem_estoque: bool = False,
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Medicamentos (itens de estoque) que cumprem um critério — usado ao
-    lançar por princípio ativo, por classificação OU por doença.
+    lançar por princípio ativo, por classificação OU por doença. Sem nenhum
+    critério, vira o catálogo geral de medicamento/hormônio/vacina (ver
+    `_eh_medicamento`) — o que faz deste endpoint a fonte única para qualquer
+    seletor que hoje mostrava todo o estoque sem filtro.
+
+    Por padrão só entram itens com saldo em estoque (`quantidade > 0`) e
+    ativos — `incluir_sem_estoque=true` resolve o problema na hora e ignora
+    esse filtro (mesma ideia do "incluir touros sem estoque" da Inseminação).
 
     O casamento por princípio ativo/doença usa a Farmácia: além do texto legado
     `principio_ativo`, resolve o vínculo relacional (principio_ativo_id →
     PrincipioAtivo.nome / PrincipioAtivo.doenca_id → Doenca.nome), para que os
     medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto."""
     from fazenda.models import Doenca, PrincipioAtivo
+
+    algum_criterio = bool(principio_ativo or classificacao or doenca or finalidade)
 
     pa_ids: set[int] = set()
     if principio_ativo:
@@ -168,6 +192,10 @@ def listar_medicamentos(
     itens = session.exec(select(Estoque)).all()
     saida = []
     for e in itens:
+        if e.ativo is False:
+            continue
+        if not algum_criterio and not _eh_medicamento(e):
+            continue
         if principio_ativo:
             casa_texto = (e.principio_ativo or "").strip().lower() == principio_ativo.strip().lower()
             casa_link = e.principio_ativo_id in pa_ids
@@ -185,6 +213,11 @@ def listar_medicamentos(
             classe = (e.classificacao_medicamento or "").lower()
             if e.principio_ativo_id not in pa_ids_vacina and "vacina" not in classe:
                 continue
+        # Saldo None = item nunca inventariado (não é a mesma coisa que
+        # confirmadamente zerado) — só esconde quando o saldo é conhecido e
+        # <= 0, para não sumir com itens legados sem saldo lançado ainda.
+        if not incluir_sem_estoque and e.quantidade is not None and e.quantidade <= 0:
+            continue
         saida.append({
             "nome": e.nome, "unidade": e.unidade, "quantidade": e.quantidade,
             "principio_ativo": e.principio_ativo, "classificacao_medicamento": e.classificacao_medicamento,

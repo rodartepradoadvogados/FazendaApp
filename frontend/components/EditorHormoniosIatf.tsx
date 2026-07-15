@@ -7,7 +7,7 @@
 // o backend dá baixa no estoque e registra a aplicação em Sanidade por vaca.
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { fetchEstoque, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, CLASSIFICACOES_MEDICAMENTO, type HormonioIatf } from "@/lib/api";
+import { fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, CLASSIFICACOES_MEDICAMENTO, type HormonioIatf } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
 const DIAS = [
@@ -37,7 +37,12 @@ let _seq = 0;
 const novaChave = () => `h${++_seq}`;
 
 export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]) => void }) {
+  // Catálogo geral de medicamento/hormônio/vacina (finalidade "Medicamento"),
+  // não mais todo o estoque cru — ração/material/equipamento não aparecem
+  // mais aqui. "Incluir itens sem estoque" resolve o problema na hora (mesmo
+  // padrão do "incluir touros sem estoque" da Inseminação).
   const [estoque, setEstoque] = useState<EstItem[]>([]);
+  const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [principios, setPrincipios] = useState<string[]>([]);
   const [doencas, setDoencas] = useState<string[]>([]);
   const [linhas, setLinhas] = useState<Linha[]>([]);
@@ -45,7 +50,9 @@ export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]
   const [opcoes, setOpcoes] = useState<Record<string, EstItem[]>>({});
 
   useEffect(() => {
-    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+    fetchMedicamentos({ incluir_sem_estoque: incluirSemEstoque }).then(setEstoque).catch(() => {});
+  }, [incluirSemEstoque]);
+  useEffect(() => {
     fetchPrincipiosAtivos().then((d: any[]) => setPrincipios(d.map((p) => p.nome))).catch(() => {});
     fetchDoencas().then((d: any[]) => setDoencas(d.map((x) => x.nome))).catch(() => {});
   }, []);
@@ -83,7 +90,7 @@ export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]
     if (!criterio) { setOpcoes((o) => ({ ...o, [l.key]: [] })); return; }
     const filtro = l.definirPor === "principio_ativo" ? { principio_ativo: criterio }
       : l.definirPor === "doenca" ? { doenca: criterio } : { classificacao: criterio };
-    fetchMedicamentos(filtro)
+    fetchMedicamentos({ ...filtro, incluir_sem_estoque: incluirSemEstoque })
       .then((m: EstItem[]) => setOpcoes((o) => ({ ...o, [l.key]: m })))
       .catch(() => setOpcoes((o) => ({ ...o, [l.key]: [] })));
   }
@@ -100,6 +107,10 @@ export function EditorHormoniosIatf({ onChange }: { onChange: (h: HormonioIatf[]
       <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
         Informe os medicamentos de cada dia (ex.: D0 = 1&nbsp;ml SincroCP + 2&nbsp;ml Estron). Cada dose é multiplicada pelo nº de vacas confirmadas. Sem medicamentos, o protocolo só agenda os dias (sem baixa de estoque).
       </p>
+      <label className="flex items-center gap-2" style={{ fontSize: "0.76rem", color: "var(--text-muted)", cursor: "pointer", marginBottom: "0.6rem" }}>
+        <input type="checkbox" checked={incluirSemEstoque} onChange={(e) => setIncluirSemEstoque(e.target.checked)} />
+        Incluir itens sem estoque
+      </label>
 
       {DIAS.map(({ dia, rotulo, padrao }) => {
         const doDia = linhas.filter((l) => l.dia === dia);

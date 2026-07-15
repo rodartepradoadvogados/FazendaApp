@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
+import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 
@@ -19,7 +19,7 @@ const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text
 type Fornecedor = { id: number; nome: string };
 
 const vazio = {
-  nome: "", numero_produto: "", categoria: "", unidade: "", quantidade: "", estoque_minimo: "",
+  nome: "", numero_produto: "", categoria: "", finalidade: "", unidade: "", quantidade: "", estoque_minimo: "",
   valor_unitario: "", local_armazenamento: "", fornecedor_id: "",
   unidade_embalagem: "", medida_embalagem: "", quantidade_embalagem: "",
   ativo: true, observacao: "", carencia_dias: "", centro_custo_padrao: "",
@@ -56,6 +56,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         nome: form.nome.trim(),
         numero_produto: str(form.numero_produto),
         categoria: str(form.categoria),
+        finalidade: str(form.finalidade),
         unidade: str(form.unidade),
         quantidade: form.estocavel ? num(form.quantidade) : undefined,
         estoque_minimo: form.estocavel ? num(form.estoque_minimo) : undefined,
@@ -93,6 +94,14 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
         <div><label style={labelStyle}>Categoria</label><input style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })} placeholder="ex.: Alimento, Medicamento…" /></div>
+        <div><label style={labelStyle}>Finalidade</label>
+          <select style={inputStyle} value={form.finalidade} onChange={(e) => set({ finalidade: e.target.value })}>
+            <option value="">—</option>{FINALIDADES_ESTOQUE.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <span style={{ display: "block", fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>
+            Decide se o item aparece nos seletores de aplicação de medicamento/hormônio.
+          </span>
+        </div>
         <div><label style={labelStyle}>Princípio ativo (medicamento)</label><input style={inputStyle} value={form.principio_ativo} onChange={(e) => set({ principio_ativo: e.target.value })} placeholder="ex.: Ivermectina" /></div>
         <div><label style={labelStyle}>Classificação (medicamento)</label>
           <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
