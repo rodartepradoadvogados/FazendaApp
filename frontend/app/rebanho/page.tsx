@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna } from "lucide-react";
+import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { IndicadoresGerais } from "@/app/indicadores/page";
 import { fetchAnimais, fetchEstratificacaoRebanho, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -57,8 +58,8 @@ function EstratificacaoRebanho() {
     <div className="card mb-4">
       <div className="card-header mb-3 flex items-center gap-2"><Beef size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{d.pct_lactacao_sobre_total}%</p><p className="kpi-label">Vacas em lactação / total</p></div>
-        <div className="kpi-card"><p className="kpi-value">{d.pct_lactacao_sobre_vacas}%</p><p className="kpi-label">Em lactação / vacas</p></div>
+        <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{d.pct_lactacao_sobre_vacas}%</p><p className="kpi-label">% de vacas em lactação</p></div>
+        <div className="kpi-card"><p className="kpi-value">{d.pct_lactacao_sobre_total}%</p><p className="kpi-label">% de vacas em lactação em relação ao rebanho</p></div>
         <div className="kpi-card"><p className="kpi-value">{d.estratos.vacas_lactacao}</p><p className="kpi-label">Vacas em lactação</p></div>
         <div className="kpi-card"><p className="kpi-value">{d.vacas_total}</p><p className="kpi-label">Vacas (adultas)</p></div>
       </div>
@@ -264,14 +265,15 @@ function RebanhoVisaoGeral() {
 
 // Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
 // Rebanho é só consulta (visão, ficha e sugestões).
-type Aba = "visao" | "sugestoes" | "ficha" | "touros";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros"];
+type Aba = "visao" | "sugestoes" | "ficha" | "touros" | "indicadores";
+const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros", "indicadores"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
+  { id: "indicadores", label: "Indicadores", icon: BarChart3, title: "Indicadores do rebanho: composição, eficiência reprodutiva e produção" },
 ] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
 
 export default function RebanhoPage() {
@@ -296,6 +298,7 @@ export default function RebanhoPage() {
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "ficha" && <FichaAnimal />}
         {aba === "touros" && <RebanhoTouros />}
+        {aba === "indicadores" && <IndicadoresGerais />}
       </div>
     </div>
   );

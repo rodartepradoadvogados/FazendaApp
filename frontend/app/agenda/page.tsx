@@ -5,7 +5,7 @@ import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, A
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
-  cadastrarPreventivo,
+  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo,
 } from "@/lib/api";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
@@ -342,6 +342,22 @@ export default function AgendaPage() {
     finally { setMarcando((p) => { const n = new Set(p); n.delete(eventoId); return n; }); }
   };
 
+  // Confirmação de cura (Sim/Não) — diferente de "Realizado": a resposta é
+  // persistida (Sanidade.curada / ProtocoloSanitarioLancamento.curada) antes
+  // de sumir da Agenda, para alimentar o relatório Taxa de cura.
+  const confirmarCura = async (e: any, curada: boolean) => {
+    setMarcando((p) => new Set(p).add(e.id));
+    try {
+      if (e.cura_origem === "protocolo") await marcarCuraProtocolo(e.cura_id, curada);
+      else await marcarCuraAplicacao(e.cura_id, curada);
+      await marcarEventoRealizado(e.id);
+      await carregar();
+      mostrarFeedback(curada ? "Cura confirmada." : "Registrado: não curado.");
+    }
+    catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
   // Sim/Não") em vez de agir direto no primeiro clique.
   const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
@@ -601,6 +617,12 @@ export default function AgendaPage() {
                                     </label>
                                   </div>
                                 )
+                              ) : (e as any).tipo === "confirmar_cura" ? (
+                                <span className="flex items-center gap-1" style={{ fontSize: "0.72rem" }} onClick={(ev) => ev.stopPropagation()}>
+                                  Curado?
+                                  <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, true)}>Sim</button>
+                                  <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, false)}>Não</button>
+                                </span>
                               ) : (
                                 <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                               )}

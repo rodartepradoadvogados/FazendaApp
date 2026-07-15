@@ -9,6 +9,7 @@ import { SecaoRecolhivel } from "@/components/ui";
 
 type Ficha = {
   animal: Record<string, unknown>;
+  pai: { nome: string | null; naab: string | null; central: string | null; tpi: number | null; nm_dolar: number | null } | null;
   partos: Record<string, unknown>[];
   servicos: Record<string, unknown>[];
   protocolos_iatf: Record<string, unknown>[];
@@ -325,6 +326,9 @@ export default function FichaAnimal() {
                 <div><span style={labelStyle}>Lote atual</span><br />{String(a.grupo_primario || "—")}</div>
                 <div><span style={labelStyle}>Data de nascimento</span><br />{a.data_nasc ? formatDate(a.data_nasc as string) : "—"}</div>
                 <div><span style={labelStyle}>Mãe</span><br />{String(a.mae_numero || "—")}</div>
+                <div><span style={labelStyle}>Pai</span><br />
+                  {ficha.pai?.nome ? `${ficha.pai.nome}${ficha.pai.naab ? ` (NAAB ${ficha.pai.naab})` : ""}` : "—"}
+                </div>
                 <div><span style={labelStyle}>Raça</span><br />{String(a.raca || "—")}</div>
                 <div><span style={labelStyle}>Grau de sangue</span><br />{String(a.grau_sangue || "—")}</div>
                 <div><span style={labelStyle}>Situação</span><br />{a.ativo ? "Ativo" : "Baixado"}</div>

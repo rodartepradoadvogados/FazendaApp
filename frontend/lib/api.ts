@@ -845,6 +845,32 @@ export async function excluirAplicacaoSanidade(id: number) {
   return res.json();
 }
 
+export async function marcarCuraAplicacao(id: number, curada: boolean) {
+  const res = await authFetch(`${API}/sanidade/aplicacoes/${id}/cura`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ curada }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  return res.json();
+}
+
+export async function marcarCuraProtocolo(lancamentoId: number, curada: boolean) {
+  const res = await authFetch(`${API}/sanidade/mastite/cura`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ lancamento_id: lancamentoId, curada }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao marcar cura"); }
+  return res.json();
+}
+
+export type CasoTaxaCura = {
+  origem: "aplicacao" | "protocolo"; id: number; numero: string; tratamento: string;
+  data: string | null; curada: boolean; lote: string | null; categoria: string; status_lactacao: string;
+};
+export async function fetchTaxaCura(): Promise<{ casos: CasoTaxaCura[]; total: number; curados: number; taxa_cura_pct: number | null }> {
+  const res = await authFetch(`${API}/sanidade/taxa-cura`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Taxa de cura error: ${res.status}`);
+  return res.json();
+}
+
 // ── Princípio ativo / Doença / Evento sanitário (Configurações > Cadastro) ──
 function _crudNomeAtivo(caminho: string, rotulo: string) {
   return {
@@ -1154,7 +1180,43 @@ export async function fetchAlimentosPadrao() {
 export async function fetchTabelaNutricional() {
   const res = await authFetch(`${API}/alimentacao/tabela-nutricional`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Tabela nutricional error: ${res.status}`);
-  return res.json() as Promise<{ alimentos: string[]; linhas: string[][] }>;
+  return res.json() as Promise<{ alimentos: string[]; produto_ids: number[]; linhas: string[][] }>;
+}
+export async function criarProdutoTabelaNutricional(nome: string) {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar produto"); }
+  return res.json();
+}
+export async function renomearProdutoTabelaNutricional(id: number, nome: string) {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao renomear produto"); }
+  return res.json();
+}
+export async function excluirProdutoTabelaNutricional(id: number) {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/produtos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir produto"); }
+  return res.json();
+}
+export async function salvarValoresTabelaNutricional(itens: { produto_id: number; nutriente: string; valor: string }[]) {
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/valores`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ itens }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar tabela nutricional"); }
+  return res.json();
+}
+export function baixarModeloTabelaNutricional() {
+  return baixarArquivoAutenticado("/alimentacao/tabela-nutricional/modelo", "tabela_nutricional_modelo.xlsx");
+}
+export async function importarTabelaNutricional(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/alimentacao/tabela-nutricional/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  return res.json();
 }
 
 export async function fetchDietas(filtros?: { lote?: number; ativo?: boolean }) {

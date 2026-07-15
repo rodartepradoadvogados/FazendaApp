@@ -12,15 +12,15 @@ export type EstoqueItemPicker = { nome: string; categoria?: string | null; quant
  * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
  * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
-export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…" }:
-  { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string }) {
+export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"] }:
+  { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[] }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
     () => itens
-      .filter((i) => i.estocavel !== false && (i.finalidade == null || i.finalidade === "Medicamento"))
+      .filter((i) => i.estocavel !== false && (i.finalidade == null || finalidades.includes(i.finalidade)))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-    [itens]
+    [itens, finalidades]
   );
   const sel = disponiveis.find((i) => i.nome === value);
 

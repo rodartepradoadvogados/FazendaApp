@@ -15,18 +15,19 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, Wheat, ClipboardList, ChevronDown, ChevronRight, Percent } from "lucide-react";
 import {
-  fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta,
+  fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
   criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, type ContextoDieta, type ApresentacaoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
-import { TabelaNutricionalBotao } from "./TabelaNutricional";
+import { TabelaNutricionalBotao, CadastrarTabelaNutricionalBotao } from "./TabelaNutricional";
+import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
 type ItemForm = { alimento: string; quantidade: string; unidade: string; base: string; ms_pct: number | null };
-type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; itens: ItemForm[] };
+type LoteForm = { responsavel: string; dataAbertura: string; dataPrevista: string; baseQuantidade: string; leiteBezerros: string; leitePorBezerroLDia: string; itens: ItemForm[] };
 
 const hoje = () => new Date().toISOString().slice(0, 10);
 const itemVazio = (): ItemForm => ({ alimento: "", quantidade: "", unidade: "kg", base: "MN", ms_pct: null });
@@ -37,7 +38,7 @@ function quantidadeFisica(it: ItemForm): number {
   if (it.base === "MS" && it.ms_pct && ["kg", "g"].includes(it.unidade)) return q / (it.ms_pct / 100);
   return q;
 }
-const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", itens: [itemVazio()] });
+const formVazio = (): LoteForm => ({ responsavel: "Alexandre Scarpa (consultor)", dataAbertura: hoje(), dataPrevista: "", baseQuantidade: "total", leiteBezerros: "", leitePorBezerroLDia: "", itens: [itemVazio()] });
 
 function num(v?: number | null, casas = 2): string {
   if (v == null) return "—";
@@ -71,7 +72,10 @@ export default function CadastroAlimentacao() {
             </button>
           ))}
         </div>
-        <TabelaNutricionalBotao />
+        <div className="flex items-center gap-2">
+          <TabelaNutricionalBotao />
+          <CadastrarTabelaNutricionalBotao />
+        </div>
       </div>
       {aba === "nova" ? <CadastrarNovaDieta /> : aba === "ver" ? <VisualizarDietas /> : <MateriaSeca />}
     </div>
@@ -122,7 +126,7 @@ function MateriaSeca() {
 // criação).
 export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
   const [lotes, setLotes] = useState<LoteRow[]>([]);
-  const [alimentos, setAlimentos] = useState<string[]>([]);
+  const [estoqueItens, setEstoqueItens] = useState<EstoqueItemPicker[]>([]);
   const [msPorAlimento, setMsPorAlimento] = useState<Record<string, number | null>>({});
   const [contextos, setContextos] = useState<Record<number, ContextoDieta | null>>({});
   const [forms, setForms] = useState<Record<number, LoteForm>>({});
@@ -133,8 +137,8 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
 
   useEffect(() => {
     fetchLotes().then((ls: LoteRow[]) => setLotes(ls.filter((l) => /^\d\d/.test(l.codigo)))).catch((e) => setErro(e.message));
-    fetchAlimentosPadrao().then(setAlimentos).catch(() => {});
     fetchMateriaSeca().then((itens) => setMsPorAlimento(Object.fromEntries(itens.map((i) => [i.nome, i.ms_pct])))).catch(() => {});
+    fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {});
   }, []);
 
   const loteNum = (l: LoteRow) => Number(l.codigo.slice(0, 2));
@@ -224,8 +228,6 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
         por trato ({NUM_TRATOS} tratos/dia) e o total de kg no vagão. Ao final, um único botão salva todos os lotes.
       </p>
 
-      <datalist id="alimentos-cad-dieta">{alimentos.map((a) => <option key={a} value={a} />)}</datalist>
-
       <div className="space-y-2">
         {lotes.map((l) => {
           const ln = loteNum(l);
@@ -281,9 +283,22 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                       </select>
                     </div>
                     <div>
-                      <label style={lbl}>Leite para bezerros (kg/dia)</label>
-                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leiteBezerros || ""} onChange={(e) => patchForm(ln, { leiteBezerros: e.target.value })} placeholder="ex.: 120" />
-                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>Total do lote/dia — alimenta o relatório Controle × Entregue.</span>
+                      <label style={lbl}>Leite por bezerro (L/dia)</label>
+                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leitePorBezerroLDia || ""}
+                        onChange={(e) => {
+                          const porBezerro = e.target.value;
+                          const total = porBezerro && nAnimais ? String(Math.round(Number(porBezerro) * nAnimais * 100) / 100) : f?.leiteBezerros || "";
+                          patchForm(ln, { leitePorBezerroLDia: porBezerro, leiteBezerros: total });
+                        }}
+                        placeholder="ex.: 2 (bezerreiro 1) ou 3 (bezerreiro 2)" />
+                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>
+                        {nAnimais ? `Calcula o total do lote: ${nAnimais} animal(is) × valor informado.` : "Informe a quantidade por bezerro; o total do lote é calculado automaticamente."}
+                      </span>
+                    </div>
+                    <div>
+                      <label style={lbl}>Leite para bezerros (kg/dia) — total do lote</label>
+                      <input type="number" inputMode="decimal" min={0} style={input} value={f?.leiteBezerros || ""} onChange={(e) => patchForm(ln, { leiteBezerros: e.target.value, leitePorBezerroLDia: "" })} placeholder="ex.: 120" />
+                      <span style={{ fontSize: "0.66rem", color: "var(--text-muted)" }}>Total do lote/dia — alimenta o relatório Controle × Entregue. Editável direto se preferir não usar o campo por bezerro.</span>
                     </div>
                   </div>
 
@@ -300,9 +315,13 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                             <div>
                               <label style={lbl}>Produto {idx + 1}</label>
-                              <input style={input} list="alimentos-cad-dieta" value={it.alimento}
-                                onChange={(e) => patchItem(ln, idx, { alimento: e.target.value, ms_pct: msPorAlimento[e.target.value] ?? null })}
-                                placeholder="ex.: Silagem de milho" />
+                              <EstoquePicker
+                                itens={estoqueItens}
+                                value={it.alimento}
+                                onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
+                                finalidades={["Ração/Alimento"]}
+                                placeholder="Selecionar silagem/alimento…"
+                              />
                             </div>
                             <div>
                               <label style={lbl}>{f?.baseQuantidade === "animal" ? "Quantidade por animal/dia" : "Quantidade total/dia (lote)"}</label>

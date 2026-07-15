@@ -56,7 +56,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "sanidade": [
         ("unidade", "VARCHAR"), ("via", "VARCHAR"), ("responsavel", "VARCHAR"), ("usuario_id", "INTEGER"),
         ("protocolo_sanitario_lancamento_id", "INTEGER"), ("protocolo_iatf_lancamento_id", "INTEGER"),
-        ("natureza", "VARCHAR"),
+        ("natureza", "VARCHAR"), ("curada", "BOOLEAN"),
     ],
     "aplicacao_agendada": [("usuario_id", "INTEGER"), ("natureza", "VARCHAR")],
     "entrega_leite_mensal": [("usuario_id", "INTEGER")],

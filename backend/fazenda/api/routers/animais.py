@@ -197,6 +197,35 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         d["touro_nm"] = touro.nm_dolar if touro else None
         servicos_dump.append(d)
 
+    # Pai deste animal (nome de guerra + NAAB): não existe FK direta — o
+    # animal é a cria de um Parto da mãe, e o pai é o reprodutor do serviço
+    # da mãe que mais provavelmente gerou essa gestação (o mais próximo antes
+    # do parto, dentro da janela de gestação bovina — ~260 a 295 dias).
+    pai = None
+    parto_como_cria = session.exec(
+        select(Parto).where((Parto.numero_cria_1 == numero) | (Parto.numero_cria_2 == numero))
+    ).first()
+    if parto_como_cria and parto_como_cria.data_parto:
+        servicos_mae = session.exec(
+            select(Servico).where(Servico.numero_matriz == parto_como_cria.numero_matriz).order_by(Servico.data_servico)
+        ).all()
+        candidatos = [
+            s for s in servicos_mae
+            if s.data_servico and s.reprodutor and 260 <= (parto_como_cria.data_parto - s.data_servico).days <= 295
+        ]
+        servico_concepcao = candidatos[-1] if candidatos else None
+        if servico_concepcao:
+            naab = naab_por_touro.get((servico_concepcao.reprodutor or "").strip().lower())
+            touro_pai = (touro_por_naab.get((naab or "").strip().upper())
+                         or touro_por_nome.get((servico_concepcao.reprodutor or "").strip().lower()))
+            pai = {
+                "nome": servico_concepcao.reprodutor,
+                "naab": naab or (touro_pai.naab if touro_pai else None),
+                "central": touro_pai.central if touro_pai else None,
+                "tpi": touro_pai.tpi if touro_pai else None,
+                "nm_dolar": touro_pai.nm_dolar if touro_pai else None,
+            }
+
     protocolos_iatf = session.exec(
         select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == numero).order_by(ProtocoloIatfAplicacao.data_prevista)
     ).all()
@@ -243,6 +272,7 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
 
     return {
         "animal": animal.model_dump(),
+        "pai": pai,
         "partos": partos_dump,
         "servicos": servicos_dump,
         "protocolos_iatf": _dump(protocolos_iatf),

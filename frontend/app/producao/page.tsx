@@ -128,7 +128,10 @@ function ProducaoLeiteira() {
   const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
   const [qlDe, setQlDe] = useState("");
   const [qlAte, setQlAte] = useState("");
-  const [qlOrigem, setQlOrigem] = useState<"todos" | "individual" | "tanque">("todos");
+  // Duas caixas de seleção independentes (em vez de um único filtro exclusivo) —
+  // dá para ver tanque e animal juntos ou isolar só um dos dois.
+  const [qlTanque, setQlTanque] = useState(true);
+  const [qlIndividual, setQlIndividual] = useState(true);
 
   useEffect(() => {
     fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch((e) => setQualidadeErro(e.message));
@@ -138,9 +141,9 @@ function ProducaoLeiteira() {
     if (!qualidade) return [];
     return qualidade.filter((r) =>
       (!qlDe || r.data_coleta >= qlDe) && (!qlAte || r.data_coleta <= qlAte) &&
-      (qlOrigem === "todos" || (qlOrigem === "individual" ? !!r.numero_matriz : !r.numero_matriz))
+      (r.numero_matriz ? qlIndividual : qlTanque)
     );
-  }, [qualidade, qlDe, qlAte, qlOrigem]);
+  }, [qualidade, qlDe, qlAte, qlTanque, qlIndividual]);
 
   const qlIndicadorInfo = INDICADORES_QUALIDADE.find((i) => i.key === qlIndicador)!;
   const qlSerie = useMemo(() => {
@@ -152,10 +155,10 @@ function ProducaoLeiteira() {
   const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
   const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
 
-  // Controle × Entregue — período próprio (default: mês corrente até hoje).
+  // Controle × Entregue — período próprio (default: últimos 30 dias até hoje).
   const hojeISO = new Date().toISOString().slice(0, 10);
-  const inicioMesISO = hojeISO.slice(0, 8) + "01";
-  const [ceIni, setCeIni] = useState(inicioMesISO);
+  const inicio30DiasISO = new Date(Date.now() - 29 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  const [ceIni, setCeIni] = useState(inicio30DiasISO);
   const [ceFim, setCeFim] = useState(hojeISO);
   const [ce, setCe] = useState<RelatorioControleEntrega | null>(null);
   const [ceErro, setCeErro] = useState<string | null>(null);
@@ -412,13 +415,21 @@ function ProducaoLeiteira() {
                     <select style={selStyle} value={qlIndicador} onChange={(e) => setQlIndicador(e.target.value as any)}>
                       {INDICADORES_QUALIDADE.map((i) => <option key={i.key} value={i.key}>{i.label}</option>)}
                     </select></div>
-                  <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Origem</label>
-                    <select style={selStyle} value={qlOrigem} onChange={(e) => setQlOrigem(e.target.value as any)} title="Amostra do tanque (rebanho todo) ou individual (uma vaca)">
-                      <option value="todos">Todas</option>
-                      <option value="tanque">Tanque (rebanho)</option>
-                      <option value="individual">Individual (vaca)</option>
-                    </select></div>
+                  <div>
+                    <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Mostrar</label>
+                    <div className="flex items-center gap-3" style={{ marginTop: "0.4rem" }}>
+                      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras do tanque (rebanho todo, sem número de matriz)">
+                        <input type="checkbox" checked={qlTanque} onChange={(e) => setQlTanque(e.target.checked)} /> Relatório do tanque
+                      </label>
+                      <label className="flex items-center gap-2" style={{ fontSize: "0.8rem" }} title="Amostras de uma vaca específica (ex.: investigação de mastite)">
+                        <input type="checkbox" checked={qlIndividual} onChange={(e) => setQlIndividual(e.target.checked)} /> Relatório por animal
+                      </label>
+                    </div>
+                  </div>
                 </div>
+                {!qlTanque && !qlIndividual && (
+                  <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>Selecione ao menos um dos dois relatórios acima.</p>
+                )}
                 <div className="grid grid-cols-2 gap-4 mb-3">
                   <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{qlAtual ?? "—"} {qlAtual != null ? qlIndicadorInfo.unidade : ""}</p>
                     <p className="kpi-label">{qlIndicadorInfo.label} atual (última coleta)</p></div>

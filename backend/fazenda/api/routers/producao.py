@@ -71,7 +71,11 @@ def obter_producao(session: Session = Depends(get_session)) -> dict:
 @router.get("/controles")
 def listar_controles(session: Session = Depends(get_session)) -> dict:
     """Registros de controle leiteiro achatados para o dashboard interativo."""
-    grupo_por_numero = {a.numero: a.grupo_primario for a in session.exec(select(Animal)).all()}
+    animais_cadastro = session.exec(select(Animal)).all()
+    grupo_por_numero = {a.numero: a.grupo_primario for a in animais_cadastro}
+    # Raça sempre a do cadastro do animal (nunca a copiada/congelada no controle
+    # leiteiro, que pode estar desatualizada ou vir de texto livre de CSV antigo).
+    raca_por_numero = {a.numero: a.raca for a in animais_cadastro}
     # Ordem de parto por animal derivada do nº de partos, para preencher os
     # controles cuja ordem veio vazia (o primeiro parto é sempre "1").
     partos_por_numero: dict[str, int] = {}
@@ -85,7 +89,7 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
         ordem = c.ordem_parto or partos_por_numero.get(c.numero_matriz) or None
         registros.append({
             "numero": c.numero_matriz,
-            "raca": c.raca or "(sem raça)",
+            "raca": raca_por_numero.get(c.numero_matriz) or "",
             "data": d.isoformat() if d else None,
             "ano": d.year if d else None,
             "producao_kg": c.producao_kg,
