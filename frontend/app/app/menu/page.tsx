@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, ChevronRight, CheckCheck,
+  Wallet, FileText, BarChart3, Receipt,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -22,8 +23,13 @@ import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
 import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
+import FluxoCaixa from "@/components/mobile/menu/FluxoCaixa";
+import Dre from "@/components/mobile/menu/Dre";
+import Rmca from "@/components/mobile/menu/Rmca";
+import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 
-type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes";
+type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes"
+  | "fluxoCaixa" | "dre" | "rmca" | "extrato";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
 type Grupo = { secao: string; itens: Item[] };
 
@@ -46,6 +52,12 @@ const GRUPOS: Grupo[] = [
     { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={18} /> },
     { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={18} />, soAdmin: true },
   ] },
+  { secao: "Financeiro", itens: [
+    { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={18} /> },
+    { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={18} /> },
+    { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={18} /> },
+    { chave: "extrato", titulo: "Extrato completo", subtitulo: "Todos os lançamentos, pagos e em aberto", rota: "/financeiro", icone: <Receipt size={18} /> },
+  ] },
 ];
 
 const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactNode> = {
@@ -59,6 +71,10 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
   aprovacoes: Aprovacoes,
+  fluxoCaixa: FluxoCaixa,
+  dre: Dre,
+  rmca: Rmca,
+  extrato: ExtratoCompleto,
 };
 
 export default function Pagina() {

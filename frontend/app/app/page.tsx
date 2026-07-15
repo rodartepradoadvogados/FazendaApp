@@ -266,14 +266,14 @@ export default function AgendaMovel() {
 
   // Cartão de um GRUPO de protocolo sanitário (lote) — pergunta lote/individual,
   // depois confirma todas ou uma matriz por vez.
-  function renderGrupoSanitario(g: GrupoSan) {
+  function renderGrupoSanitario(g: GrupoSan, alt: 0 | 1) {
     const { chave, rotulo } = catInfo(g.categoria);
     const aberto = sanAberto.has(g.grupo);
     const modo = sanModo[g.grupo];
     const feitasCount = g.itens.filter((it) => feitos.has(it.id)).length;
     const tudoFeito = feitasCount === g.itens.length;
     return (
-      <MobCard key={g.grupo} style={{ marginBottom: "0.6rem" }}>
+      <MobCard key={g.grupo} alt={alt} style={{ marginBottom: "0.6rem" }}>
         <button type="button" onClick={() => abrirSan(g.grupo)}
           style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -336,11 +336,11 @@ export default function AgendaMovel() {
     );
   }
 
-  function renderRenderavel(r: Renderavel) {
-    return r.kind === "grupo" ? renderGrupoSanitario(r.g) : renderCartao(r.e);
+  function renderRenderavel(r: Renderavel, alt: 0 | 1) {
+    return r.kind === "grupo" ? renderGrupoSanitario(r.g, alt) : renderCartao(r.e, alt);
   }
 
-  function renderCartao(e: Evento) {
+  function renderCartao(e: Evento, alt: 0 | 1) {
     const { chave, rotulo } = catInfo(e.categoria);
     const feito = feitos.has(e.id);
     const atrasada = e.data < hoje;
@@ -350,7 +350,7 @@ export default function AgendaMovel() {
       const aberto = iatfAberto.has(e.id);
       const sel = iatfChecks[e.id] || new Set(e.animais);
       return (
-        <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -435,7 +435,7 @@ export default function AgendaMovel() {
       const aberto = dietaAberta.has(e.id);
       const a = dietaApres[e.id];
       return (
-        <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => abrirDieta(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
@@ -482,7 +482,7 @@ export default function AgendaMovel() {
 
     const { principal, detalhe } = linhas(e);
     return (
-      <MobCard key={e.id} style={{ marginBottom: "0.6rem" }}>
+      <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
@@ -520,7 +520,7 @@ export default function AgendaMovel() {
         <div style={{ marginTop: "0.6rem" }}>
           {evs.length === 0
             ? <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem", padding: "0.3rem 0.2rem" }}>Nada agendado.</p>
-            : montarLista(evs).map(renderRenderavel)}
+            : montarLista(evs).map((r, i) => renderRenderavel(r, (i % 2) as 0 | 1))}
         </div>
       </details>
     );
@@ -565,7 +565,7 @@ export default function AgendaMovel() {
               </p>
             </div>
           ) : (
-            montarLista(eventos).map(renderRenderavel)
+            montarLista(eventos).map((r, i) => renderRenderavel(r, (i % 2) as 0 | 1))
           )}
 
           {/* Consulta antecipada: os dois dias seguintes, recolhidos. */}

@@ -20,8 +20,13 @@ export function corCategoria(cat?: string | null): string {
   return CATEGORIA_COR[(cat || "").toLowerCase()] || "var(--mob-muted)";
 }
 
-export function MobCard({ children, style, onClick }: { children: ReactNode; style?: CSSProperties; onClick?: () => void }) {
-  return <div className="mob-card" style={{ padding: "0.95rem 1rem", ...style }} onClick={onClick}>{children}</div>;
+/** `alt` alterna a cor do cartão em sequência (0 = 1º/3º/5º..., 1 = 2º/4º/6º...):
+ * no claro, branco vs. um tom leve da paleta ativa; no escuro, preto contornado
+ * de vinho vs. preto contornado de verde (fixos, sem seguir a paleta). Usado na
+ * Agenda e na Ficha do animal para diferenciar cartões em sequência. */
+export function MobCard({ children, style, onClick, alt }: { children: ReactNode; style?: CSSProperties; onClick?: () => void; alt?: 0 | 1 }) {
+  const classe = alt == null ? "mob-card" : `mob-card ${alt === 0 ? "mob-card-a" : "mob-card-b"}`;
+  return <div className={classe} style={{ padding: "0.95rem 1rem", ...style }} onClick={onClick}>{children}</div>;
 }
 
 /** Título de tela (ex.: "Hoje, 10 de Julho") com espaço para um badge à direita. */

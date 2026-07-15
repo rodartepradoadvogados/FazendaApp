@@ -80,3 +80,26 @@ export function Bolinha({ cor }: { cor?: string | null }) {
 export function NumAnimal({ children }: { children: ReactNode }) {
   return <span style={{ fontWeight: 800, fontSize: "1.05rem", color: "var(--mob-text)" }}>{children}</span>;
 }
+
+/** Formata em Real — usado nas telas de Financeiro (Fluxo/DRE/RMCA/Extrato). */
+export function brl(v?: number | null): string {
+  if (v == null) return "—";
+  return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+/** Par de datas Início/Até — filtro de período obrigatório das telas de
+ * Financeiro do app (Fluxo de caixa, DRE, RMCA, Extrato completo). */
+export function FiltroPeriodo({ inicio, fim, onInicio, onFim }: { inicio: string; fim: string; onInicio: (v: string) => void; onFim: (v: string) => void }) {
+  return (
+    <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.8rem" }}>
+      <label style={{ flex: 1 }}>
+        <span style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--mob-muted)", marginBottom: "0.3rem" }}>De</span>
+        <input type="date" className="mob-input" value={inicio} onChange={(e) => onInicio(e.target.value)} />
+      </label>
+      <label style={{ flex: 1 }}>
+        <span style={{ display: "block", fontSize: "0.78rem", fontWeight: 600, color: "var(--mob-muted)", marginBottom: "0.3rem" }}>Até</span>
+        <input type="date" className="mob-input" value={fim} onChange={(e) => onFim(e.target.value)} />
+      </label>
+    </div>
+  );
+}

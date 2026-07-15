@@ -2,10 +2,10 @@
 // Tela LANÇAR (lançamento rápido) do app de campo. Busca grande no topo que
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
-import { useState } from "react";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
-import { fetchAnimais } from "@/lib/api";
+import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
 import { FormReprodutivo } from "./FormReprodutivo";
 import { FormProducao } from "./FormProducao";
@@ -13,8 +13,10 @@ import { FormSanidade } from "./FormSanidade";
 import { FormAlimentacao } from "./FormAlimentacao";
 import Movimentar from "@/components/mobile/rebanho/Movimentar";
 import Baixar from "@/components/mobile/rebanho/Baixar";
+import FormFinanceiroApp from "./FormFinanceiroApp";
+import BalancoEstoque from "./BalancoEstoque";
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar" | "financeiro" | "estoque";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
@@ -23,24 +25,32 @@ const TITULOS: Record<Tela, string> = {
   alimentacao: "Alimentação",
   movimentar: "Movimentar animais",
   baixar: "Baixar animal",
+  financeiro: "Financeiro",
+  estoque: "Balanço de estoque",
 };
 
 export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
   const [tela, setTela] = useState<Tela | null>(null);
   const [fixado, setFixado] = useState<Animal | null>(null);
+  // Só sabemos a permissão real depois de montar (localStorage não existe no
+  // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
+  const [montado, setMontado] = useState(false);
+  useEffect(() => { setMontado(true); }, []);
 
   // ── Sub-tela aberta ────────────────────────────────────────────────────────
   if (tela) {
     return (
       <div>
-        <MobVoltar titulo={TITULOS[tela]} onVoltar={() => setTela(null)} />
+        {tela !== "financeiro" && tela !== "estoque" && <MobVoltar titulo={TITULOS[tela]} onVoltar={() => setTela(null)} />}
         {tela === "reprodutivo" && <FormReprodutivo animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "producao" && <FormProducao animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "sanidade" && <FormSanidade animais={animais.dados} animalFixado={fixado?.numero || null} />}
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "movimentar" && <Movimentar />}
         {tela === "baixar" && <Baixar />}
+        {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} />}
+        {tela === "estoque" && <BalancoEstoque onVoltar={() => setTela(null)} />}
       </div>
     );
   }
@@ -61,6 +71,12 @@ export function LancarTela() {
         <MobBloco icone={<Wheat size={24} />} label="Alimentação" cor="var(--mob-laranja)" onClick={() => setTela("alimentacao")} />
         <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" cor="var(--mob-amarelo)" onClick={() => setTela("movimentar")} />
         <MobBloco icone={<Skull size={24} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
+        {montado && podeModulo("financeiro") && (
+          <MobBloco icone={<Landmark size={24} />} label="Financeiro" cor="var(--mob-vinho)" onClick={() => setTela("financeiro")} />
+        )}
+        {montado && podeModulo("estoque") && (
+          <MobBloco icone={<Boxes size={24} />} label="Balanço de estoque" cor="var(--mob-dourado)" onClick={() => setTela("estoque")} />
+        )}
       </div>
     </div>
   );

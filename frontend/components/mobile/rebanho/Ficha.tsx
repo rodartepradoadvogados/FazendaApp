@@ -14,6 +14,9 @@ type Ficha = {
   colostragem: Record<string, unknown> | null;
   compra: Record<string, unknown> | null;
   baixa: Record<string, unknown> | null;
+  pai: { nome: string | null; naab: string | null } | null;
+  previsao_parto: string | null;
+  previsao_secagem: string | null;
 } & Record<string, Record<string, unknown>[] | Record<string, unknown> | null>;
 
 // Grupos de lançamentos (as chaves batem com o retorno de /animais/{n}/ficha).
@@ -54,7 +57,7 @@ function Grade({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem 1rem" }}>{children}</div>;
 }
 
-function Secao({ titulo, linhas, campos }: { titulo: string; linhas: Record<string, unknown>[]; campos: Campo[] }) {
+function Secao({ titulo, linhas, campos, altInicio }: { titulo: string; linhas: Record<string, unknown>[]; campos: Campo[]; altInicio: number }) {
   if (!linhas.length) return null;
   return (
     <details style={{ marginBottom: "0.7rem" }}>
@@ -64,7 +67,7 @@ function Secao({ titulo, linhas, campos }: { titulo: string; linhas: Record<stri
       </summary>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
         {linhas.map((l, i) => (
-          <MobCard key={i}>
+          <MobCard key={i} alt={((altInicio + i) % 2) as 0 | 1}>
             <Grade>
               {campos.map(([chave, rot, data]) => (
                 <ParDado key={chave} label={rot} valor={mostrarValor(l[chave], data)} />
@@ -107,6 +110,13 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
   const colostragem = ficha?.colostragem as Record<string, unknown> | null;
   const baixa = ficha?.baixa as Record<string, unknown> | null;
   const compra = ficha?.compra as Record<string, unknown> | null;
+  const pai = ficha?.pai;
+
+  // Alternância de cor dos cartões ABAIXO do primeiro (identificação) — mesmo
+  // esquema da Agenda (claro: branco/paleta; escuro: preto contornado de
+  // vinho/verde). Contador corrido: cada cartão renderizado consome um índice.
+  let altContador = 0;
+  const proximoAlt = (): 0 | 1 => (altContador++ % 2) as 0 | 1;
 
   return (
     <div>
@@ -138,11 +148,16 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
               <ParDado label="Entrada" valor={a.data_entrada ? formatDate(String(a.data_entrada)) : "—"} />
               <ParDado label="Mãe" valor={String(a.mae_numero || "—")} />
               <ParDado label="DEL" valor={a.del_dias != null ? String(a.del_dias) : "—"} />
+              <ParDado label="Pai" valor={pai?.nome ? `${pai.nome}${pai.naab ? ` (${pai.naab})` : ""}` : "—"} />
+              <ParDado label="Grau de sangue" valor={String(a.grau_sangue || "—")} />
+              <ParDado label="Última produção" valor={a.ult_cl_kg != null ? `${Number(a.ult_cl_kg).toLocaleString("pt-BR", { maximumFractionDigits: 1 })} kg${a.data_ult_leite ? ` (${formatDate(String(a.data_ult_leite))})` : ""}` : "—"} />
+              <ParDado label="Previsão de secagem" valor={ficha?.previsao_secagem ? formatDate(ficha.previsao_secagem) : "—"} />
+              <ParDado label="Previsão de parto" valor={ficha?.previsao_parto ? formatDate(ficha.previsao_parto) : "—"} />
             </Grade>
           </MobCard>
 
           {colostragem && (
-            <MobCard style={{ marginBottom: "0.7rem" }}>
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
               <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Colostragem / IgG</div>
               <Grade>
                 <ParDado label="Tomou colostro?" valor={mostrarValor(colostragem.tomou_colostro)} />
@@ -154,7 +169,7 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
           )}
 
           {compra && (
-            <MobCard style={{ marginBottom: "0.7rem" }}>
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
               <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Compra</div>
               <Grade>
                 <ParDado label="Data" valor={mostrarValor(compra.data_compra, true)} />
@@ -166,7 +181,7 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
           )}
 
           {baixa && (
-            <MobCard style={{ marginBottom: "0.7rem", borderColor: "var(--mob-vermelho)" }}>
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem", borderColor: "var(--mob-vermelho)" }}>
               <div style={{ fontWeight: 700, marginBottom: "0.6rem", color: "var(--mob-vermelho)" }}>Baixa (saída do rebanho)</div>
               <Grade>
                 <ParDado label="Data" valor={mostrarValor(baixa.data_baixa, true)} />
@@ -178,9 +193,12 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
           )}
 
           <div className="mob-secao">Lançamentos</div>
-          {SECOES.map((s) => (
-            <Secao key={s.chave} titulo={s.titulo} campos={s.campos} linhas={(ficha?.[s.chave] as Record<string, unknown>[]) || []} />
-          ))}
+          {SECOES.map((s) => {
+            const linhas = (ficha?.[s.chave] as Record<string, unknown>[]) || [];
+            const altInicio = altContador;
+            altContador += linhas.length;
+            return <Secao key={s.chave} titulo={s.titulo} campos={s.campos} linhas={linhas} altInicio={altInicio} />;
+          })}
           {SECOES.every((s) => !((ficha?.[s.chave] as unknown[]) || []).length) && (
             <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum lançamento registrado para este animal.</p>
           )}
