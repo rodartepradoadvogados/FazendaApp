@@ -1,5 +1,5 @@
 "use client";
-// Casca do APP MÓVEL (/app): cabeçalho vinho com status online/offline,
+// Casca do APP MÓVEL (/app): cabeçalho (vinho ou verde) com status online/offline,
 // alternador claro/escuro, badge de pendências e navegação inferior fixa
 // (Agenda · Lançar · Rebanho · Menu). Registra o service worker (abre sem
 // internet) e liga a sincronização automática da fila offline.
@@ -10,6 +10,7 @@ import { CalendarCheck, PlusCircle, Beef, Menu as MenuIcon, Sun, Moon, CloudUplo
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
+import { CowDataWordmark } from "@/components/CowDataWordmark";
 
 const ABAS = [
   { href: "/app", label: "Agenda", icon: CalendarCheck },
@@ -57,12 +58,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="mob">
-      {/* Cabeçalho vinho — FIXO no topo (não some ao rolar no celular). */}
+      {/* Cabeçalho (vinho ou verde, conforme a paleta) — FIXO no topo (não some ao rolar no celular). */}
       <header ref={headerRef} style={{ background: "var(--mob-header)", color: "var(--mob-header-fg)", padding: "calc(0.9rem + env(safe-area-inset-top)) 1.1rem 0.9rem", borderRadius: "0 0 18px 18px", position: "fixed", top: 0, left: 0, right: 0, zIndex: 40 }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
-            <p style={{ fontWeight: 800, letterSpacing: "0.06em", fontSize: "1rem", color: "var(--mob-dourado-2)", display: "flex", alignItems: "center", gap: "0.45rem" }}>
-              FAZENDA
+            <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+              <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
               {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
               <span
                 title={online ? "Conectado à internet" : "Sem internet — os lançamentos ficam guardados e serão enviados quando conectar"}

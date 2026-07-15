@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
-import { BullLogo } from "@/components/BullLogo";
+import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
 
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
@@ -104,8 +104,7 @@ export function Sidebar() {
           style={{ background: "none", border: "none", color: "var(--sidebar-fg)", cursor: "pointer", display: "flex" }}>
           <Menu size={22} />
         </button>
-        <BullLogo size={18} />
-        <span style={{ color: "var(--sidebar-logo-fg)", fontSize: "0.8rem", fontWeight: 800, letterSpacing: "0.05em" }}>FAZENDA</span>
+        <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
         <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· Jairo Nasser</span>
       </div>
       {/* Espaçador: reserva a altura da barra fixa para o conteúdo não ficar por baixo dela. */}
@@ -129,19 +128,11 @@ export function Sidebar() {
         className="p-4 border-b"
         style={{ borderColor: "var(--sidebar-border)" }}
       >
-        <div
-          className="flex items-center gap-2 px-2 py-2 rounded-lg"
-          style={{ background: "var(--sidebar-logo-bg)" }}
-        >
-          <BullLogo size={22} />
-          <div>
-            <p style={{ color: "var(--sidebar-logo-fg)", fontSize: "0.7rem", fontWeight: 800, letterSpacing: "0.05em", lineHeight: 1.2 }}>
-              FAZENDA
-            </p>
-            <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-              Jairo Nasser
-            </p>
-          </div>
+        <div className="flex flex-col gap-1 px-2 py-2">
+          <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
+          <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
+            Jairo Nasser
+          </p>
         </div>
       </div>
 
