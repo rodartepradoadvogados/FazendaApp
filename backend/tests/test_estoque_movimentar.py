@@ -113,6 +113,11 @@ class TestCriarItemEstoque:
         r = client.post("/estoque/", json={"nome": "Borgal 50ml"})
         assert r.status_code == 409
 
+    def test_finalidade_persiste_no_cadastro(self, client):
+        r = client.post("/estoque/", json={"nome": "Ração Milho 2", "finalidade": "Ração/Alimento", "quantidade": 100})
+        assert r.status_code == 201
+        assert r.json()["finalidade"] == "Ração/Alimento"
+
     def test_marca_abaixo_minimo_na_criacao(self, client):
         r = client.post("/estoque/", json={"nome": "Concentrado", "quantidade": 2, "estoque_minimo": 10})
         assert r.json()["abaixo_minimo"] is True

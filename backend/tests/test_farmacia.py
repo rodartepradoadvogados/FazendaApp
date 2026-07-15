@@ -219,3 +219,27 @@ def test_bootstrap_popula_catalogo_completo_idempotente():
         assert len(marcas) == 111
         mel = next(p for p in pas if p.nome == "Meloxicam")
         assert mel.categoria_software == "AINE" and mel.uso_principal
+
+
+def test_backfill_finalidade_marca_medicamento_legado_sem_sobrescrever():
+    """Item legado com sinal de medicamento (classificação/princípio) e sem
+    `finalidade` ainda definida ganha "Medicamento" automaticamente — mas um
+    valor já definido no cadastro (mesmo que "Outro") nunca é sobrescrito."""
+    from sqlalchemy.pool import StaticPool
+    from sqlmodel import Session, SQLModel, create_engine, select
+    from fazenda.rules.farmacia import bootstrap_farmacia
+
+    eng = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(eng)
+    with Session(eng) as s:
+        s.add(Estoque(nome="Terramicina Legado", quantidade=10, unidade="ml", classificacao_medicamento="Antibiótico"))
+        s.add(Estoque(nome="Ração Milho Legado", quantidade=500, unidade="kg"))
+        s.add(Estoque(nome="Equipamento Já Classificado", quantidade=1, unidade="unidade", finalidade="Outro"))
+        s.commit()
+        bootstrap_farmacia(s)
+        terramicina = s.exec(select(Estoque).where(Estoque.nome == "Terramicina Legado")).first()
+        racao = s.exec(select(Estoque).where(Estoque.nome == "Ração Milho Legado")).first()
+        equipamento = s.exec(select(Estoque).where(Estoque.nome == "Equipamento Já Classificado")).first()
+        assert terramicina.finalidade == "Medicamento"
+        assert racao.finalidade is None  # sem sinal de medicamento — fica sem classificar
+        assert equipamento.finalidade == "Outro"  # já definido, não é sobrescrito

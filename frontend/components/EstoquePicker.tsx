@@ -2,19 +2,24 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 
-export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null };
+export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null };
 
 /**
  * Seletor de produto do estoque: mesma tabela estilizada (vermelha) usada
  * para escolher animal (AnimalPicker) — nome, categoria e estoque atual —
- * em vez de um campo de texto livre sujeito a erro de digitação.
+ * em vez de um campo de texto livre sujeito a erro de digitação. Usado só
+ * para definir QUAL medicamento um protocolo/evento sanitário usa (cadastro,
+ * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
+ * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
 export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…" }:
   { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
-    () => itens.filter((i) => i.estocavel !== false).sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
+    () => itens
+      .filter((i) => i.estocavel !== false && (i.finalidade == null || i.finalidade === "Medicamento"))
+      .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
     [itens]
   );
   const sel = disponiveis.find((i) => i.nome === value);

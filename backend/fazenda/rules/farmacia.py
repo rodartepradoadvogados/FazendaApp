@@ -196,6 +196,22 @@ def bootstrap_farmacia(session: Session) -> None:
         compatibilizar_estoque(session)
         session.add(SeedFlag(chave=chave))
         session.commit()
+    backfill_finalidade_estoque(session)
+
+
+def backfill_finalidade_estoque(session: Session) -> None:
+    """Preenche `Estoque.finalidade` (novo campo) para itens legados que já têm
+    sinal forte de serem medicamento — classificação, princípio ativo (texto ou
+    vínculo) — e ainda não foram classificados. Roda em todo start (add-missing,
+    nunca sobrescreve um valor já definido pelo usuário no cadastro)."""
+    itens = session.exec(select(Estoque).where(Estoque.finalidade == None)).all()  # noqa: E711
+    if not itens:
+        return
+    for item in itens:
+        if item.classificacao_medicamento or item.principio_ativo_id or (item.principio_ativo or "").strip():
+            item.finalidade = "Medicamento"
+            session.add(item)
+    session.commit()
 
 
 # ── Gatilho de comunicação ──────────────────────────────────────────────────

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user
+from fazenda.auth import Usuario, get_current_user, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
@@ -582,6 +582,28 @@ def calcular_agenda(
     ]
     tem_financeiro = "financeiro" in modulos
     tem_reproducao = "reproducao" in modulos
+    tem_estoque = tem_modulo(usuario, "estoque")
+
+    # Alertas de estoque (negativo/abaixo do mínimo) — SEMPRE calculado (não
+    # depende do opt-in "exibir necessidade de compra na agenda" por item, que
+    # só vira um evento cronológico simples em Gestão/Financeiro). Aqui é uma
+    # visão de "informações" da Agenda, incondicional para quem tem acesso ao
+    # módulo de estoque. Só considera itens estocáveis (None/True).
+    estoque_negativo = []
+    estoque_abaixo_minimo = []
+    if tem_estoque:
+        for item in estoque:
+            if item.get("estocavel") is False:
+                continue
+            qtd = item.get("quantidade")
+            if qtd is None:
+                continue
+            minimo = item.get("estoque_minimo")
+            linha = {"nome": item["nome"], "quantidade": qtd, "estoque_minimo": minimo, "unidade": item.get("unidade")}
+            if qtd < 0:
+                estoque_negativo.append(linha)
+            elif minimo is not None and qtd < minimo:
+                estoque_abaixo_minimo.append(linha)
 
     return {
         "data_referencia": result.data_referencia.isoformat(),
@@ -597,6 +619,8 @@ def calcular_agenda(
         "bst_excluidos": [b.__dict__ for b in result.bst_excluidos] if tem_reproducao else [],
         "bst_nunca_aplicados": bst_nunca_aplicados if tem_reproducao else [],
         "contas_a_pagar": result.contas_a_pagar if tem_financeiro else [],
+        "estoque_negativo": estoque_negativo,
+        "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,

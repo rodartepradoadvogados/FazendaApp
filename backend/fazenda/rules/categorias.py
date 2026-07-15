@@ -17,3 +17,17 @@ CATEGORIAS_FORNECEDOR = [
     "Embalagens e materiais",
     "Outros",
 ]
+
+# Finalidade de um item de ESTOQUE (Estoque.finalidade) — decide se ele pode
+# aparecer nos seletores de "aplicação de medicamento"/hormônio. "Medicamento"
+# cobre remédio, hormônio e vacina (a subclasse terapêutica continua vindo de
+# `classificacao_medicamento`); os demais valores existem só para EXCLUIR
+# ração/material/equipamento desses seletores. Sêmen não usa este campo — vive
+# em EstoqueSemen, uma tabela própria.
+FINALIDADES_ESTOQUE = [
+    "Medicamento",
+    "Ração/Alimento",
+    "Material/Insumo",
+    "Equipamento",
+    "Outro",
+]

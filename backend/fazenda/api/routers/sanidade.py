@@ -531,15 +531,18 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
 
     # Etapas cadastradas por princípio ativo/classificação exigem escolher o
     # medicamento real no lançamento (guardado por etapa em cada aplicação).
+    # Etapas de produto FIXO também podem vir com uma escolha — é o medicamento
+    # SUBSTITUTO que o front oferece quando o item cadastrado no protocolo está
+    # zerado/negativo/no mínimo; nesse caso, o substituto vale por cima do fixo.
     produto_por_etapa: dict[int, str | None] = {}
     for etapa in etapas:
+        escolhido = (dados.escolhas_medicamento.get(str(etapa.id)) or "").strip()
         if getattr(etapa, "criterio_tipo", "medicamento") != "medicamento":
-            escolhido = (dados.escolhas_medicamento.get(str(etapa.id)) or "").strip()
             if not escolhido:
                 raise HTTPException(status_code=400, detail=f"Escolha o medicamento da etapa D{etapa.dia} ({etapa.produto}).")
             produto_por_etapa[etapa.id] = escolhido
         else:
-            produto_por_etapa[etapa.id] = None
+            produto_por_etapa[etapa.id] = escolhido or None
 
     if dados.grau_mastite is not None and dados.grau_mastite not in GRAUS_MASTITE:
         raise HTTPException(status_code=400, detail="Grau de mastite inválido (aceitos: 1, 2 ou 3)")

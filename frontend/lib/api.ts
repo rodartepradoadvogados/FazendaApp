@@ -781,14 +781,24 @@ export async function atualizarEventoSanitario(id: number, dados: EventoSanitari
 // Classificações de medicamento (para cadastrar/protocolar por classificação).
 export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório", "Antibiótico", "Antiparasitário", "Vacina", "Hormônio", "Outro"];
 
+// Finalidade de um item de ESTOQUE (Estoque.finalidade) — decide se ele
+// aparece nos seletores de aplicação de medicamento/hormônio. Só "Medicamento"
+// entra nesses seletores; os demais existem para EXCLUIR ração/material/
+// equipamento deles. Sêmen não usa este campo (tabela própria).
+export const FINALIDADES_ESTOQUE = ["Medicamento", "Ração/Alimento", "Material/Insumo", "Equipamento", "Outro"];
+
 // Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um
-// protocolo cadastrado por princípio ativo ou classificação.
-export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string; doenca?: string; finalidade?: string }) {
+// protocolo cadastrado por princípio ativo ou classificação. Sem nenhum
+// critério, vira o catálogo geral de medicamento/hormônio/vacina. Por padrão
+// só traz itens com saldo em estoque — "incluir_sem_estoque" resolve o
+// problema na hora (mesmo padrão do "incluir touros sem estoque" da Inseminação).
+export async function fetchMedicamentos(filtro: { principio_ativo?: string; classificacao?: string; doenca?: string; finalidade?: string; incluir_sem_estoque?: boolean }) {
   const params = new URLSearchParams();
   if (filtro.principio_ativo) params.set("principio_ativo", filtro.principio_ativo);
   if (filtro.classificacao) params.set("classificacao", filtro.classificacao);
   if (filtro.doenca) params.set("doenca", filtro.doenca);
   if (filtro.finalidade) params.set("finalidade", filtro.finalidade);
+  if (filtro.incluir_sem_estoque) params.set("incluir_sem_estoque", "true");
   const res = await authFetch(`${API}/estoque/medicamentos?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Medicamentos error: ${res.status}`);
   return res.json();
