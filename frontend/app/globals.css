@@ -130,6 +130,38 @@
   --accent-icon: var(--vinho);
 }
 
+/* ── PALETA "Verde" — dimensão independente do tema, escolhida em
+   Configurações (site) / Menu (app) e aplicada via
+   document.documentElement[data-paleta] = "vinho" (padrão de fábrica) |
+   "verde". Como quase tudo no site usa var(--vinho*)/var(--dourado*), só
+   redefinir esses tokens (por tema, igual ao bloco de tema acima) já
+   repinta a interface inteira — sem tocar em nenhum componente. */
+:root[data-theme="escuro"][data-paleta="verde"] {
+  --vinho:       #1F5C3D;
+  --vinho-light: #2E7D52;
+  --vinho-dark:  #16402B;
+  --dourado:     #2E7D52;
+  --dourado-light: #4ADE80;
+  --sidebar-active-bg: rgba(31, 92, 61, 0.4);
+  --pill-active-bg: rgba(31, 92, 61, 0.4);
+}
+:root[data-theme="claro"][data-paleta="verde"] {
+  --vinho:       #1F5C3D;
+  --vinho-light: #2E7D52;
+  --vinho-dark:  #16402B;
+  --dourado:     #2E7D52;
+  --dourado-light: #4ADE80;
+  --sidebar-active-bg: rgba(31, 92, 61, 0.08);
+  --sidebar-subnav-outline-bg: rgba(31, 92, 61, 0.06);
+}
+:root[data-theme="misto"][data-paleta="verde"] {
+  --vinho:       #1F5C3D;
+  --vinho-light: #2E7D52;
+  --vinho-dark:  #16402B;
+  --dourado:     #2E7D52;
+  --dourado-light: #4ADE80;
+}
+
 /* ── Tailwind custom colors via CSS vars ── */
 @theme {
   --color-fazenda-bg:       var(--bg);
@@ -432,6 +464,20 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-roxo:      #A78BFA;
   --mob-laranja:   #FB923C;
   --mob-amarelo:   #FBBF24;
+}
+
+/* ── PALETA "Verde" no app móvel — mesma dimensão independente do tema
+   descrita no bloco --vinho/--dourado do site; troca --mob-vinho/--mob-dourado*
+   quando data-paleta="verde" (--mob-acao referencia var(--mob-dourado*) e
+   acompanha sozinho). */
+:root[data-paleta="verde"] .mob {
+  --mob-vinho:     #1F5C3D;
+  --mob-dourado:   #2E7D52;
+  --mob-dourado-2: #4ADE80;
+  --mob-header:    linear-gradient(160deg, #1F5C3D, #164430);
+}
+:root[data-theme="escuro"][data-paleta="verde"] .mob {
+  --mob-header:    linear-gradient(160deg, #16402B, #0E2E1F);
 }
 
 /* Área de conteúdo rola por baixo da barra fixa inferior. */

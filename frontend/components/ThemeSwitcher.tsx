@@ -1,6 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Sun, Moon, Columns2 } from "lucide-react";
+import { salvarPreferenciaPaleta } from "@/lib/api";
 
 type Tema = "claro" | "misto" | "escuro";
 const CICLO: Tema[] = ["claro", "misto", "escuro"];
@@ -14,6 +15,14 @@ const META: Record<Tema, { label: string; icon: typeof Sun }> = {
 export function aplicarTema(t: Tema) {
   document.documentElement.setAttribute("data-theme", t);
   try { localStorage.setItem("tema", t); } catch { /* ignore */ }
+}
+
+export type Paleta = "vinho" | "verde";
+
+export function aplicarPaleta(p: Paleta) {
+  document.documentElement.setAttribute("data-paleta", p);
+  try { localStorage.setItem("paleta", p); } catch { /* ignore */ }
+  salvarPreferenciaPaleta(p).catch(() => { /* offline/erro: fica só local, sincroniza no próximo login */ });
 }
 
 export function ThemeSwitcher() {

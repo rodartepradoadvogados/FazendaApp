@@ -31,7 +31,8 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehAdmin()) { router.replace("/"); return; }
-    if (path === "/configuracoes" && !(podeModulo("parametros") || podeModulo("upload") || ehAdmin())) { router.replace("/"); return; }
+    // Configurações tem a aba "Aparência" (tema/paleta) liberada para todo mundo,
+    // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
     setEstado("logado");
   }, [path, router, ehApp]);

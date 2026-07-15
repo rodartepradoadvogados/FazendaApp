@@ -11,6 +11,7 @@ import {
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo } from "@/components/mobile/ui";
+import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
 import CalendarioSanitario from "@/components/mobile/menu/CalendarioSanitario";
@@ -134,6 +135,12 @@ export default function Pagina() {
             <CloudUpload size={17} /> {sincronizando ? "Enviando…" : online ? "Enviar agora" : "Sem internet"}
           </button>
         )}
+      </div>
+
+      {/* Aparência (tema e paleta de cores — preferência pessoal) */}
+      <div className="mob-secao">Aparência</div>
+      <div className="mob-card" style={{ padding: "0.9rem 1rem", marginBottom: "0.6rem" }}>
+        <AparenciaSelector variant="app" />
       </div>
 
       {/* Sistema */}
