@@ -443,7 +443,7 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
         </Campo>
         <Campo label="Seleção">
           <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
-            <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Em lote (vários animais)
+            <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Selecionar vários animais
           </label>
         </Campo>
         <Campo label={`Data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"} (1º dia do cronograma)`}>
