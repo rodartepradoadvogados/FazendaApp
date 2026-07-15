@@ -11,7 +11,13 @@ import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "financeiro" | "upload" | "importar" | "usuarios";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios";
+type AbaParametros = "gerais" | "financeiro";
+// Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
+const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
+  ["gerais", "Parâmetros gerais", SlidersHorizontal],
+  ["financeiro", "Parâmetros financeiros", Wallet],
+];
 
 export default function ConfiguracoesPage() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -21,12 +27,14 @@ export default function ConfiguracoesPage() {
   // registro de sub-navegação (evita a Sidebar ficar disputada entre pai e filho).
   const [cadastroAba, setCadastroAba] = useState<AbaCadastro>("lotes");
   const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("principios");
+  const [parametrosAba, setParametrosAba] = useState<AbaParametros>("gerais");
+  const temFinanceiro = podeModulo("financeiro");
+  const abasParametrosVisiveis = useMemo(() => ABAS_PARAMETROS.filter(([id]) => id !== "financeiro" || temFinanceiro), [temFinanceiro]);
 
   useEffect(() => {
     const abas: { id: Aba; label: string; icon: any; title: string }[] = [];
     if (podeModulo("parametros")) abas.push({ id: "cadastro", label: "Cadastro", icon: Layers, title: "Cadastros de animais, lotes, pessoas..." });
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
-    if (podeModulo("financeiro")) abas.push({ id: "financeiro", label: "Parâmetros financeiros", icon: Wallet, title: "Parâmetros da fazenda e financeiros" });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
@@ -40,21 +48,33 @@ export default function ConfiguracoesPage() {
   // Árvore completa (3 níveis: Configurações › Cadastro › Sanitário) — um único
   // registro, dono de tudo, evita a corrida de dois componentes escrevendo no
   // mesmo contexto na mesma renderização.
-  const subNavTree: SubNavNode[] = useMemo(() => abasVisiveis.map((a) => (
-    a.id !== "cadastro" ? { id: a.id, label: a.label, icon: a.icon } : {
-      id: a.id, label: a.label, icon: a.icon,
-      children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
-        id: cid, label: clabel, icon: cIcon,
-        children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon })) : undefined,
-      })),
+  const subNavTree: SubNavNode[] = useMemo(() => abasVisiveis.map((a) => {
+    if (a.id === "cadastro") {
+      return {
+        id: a.id, label: a.label, icon: a.icon,
+        children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
+          id: cid, label: clabel, icon: cIcon,
+          children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon })) : undefined,
+        })),
+      };
     }
-  )), [abasVisiveis]);
-  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba) : (aba ?? "");
+    if (a.id === "parametros") {
+      return {
+        id: a.id, label: a.label, icon: a.icon,
+        children: abasParametrosVisiveis.map(([pid, plabel, pIcon]) => ({ id: pid, label: plabel, icon: pIcon })),
+      };
+    }
+    return { id: a.id, label: a.label, icon: a.icon };
+  }), [abasVisiveis, abasParametrosVisiveis]);
+  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba)
+    : aba === "parametros" ? parametrosAba
+    : (aba ?? "");
   const onSelect = useCallback((id: string) => {
     if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
     if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
+    if (abasParametrosVisiveis.some(([pid]) => pid === id)) { setAba("parametros"); setParametrosAba(id as AbaParametros); return; }
     setAba("cadastro"); setCadastroAba(id as AbaCadastro);
-  }, [abasVisiveis]);
+  }, [abasVisiveis, abasParametrosVisiveis]);
   useSubNavRegister(useMemo(() => (aba ? { tree: subNavTree, activeId, onSelect } : null), [subNavTree, activeId, aba, onSelect]));
 
   if (!aba) {
@@ -72,8 +92,8 @@ export default function ConfiguracoesPage() {
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "cadastro" && <Cadastro aba={cadastroAba} onAbaChange={setCadastroAba} abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba} />}
-        {aba === "parametros" && <ParametrosPage />}
-        {aba === "financeiro" && <ParametrosFinanceiros />}
+        {aba === "parametros" && parametrosAba === "gerais" && <ParametrosPage />}
+        {aba === "parametros" && parametrosAba === "financeiro" && temFinanceiro && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "usuarios" && <UsuariosPage />}

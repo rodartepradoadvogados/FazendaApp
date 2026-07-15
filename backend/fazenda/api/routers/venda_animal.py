@@ -1,12 +1,9 @@
 """
-Router de compra de animal (Lançamentos > Compra/Venda > Comprar animal) —
-registra o efeito financeiro/histórico completo da aquisição: lançamento
-(despesa) rico em ContaGerencial (conta gerencial restrita às contas de
-compra de animal, centro de custo, documento, datas, parcelamento, pagamento),
-GTA e ICMS quando houver, e comissão de corretagem opcional. Não cria nem
-exige ficha de Animal: o cadastro do animal em si segue seu próprio fluxo
-(CSV/ficha), este endpoint só documenta a compra e gera o(s) lançamento(s)
-financeiro(s) correspondente(s).
+Router de venda de animal (Lançamentos > Compra/Venda > Vender animal) —
+espelha compra_animal.py: lançamento (receita) rico em ContaGerencial (conta
+gerencial restrita às contas de venda de animal, centro de custo, documento,
+datas, parcelamento, recebimento), GTA e ICMS quando houver, motivo(s) e
+categoria(s) da venda, e comissão de corretagem opcional.
 """
 from __future__ import annotations
 
@@ -18,30 +15,30 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Animal, CompraAnimal, ContaGerencial, Usuario
+from fazenda.models import Animal, ContaGerencial, Usuario, VendaAnimal
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
-router = APIRouter(prefix="/compras-animais", tags=["compras-animais"])
+router = APIRouter(prefix="/vendas-animais", tags=["vendas-animais"])
 
 TIPOS_VALOR = ("por_animal", "total")
-# Ramos do plano de contas onde a compra de animal (reposição/crescimento de
-# rebanho) deve ser lançada — o seletor do frontend só mostra folhas destes ramos.
-PREFIXOS_CONTA_COMPRA_ANIMAL = ["3.10.06", "3.10.07"]
+# Ramo do plano de contas onde a receita de venda de animal deve ser lançada.
+PREFIXOS_CONTA_VENDA_ANIMAL = ["2.01.02"]
 ICMS_TIPOS = ("intermunicipal", "interestadual")
 
 
-class CompraIn(BaseModel):
+class VendaIn(BaseModel):
     animais: list[str]
-    vendedor: str
+    comprador: str
     valor: float
     tipo_valor: str  # "por_animal" | "total"
-    data_compra: date
+    data_venda: date
     observacao: str | None = None
     responsavel: str | None = None
+    categorias: list[str] = []  # ex.: ["Vaca", "Novilha"] — pode misturar categorias na mesma nota
+    motivo_venda: str | None = None
 
-    # Conta gerencial (restrita a PREFIXOS_CONTA_COMPRA_ANIMAL no frontend).
     codigo_conta_gerencial: str
     descricao: str | None = None
     centro_custo: str | None = None
@@ -49,9 +46,9 @@ class CompraIn(BaseModel):
     numero_documento: str | None = None
     data_emissao: date | None = None
     data_vencimento: date | None = None
-    data_prevista_entrada: date | None = None
+    data_prevista_saida: date | None = None
     data_pedido: date | None = None
-    entregue: bool | None = None
+    entregue: bool | None = None  # "já foi entregue/recebido" (aqui: entregue ao comprador)
     desconto: float = 0
     acrescimo: float = 0
     parcelas: list[ParcelaIn] = []
@@ -68,15 +65,15 @@ class CompraIn(BaseModel):
     pagar_comissao: bool = False
     corretor_nome: str | None = None
     valor_comissao: float | None = None
-    forma_comissao: str | None = None  # "redirecionado" | "separado"
+    forma_comissao: str | None = None
     data_vencimento_comissao: date | None = None
     parcelas_comissao: list[ParcelaIn] = []
 
 
 @router.get("/")
-def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
-    compras = session.exec(select(CompraAnimal).order_by(CompraAnimal.data_compra.desc(), CompraAnimal.id.desc())).all()
-    registros = [c.model_dump() for c in compras]
+def listar_vendas(session: Session = Depends(get_session)) -> list[dict]:
+    vendas = session.exec(select(VendaAnimal).order_by(VendaAnimal.data_venda.desc(), VendaAnimal.id.desc())).all()
+    registros = [v.model_dump() for v in vendas]
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     for r in registros:
         r["usuario_nome"] = nomes.get(r["usuario_id"])
@@ -84,17 +81,17 @@ def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/")
-def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_venda(dados: VendaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Informe ao menos um animal")
-    if not (dados.vendedor or "").strip():
-        raise HTTPException(status_code=400, detail="Informe o vendedor")
+    if not (dados.comprador or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o comprador")
     if dados.valor is None or dados.valor <= 0:
-        raise HTTPException(status_code=400, detail="Informe o valor da compra")
+        raise HTTPException(status_code=400, detail="Informe o valor da venda")
     if dados.tipo_valor not in TIPOS_VALOR:
         raise HTTPException(status_code=400, detail="Informe se o valor é por animal ou total")
     if not (dados.codigo_conta_gerencial or "").strip():
-        raise HTTPException(status_code=400, detail="Selecione a conta gerencial da compra")
+        raise HTTPException(status_code=400, detail="Selecione a conta gerencial da venda")
     if dados.icms_incide and dados.icms_tipo not in ICMS_TIPOS:
         raise HTTPException(status_code=400, detail="Informe se o ICMS é intermunicipal ou interestadual")
     if dados.pagar_comissao:
@@ -112,26 +109,27 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), u
         valor_unitario = round(valor_total_bruto / quantidade, 2)
     valor_liquido = round(valor_total_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
 
-    numero_lancamento = _proximo_numero_lancamento(session, dados.data_compra.year)
-    descricao = dados.descricao or f"Compra de {quantidade} animal(is) — {dados.vendedor}"
+    categorias_txt = ",".join(dados.categorias) if dados.categorias else None
+    numero_lancamento = _proximo_numero_lancamento(session, dados.data_venda.year)
+    descricao = dados.descricao or f"Venda de {quantidade} animal(is) — {dados.comprador}"
     campos_comuns = dict(
         numero_lancamento=numero_lancamento,
         codigo_conta=dados.codigo_conta_gerencial,
         descricao=descricao,
         centro_custo=dados.centro_custo,
-        fornecedor_cliente=dados.vendedor,
+        fornecedor_cliente=dados.comprador,
         responsavel=dados.responsavel,
-        tipo_documento=dados.tipo_documento or "Compra de animal",
+        tipo_documento=dados.tipo_documento or "Venda de animal",
         numero_nota=dados.numero_documento,
         data_emissao=dados.data_emissao,
-        data_competencia=dados.data_compra,
-        data_prevista_entrada=dados.data_prevista_entrada,
+        data_competencia=dados.data_venda,
+        data_prevista_entrada=dados.data_prevista_saida,  # mesma coluna serve p/ "data prevista" (entrada OU saída, a depender do fluxo)
         data_pedido=dados.data_pedido,
         entregue=dados.entregue,
         quantidade=quantidade,
         desconto_nota=dados.desconto or None,
         acrescimo_nota=dados.acrescimo or None,
-        tipo="despesa", origem="manual",
+        tipo="receita", origem="manual",
         usuario_id=usuario_id_seguro(user),
     )
 
@@ -146,7 +144,7 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), u
     else:
         registro = ContaGerencial(
             **campos_comuns,
-            data_vencimento=dados.data_vencimento or dados.data_prevista_entrada or dados.data_compra,
+            data_vencimento=dados.data_vencimento or dados.data_prevista_saida or dados.data_venda,
             valor_unitario=valor_unitario, valor_total=valor_liquido,
             parcela_num=1, parcela_total=1,
         )
@@ -160,13 +158,13 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), u
     if dados.pagar_comissao:
         criar_comissao(
             session,
-            origem_tipo="compra_animal",
+            origem_tipo="venda_animal",
             numero_lancamento_origem=numero_lancamento,
             corretor_nome=dados.corretor_nome,
             valor_comissao=dados.valor_comissao,
             forma=dados.forma_comissao,
-            data_transacao=dados.data_compra,
-            descricao_origem=f"compra de {quantidade} animal(is) de {dados.vendedor}",
+            data_transacao=dados.data_venda,
+            descricao_origem=f"venda de {quantidade} animal(is) para {dados.comprador}",
             centro_custo=dados.centro_custo,
             origem_paga=paga_agora,
             origem_data_pagamento=dados.data_pagamento,
@@ -175,27 +173,29 @@ def registrar_compra(dados: CompraIn, session: Session = Depends(get_session), u
             parcelas_comissao=[(p.data_vencimento, p.valor) for p in dados.parcelas_comissao] or None,
         )
 
-    comprados = []
+    vendidos = []
     for numero in dados.animais:
-        session.add(CompraAnimal(
-            numero_animal=numero, vendedor=dados.vendedor, valor=valor_unitario,
-            tipo_valor=dados.tipo_valor, data_compra=dados.data_compra,
+        session.add(VendaAnimal(
+            numero_animal=numero, comprador=dados.comprador, valor=valor_unitario,
+            tipo_valor=dados.tipo_valor, data_venda=dados.data_venda,
             responsavel=dados.responsavel, observacao=dados.observacao,
+            categorias=categorias_txt, motivo_venda=dados.motivo_venda,
             numero_lancamento_gerado=numero_lancamento,
             gta=dados.gta, icms_incide=dados.icms_incide, icms_tipo=dados.icms_tipo, icms_valor=dados.icms_valor,
             usuario_id=usuario_id_seguro(user),
         ))
-        # Vincula o valor da compra à ficha do animal (para o relatório de
-        # payback quando ele produzir). Preenche data de entrada e vendedor.
+        # A venda tira o animal do rebanho ativo — mesmo efeito de Rebanho >
+        # Baixar animal > motivo "venda" (Animal.ativo/data_baixa/motivo_baixa),
+        # para que relatórios e listas de rebanho ativo fiquem consistentes
+        # não importa por qual tela a venda foi lançada.
         animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
         if animal:
-            animal.valor = valor_unitario
-            if not animal.data_entrada:
-                animal.data_entrada = dados.data_compra
-            if not animal.proprietario:
-                animal.proprietario = dados.vendedor
+            animal.ativo = False
+            animal.data_baixa = dados.data_venda
+            animal.motivo_baixa = "venda"
+            animal.atualizado_em = datetime.utcnow()
             session.add(animal)
-        comprados.append(numero)
+        vendidos.append(numero)
 
     session.commit()
-    return {"comprados": len(comprados), "animais": comprados, "numero_lancamento": numero_lancamento}
+    return {"vendidos": len(vendidos), "animais": vendidos, "numero_lancamento": numero_lancamento}

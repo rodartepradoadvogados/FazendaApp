@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check } from "lucide-react";
 import { fetchParametros } from "@/lib/api";
+import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 
 type Item = { chave: string; label: string; valor: number; unidade: string };
 type Grupo = { titulo: string; itens: Item[] };
@@ -77,6 +78,10 @@ export default function ParametrosPage() {
           })}
         </div>
       )}
+
+      <div className="mt-4">
+        <CadastroMotivosVenda />
+      </div>
     </div>
   );
 }

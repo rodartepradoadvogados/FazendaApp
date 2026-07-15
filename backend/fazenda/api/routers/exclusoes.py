@@ -20,6 +20,8 @@ from fazenda.models import (
     AgendaManual,
     Animal,
     CalendarioSanitario,
+    ComissaoCorretagem,
+    CompraAnimal,
     ContaGerencial,
     ControleLeiteiro,
     Doenca,
@@ -45,6 +47,7 @@ from fazenda.models import (
     SolicitacaoExclusao,
     Usuario,
     ValeFuncionario,
+    VendaAnimal,
 )
 
 router = APIRouter(prefix="/exclusoes", tags=["exclusoes"])
@@ -58,6 +61,8 @@ TIPOS = [
     {"id": "protocolo_sanitario_lancamento", "label": "Aplicação de protocolo sanitário (curativo/vacina)"},
     {"id": "protocolo_iatf_lancamento", "label": "Aplicação de protocolo hormonal (IATF)"},
     {"id": "financeiro", "label": "Financeiro"},
+    {"id": "compra_animal", "label": "Compra de animal"},
+    {"id": "venda_animal", "label": "Venda de animal"},
     {"id": "estoque", "label": "Estoque"},
     {"id": "evento_manual", "label": "Evento manual da agenda"},
     {"id": "lote", "label": "Lote (cadastro)"},
@@ -77,7 +82,7 @@ TIPOS = [
 SUBTIPOS_TODOS = [
     "servico", "parto", "controle", "sanidade",
     "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
-    "evento_manual", "financeiro",
+    "evento_manual", "financeiro", "compra_animal", "venda_animal",
 ]
 
 
@@ -244,6 +249,38 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
             )
         ]
         return out[:200]
+
+    if tipo == "compra_animal":
+        rows = session.exec(select(CompraAnimal)).all()
+        out = [
+            {
+                "id": c.id,
+                "titulo": f"{c.numero_animal} — {c.vendedor} — {_br(c.data_compra)}",
+                "subtitulo": f"R$ {c.valor or 0:,.2f} · lanç. {c.numero_lancamento_gerado or '—'}"
+                + (f" · GTA {c.gta}" if c.gta else ""),
+                "_data": c.data_compra,
+            }
+            for c in rows
+            if _contem(termo, c.numero_animal, c.vendedor, c.numero_lancamento_gerado, c.gta)
+            and _dentro_periodo(c.data_compra, data_inicio, data_fim)
+        ]
+        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+
+    if tipo == "venda_animal":
+        rows = session.exec(select(VendaAnimal)).all()
+        out = [
+            {
+                "id": v.id,
+                "titulo": f"{v.numero_animal} — {v.comprador} — {_br(v.data_venda)}",
+                "subtitulo": f"R$ {v.valor or 0:,.2f} · lanç. {v.numero_lancamento_gerado or '—'}"
+                + (f" · GTA {v.gta}" if v.gta else ""),
+                "_data": v.data_venda,
+            }
+            for v in rows
+            if _contem(termo, v.numero_animal, v.comprador, v.numero_lancamento_gerado, v.gta)
+            and _dentro_periodo(v.data_venda, data_inicio, data_fim)
+        ]
+        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "estoque":
         rows = session.exec(select(Estoque)).all()
@@ -505,6 +542,78 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
         if itens:
             impacto.append(f"{len(itens)} produto(s)/serviço(s) lançados nesta nota")
         return impacto, [c, *itens]
+
+    if tipo == "compra_animal":
+        c = session.get(CompraAnimal, int(id_))
+        if not c:
+            raise HTTPException(status_code=404, detail="Compra de animal não encontrada")
+        impacto = [f"Compra do animal {c.numero_animal} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor or 0:,.2f})"]
+        objetos: list = [c]
+        irmaos = (
+            session.exec(select(CompraAnimal).where(CompraAnimal.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            if c.numero_lancamento_gerado else [c]
+        )
+        if len(irmaos) > 1:
+            impacto.append(
+                f"Faz parte de uma compra em lote com mais {len(irmaos) - 1} animal(is) — o lançamento "
+                "financeiro e a comissão (se houver) continuam intactos, pois ainda valem para os demais animais."
+            )
+        else:
+            contas = (
+                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                if c.numero_lancamento_gerado else []
+            )
+            comissoes = (
+                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == c.numero_lancamento_gerado)).all()
+                if c.numero_lancamento_gerado else []
+            )
+            contas_comissao = []
+            for co in comissoes:
+                contas_comissao += session.exec(
+                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                ).all()
+            if contas:
+                impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
+            if comissoes:
+                impacto.append(f"{len(comissoes)} comissão(ões) de corretagem vinculada(s)")
+            objetos += [*contas, *comissoes, *contas_comissao]
+        return impacto, objetos
+
+    if tipo == "venda_animal":
+        v = session.get(VendaAnimal, int(id_))
+        if not v:
+            raise HTTPException(status_code=404, detail="Venda de animal não encontrada")
+        impacto = [f"Venda do animal {v.numero_animal} — {v.comprador} — {_br(v.data_venda)} (R$ {v.valor or 0:,.2f})"]
+        objetos: list = [v]
+        irmaos = (
+            session.exec(select(VendaAnimal).where(VendaAnimal.numero_lancamento_gerado == v.numero_lancamento_gerado)).all()
+            if v.numero_lancamento_gerado else [v]
+        )
+        if len(irmaos) > 1:
+            impacto.append(
+                f"Faz parte de uma venda em lote com mais {len(irmaos) - 1} animal(is) — o lançamento "
+                "financeiro e a comissão (se houver) continuam intactos, pois ainda valem para os demais animais."
+            )
+        else:
+            contas = (
+                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == v.numero_lancamento_gerado)).all()
+                if v.numero_lancamento_gerado else []
+            )
+            comissoes = (
+                session.exec(select(ComissaoCorretagem).where(ComissaoCorretagem.numero_lancamento == v.numero_lancamento_gerado)).all()
+                if v.numero_lancamento_gerado else []
+            )
+            contas_comissao = []
+            for co in comissoes:
+                contas_comissao += session.exec(
+                    select(ContaGerencial).where(ContaGerencial.numero_lancamento == co.numero_lancamento_comissao)
+                ).all()
+            if contas:
+                impacto.append(f"Lançamento financeiro {v.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
+            if comissoes:
+                impacto.append(f"{len(comissoes)} comissão(ões) de corretagem vinculada(s)")
+            objetos += [*contas, *comissoes, *contas_comissao]
+        return impacto, objetos
 
     if tipo == "lote":
         lote = session.get(Lote, int(id_))

@@ -32,18 +32,20 @@ from fazenda.api.routers import (
     parametros,
     producao,
     recria,
+    relatorio_compra_venda_animal,
     relatorios,
     reproducao,
     sanidade,
     telegram,
     upload,
+    venda_animal,
 )
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
-from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo
+from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas
 from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import (
-    seed_cadastro_sanitario, seed_motivos_baixa, seed_pessoas, seed_servicos, seed_semen_categorias,
+    seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos,
 )
@@ -62,6 +64,9 @@ async def lifespan(app: FastAPI):
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
         normalizar_plano_contas(session)
+        # Classificação padrão (serviço/produto/ambos) por palavra-chave —
+        # só preenche onde ainda está vazio, nunca sobrescreve edição manual.
+        classificar_natureza_plano_contas(session)
         normalizar_centros_custo(session)
         deduplicar_partos(session)
         seed_pessoas(session)
@@ -70,6 +75,7 @@ async def lifespan(app: FastAPI):
         # fisiológica) — idempotente, só cria/compatibiliza o que falta.
         configurar_calendario_sanitario_padrao(session)
         seed_motivos_baixa(session)
+        seed_motivos_venda(session)
         seed_servicos(session)
         # Tipos de serviço (Cobertura/IA) e métodos (Monta Natural/IA em cio
         # natural/IATF) — vocabulário do lançamento de Serviço/Inseminação.
@@ -160,6 +166,8 @@ app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).

@@ -62,7 +62,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "vale_funcionario": [("usuario_id", "INTEGER")],
     "movimento_estoque": [("usuario_id", "INTEGER")],
     "movimento_lote": [("usuario_id", "INTEGER")],
-    "compra_animal": [("usuario_id", "INTEGER")],
+    "compra_animal": [
+        ("usuario_id", "INTEGER"), ("gta", "VARCHAR"), ("icms_incide", "BOOLEAN"),
+        ("icms_tipo", "VARCHAR"), ("icms_valor", "FLOAT"),
+    ],
     "ocorrencia_clinica": [("usuario_id", "INTEGER")],
     "registro_cocho": [("usuario_id", "INTEGER")],
     "animal": [
@@ -142,6 +145,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "plano_conta_gerencial": [
         ("rmca_receita_leite", "BOOLEAN"),
         ("rmca_custo_alimentacao", "BOOLEAN"),
+        ("natureza", "VARCHAR"),
     ],
     "lancamento_item": [("tipo_item", "VARCHAR")],
     "folha_pagamento": [

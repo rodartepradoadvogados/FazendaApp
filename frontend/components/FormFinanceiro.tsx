@@ -462,6 +462,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                 <SeletorContaGerencial
                   contas={planoContas}
                   tipo={tipo}
+                  natureza={it.tipo_item}
                   codigo={it.codigo_conta_gerencial}
                   nome={it.nome_conta_gerencial}
                   onSelect={(codigo, nome) => atualizarItem(idx, { codigo_conta_gerencial: codigo, nome_conta_gerencial: nome })}

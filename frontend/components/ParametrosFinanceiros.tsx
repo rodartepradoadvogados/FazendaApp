@@ -255,15 +255,15 @@ function CentrosCusto() {
 // ---------------------------------------------------------------------------
 type ContaGerencial = {
   id: number; codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string | null;
-  rmca_receita_leite: boolean | null; rmca_custo_alimentacao: boolean | null;
+  rmca_receita_leite: boolean | null; rmca_custo_alimentacao: boolean | null; natureza: string | null;
 };
 type FormGerencial = {
   codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string;
-  rmca_receita_leite: boolean; rmca_custo_alimentacao: boolean;
+  rmca_receita_leite: boolean; rmca_custo_alimentacao: boolean; natureza: string;
 };
 const formGerencialVazio: FormGerencial = {
   codigo: "", nome: "", ativa: true, tipo_fixo_variavel: "",
-  rmca_receita_leite: false, rmca_custo_alimentacao: false,
+  rmca_receita_leite: false, rmca_custo_alimentacao: false, natureza: "ambos",
 };
 
 function ContasGerenciais() {
@@ -286,6 +286,7 @@ function ContasGerenciais() {
     setForm({
       codigo: c.codigo, nome: c.nome, ativa: c.ativa, tipo_fixo_variavel: c.tipo_fixo_variavel ?? "",
       rmca_receita_leite: c.rmca_receita_leite ?? false, rmca_custo_alimentacao: c.rmca_custo_alimentacao ?? false,
+      natureza: c.natureza ?? "ambos",
     });
     setEditando(c.id); setMsg(null);
   };
@@ -298,6 +299,7 @@ function ContasGerenciais() {
       const dados = {
         codigo: form.codigo.trim(), nome: form.nome.trim(), ativa: form.ativa, tipo_fixo_variavel: form.tipo_fixo_variavel || undefined,
         rmca_receita_leite: form.rmca_receita_leite, rmca_custo_alimentacao: form.rmca_custo_alimentacao,
+        natureza: form.natureza || undefined,
       };
       if (editando === "novo") await criarContaGerencial(dados);
       else if (typeof editando === "number") await atualizarContaGerencial(editando, dados);
@@ -321,6 +323,20 @@ function ContasGerenciais() {
           </select></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativa} onChange={(e) => setForm({ ...form, ativa: e.target.checked })} /> Ativa</label></div>
+      </div>
+      <div className="mb-3">
+        <label style={labelStyle}>Natureza do lançamento aceito nesta conta</label>
+        <div className="flex items-center gap-4 mt-1">
+          {(["servico", "produto", "ambos"] as const).map((n) => (
+            <label key={n} className="flex items-center gap-2" style={{ fontSize: "0.78rem", cursor: "pointer" }}>
+              <input type="radio" checked={form.natureza === n} onChange={() => setForm({ ...form, natureza: n })} />
+              {n === "servico" ? "Serviço" : n === "produto" ? "Produto" : "Ambos"}
+            </label>
+          ))}
+        </div>
+        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+          Em Financeiro &gt; Contas a pagar/a receber, "Serviço" só abre a lista de serviços; "Produto" só abre a lista de produtos; "Ambos" abre as duas.
+        </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
         <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
@@ -364,6 +380,11 @@ function ContasGerenciais() {
             <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0 }}>{c.codigo}</span>
             <span style={{ ...estiloNivel(nivel), overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{c.nome}</span>
             {!c.ativa && <span style={{ color: "var(--text-muted)", fontSize: "0.7rem", flexShrink: 0 }}>(inativa)</span>}
+            {c.natureza && c.natureza !== "ambos" && (
+              <span style={{ fontSize: "0.62rem", padding: "0.05rem 0.4rem", borderRadius: "999px", flexShrink: 0, border: "1px solid var(--border)", color: "var(--text-muted)" }}>
+                {c.natureza === "servico" ? "Serviço" : "Produto"}
+              </span>
+            )}
             {c.rmca_receita_leite && <span style={badgeRmca}>RMCA · receita leite</span>}
             {c.rmca_custo_alimentacao && <span style={badgeRmca}>RMCA · alimentação</span>}
           </button>

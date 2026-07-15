@@ -525,6 +525,11 @@ class PlanoContaGerencial(SQLModel, table=True):
     rmca_receita_leite: Optional[bool] = None
     rmca_custo_alimentacao: Optional[bool] = None
 
+    # Natureza do lançamento aceito por esta conta — "servico" | "produto" | "ambos".
+    # Restringe, em Financeiro > Contas a pagar/a receber, se o item do lançamento
+    # pode ser um serviço, um produto, ou os dois (ver FormFinanceiro/SeletorContaGerencial).
+    natureza: Optional[str] = None
+
 
 class SeedFlag(SQLModel, table=True):
     """Marcador de migração/seed de dados executado uma única vez.
@@ -1032,6 +1037,17 @@ class MotivoBaixa(SQLModel, table=True):
     """Causa específica de uma baixa de animal (Rebanho > Baixar animal), cadastrável em Configurações."""
 
     __tablename__ = "motivo_baixa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class MotivoVenda(SQLModel, table=True):
+    """Motivo da venda de um animal (Lançamentos > Compra/Venda > Vender animal), cadastrável em Configurações."""
+
+    __tablename__ = "motivo_venda"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
@@ -1588,7 +1604,10 @@ class BaixaAnimal(SQLModel, table=True):
 # lançamento financeiro (despesa) e, opcionalmente, comissão de corretagem.
 # ---------------------------------------------------------------------------
 class CompraAnimal(SQLModel, table=True):
-    """Registro de compra de animal — apenas o efeito financeiro/histórico da aquisição."""
+    """Registro de compra de animal — apenas o efeito financeiro/histórico da aquisição.
+    Os campos financeiros "ricos" (centro de custo, tipo/nº de documento, datas,
+    parcelamento, pagamento etc.) vivem na(s) ContaGerencial geradas — aqui só
+    o que é específico da transação de compra do animal em si."""
 
     __tablename__ = "compra_animal"
 
@@ -1601,6 +1620,39 @@ class CompraAnimal(SQLModel, table=True):
     responsavel: Optional[str] = None
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na compra
+    # Guia de Trânsito Animal — vincula a compra ao documento sanitário de
+    # transporte (consultável no relatório de compra/venda de animais).
+    gta: Optional[str] = None
+    icms_incide: bool = False
+    icms_tipo: Optional[str] = None  # "intermunicipal" | "interestadual"
+    icms_valor: Optional[float] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+class VendaAnimal(SQLModel, table=True):
+    """Registro de venda de animal — espelha CompraAnimal, com comprador no
+    lugar de vendedor e categoria(s)/motivo da venda, específicos de venda."""
+
+    __tablename__ = "venda_animal"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_animal: str = Field(index=True)
+    comprador: str
+    valor: float
+    tipo_valor: str  # "por_animal" | "total"
+    data_venda: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    # Categoria(s) do(s) animal(is) vendido(s) nesta nota — lista separada por
+    # vírgula (ex.: "Vaca,Novilha") já que uma mesma nota pode misturar categorias.
+    categorias: Optional[str] = None
+    motivo_venda: Optional[str] = None
+    numero_lancamento_gerado: Optional[str] = None
+    gta: Optional[str] = None
+    icms_incide: bool = False
+    icms_tipo: Optional[str] = None  # "intermunicipal" | "interestadual"
+    icms_valor: Optional[float] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
@@ -1608,8 +1660,9 @@ class CompraAnimal(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Comissão de corretagem — gerada a partir de uma venda ou compra de animal,
 # quando há corretor envolvido. Sempre resulta em uma despesa (ContaGerencial)
-# separada e visível, seja "redirecionada" (já paga junto com a transação) ou
-# "separada" (conta a pagar em aberto, liquidada depois como qualquer outra).
+# separada e visível, seja "redirecionada" (liquidada junto com a transação,
+# copiando o estado de pagamento dela) ou "separada" (conta a pagar/vencimento
+# própria, independente da transação de origem).
 # ---------------------------------------------------------------------------
 class ComissaoCorretagem(SQLModel, table=True):
     """Registro de comissão paga a corretor por uma venda/compra de animal."""
@@ -1621,7 +1674,7 @@ class ComissaoCorretagem(SQLModel, table=True):
     numero_lancamento: str  # LC-... do lançamento de venda/compra ao qual esta comissão se refere
     corretor_nome: str
     valor_comissao: float
-    forma: str  # "redirecionado" (já paga junto da transação) | "separado" (conta a pagar em aberto)
+    forma: str  # "redirecionado" (segue o pagamento da transação) | "separado" (conta a pagar própria)
     numero_lancamento_comissao: Optional[str] = None  # LC-... da despesa de comissão criada
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)

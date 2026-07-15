@@ -29,7 +29,7 @@ import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
-import ComprarAnimal from "@/components/ComprarAnimal";
+import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
@@ -3413,10 +3413,16 @@ const TIPOS_GRUPOS = [
   },
   {
     id: "animais", label: "Animais", icon: ArrowRightLeft,
-    desc: "Movimentar animais entre lotes, comprar ou dar baixa (venda/morte/descarte).",
+    desc: "Movimentar animais entre lotes, comprar/vender ou dar baixa (morte/descarte).",
     subs: [
       { id: "mover_animais", label: "Movimentar animais", icon: ArrowRightLeft, desc: "Transferir um ou vários animais de lote." },
-      { id: "comprar_animal", label: "Compra / venda", icon: ShoppingCart, desc: "Registrar a compra de um animal (vendedor via fornecedor, com valor)." },
+      {
+        id: "compra_venda", label: "Compra / Venda", icon: ShoppingCart, desc: "Registrar a compra ou a venda de animal(is).",
+        subs: [
+          { id: "comprar_animal", label: "Comprar animal", icon: ShoppingCart, desc: "Registrar a compra de animal(is) — vendedor via fornecedor, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
+          { id: "vender_animal", label: "Vender animal", icon: ShoppingCart, desc: "Registrar a venda de animal(is) — comprador via cadastro, motivo/categoria(s) da venda, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
+        ],
+      },
       { id: "baixar_animal", label: "Baixa", icon: Skull, desc: "Registrar saída do rebanho: venda, morte, descarte ou marcar 'A descartar'." },
     ],
   },
@@ -3425,11 +3431,24 @@ const TIPOS_GRUPOS = [
   { id: "exclusao", label: "Excluir lançamento", icon: Trash2, desc: "Apagar um lançamento já salvo, com filtros e prévia de impacto.", leaf: "exclusao" },
 ];
 
+// Um item de "subs" pode, por sua vez, ter os próprios "subs" (mais um nível
+// de sub-aba — caso de Compra/Venda dentro de Animais) — achata recursivamente
+// até sobrarem só as folhas de verdade (as que têm formulário próprio).
+function achatarSubs(itens: any[]): any[] {
+  return itens.flatMap((it) => (it.subs ? achatarSubs(it.subs) : [it]));
+}
+
+// Constrói o nó da árvore de sub-navegação recursivamente, para os itens que
+// tiverem sub-abas próprias (mesmo caso acima).
+function paraSubNavNode(it: any): SubNavNode {
+  return { id: it.id, label: it.label, icon: it.icon, children: it.subs?.map(paraSubNavNode) };
+}
+
 // Lista achatada de sub-tipos (folhas), usada para saber qual formulário renderizar.
 // Um grupo pode ter folhas direto (subs), estar sozinho (leaf) ou se ramificar em
 // sub-grupos (grupos) — caso do Sanitário, que abre Curativa/Preventiva antes das folhas.
 const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
-  g.grupos ? g.grupos.flatMap((sg) => sg.subs) : g.subs ? g.subs : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]
+  g.grupos ? g.grupos.flatMap((sg) => achatarSubs(sg.subs)) : g.subs ? achatarSubs(g.subs) : [{ id: g.leaf!, label: g.label, icon: g.icon, desc: g.desc }]
 );
 
 export default function LancamentosPage() {
@@ -3494,8 +3513,8 @@ export default function LancamentosPage() {
   const subNavTree: SubNavNode[] = useMemo(() => TIPOS_GRUPOS.map((g) => ({
     id: g.leaf ?? g.id, label: g.label, icon: g.icon,
     children: g.grupos
-      ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map((s) => ({ id: s.id, label: s.label, icon: s.icon })) }))
-      : g.subs?.map((s) => ({ id: s.id, label: s.label, icon: s.icon })),
+      ? g.grupos.map((sg) => ({ id: sg.id, label: sg.label, icon: sg.icon, children: sg.subs.map(paraSubNavNode) }))
+      : g.subs?.map(paraSubNavNode),
   })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: sel, onSelect: trocarTipo }), [subNavTree, sel, trocarTipo]));
 
@@ -3573,7 +3592,8 @@ export default function LancamentosPage() {
         {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
         {sel === "estoque" && <FormEstoque estoque={estoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}
-        {sel === "comprar_animal" && <ComprarAnimal />}
+        {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
+        {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
         {sel === "baixar_animal" && <BaixarAnimal />}
         {sel === "alimentacao_dieta" && <FormAlimentacaoDieta />}
         {sel === "exclusao" && <FormExclusao />}
