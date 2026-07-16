@@ -249,14 +249,17 @@ export default function FinanceiroPage() {
 
   useEffect(() => {
     if (regs && !inicio) {
-      const ds = regs.flatMap((r) => [r.data_pagamento, r.data_competencia, r.data_vencimento]).filter(Boolean).sort() as string[];
-      // Início = data mais antiga real dos lançamentos, mas o fim sempre parte de
-      // hoje — nunca da maior data encontrada (um lançamento com data futura/errada
-      // não deve puxar o filtro inteiro para o futuro).
-      if (ds.length) setInicio(ds[0]);
-      setFim(new Date().toISOString().slice(0, 10));
+      // Filtro padrão: hoje até hoje (não o histórico inteiro) — o usuário
+      // ajusta o período manualmente quando quiser ver mais.
+      const hoje = new Date().toISOString().slice(0, 10);
+      setInicio(hoje);
+      setFim(hoje);
     }
   }, [regs, inicio]);
+
+  useEffect(() => {
+    if (regs && !centro) setCentro("Pecuária Leiteira");
+  }, [regs, centro]);
 
   const centros = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo))).sort(), [regs]);
   // Produto/serviço: opções vindas do backend + nomes efetivamente lançados nas

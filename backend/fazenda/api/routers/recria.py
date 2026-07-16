@@ -14,7 +14,8 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -24,7 +25,9 @@ from fazenda.models import (
     Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
     Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico, Usuario,
 )
+from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
 )
@@ -446,6 +449,70 @@ def criar_cocho(dados: CochoIn, session: Session = Depends(get_session), user: U
     session.commit()
     session.refresh(r)
     return _serializa_cocho(r)
+
+
+# ---------------------------------------------------------------------------
+# Importação de planilha (Excel ou CSV) da leitura de campo do cocho — a
+# ficha de papel que o técnico preenche no curral (data/lote/nº de
+# animais/ofertado/sobra), evitando redigitar registro a registro na tela.
+# ---------------------------------------------------------------------------
+COCHO_APELIDOS = {
+    "data": ["data", "data leitura", "data da leitura"],
+    "lote": ["lote", "lote/grupo", "grupo"],
+    "num_animais": ["numero de animais", "num animais", "n animais", "qtd animais", "animais"],
+    "kg_ofertado": ["kg ofertado", "ofertado", "ofertado kg", "kg ofertados"],
+    "kg_sobra": ["kg sobra", "sobra", "sobra kg"],
+    "kg_formulado": ["kg formulado", "formulado", "meta", "kg meta", "kg formulado meta opcional"],
+}
+MODELO_COCHO = {
+    "colunas": ["Data", "Lote", "Número de animais", "Kg ofertado", "Kg sobra", "Kg formulado (meta, opcional)"],
+    "exemplo": ["05/07/2026", "01 - Lactação Alta", "45", "900,0", "60,0", "850,0"],
+}
+
+
+@router.get("/cocho/modelo-excel")
+def modelo_excel_cocho() -> Response:
+    conteudo = gerar_modelo_xlsx(MODELO_COCHO["colunas"], MODELO_COCHO["exemplo"], aba="Leitura de cocho")
+    return Response(
+        content=conteudo,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="modelo_leitura_cocho.xlsx"'},
+    )
+
+
+@router.post("/cocho/importar")
+async def importar_cocho_planilha(
+    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    content = await file.read()
+    linhas = list(iter_planilha_rows(file.filename or "", content))
+    if not linhas:
+        return {"criados": 0, "erros": ["Planilha vazia ou em formato não reconhecido."]}
+
+    erros: list[str] = []
+    criados = 0
+    for i, row in enumerate(linhas, start=2):
+        row_norm = {normalizar_cabecalho(k): v for k, v in row.items()}
+        data_linha = parse_date(valor_por_apelido(row_norm, COCHO_APELIDOS["data"]))
+        lote = valor_por_apelido(row_norm, COCHO_APELIDOS["lote"]).strip()
+        num_animais = parse_float(valor_por_apelido(row_norm, COCHO_APELIDOS["num_animais"]))
+        kg_ofertado = parse_float(valor_por_apelido(row_norm, COCHO_APELIDOS["kg_ofertado"]))
+        kg_sobra = parse_float(valor_por_apelido(row_norm, COCHO_APELIDOS["kg_sobra"]))
+        kg_formulado = parse_float(valor_por_apelido(row_norm, COCHO_APELIDOS["kg_formulado"]))
+        if not data_linha or not lote or not kg_ofertado:
+            erros.append(f"Linha {i}: data, lote e kg ofertado são obrigatórios.")
+            continue
+        if kg_sobra and kg_sobra > kg_ofertado:
+            erros.append(f"Linha {i}: a sobra não pode ser maior que o ofertado.")
+            continue
+        r = RegistroCocho(
+            data=data_linha, lote=lote, num_animais=int(num_animais) if num_animais else 1,
+            kg_ofertado=kg_ofertado, kg_sobra=kg_sobra or 0.0, kg_formulado=kg_formulado, usuario_id=user.id,
+        )
+        session.add(r)
+        criados += 1
+    session.commit()
+    return {"criados": criados, "erros": erros}
 
 
 @router.delete("/cocho/{cocho_id}")

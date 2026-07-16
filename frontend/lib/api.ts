@@ -2394,6 +2394,18 @@ export const fetchRecriaCocho = (lote = "", ini = "", fim = ""): Promise<{ regis
 export const criarRecriaCocho = (d: RecriaCocho) => _rSend(`/recria/cocho`, "POST", d);
 export const excluirRecriaCocho = (id: number) => _rSend(`/recria/cocho/${id}`, "DELETE");
 
+export function baixarModeloCocho() {
+  return baixarArquivoAutenticado("/recria/cocho/modelo-excel", "modelo_leitura_cocho.xlsx");
+}
+
+export async function importarCochoPlanilha(file: File): Promise<{ criados: number; erros: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/recria/cocho/importar`, { method: "POST", body: form });
+  if (!res.ok) throw new Error((await res.json().catch(() => null))?.detail || "Erro ao importar planilha");
+  return res.json();
+}
+
 export type Estratificacao = { total: number; estratos: Record<string, number>; percentuais: Record<string, number>; vacas_total: number; pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number };
 export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);
 
