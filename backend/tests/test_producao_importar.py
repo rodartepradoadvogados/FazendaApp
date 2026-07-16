@@ -159,6 +159,48 @@ class TestImportarControleLeiteiroPorLote:
         assert len(d["erros"]) == 1 and "não encontrado" in d["erros"][0]
 
 
+class TestImportarControleLeiteiroSoTotal:
+    def test_planilha_por_animal_so_com_total_grava_producao_sem_quebrar_ordenha(self, client):
+        conteudo = _xlsx_bytes(["Número", "Data", "Total"], [["101", "05/07/2026", "27,5"]])
+        r = client.post(
+            "/producao/controle-leiteiro/importar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["criados"] == 1 and d["erros"] == []
+        registro = next(c for c in client.get("/producao/controles").json()["controles"] if c["numero"] == "101")
+        assert registro["producao_kg"] == 27.5
+        assert registro["ordenha1_kg"] is None
+        assert registro["ordenha2_kg"] is None
+        assert registro["ordenha3_kg"] is None
+
+    def test_planilha_por_lote_so_com_total_distribui_sem_quebrar_ordenha(self, client):
+        conteudo = _xlsx_bytes(["Lote", "Data", "Total"], [["01 - Alta", "05/07/2026", "36"]])
+        r = client.post(
+            "/producao/controle-leiteiro/importar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["criados"] == 2 and d["erros"] == []
+        controles = client.get("/producao/controles").json()["controles"]
+        r101 = next(c for c in controles if c["numero"] == "101")
+        r102 = next(c for c in controles if c["numero"] == "102")
+        assert r101["producao_kg"] == 18.0 and r102["producao_kg"] == 18.0
+        assert r101["ordenha1_kg"] is None and r102["ordenha1_kg"] is None
+
+    def test_linha_sem_ordenha_nem_total_vira_erro(self, client):
+        conteudo = _xlsx_bytes(["Número", "Data"], [["101", "05/07/2026"]])
+        r = client.post(
+            "/producao/controle-leiteiro/importar",
+            files={"file": ("controle.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d["criados"] == 0 and len(d["erros"]) == 1
+
+
 class TestImportarControleLeiteiroValidacao:
     def test_planilha_sem_coluna_reconhecida_da_400(self, client):
         conteudo = _xlsx_bytes(["Foo", "Bar"], [["x", "y"]])
@@ -208,3 +250,51 @@ class TestImportarQualidadeLeite:
         assert r.status_code == 200
         d = r.json()
         assert d["criados"] == 0 and len(d["erros"]) == 1
+
+
+class TestModeloExcelPesagemCorporal:
+    def test_modelo_pesagem_corporal(self, client):
+        r = client.get("/producao/pesagens/modelo-excel")
+        assert r.status_code == 200
+        assert r.headers["content-type"].startswith("application/vnd.openxmlformats")
+        wb = openpyxl.load_workbook(io.BytesIO(r.content))
+        cabecalho = [c.value for c in wb.active[1]]
+        assert "Peso (kg)" in cabecalho
+
+
+class TestImportarPesagemCorporal:
+    def test_planilha_cria_pesagem_com_del_e_lote_do_cadastro(self, client):
+        conteudo = _xlsx_bytes(["Número do animal", "Data", "Peso (kg)"], [["101", "05/07/2026", "420,5"]])
+        r = client.post(
+            "/producao/pesagens/importar",
+            files={"file": ("pesagem.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["criados"] == 1 and d["erros"] == []
+        registro = client.get("/producao/pesagens/relatorio", params={"numero_matriz": "101"}).json()["linhas"][0]
+        assert registro["ultima_peso"] == 420.5
+        assert registro["grupo_primario"] == "01 - Alta"
+
+    def test_linha_sem_peso_vira_erro_mas_nao_derruba_as_outras(self, client):
+        conteudo = _xlsx_bytes(
+            ["Número do animal", "Data", "Peso (kg)"],
+            [["101", "05/07/2026", "420"], ["102", "05/07/2026", ""]],
+        )
+        r = client.post(
+            "/producao/pesagens/importar",
+            files={"file": ("pesagem.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200
+        d = r.json()
+        assert d["criados"] == 1
+        assert len(d["erros"]) == 1
+
+    def test_planilha_vazia_retorna_zero_criados(self, client):
+        conteudo = _xlsx_bytes(["Número do animal", "Data", "Peso (kg)"], [])
+        r = client.post(
+            "/producao/pesagens/importar",
+            files={"file": ("pesagem.xlsx", conteudo, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+        )
+        assert r.status_code == 200
+        assert r.json()["criados"] == 0

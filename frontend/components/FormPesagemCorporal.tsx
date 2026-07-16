@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { Scale } from "lucide-react";
-import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate } from "@/lib/api";
+import { criarPesagensCorporais, fetchRelatorioPesagemCorporal, formatDate, baixarModeloPesagemCorporal, importarPesagemCorporalPlanilha } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { UploadPlanilha } from "@/components/UploadPlanilha";
 
 const COLUNAS_PESAGEM = [
   { header: "Nº", key: "numero_matriz" }, { header: "Lote", key: "grupo_primario" },
@@ -33,7 +34,7 @@ type Linha = {
 
 export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
   // Lançamento
-  const [modo, setModo] = useState<"vaca" | "lote">("vaca");
+  const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
   const [vaca, setVaca] = useState("");
   const [lote, setLote] = useState("");
   const [peso, setPeso] = useState("");
@@ -97,12 +98,16 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
           <select style={inputStyle} value={modo} onChange={(e) => { setModo(e.target.value as any); setErro(null); setSucesso(null); }}>
             <option value="vaca">Por animal</option>
             <option value="lote">Por lote</option>
+            <option value="planilha">Importar de planilha</option>
           </select>
         </Campo>
-        <Campo label="Data da pesagem"><input type="date" style={inputStyle} value={dataPesagem} onChange={(e) => setDataPesagem(e.target.value)} /></Campo>
-        {modo === "vaca" ? (
+        {modo !== "planilha" && (
+          <Campo label="Data da pesagem"><input type="date" style={inputStyle} value={dataPesagem} onChange={(e) => setDataPesagem(e.target.value)} /></Campo>
+        )}
+        {modo === "vaca" && (
           <Campo label="Animal" full><AnimalPicker animais={animais} value={vaca} onChange={setVaca} placeholder="Selecione o animal…" /></Campo>
-        ) : (
+        )}
+        {modo === "lote" && (
           <Campo label="Lote" full>
             <select style={inputStyle} value={lote} onChange={(e) => setLote(e.target.value)}>
               <option value="">Selecione…</option>
@@ -112,7 +117,14 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
         )}
       </div>
 
-      {modo === "vaca" ? (
+      {modo === "planilha" && (
+        <UploadPlanilha
+          modelos={[{ label: "Baixar modelo", baixar: baixarModeloPesagemCorporal }]}
+          onImportar={importarPesagemCorporalPlanilha}
+        />
+      )}
+
+      {modo !== "planilha" && (modo === "vaca" ? (
         <div className="mt-3">
           <label style={lbl}>Peso (kg)</label>
           <input type="number" inputMode="decimal" style={{ ...inputStyle, width: "10rem" }} value={peso} onChange={(e) => setPeso(e.target.value)} placeholder="kg" />
@@ -147,14 +159,16 @@ export function FormPesagemCorporal({ animais, lotes }: { animais: AnimalRow[]; 
         </div>
       ) : (
         <p style={nota}>Selecione um lote para ver a listagem de animais e lançar o peso de todos de uma vez.</p>
+      ))}
+
+      {modo !== "planilha" && erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
+      {modo !== "planilha" && sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
+
+      {modo !== "planilha" && (
+        <div className="flex items-center gap-3 mt-4 mb-2">
+          <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        </div>
       )}
-
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
-      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
-
-      <div className="flex items-center gap-3 mt-4 mb-2">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
-      </div>
 
       <div className="card mt-4">
         <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
