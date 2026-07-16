@@ -493,7 +493,7 @@ class CadastrarPreventivoIn(BaseModel):
     evento_sanitario_id: int
     categoria_alvo: str | None = None       # lote ou categoria alvo
     data_evento: date
-    frequencia_valor: int = 1
+    frequencia_valor: int = 1               # 0 = não repetir (só esta aplicação, sem gerar agendamento futuro)
     frequencia_unidade: str = "meses"
     animais: list[str] = []                  # animais marcados (individual ou todos)
     aplicar: bool = False                    # também registrar a aplicação do produto padrão
@@ -522,8 +522,8 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
     if dados.frequencia_unidade not in FREQUENCIAS:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
-    if dados.frequencia_valor <= 0:
-        raise HTTPException(status_code=400, detail="A frequência deve ser maior que zero")
+    if dados.frequencia_valor < 0:
+        raise HTTPException(status_code=400, detail="A frequência não pode ser negativa")
 
     produto = dados.produto or ev.produto_padrao
     dose = dados.dose if dados.dose is not None else ev.dose_padrao
@@ -531,20 +531,24 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
     via = dados.via if dados.via is not None else ev.via_padrao
 
     # 1) Regra recorrente do calendário — herda produto/dose/doença do evento
-    # (ou o que foi confirmado/ajustado na hora de dar baixa).
-    dosagem = None
-    if dose is not None:
-        dosagem = f"{dose:g} {unidade}".strip() if unidade else f"{dose:g}"
-    regra = CalendarioSanitario(
-        evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
-        produto=produto, principio_ativo_id=dados.principio_ativo_id, dosagem=dosagem, unidade=unidade,
-        veterinario=dados.veterinario,
-        frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
-        data_evento=dados.data_evento, observacao=dados.observacao,
-    )
-    session.add(regra)
-    session.commit()
-    session.refresh(regra)
+    # (ou o que foi confirmado/ajustado na hora de dar baixa). "Repetir a cada"
+    # = 0 significa que o usuário não quer gerar agendamento futuro: só a
+    # aplicação de agora é registrada (passo 2), sem criar a regra recorrente.
+    regra = None
+    if dados.frequencia_valor > 0:
+        dosagem = None
+        if dose is not None:
+            dosagem = f"{dose:g} {unidade}".strip() if unidade else f"{dose:g}"
+        regra = CalendarioSanitario(
+            evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
+            produto=produto, principio_ativo_id=dados.principio_ativo_id, dosagem=dosagem, unidade=unidade,
+            veterinario=dados.veterinario,
+            frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
+            data_evento=dados.data_evento, observacao=dados.observacao,
+        )
+        session.add(regra)
+        session.commit()
+        session.refresh(regra)
 
     # 2) Aplicação do produto (padrão ou confirmado/ajustado) nos animais marcados (opcional).
     aplicacao = None
@@ -561,7 +565,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
         )
 
     eventos, doencas, principios, categorias = _nomes(session)
-    return {"regra": _serializar(regra, eventos, doencas, principios, categorias), "aplicacao": aplicacao}
+    return {"regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None, "aplicacao": aplicacao}
 
 
 # ---------------------------------------------------------------------------
