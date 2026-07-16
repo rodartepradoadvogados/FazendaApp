@@ -12,6 +12,7 @@ export type AnimalRow = {
   ult_cl_kg?: number | null;
   data_ult_servico_pos?: string | null;
   data_ult_parto?: string | null;
+  a_descartar?: boolean;
 };
 
 const SIT_CORES: Record<string, string> = {

@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
 import { IndicadoresGerais } from "@/app/indicadores/page";
-import { fetchAnimais, fetchEstratificacaoRebanho, type Estratificacao } from "@/lib/api";
+import { fetchAnimais, fetchEstratificacaoRebanho, marcarADescartar, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
@@ -26,6 +26,7 @@ type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
   categoria_completa: string | null; raca: string | null; sit_rep: string | null;
   del_dias: number | null; ult_cl_kg: number | null; diagnostico: string | null;
+  a_descartar?: boolean;
 };
 
 const SIT_CORES: Record<string, string> = {
@@ -83,6 +84,70 @@ function EstratificacaoRebanho() {
   );
 }
 
+// Caixa de animais marcados "A descartar" (Animal.a_descartar=true): seguem
+// ativos no rebanho, mas fora das ações reprodutivas. Permite desmarcar em
+// lote direto daqui (sem precisar voltar em Lançamentos > Baixar animal).
+function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtualizar: () => void }) {
+  const marcados = useMemo(() => animais.filter((a) => a.a_descartar), [animais]);
+  const [sel, setSel] = useState<Set<string>>(new Set());
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+
+  const toggle = (numero: string) => setSel((p) => { const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n; });
+  const toggleTodos = () => setSel((p) => (p.size === marcados.length && marcados.length ? new Set() : new Set(marcados.map((a) => a.numero))));
+
+  const desmarcar = async () => {
+    if (!sel.size) return;
+    setSalvando(true); setMsg(null);
+    try {
+      await marcarADescartar({ animais: Array.from(sel), descartar: false });
+      setMsg(`${sel.size} animal(is) desmarcado(s).`);
+      setSel(new Set());
+      aoAtualizar();
+    } catch (e: any) {
+      setMsg(e.message || "Erro ao desmarcar.");
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  if (!marcados.length) return null;
+
+  return (
+    <div className="card mb-4">
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span className="flex items-center gap-2"><Skull size={14} style={{ color: "var(--red)" }} /> Animais marcados a descartar ({marcados.length})</span>
+        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
+          {sel.size === marcados.length && marcados.length ? "Limpar seleção" : "Selecionar todos"}
+        </button>
+      </div>
+      <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+        Seguem ativos no rebanho (ordenha, sanidade, movimentação), mas fora das ações reprodutivas. Desmarque aqui para voltarem às ações reprodutivas.
+      </p>
+      <div className="overflow-x-auto" style={{ maxHeight: "260px" }}>
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <thead><tr><th></th><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th></tr></thead>
+          <tbody>
+            {marcados.map((a) => (
+              <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
+                <td><input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
+                <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
+                <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+                <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {msg && <p style={{ fontSize: "0.78rem", color: "var(--dourado-light)", marginTop: "0.6rem" }}>{msg}</p>}
+      <button className="btn-primary" style={{ marginTop: "0.7rem", fontSize: "0.8rem" }} onClick={desmarcar} disabled={salvando || !sel.size}>
+        {salvando ? "Salvando…" : `Desmarcar ${sel.size || ""} selecionado(s)`}
+      </button>
+    </div>
+  );
+}
+
 function RebanhoVisaoGeral() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -93,9 +158,10 @@ function RebanhoVisaoGeral() {
   const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
-  useEffect(() => {
+  const carregar = useCallback(() => {
     fetchAnimais().then(setRegs).catch((e) => setError(e.message));
   }, []);
+  useEffect(carregar, [carregar]);
 
   const opc = (f: (a: Animal) => string | null) => {
     const s = new Set<string>(); (regs ?? []).forEach((a) => { const v = f(a); if (v) s.add(v); });
@@ -151,6 +217,7 @@ function RebanhoVisaoGeral() {
       {regs && (
         <>
           <EstratificacaoRebanho />
+          <CaixaADescartar animais={regs} aoAtualizar={carregar} />
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">

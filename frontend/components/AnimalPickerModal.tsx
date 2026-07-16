@@ -20,13 +20,21 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
+  const [filtroLote, setFiltroLote] = useState("");
+
+  const lotes = useMemo(
+    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animais]
+  );
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    if (!q) return animais;
-    return animais.filter((a) =>
-      `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`.toLowerCase().includes(q));
-  }, [animais, busca]);
+    return animais.filter((a) => {
+      if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
+      if (!q) return true;
+      return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`.toLowerCase().includes(q);
+    });
+  }, [animais, busca, filtroLote]);
 
   const todosFiltradosSelecionados = filtrados.length > 0 && filtrados.every((a) => selecionados.has(a.numero));
   function alternarFiltrados() {
@@ -44,7 +52,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
 
   return (
     <>
-      <button type="button" style={btn} onClick={() => { setAberto(true); setBusca(""); }}>
+      <button type="button" style={btn} onClick={() => { setAberto(true); setBusca(""); setFiltroLote(""); }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
           {selecionados.size ? `${selecionados.size} animal(is) selecionado(s)` : placeholder}
         </span>
@@ -60,14 +68,23 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
               </div>
               <button onClick={() => setAberto(false)} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
-            <div style={{ position: "relative", marginBottom: "0.6rem" }}>
-              <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
-              <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
-                style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+            <div className="flex gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+              <div style={{ position: "relative", flex: "1 1 220px" }}>
+                <Search size={14} style={{ position: "absolute", left: 9, top: 10, color: "var(--text-muted)" }} />
+                <input autoFocus value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por número, grupo, categoria…"
+                  style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem 0.45rem 2rem", fontSize: "0.85rem" }} />
+              </div>
+              {lotes.length > 1 && (
+                <select value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote"
+                  style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" }}>
+                  <option value="">Todos os lotes</option>
+                  {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              )}
             </div>
             <div className="flex items-center justify-between mb-2">
               <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={alternarFiltrados} disabled={!filtrados.length}>
-                {todosFiltradosSelecionados ? "Limpar seleção" : "Selecionar todos"}{busca.trim() ? " (filtrados)" : ""}
+                {todosFiltradosSelecionados ? "Limpar seleção" : "Selecionar todos"}{busca.trim() || filtroLote ? " (filtrados)" : ""}
               </button>
             </div>
             <div style={{ overflowY: "auto" }}>
