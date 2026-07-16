@@ -258,6 +258,10 @@ class MovimentoIn(BaseModel):
     unidade: str | None = None
     data_movimento: date
     observacao: str | None = None
+    # Vincula esta entrada física a um item de Pedido de compra — é só a
+    # partir deste vínculo que o pedido passa a refletir em Estoque.
+    pedido_id: int | None = None
+    pedido_item_id: int | None = None
 
 
 def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: int | None = None) -> Estoque:
@@ -291,9 +295,16 @@ def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: i
         data_movimento=dados.data_movimento,
         observacao=dados.observacao,
         usuario_id=usuario_id,
+        pedido_id=dados.pedido_id,
+        pedido_item_id=dados.pedido_item_id,
     ))
     session.commit()
     session.refresh(item)
+
+    if dados.pedido_item_id and not baixa:
+        from fazenda.api.routers.pedidos import atualizar_status_por_movimento_estoque
+        atualizar_status_por_movimento_estoque(session, dados.pedido_item_id, dados.quantidade)
+
     return item
 
 

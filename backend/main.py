@@ -30,6 +30,8 @@ from fazenda.api.routers import (
     movimentacoes,
     notificacoes,
     parametros,
+    pedidos,
+    planejamento,
     producao,
     recria,
     relatorio_compra_venda_animal,
@@ -146,6 +148,11 @@ app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"
 app.include_router(agenda.router, dependencies=_protegido)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+# Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
+# — mesmo módulo. Pedidos é módulo próprio (não mexe em Estoque/Financeiro
+# sozinho — só quando um lançamento/movimento é vinculado a ele).
+app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos"))])
 app.include_router(indicadores.router, dependencies=_protegido)
 app.include_router(parametros.router, dependencies=_protegido)
 app.include_router(alimentacao.router, dependencies=_protegido)

@@ -2,12 +2,17 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight, ShoppingCart,
+  RefreshCw, Paperclip, Pencil, ChevronDown, ChevronRight, ShoppingCart, Target, TrendingUp, Compass, Trash2,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, fetchRmca, fetchCustoLitroLeite, formatBRL, formatDate,
   criarVale, atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
+  fetchCentrosCusto,
+  fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
+  fetchCenarios, criarCenario, atualizarCenario, excluirCenario,
+  fetchItensCenario, criarItemCenario, atualizarItemCenario, excluirItemCenario, fetchProjecaoCenario,
+  importarParaPedido, type OrcamentoItemPayload, type CenarioPayload, type PlanejamentoItemPayload,
 } from "@/lib/api";
 import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
@@ -46,7 +51,7 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -68,6 +73,10 @@ const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "recebimento", label: "Recebimento", icon: Wallet, desc: "Lançar/quitar uma nota de receita" },
   { id: "lote", label: "Pagamento/recebimento em lote", icon: Layers, desc: "Dar baixa em várias notas de uma vez" },
   { id: "folha", label: "Folha de pagamento", icon: Users, desc: "Lançamento e acompanhamento da folha" },
+];
+const PLANEJAMENTO: { id: Rel; label: string; icon: any; desc: string }[] = [
+  { id: "orcamento", label: "Orçamento", icon: Target, desc: "Planilha orçamentária por conta gerencial/centro de custo/mês, comparada ao realizado" },
+  { id: "planejamento_financeiro", label: "Planejamento financeiro", icon: TrendingUp, desc: "Cenários (otimista/realista/pessimista) com projeção de fluxo de caixa" },
 ];
 const CONTAS_IDS = new Set(CONTAS.map((c) => c.id));
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
@@ -226,6 +235,7 @@ export default function FinanceiroPage() {
     { id: "contas-grupo", label: "Contas", icon: Wallet, children: CONTAS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
+    { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "patrimonio-grupo", label: "Patrimônio", icon: Building2, children: [
       { id: "patrimonio", label: "Patrimônio", icon: Building2 },
     ] },
@@ -441,7 +451,9 @@ export default function FinanceiroPage() {
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
-          : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView /> : <>
+          : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
+          : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} />
+          : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -2616,6 +2628,533 @@ function CustoLitroLeiteView() {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Planejamento > Orçamento
+// ─────────────────────────────────────────────────────────────────────────
+type OrcamentoItemRow = OrcamentoItemPayload & { id: number; nome_conta_gerencial: string };
+type ComparativoLinha = { codigo_conta_gerencial: string; nome_conta_gerencial: string; tipo: string; orcado: number; realizado: number; desvio: number; desvio_pct: number | null };
+
+const MESES_NOMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+
+function OrcamentoView({ planoContas }: { planoContas: ContaPlano[] }) {
+  const anoAtual = new Date().getFullYear();
+  const [ano, setAno] = useState(anoAtual);
+  const [centros, setCentros] = useState<string[]>([]);
+  const [itens, setItens] = useState<OrcamentoItemRow[] | null>(null);
+  const [comparativo, setComparativo] = useState<{ linhas: ComparativoLinha[]; total_orcado: number; total_realizado: number } | null>(null);
+  const [mesInicio, setMesInicio] = useState(1);
+  const [mesFim, setMesFim] = useState(12);
+  const [centroFiltro, setCentroFiltro] = useState("");
+  const [erro, setErro] = useState<string | null>(null);
+  const [editando, setEditando] = useState<OrcamentoItemRow | "novo" | null>(null);
+  const [importando, setImportando] = useState<OrcamentoItemRow | null>(null);
+
+  const recarregar = () => fetchOrcamento(ano).then(setItens).catch((e) => setErro(e.message));
+  useEffect(() => { recarregar(); }, [ano]);
+  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchComparativoOrcado({ ano, mes_inicio: mesInicio, mes_fim: mesFim, centro_custo: centroFiltro || undefined })
+      .then(setComparativo).catch((e) => setErro(e.message));
+  }, [ano, mesInicio, mesFim, centroFiltro, itens]);
+
+  async function excluir(id: number) {
+    if (!confirm("Excluir este item de orçamento?")) return;
+    await excluirItemOrcamento(id);
+    recarregar();
+  }
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Target size={14} /> Orçamento — {ano}</div>
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+          Planilha orçamentária por conta gerencial/centro de custo/mês (mesmo padrão de ERPs como TOTVS Protheus),
+          comparada automaticamente ao realizado lançado em Financeiro.
+        </p>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={labelStyleLote}>Ano</label>
+            <input type="number" style={{ ...selStyleLote, width: "6rem" }} value={ano} onChange={(e) => setAno(Number(e.target.value) || anoAtual)} /></div>
+          <div><label style={labelStyleLote}>Mês inicial</label>
+            <select style={selStyleLote} value={mesInicio} onChange={(e) => setMesInicio(Number(e.target.value))}>
+              {MESES_NOMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Mês final</label>
+            <select style={selStyleLote} value={mesFim} onChange={(e) => setMesFim(Number(e.target.value))}>
+              {MESES_NOMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+            </select></div>
+          <div><label style={labelStyleLote}>Centro de custo</label>
+            <select style={selStyleLote} value={centroFiltro} onChange={(e) => setCentroFiltro(e.target.value)}>
+              <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
+            </select></div>
+          <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem" }} onClick={() => setEditando("novo")}>
+            <Plus size={14} /> Novo item de orçamento
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+
+      {comparativo && (
+        <div className="card mb-4">
+          <div className="card-header mb-3">Orçado × Realizado</div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+            <KPI v={formatBRL(comparativo.total_orcado)} l="Total orçado" c="var(--dourado-light)" />
+            <KPI v={formatBRL(comparativo.total_realizado)} l="Total realizado" />
+            <KPI v={formatBRL(comparativo.total_realizado - comparativo.total_orcado)} l="Desvio" c={comparativo.total_realizado - comparativo.total_orcado <= 0 ? "var(--green-light)" : "var(--red)"} />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Conta gerencial</th><th>Tipo</th><th style={{ textAlign: "right" }}>Orçado</th><th style={{ textAlign: "right" }}>Realizado</th><th style={{ textAlign: "right" }}>Desvio</th><th style={{ textAlign: "right" }}>Desvio %</th></tr></thead>
+              <tbody>
+                {comparativo.linhas.map((l) => (
+                  <tr key={l.codigo_conta_gerencial}>
+                    <td style={{ fontSize: "0.82rem" }}>{l.nome_conta_gerencial}</td>
+                    <td style={{ fontSize: "0.78rem", color: l.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{l.tipo === "receita" ? "Receita" : "Despesa"}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{formatBRL(l.orcado)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem" }}>{formatBRL(l.realizado)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.82rem", color: (l.tipo === "despesa" ? l.desvio > 0 : l.desvio < 0) ? "var(--red)" : "var(--green-light)" }}>{formatBRL(l.desvio)}</td>
+                    <td style={{ textAlign: "right", fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.desvio_pct != null ? `${l.desvio_pct}%` : "—"}</td>
+                  </tr>
+                ))}
+                {!comparativo.linhas.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum item de orçamento cadastrado neste período.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      <div className="card">
+        <div className="card-header mb-3">Itens de orçamento — {ano}</div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Mês</th><th>Conta gerencial</th><th>Centro de custo</th><th>Tipo</th><th style={{ textAlign: "right" }}>Valor orçado</th><th></th></tr></thead>
+            <tbody>
+              {(itens ?? []).map((i) => (
+                <tr key={i.id}>
+                  <td style={{ fontSize: "0.82rem" }}>{MESES_NOMES[i.mes - 1]}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{i.nome_conta_gerencial}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{i.centro_custo || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: i.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{i.tipo === "receita" ? "Receita" : "Despesa"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.82rem", fontWeight: 600 }}>{formatBRL(i.valor_orcado)}</td>
+                  <td style={{ display: "flex", gap: "0.4rem", justifyContent: "flex-end" }}>
+                    <button title="Importar para Pedido" onClick={() => setImportando(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--dourado-light)" }}><ShoppingCart size={15} /></button>
+                    <button title="Editar" onClick={() => setEditando(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><Pencil size={14} /></button>
+                    <button title="Excluir" onClick={() => excluir(i.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+              {itens && !itens.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum item de orçamento cadastrado em {ano}.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {editando && (
+        <Modal onClose={() => setEditando(null)} title={editando === "novo" ? "Novo item de orçamento" : "Editar item de orçamento"}>
+          <FormItemOrcamento planoContas={planoContas} centros={centros} anoDefault={ano}
+            item={editando === "novo" ? null : editando}
+            onSalvo={() => { setEditando(null); recarregar(); }} onCancelar={() => setEditando(null)} />
+        </Modal>
+      )}
+      {importando && (
+        <Modal onClose={() => setImportando(null)} title="Importar para Pedido">
+          <FormImportarPedido origemTipo="orcamento" origemItemId={importando.id}
+            valorEstimado={importando.valor_orcado} nomeItem={importando.nome_conta_gerencial}
+            onSalvo={() => setImportando(null)} onCancelar={() => setImportando(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function FormItemOrcamento({ planoContas, centros, anoDefault, item, onSalvo, onCancelar }: {
+  planoContas: ContaPlano[]; centros: string[]; anoDefault: number; item: OrcamentoItemRow | null;
+  onSalvo: () => void; onCancelar: () => void;
+}) {
+  const [ano, setAno] = useState(item?.ano ?? anoDefault);
+  const [mes, setMes] = useState(item?.mes ?? new Date().getMonth() + 1);
+  const [tipo, setTipo] = useState<"receita" | "despesa">((item?.tipo as any) ?? "despesa");
+  const [codigo, setCodigo] = useState(item?.codigo_conta_gerencial ?? "");
+  const [nome, setNome] = useState(item?.nome_conta_gerencial ?? "");
+  const [centro, setCentro] = useState(item?.centro_custo ?? "");
+  const [valor, setValor] = useState(item?.valor_orcado ?? 0);
+  const [observacao, setObservacao] = useState(item?.observacao ?? "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvar() {
+    if (!codigo || !valor) { setErro("Informe a conta gerencial e o valor orçado."); return; }
+    setSalvando(true); setErro(null);
+    const dados: OrcamentoItemPayload = { ano, mes, codigo_conta_gerencial: codigo, centro_custo: centro || null, tipo, valor_orcado: valor, observacao: observacao || null };
+    try {
+      if (item) await atualizarItemOrcamento(item.id, dados); else await criarItemOrcamento(dados);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div className="flex flex-wrap gap-3">
+        <div><label style={labelStyleLote}>Ano</label><input type="number" style={{ ...selStyleLote, width: "6rem" }} value={ano} onChange={(e) => setAno(Number(e.target.value))} /></div>
+        <div><label style={labelStyleLote}>Mês</label>
+          <select style={selStyleLote} value={mes} onChange={(e) => setMes(Number(e.target.value))}>
+            {MESES_NOMES.map((m, i) => <option key={i} value={i + 1}>{m}</option>)}
+          </select></div>
+        <div><label style={labelStyleLote}>Tipo</label>
+          <select style={selStyleLote} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setCodigo(""); setNome(""); }}>
+            <option value="despesa">Despesa</option><option value="receita">Receita</option>
+          </select></div>
+      </div>
+      <div>
+        <label style={labelStyleLote}>Conta gerencial</label>
+        <SeletorContaGerencial contas={planoContas} tipo={tipo} codigo={codigo} nome={nome} onSelect={(c, n) => { setCodigo(c); setNome(n); }} />
+      </div>
+      <div>
+        <label style={labelStyleLote}>Centro de custo (opcional)</label>
+        <select style={{ ...selStyleLote, width: "100%" }} value={centro} onChange={(e) => setCentro(e.target.value)}>
+          <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyleLote}>Valor orçado</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+      {erro && <div className="alert-critico"><span>{erro}</span></div>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
+        <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </div>
+  );
+}
+
+// Formulário compartilhado (Orçamento e Planejamento financeiro) para criar um
+// Pedido-rascunho a partir de uma linha — só copia dados, não lança nada em
+// Estoque/Financeiro; o pedido em si fica pendente até ser vinculado depois.
+function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem, onSalvo, onCancelar }: {
+  origemTipo: "orcamento" | "planejamento_financeiro"; origemItemId: number; valorEstimado: number; nomeItem: string;
+  onSalvo: () => void; onCancelar: () => void;
+}) {
+  const [tipoPedido, setTipoPedido] = useState<"compra" | "venda">("compra");
+  const [fornecedorCliente, setFornecedorCliente] = useState("");
+  const [dataPedido, setDataPedido] = useState(() => new Date().toISOString().slice(0, 10));
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [resultado, setResultado] = useState<{ numero_pedido: string } | null>(null);
+
+  async function salvar() {
+    setSalvando(true); setErro(null);
+    try {
+      const r = await importarParaPedido({ origem_tipo: origemTipo, origem_item_id: origemItemId, tipo_pedido: tipoPedido, fornecedor_cliente: fornecedorCliente || null, data_pedido: dataPedido });
+      setResultado(r);
+    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
+  }
+
+  if (resultado) {
+    return (
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+        <p style={{ fontSize: "0.85rem" }}>Pedido <strong>{resultado.numero_pedido}</strong> criado a partir de <strong>{nomeItem}</strong> ({formatBRL(valorEstimado)}).</p>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Ele fica em Pedidos como rascunho — só reflete em Estoque/Financeiro quando uma nota fiscal/recibo ou uma entrada de estoque for vinculada a ele.</p>
+        <div className="flex gap-2 justify-end">
+          <a href="/pedidos" className="btn-primary" style={{ textDecoration: "none" }}>Ver em Pedidos</a>
+          <button className="btn-secondary" onClick={onSalvo}>Fechar</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+        Cria um pedido-rascunho a partir de <strong>{nomeItem}</strong> ({formatBRL(valorEstimado)}). Não lança nada em Estoque/Financeiro agora.
+      </p>
+      <div><label style={labelStyleLote}>Tipo do pedido</label>
+        <select style={{ ...selStyleLote, width: "100%" }} value={tipoPedido} onChange={(e) => setTipoPedido(e.target.value as any)}>
+          <option value="compra">Compra</option><option value="venda">Venda</option>
+        </select></div>
+      <div><label style={labelStyleLote}>Fornecedor/Cliente (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={fornecedorCliente} onChange={(e) => setFornecedorCliente(e.target.value)} /></div>
+      <div><label style={labelStyleLote}>Data do pedido</label><input type="date" style={{ ...selStyleLote, width: "100%" }} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></div>
+      {erro && <div className="alert-critico"><span>{erro}</span></div>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
+        <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Criando…" : "Criar pedido"}</button>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Planejamento > Planejamento financeiro (cenários)
+// ─────────────────────────────────────────────────────────────────────────
+type CenarioRow = CenarioPayload & { id: number; ativo: boolean; criado_em: string };
+type PlanejamentoItemRow = PlanejamentoItemPayload & { id: number; nome_conta_gerencial: string };
+const TIPOS_CENARIO = [
+  { id: "otimista", label: "Otimista", cor: "var(--green-light)" },
+  { id: "realista", label: "Realista", cor: "var(--dourado-light)" },
+  { id: "pessimista", label: "Pessimista", cor: "var(--red)" },
+  { id: "personalizado", label: "Personalizado", cor: "var(--text-muted)" },
+] as const;
+
+function PlanejamentoFinanceiroView({ planoContas }: { planoContas: ContaPlano[] }) {
+  const [cenarios, setCenarios] = useState<CenarioRow[] | null>(null);
+  const [centros, setCentros] = useState<string[]>([]);
+  const [cenarioAtivo, setCenarioAtivo] = useState<number | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [editandoCenario, setEditandoCenario] = useState<CenarioRow | "novo" | null>(null);
+
+  const recarregarCenarios = () => fetchCenarios().then((d) => {
+    setCenarios(d);
+    if (!cenarioAtivo && d.length) setCenarioAtivo(d[0].id);
+  }).catch((e) => setErro(e.message));
+  useEffect(() => { recarregarCenarios(); }, []);
+  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
+
+  async function excluirCenarioAtual(id: number) {
+    if (!confirm("Excluir este cenário e todas as suas linhas?")) return;
+    await excluirCenario(id);
+    if (cenarioAtivo === id) setCenarioAtivo(null);
+    recarregarCenarios();
+  }
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><TrendingUp size={14} /> Planejamento financeiro — cenários</div>
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+          Simule situações "e se" — cenários otimista/realista/pessimista com receitas e despesas previstas mês a mês,
+          projetando um fluxo de caixa futuro (rolling forecast), sem afetar Financeiro/Estoque.
+        </p>
+        <div className="flex flex-wrap gap-2 items-center">
+          {(cenarios ?? []).map((c) => {
+            const t = TIPOS_CENARIO.find((x) => x.id === c.tipo);
+            return (
+              <button key={c.id} onClick={() => setCenarioAtivo(c.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem",
+                  padding: "0.35rem 0.7rem", borderRadius: "999px", border: "1px solid var(--border)", cursor: "pointer",
+                  background: cenarioAtivo === c.id ? "var(--pill-active-bg)" : "var(--surface-2)",
+                  color: cenarioAtivo === c.id ? "var(--pill-active-fg)" : "var(--text)",
+                }}>
+                <span style={{ width: 8, height: 8, borderRadius: "50%", background: t?.cor || "var(--text-muted)" }} />
+                {c.nome}
+              </button>
+            );
+          })}
+          <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem" }} onClick={() => setEditandoCenario("novo")}>
+            <Plus size={14} /> Novo cenário
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+      {cenarios && !cenarios.length && <div className="card" style={{ textAlign: "center", padding: "2rem" }}><p style={{ color: "var(--text-muted)" }}>Nenhum cenário cadastrado ainda.</p></div>}
+
+      {cenarioAtivo && (
+        <CenarioDetalheView
+          cenario={(cenarios ?? []).find((c) => c.id === cenarioAtivo)!}
+          planoContas={planoContas} centros={centros}
+          onEditarCenario={() => setEditandoCenario((cenarios ?? []).find((c) => c.id === cenarioAtivo)!)}
+          onExcluirCenario={() => excluirCenarioAtual(cenarioAtivo)}
+        />
+      )}
+
+      {editandoCenario && (
+        <Modal onClose={() => setEditandoCenario(null)} title={editandoCenario === "novo" ? "Novo cenário" : "Editar cenário"}>
+          <FormCenario item={editandoCenario === "novo" ? null : editandoCenario}
+            onSalvo={(id) => { setEditandoCenario(null); recarregarCenarios(); if (id) setCenarioAtivo(id); }}
+            onCancelar={() => setEditandoCenario(null)} />
+        </Modal>
+      )}
+    </div>
+  );
+}
+
+function FormCenario({ item, onSalvo, onCancelar }: { item: CenarioRow | null; onSalvo: (id?: number) => void; onCancelar: () => void }) {
+  const [nome, setNome] = useState(item?.nome ?? "");
+  const [tipo, setTipo] = useState<CenarioPayload["tipo"]>(item?.tipo ?? "realista");
+  const [observacao, setObservacao] = useState(item?.observacao ?? "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvar() {
+    if (!nome.trim()) { setErro("Informe o nome do cenário."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const dados: CenarioPayload = { nome, tipo, observacao: observacao || null };
+      const r = item ? await atualizarCenario(item.id, dados) : await criarCenario(dados);
+      onSalvo(r.id);
+    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div><label style={labelStyleLote}>Nome do cenário</label><input style={{ ...selStyleLote, width: "100%" }} value={nome} onChange={(e) => setNome(e.target.value)} placeholder="ex.: Expansão do rebanho 2027" /></div>
+      <div><label style={labelStyleLote}>Tipo</label>
+        <select style={{ ...selStyleLote, width: "100%" }} value={tipo} onChange={(e) => setTipo(e.target.value as any)}>
+          {TIPOS_CENARIO.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
+        </select></div>
+      <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+      {erro && <div className="alert-critico"><span>{erro}</span></div>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
+        <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
+    </div>
+  );
+}
+
+function CenarioDetalheView({ cenario, planoContas, centros, onEditarCenario, onExcluirCenario }: {
+  cenario: CenarioRow; planoContas: ContaPlano[]; centros: string[]; onEditarCenario: () => void; onExcluirCenario: () => void;
+}) {
+  const [itens, setItens] = useState<PlanejamentoItemRow[] | null>(null);
+  const [projecao, setProjecao] = useState<{ meses: { mes: string; receitas: number; despesas: number; saldo: number; acumulado: number }[] } | null>(null);
+  const [editando, setEditando] = useState<PlanejamentoItemRow | "novo" | null>(null);
+  const [importando, setImportando] = useState<PlanejamentoItemRow | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const recarregar = () => {
+    fetchItensCenario(cenario.id).then(setItens).catch((e) => setErro(e.message));
+    fetchProjecaoCenario(cenario.id).then(setProjecao).catch(() => {});
+  };
+  useEffect(() => { recarregar(); }, [cenario.id]);
+
+  async function excluir(id: number) {
+    if (!confirm("Excluir esta linha do cenário?")) return;
+    await excluirItemCenario(id);
+    recarregar();
+  }
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>{cenario.nome}</div>
+          <div className="flex gap-2">
+            <button title="Editar cenário" onClick={onEditarCenario} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><Pencil size={14} /></button>
+            <button title="Excluir cenário" onClick={onExcluirCenario} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={14} /></button>
+          </div>
+        </div>
+        {cenario.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>{cenario.observacao}</p>}
+
+        {projecao && projecao.meses.length > 0 && (
+          <ResponsiveContainer width="100%" height={220}>
+            <ComposedChart data={projecao.meses}>
+              <CartesianGrid stroke="var(--border)" vertical={false} />
+              <XAxis dataKey="mes" tickFormatter={mesCompLabel} tick={{ fill: "var(--text-muted)", fontSize: 10 }} />
+              <YAxis tickFormatter={brk} tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={48} />
+              <Tooltip formatter={(v: any) => formatBRL(Number(v))} labelFormatter={(m: any) => mesCompLabel(m as string)} contentStyle={tip} />
+              <Legend wrapperStyle={{ fontSize: "0.75rem" }} />
+              <Bar dataKey="receitas" name="Receitas previstas" fill="var(--green-light)" radius={[2, 2, 0, 0]} />
+              <Bar dataKey="despesas" name="Despesas previstas" fill="var(--red)" radius={[2, 2, 0, 0]} />
+              <Line type="monotone" dataKey="acumulado" name="Saldo acumulado" stroke="var(--dourado-light)" strokeWidth={2} dot={{ r: 2 }} />
+            </ComposedChart>
+          </ResponsiveContainer>
+        )}
+        {projecao && !projecao.meses.length && <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhuma linha prevista neste cenário ainda.</p>}
+      </div>
+
+      <div className="card">
+        <div className="flex items-center justify-between mb-3">
+          <div className="card-header" style={{ margin: 0 }}>Linhas previstas</div>
+          <button className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem" }} onClick={() => setEditando("novo")}>
+            <Plus size={14} /> Nova linha
+          </button>
+        </div>
+        {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Mês</th><th>Conta gerencial</th><th>Centro de custo</th><th>Tipo</th><th style={{ textAlign: "right" }}>Valor previsto</th><th></th></tr></thead>
+            <tbody>
+              {(itens ?? []).map((i) => (
+                <tr key={i.id}>
+                  <td style={{ fontSize: "0.82rem" }}>{mesCompLabel(i.mes_competencia)}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{i.nome_conta_gerencial}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{i.centro_custo || "—"}</td>
+                  <td style={{ fontSize: "0.78rem", color: i.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{i.tipo === "receita" ? "Receita" : "Despesa"}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.82rem", fontWeight: 600 }}>{formatBRL(i.valor_previsto)}</td>
+                  <td style={{ display: "flex", gap: "0.4rem", justifyContent: "flex-end" }}>
+                    <button title="Importar para Pedido" onClick={() => setImportando(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--dourado-light)" }}><ShoppingCart size={15} /></button>
+                    <button title="Editar" onClick={() => setEditando(i)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><Pencil size={14} /></button>
+                    <button title="Excluir" onClick={() => excluir(i.id)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
+              {itens && !itens.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhuma linha prevista neste cenário.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {editando && (
+        <Modal onClose={() => setEditando(null)} title={editando === "novo" ? "Nova linha prevista" : "Editar linha prevista"}>
+          <FormItemCenario planoContas={planoContas} centros={centros} cenarioId={cenario.id}
+            item={editando === "novo" ? null : editando}
+            onSalvo={() => { setEditando(null); recarregar(); }} onCancelar={() => setEditando(null)} />
+        </Modal>
+      )}
+      {importando && (
+        <Modal onClose={() => setImportando(null)} title="Importar para Pedido">
+          <FormImportarPedido origemTipo="planejamento_financeiro" origemItemId={importando.id}
+            valorEstimado={importando.valor_previsto} nomeItem={importando.nome_conta_gerencial}
+            onSalvo={() => setImportando(null)} onCancelar={() => setImportando(null)} />
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function FormItemCenario({ planoContas, centros, cenarioId, item, onSalvo, onCancelar }: {
+  planoContas: ContaPlano[]; centros: string[]; cenarioId: number; item: PlanejamentoItemRow | null;
+  onSalvo: () => void; onCancelar: () => void;
+}) {
+  const [mesCompetencia, setMesCompetencia] = useState(item?.mes_competencia ?? new Date().toISOString().slice(0, 7));
+  const [tipo, setTipo] = useState<"receita" | "despesa">((item?.tipo as any) ?? "despesa");
+  const [codigo, setCodigo] = useState(item?.codigo_conta_gerencial ?? "");
+  const [nome, setNome] = useState(item?.nome_conta_gerencial ?? "");
+  const [centro, setCentro] = useState(item?.centro_custo ?? "");
+  const [valor, setValor] = useState(item?.valor_previsto ?? 0);
+  const [observacao, setObservacao] = useState(item?.observacao ?? "");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  async function salvar() {
+    if (!codigo || !valor) { setErro("Informe a conta gerencial e o valor previsto."); return; }
+    setSalvando(true); setErro(null);
+    const dados: PlanejamentoItemPayload = { mes_competencia: mesCompetencia, codigo_conta_gerencial: codigo, centro_custo: centro || null, tipo, valor_previsto: valor, observacao: observacao || null };
+    try {
+      if (item) await atualizarItemCenario(item.id, dados); else await criarItemCenario(cenarioId, dados);
+      onSalvo();
+    } catch (e: any) { setErro(e.message); } finally { setSalvando(false); }
+  }
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div className="flex flex-wrap gap-3">
+        <div><label style={labelStyleLote}>Mês de competência</label><input type="month" style={selStyleLote} value={mesCompetencia} onChange={(e) => setMesCompetencia(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Tipo</label>
+          <select style={selStyleLote} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setCodigo(""); setNome(""); }}>
+            <option value="despesa">Despesa</option><option value="receita">Receita</option>
+          </select></div>
+      </div>
+      <div>
+        <label style={labelStyleLote}>Conta gerencial</label>
+        <SeletorContaGerencial contas={planoContas} tipo={tipo} codigo={codigo} nome={nome} onSelect={(c, n) => { setCodigo(c); setNome(n); }} />
+      </div>
+      <div>
+        <label style={labelStyleLote}>Centro de custo (opcional)</label>
+        <select style={{ ...selStyleLote, width: "100%" }} value={centro} onChange={(e) => setCentro(e.target.value)}>
+          <option value="">— Nenhum —</option>{centros.map((c) => <option key={c}>{c}</option>)}
+        </select>
+      </div>
+      <div><label style={labelStyleLote}>Valor previsto</label><input type="number" step="0.01" style={{ ...selStyleLote, width: "100%" }} value={valor} onChange={(e) => setValor(Number(e.target.value))} /></div>
+      <div><label style={labelStyleLote}>Observação (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+      {erro && <div className="alert-critico"><span>{erro}</span></div>}
+      <div className="flex gap-2 justify-end">
+        <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
+        <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Salvando…" : "Salvar"}</button>
+      </div>
     </div>
   );
 }

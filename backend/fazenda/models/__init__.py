@@ -478,6 +478,9 @@ class ContaGerencial(SQLModel, table=True):
     acrescimo_nota: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Vínculo opcional ao Pedido que esta nota fiscal/recibo está atendendo —
+    # é só quando esse vínculo existe que o Pedido passa a refletir em Financeiro.
+    pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
 
 
 # ---------------------------------------------------------------------------
@@ -571,6 +574,106 @@ class CentroCusto(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Orçamento (Financeiro > Planejamento > Orçamento) — uma linha por
+# ano/mês/conta gerencial/centro de custo. Comparado contra o realizado
+# (ContaGerencial/LancamentoItem já existentes) para o relatório orçado x
+# realizado; não tem efeito nenhum sobre Estoque nem sobre lançamentos.
+# ---------------------------------------------------------------------------
+class OrcamentoItem(SQLModel, table=True):
+    __tablename__ = "orcamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ano: int = Field(index=True)
+    mes: int  # 1-12
+    codigo_conta_gerencial: str
+    centro_custo: Optional[str] = None
+    tipo: str  # "receita" | "despesa"
+    valor_orcado: float
+    observacao: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Planejamento financeiro (Financeiro > Planejamento > Planejamento
+# financeiro) — cenários de simulação (otimista/realista/pessimista ou
+# personalizado) com linhas de receita/despesa projetadas mês a mês, para
+# montar uma projeção de fluxo de caixa "e se". Também sem efeito sobre
+# Estoque/lançamentos — é só simulação.
+# ---------------------------------------------------------------------------
+class PlanejamentoCenario(SQLModel, table=True):
+    __tablename__ = "planejamento_cenario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str
+    tipo: str = "personalizado"  # "otimista" | "realista" | "pessimista" | "personalizado"
+    observacao: Optional[str] = None
+    ativo: bool = True
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PlanejamentoItem(SQLModel, table=True):
+    __tablename__ = "planejamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cenario_id: int = Field(foreign_key="planejamento_cenario.id", index=True)
+    mes_competencia: str  # "YYYY-MM"
+    codigo_conta_gerencial: str
+    centro_custo: Optional[str] = None
+    tipo: str  # "receita" | "despesa"
+    valor_previsto: float
+    observacao: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Pedidos — intenção de compra/venda que NÃO mexe em Estoque nem gera
+# lançamento financeiro sozinha; só quando uma nota fiscal/recibo é lançada
+# em Financeiro (ou uma entrada/saída em Estoque) e vinculada a este pedido é
+# que ele passa a refletir nesses dois módulos (ver `pedido_id` em
+# ContaGerencial e MovimentoEstoque, mais abaixo).
+# ---------------------------------------------------------------------------
+class Pedido(SQLModel, table=True):
+    __tablename__ = "pedido"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_pedido: str = Field(index=True, unique=True)
+    tipo: str  # "compra" | "venda"
+    fornecedor_cliente: Optional[str] = None
+    centro_custo: Optional[str] = None
+    data_pedido: date
+    data_prevista: Optional[date] = None
+    status: str = "aberto"  # "aberto" | "parcialmente_atendido" | "atendido" | "cancelado"
+    observacao: Optional[str] = None
+    responsavel: Optional[str] = None
+    # Rastro de onde este pedido nasceu, se veio de "Importar para Pedidos"
+    # em Orçamento/Planejamento financeiro (ver planejamento.py).
+    origem_tipo: Optional[str] = None  # "orcamento" | "planejamento_financeiro"
+    origem_item_id: Optional[int] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PedidoItem(SQLModel, table=True):
+    __tablename__ = "pedido_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pedido_id: int = Field(foreign_key="pedido.id", index=True)
+    tipo_item: str  # "produto" | "servico"
+    produto_servico: str
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario_estimado: Optional[float] = None
+    valor_total_estimado: float
+    # Quanto desse item já foi coberto por lançamentos/movimentos vinculados.
+    quantidade_atendida: float = 0
+    valor_atendido: float = 0
 
 
 # ---------------------------------------------------------------------------
@@ -867,6 +970,11 @@ class MovimentoEstoque(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Vínculo opcional ao Pedido de compra que esta entrada física está
+    # atendendo — é só quando esse vínculo existe que o Pedido passa a
+    # refletir em Estoque (ver Pedido/PedidoItem).
+    pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
+    pedido_item_id: Optional[int] = Field(default=None, foreign_key="pedido_item.id")
 
 
 # ---------------------------------------------------------------------------

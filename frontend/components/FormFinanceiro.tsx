@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
-  lerDocumentoFinanceiro, formatBRL,
+  lerDocumentoFinanceiro, formatBRL, fetchPedidos,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -129,6 +129,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [dataPrevistaEntrada, setDataPrevistaEntrada] = useState("");
   const [dataPedido, setDataPedido] = useState("");
   const [entregue, setEntregue] = useState(false);
+  // Vínculo opcional a um Pedido (módulo Pedidos) — só a partir deste vínculo o
+  // pedido passa a refletir em Financeiro; ele mesmo nunca lança nada sozinho.
+  const [pedidoId, setPedidoId] = useState("");
+  const [pedidosAbertos, setPedidosAbertos] = useState<{ id: number; numero_pedido: string; fornecedor_cliente: string | null; valor_total_estimado: number }[]>([]);
+  useEffect(() => {
+    fetchPedidos({ tipo: tipo === "despesa" ? "compra" : "venda" })
+      .then((lista: any[]) => setPedidosAbertos(lista.filter((p) => p.status !== "cancelado" && p.status !== "atendido")))
+      .catch(() => {});
+  }, [tipo]);
   const [desconto, setDesconto] = useState("");
   const [acrescimo, setAcrescimo] = useState("");
 
@@ -192,6 +201,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setItens([itemVazio()]);
     setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
+    setPedidoId("");
     setDesconto(""); setAcrescimo("");
     setParcelado(false); setQtdParcelas("2"); setParcelas([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
@@ -211,7 +221,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   function montarRascunho() {
     return {
       itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento,
-      dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo,
+      dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, pedidoId, entregue, desconto, acrescimo,
       parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
       numeroDocumentoPagamento, salvoEm: new Date().toISOString(),
     };
@@ -222,6 +232,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setCentroCusto(d.centroCusto || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
     setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
+    setPedidoId(d.pedidoId || "");
     setEntregue(!!d.entregue); setDesconto(d.desconto || ""); setAcrescimo(d.acrescimo || "");
     setParcelado(!!d.parcelado); setQtdParcelas(d.qtdParcelas || "2"); setParcelas(Array.isArray(d.parcelas) ? d.parcelas : []);
     setJaPago(!!d.jaPago); setDataPagamento(d.dataPagamento || ""); setValorPago(d.valorPago || "");
@@ -370,6 +381,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       data_vencimento: !parcelado ? (dataVencimento || null) : null,
       data_prevista_entrada: dataPrevistaEntrada || null,
       data_pedido: dataPedido || null,
+      pedido_id: pedidoId ? Number(pedidoId) : null,
       entregue,
       desconto: Number(desconto) || 0,
       acrescimo: Number(acrescimo) || 0,
@@ -599,6 +611,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
         )}
         <Campo label="Data prevista de entrada"><input type="date" style={inputStyle} value={dataPrevistaEntrada} onChange={(e) => setDataPrevistaEntrada(e.target.value)} /></Campo>
         <Campo label="Data do pedido"><input type="date" style={inputStyle} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></Campo>
+        <Campo label="Vincular a um pedido (opcional)">
+          <select style={inputStyle} value={pedidoId} onChange={(e) => setPedidoId(e.target.value)}>
+            <option value="">— Nenhum —</option>
+            {pedidosAbertos.map((p) => (
+              <option key={p.id} value={p.id}>{p.numero_pedido} — {p.fornecedor_cliente || "sem contraparte"} ({formatBRL(p.valor_total_estimado)})</option>
+            ))}
+          </select>
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            É só a partir deste vínculo que o pedido passa a refletir aqui em Financeiro.
+          </span>
+        </Campo>
 
         <Campo label="Entregue?">
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", marginTop: "0.4rem" }}>

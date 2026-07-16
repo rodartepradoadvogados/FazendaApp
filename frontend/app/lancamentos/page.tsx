@@ -16,6 +16,7 @@ import {
   fetchApresentacoesFarmacia, fetchTouros,
   fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
   baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
+  fetchPedidos, fetchPedido,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -3191,6 +3192,25 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
+  // Vínculo opcional a um item de Pedido de compra — só entrada de estoque faz
+  // sentido vincular (uma saída não "atende" um pedido de compra). É só a
+  // partir deste vínculo que o pedido passa a refletir aqui em Estoque.
+  const [pedidosCompra, setPedidosCompra] = useState<{ id: number; numero_pedido: string; fornecedor_cliente: string | null }[]>([]);
+  const [pedidoId, setPedidoId] = useState("");
+  const [itensPedido, setItensPedido] = useState<{ id: number; produto_servico: string }[]>([]);
+  const [pedidoItemId, setPedidoItemId] = useState("");
+
+  useEffect(() => {
+    if (tipo !== "entrada") return;
+    fetchPedidos({ tipo: "compra" })
+      .then((lista: any[]) => setPedidosCompra(lista.filter((p) => p.status !== "cancelado" && p.status !== "atendido")))
+      .catch(() => {});
+  }, [tipo]);
+  useEffect(() => {
+    if (!pedidoId) { setItensPedido([]); setPedidoItemId(""); return; }
+    fetchPedido(Number(pedidoId)).then((p: any) => setItensPedido(p.itens || [])).catch(() => {});
+  }, [pedidoId]);
+
   const item = estoque.find((e) => e.nome === produto);
   const q = Number(qtd) || 0;
   const baixa = MOV_BAIXA.has(mov);
@@ -3201,9 +3221,13 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
     if (!produto || !tipo || !mov || !q) { setErro("Selecione o produto, o tipo de movimento e a quantidade."); return; }
     setSalvando(true);
     try {
-      const r = await movimentarEstoque({ nome: produto, movimento: mov, quantidade: q, unidade: unidade || item?.unidade || undefined, data_movimento: dataMov, observacao: observacao || undefined });
+      const r = await movimentarEstoque({
+        nome: produto, movimento: mov, quantidade: q, unidade: unidade || item?.unidade || undefined, data_movimento: dataMov, observacao: observacao || undefined,
+        pedido_id: tipo === "entrada" && pedidoId ? Number(pedidoId) : null,
+        pedido_item_id: tipo === "entrada" && pedidoItemId ? Number(pedidoItemId) : null,
+      });
       setSucesso(`Estoque de ${produto} atualizado: ${r.quantidade} ${r.unidade || ""}.`);
-      setMov(""); setQtd(""); setObservacao("");
+      setMov(""); setQtd(""); setObservacao(""); setPedidoId(""); setPedidoItemId("");
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar movimento de estoque");
     } finally {
@@ -3242,6 +3266,27 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
           </select>
         </Campo>
         <Campo label="Data"><input type="date" style={inputStyle} value={dataMov} onChange={(e) => setDataMov(e.target.value)} /></Campo>
+        {tipo === "entrada" && (
+          <>
+            <Campo label="Vincular a um pedido de compra (opcional)">
+              <select style={inputStyle} value={pedidoId} onChange={(e) => { setPedidoId(e.target.value); setPedidoItemId(""); }}>
+                <option value="">— Nenhum —</option>
+                {pedidosCompra.map((p) => <option key={p.id} value={p.id}>{p.numero_pedido} — {p.fornecedor_cliente || "sem contraparte"}</option>)}
+              </select>
+            </Campo>
+            {pedidoId && (
+              <Campo label="Item do pedido">
+                <select style={inputStyle} value={pedidoItemId} onChange={(e) => setPedidoItemId(e.target.value)}>
+                  <option value="">— Nenhum —</option>
+                  {itensPedido.map((i) => <option key={i.id} value={i.id}>{i.produto_servico}</option>)}
+                </select>
+                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+                  É só a partir deste vínculo que o pedido passa a refletir aqui em Estoque.
+                </span>
+              </Campo>
+            )}
+          </>
+        )}
         <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
       {item && mov && (

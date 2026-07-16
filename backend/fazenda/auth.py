@@ -103,7 +103,7 @@ def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
 MODULOS = [
     "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise",
     "rebanho", "producao", "alimentacao", "sanidade", "financeiro", "estoque",
-    "parametros", "upload",
+    "pedidos", "parametros", "upload",
 ]
 
 

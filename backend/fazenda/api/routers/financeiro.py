@@ -196,6 +196,9 @@ class LancamentoIn(BaseModel):
     valor_pago: Optional[float] = None
     conta_bancaria: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
+    # Vincula esta nota fiscal/recibo a um Pedido (Pedidos > módulo próprio) —
+    # é só a partir deste vínculo que o pedido passa a refletir em Financeiro.
+    pedido_id: Optional[int] = None
 
 
 FORMAS_PAGAMENTO = ["pix", "transferencia", "boleto", "credito", "debito"]
@@ -757,6 +760,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         origem="manual",
         desconto_nota=dados.desconto or None,
         acrescimo_nota=dados.acrescimo or None,
+        pedido_id=dados.pedido_id,
         # Alguns fluxos (importação de CSV, lançamento via Telegram) chamam esta
         # função diretamente, fora do ciclo de requisição do FastAPI — nesses
         # casos `user` não é resolvido pela injeção de dependência e chega aqui
@@ -800,6 +804,10 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
     session.commit()
     for c in criados:
         session.refresh(c)
+
+    if dados.pedido_id:
+        from fazenda.api.routers.pedidos import atualizar_status_por_lancamento
+        atualizar_status_por_lancamento(session, dados.pedido_id, valor_liquido)
 
     return {
         "numero_lancamento": numero_lancamento,
