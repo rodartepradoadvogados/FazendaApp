@@ -2,16 +2,21 @@
 // Tela MENU do app de campo. NADA remete ao site: cada item abre a informação
 // GERENCIAL (só leitura, enxuta) dentro do próprio app, numa SUB-TELA com botão
 // voltar (estado interno, sem navegar de rota). Itens filtrados por permissão.
-// Mantém a fila de sincronização offline e o rodapé com o usuário logado.
+//
+// Navegação em grade de 2 níveis (mesmo padrão lúdico já usado em Lançar e
+// Rebanho > Lotes, via GradeAcoes): 1º nível = sessões (quadrados grandes e
+// coloridos); ao tocar numa sessão, abre um 2º nível com os itens daquela
+// sessão (também em quadrados); ao tocar num item, abre a sub-tela real.
 import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
-  LogOut, CloudUpload, Trash2, ChevronRight, CheckCheck,
-  Wallet, FileText, BarChart3, Receipt,
+  LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
+  Wallet, FileText, BarChart3, Receipt, Palette,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
-import { MobTitulo } from "@/components/mobile/ui";
+import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
+import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
 import ProtocolosIatf from "@/components/mobile/menu/ProtocolosIatf";
@@ -30,33 +35,34 @@ import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
+type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
-type Grupo = { secao: string; itens: Item[] };
+type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
 
 const GRUPOS: Grupo[] = [
-  { secao: "Reprodução", itens: [
-    { chave: "agendaVet", titulo: "Agenda do Veterinário", subtitulo: "Listas do rebanho para a visita", rota: "/reproducao", icone: <Stethoscope size={18} /> },
-    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={18} /> },
+  { secao: "reproducao", titulo: "Reprodução", cor: "var(--mob-roxo)", iconeSecao: <Heart size={26} />, itens: [
+    { chave: "agendaVet", titulo: "Agenda do Veterinário", subtitulo: "Listas do rebanho para a visita", rota: "/reproducao", icone: <Stethoscope size={26} /> },
+    { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={26} /> },
   ] },
-  { secao: "Sanidade", itens: [
-    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={18} /> },
-    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={18} />, soAdmin: true },
+  { secao: "sanidade", titulo: "Sanidade", cor: "var(--mob-verde)", iconeSecao: <ShieldPlus size={26} />, itens: [
+    { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={26} /> },
+    { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={26} />, soAdmin: true },
   ] },
-  { secao: "Alimentação", itens: [
-    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={18} /> },
-    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <Wheat size={18} /> },
-    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <Wheat size={18} /> },
+  { secao: "alimentacao", titulo: "Alimentação", cor: "var(--mob-laranja)", iconeSecao: <Wheat size={26} />, itens: [
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} /> },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <Wheat size={26} /> },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <Wheat size={26} /> },
   ] },
-  { secao: "Gestão", itens: [
-    { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={18} /> },
-    { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={18} /> },
-    { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={18} />, soAdmin: true },
+  { secao: "gestao", titulo: "Gestão", cor: "var(--mob-azul)", iconeSecao: <FileBarChart size={26} />, itens: [
+    { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
+    { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={26} /> },
+    { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={26} />, soAdmin: true },
   ] },
-  { secao: "Financeiro", itens: [
-    { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={18} /> },
-    { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={18} /> },
-    { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={18} /> },
-    { chave: "extrato", titulo: "Extrato completo", subtitulo: "Todos os lançamentos, pagos e em aberto", rota: "/financeiro", icone: <Receipt size={18} /> },
+  { secao: "financeiro", titulo: "Financeiro", cor: "var(--mob-vinho)", iconeSecao: <Landmark size={26} />, itens: [
+    { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={26} /> },
+    { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={26} /> },
+    { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={26} /> },
+    { chave: "extrato", titulo: "Extrato completo", subtitulo: "Todos os lançamentos, pagos e em aberto", rota: "/financeiro", icone: <Receipt size={26} /> },
   ] },
 ];
 
@@ -79,6 +85,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -105,28 +112,46 @@ export default function Pagina() {
     ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
 
+  // 2º nível: itens da sessão escolhida, em quadrados.
+  if (secaoAberta === "aparencia") {
+    return (
+      <div>
+        <MobVoltar titulo="Aparência" onVoltar={() => setSecaoAberta(null)} />
+        <div className="mob-card" style={{ padding: "0.9rem 1rem" }}>
+          <AparenciaSelector variant="app" />
+        </div>
+      </div>
+    );
+  }
+  const grupoAberto = grupos.find((g) => g.secao === secaoAberta);
+  if (grupoAberto) {
+    const opcoes: OpcaoAcao[] = grupoAberto.itens.map((i) => ({ id: i.chave, label: i.titulo, icone: i.icone, cor: grupoAberto.cor }));
+    return (
+      <div>
+        <MobVoltar titulo={grupoAberto.titulo} onVoltar={() => setSecaoAberta(null)} />
+        <GradeAcoes opcoes={opcoes} onEscolher={(id) => setSub(id as SubKey)} />
+      </div>
+    );
+  }
+
+  // 1º nível: sessões, em quadrados coloridos.
+  const secoesOpcoes: OpcaoAcao[] = [
+    ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
+    { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
+    { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
+  ];
+
   return (
     <div>
       <MobTitulo>Menu</MobTitulo>
 
-      {grupos.map((g) => (
-        <div key={g.secao}>
-          <div className="mob-secao">{g.secao}</div>
-          {g.itens.map((i) => (
-            <button key={i.chave} type="button" className="mob-linha" style={{ marginBottom: "0.6rem" }} onClick={() => setSub(i.chave)}>
-              <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(184,134,11,0.12)", color: "var(--mob-dourado-2)", flexShrink: 0 }}>{i.icone}</span>
-              <span style={{ flex: 1, minWidth: 0 }}>
-                <span style={{ display: "block", fontWeight: 700, fontSize: "0.95rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.titulo}</span>
-                <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{i.subtitulo}</span>
-              </span>
-              <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
-            </button>
-          ))}
-        </div>
-      ))}
+      <GradeAcoes
+        opcoes={secoesOpcoes}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia")}
+      />
 
-      {/* Sincronização offline */}
-      <div id="pendentes" style={{ scrollMarginTop: "5rem" }}>
+      {/* Sincronização offline — sempre visível, independente das sessões acima. */}
+      <div id="pendentes" style={{ scrollMarginTop: "5rem", marginTop: "1.2rem" }}>
         <div className="mob-secao">Sincronização</div>
         {fila.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", marginBottom: "0.6rem" }}>Nada aguardando envio ✓</p>}
 
@@ -152,18 +177,6 @@ export default function Pagina() {
           </button>
         )}
       </div>
-
-      {/* Aparência (tema e paleta de cores — preferência pessoal) */}
-      <div className="mob-secao">Aparência</div>
-      <div className="mob-card" style={{ padding: "0.9rem 1rem", marginBottom: "0.6rem" }}>
-        <AparenciaSelector variant="app" />
-      </div>
-
-      {/* Sistema */}
-      <div className="mob-secao">Sistema</div>
-      <button type="button" className="mob-btn-2" onClick={logout} style={{ marginTop: "0.4rem" }}>
-        <LogOut size={17} /> Sair / trocar de usuário
-      </button>
 
       {/* Rodapé */}
       <p style={{ textAlign: "center", color: "var(--mob-muted)", fontSize: "0.78rem", margin: "1.6rem 0 0.5rem" }}>

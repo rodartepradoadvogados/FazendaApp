@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Dancing_Script } from "next/font/google";
 import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
 
 const inter = Inter({ subsets: ["latin"] });
+// Só para o "milk" cursivo da marca d'água da tela de login (ver LoginWatermark).
+const dancingScript = Dancing_Script({ subsets: ["latin"], weight: "700", variable: "--font-script" });
 
 export const metadata: Metadata = {
   title: "Fazenda Estreito Ponte de Pedra",
@@ -39,7 +41,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={inter.className}>
+      <body className={`${inter.className} ${dancingScript.variable}`}>
         <AuthShell>{children}</AuthShell>
       </body>
     </html>

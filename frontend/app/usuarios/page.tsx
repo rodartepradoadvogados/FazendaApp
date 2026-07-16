@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Users, AlertTriangle, UserPlus, Check, Pencil, X } from "lucide-react";
-import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario } from "@/lib/api";
+import { Users, AlertTriangle, UserPlus, Check, Pencil, X, ShieldCheck, Clock } from "lucide-react";
+import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchAcessos, type UsuarioAcesso } from "@/lib/api";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -24,6 +24,7 @@ export default function UsuariosPage() {
 
   const [username, setUsername] = useState("");
   const [nome, setNome] = useState("");
+  const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
   const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
@@ -38,9 +39,9 @@ export default function UsuariosPage() {
   const criar = async () => {
     setSalvando(true); setError(null); setMsg(null);
     try {
-      await criarUsuario({ username: username.trim(), senha, nome: nome.trim() || undefined, papel, permissoes: papel === "admin" ? TODOS : Array.from(perms) });
+      await criarUsuario({ username: username.trim(), senha, nome: nome.trim() || undefined, email: email.trim() || undefined, papel, permissoes: papel === "admin" ? TODOS : Array.from(perms) });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setNome(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS));
+      setUsername(""); setNome(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS));
       carregar();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
@@ -70,6 +71,7 @@ export default function UsuariosPage() {
           <div className="space-y-3">
             <div><label style={lbl}>Usuário (login)</label><input style={inp} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
             <div><label style={lbl}>Nome</label><input style={inp} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+            <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
             <div><label style={lbl}>Senha</label><input style={inp} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
             <div><label style={lbl}>Tipo</label>
               <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>
@@ -135,6 +137,8 @@ export default function UsuariosPage() {
         </div>
       </div>
 
+      {ehDono() && <RelatorioAcessos />}
+
       {editando && (
         <EditarUsuarioModal
           usuario={editando}
@@ -147,9 +151,46 @@ export default function UsuariosPage() {
   );
 }
 
+// Relatório de últimos acessos — só o proprietário vê esta seção (o backend
+// também bloqueia /auth/usuarios/acessos para qualquer outro usuário, mesmo
+// admin, então esconder aqui é só para não mostrar um card que sempre erra
+// 403 para os demais).
+function RelatorioAcessos() {
+  const [acessos, setAcessos] = useState<UsuarioAcesso[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchAcessos().then(setAcessos).catch((e) => setErro(e.message)); }, []);
+
+  const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Nunca";
+
+  return (
+    <div className="card mt-4" style={{ maxWidth: "32rem" }}>
+      <div className="card-header mb-3 flex items-center gap-2"><ShieldCheck size={14} /> Últimos acessos</div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>Visível só para você.</p>
+      {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
+      {!acessos && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {acessos && (
+        <table className="fazenda-table">
+          <thead><tr><th>Login</th><th>Nome</th><th><Clock size={12} style={{ display: "inline", marginRight: "0.25rem" }} />Último login</th></tr></thead>
+          <tbody>
+            {acessos.map((a) => (
+              <tr key={a.id}>
+                <td style={{ fontWeight: 700 }}>{a.username}{!a.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                <td style={{ fontSize: "0.8rem" }}>{a.nome || "—"}</td>
+                <td style={{ fontSize: "0.8rem", color: a.ultimo_login ? "var(--text)" : "var(--text-muted)" }}>{fmt(a.ultimo_login)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any; souEu: boolean; onClose: () => void; onSalvo: () => void }) {
   const [username, setUsername] = useState(usuario.username);
   const [nome, setNome] = useState(usuario.nome || "");
+  const [email, setEmail] = useState(usuario.email || "");
   const [papel, setPapel] = useState<"admin" | "operador">(usuario.papel);
   const [perms, setPerms] = useState<Set<string>>(new Set(usuario.papel === "admin" ? TODOS : usuario.permissoes || []));
   const [ativo, setAtivo] = useState<boolean>(usuario.ativo);
@@ -163,7 +204,7 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
     setSalvando(true); setErro(null);
     try {
       await atualizarUsuario(usuario.id, {
-        username: username.trim(), nome: nome.trim() || undefined, papel,
+        username: username.trim(), nome: nome.trim() || undefined, email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms),
         ativo, ...(novaSenha ? { senha: novaSenha } : {}),
       });
@@ -182,6 +223,7 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
         <div className="space-y-3">
           <div><label style={lbl}>Usuário (login)</label><input style={inp} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
           <div><label style={lbl}>Nome</label><input style={inp} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+          <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
           <div><label style={lbl}>Tipo</label>
             <select style={inp} value={papel} onChange={(e) => setPapel(e.target.value as any)}>

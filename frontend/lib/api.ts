@@ -33,12 +33,24 @@ export function podeModulo(mod: string): boolean {
 export function ehAdmin(): boolean {
   return getUsuario()?.papel === "admin";
 }
+// Proprietário da fazenda — único com acesso ao relatório de últimos acessos
+// (ver backend/fazenda/auth.py::exigir_dono). O backend já resolve isso pelo
+// e-mail cadastrado e devolve o booleano pronto em /auth/me e /auth/login.
+export function ehDono(): boolean {
+  return getUsuario()?.eh_dono === true;
+}
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
   if (!res.ok) throw new Error(`Usuários error: ${res.status}`);
   return res.json();
 }
-export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[] }) {
+export type UsuarioAcesso = { id: number; username: string; nome: string | null; papel: string; ativo: boolean; ultimo_login: string | null };
+export async function fetchAcessos(): Promise<UsuarioAcesso[]> {
+  const res = await authFetch(`${API}/auth/usuarios/acessos`);
+  if (!res.ok) throw new Error(`Acessos error: ${res.status}`);
+  return res.json();
+}
+export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[]; email?: string }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
@@ -477,6 +489,16 @@ export async function atualizarMetaEstoque(id: number, dados: { unidade_embalage
 export async function fetchParametros() {
   const res = await authFetch(`${API}/parametros/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Parâmetros error: ${res.status}`);
+  return res.json();
+}
+
+export async function atualizarParametro(chave: string, valor: number | string | boolean) {
+  const res = await authFetch(`${API}/parametros/${chave}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valor }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
   return res.json();
 }
 

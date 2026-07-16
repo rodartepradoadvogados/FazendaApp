@@ -35,8 +35,10 @@ class TestGestacao:
         assert dias_gestacao("Nelore") == 295
 
     def test_raca_desconhecida_usa_default(self):
-        assert dias_gestacao("Angus") == 287
-        assert dias_gestacao(None) == 287
+        # Raça não mapeada cai no ponto médio (arredondado) da faixa editável
+        # gestacao_dias_min/max (280-295, ver fazenda.rules.parametros) = 288.
+        assert dias_gestacao("Angus") == 288
+        assert dias_gestacao(None) == 288
 
     def test_parto_provavel_girolando(self):
         data_servico = date(2026, 3, 1)
@@ -327,8 +329,8 @@ class TestIndicadores:
         assert rep["partos_previstos_nums"]["em_30_dias"] == ["10"]
         # contagem bate com a lista (bug 6x5)
         assert rep["partos_previstos"]["em_90_dias"] == len(rep["partos_previstos_nums"]["em_90_dias"])
-        # gestação de 280 dias: parto ~ serviço + 280
-        assert rep["partos_previstos_datas"]["10"] == (hoje - timedelta(days=260) + timedelta(days=280)).isoformat()
+        # gestação de referência (ponto médio de gestacao_dias_min/max, 288 dias): parto ~ serviço + 288
+        assert rep["partos_previstos_datas"]["10"] == (hoje - timedelta(days=260) + timedelta(days=288)).isoformat()
 
     def test_iep_so_duplicidades_fica_none(self):
         animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]

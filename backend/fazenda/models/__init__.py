@@ -1601,6 +1601,25 @@ class AnaliseBromatologica(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
+class ParametroFazenda(SQLModel, table=True):
+    """Parâmetro editável de manejo/metas/financeiro — substitui o antigo dict
+    fixo em `rules/parametros.py` por um valor persistido e de fato editável
+    pela UI de Configurações > Parâmetros. `valor` fica como texto para caber
+    qualquer `tipo` (int/float/bool/date) num único campo; `get_param()` (ver
+    `rules/parametros.py`) faz a conversão na leitura."""
+
+    __tablename__ = "parametro_fazenda"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    chave: str = Field(index=True, unique=True)
+    grupo: str
+    label: str
+    valor: str
+    tipo: str = "int"  # "int" | "float" | "bool" | "date"
+    unidade: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class DietaRegistroReal(SQLModel, table=True):
     """O que foi realmente oferecido, por data — comparado ao programado."""
 
@@ -1738,6 +1757,10 @@ class Usuario(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     # Preferência pessoal de paleta de cores — "vinho" (padrão) ou "verde".
     paleta: Optional[str] = None
+    # E-mail pessoal (opcional) — usado hoje só para identificar o dono da
+    # fazenda e liberar o relatório de acessos (ver fazenda.auth.exigir_dono).
+    email: Optional[str] = None
+    ultimo_login: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

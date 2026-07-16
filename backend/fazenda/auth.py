@@ -25,6 +25,10 @@ SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-e
 PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
 
+# E-mail do proprietário — único com acesso ao relatório de últimos acessos
+# (ver /auth/usuarios/acessos). Fixo por enquanto, sem UI de gestão.
+EMAIL_DONO = "rodartepradoadvogados@gmail.com"
+
 
 # ---------------------------------------------------------------------------
 # Senha
@@ -96,6 +100,14 @@ def get_current_user(
 def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
     if user.papel != "admin":
         raise HTTPException(status_code=403, detail="Requer administrador")
+    return user
+
+
+def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
+    """Restringe a UM único usuário — o proprietário — por e-mail cadastrado.
+    Independente de papel/admin: mesmo outro admin não passa por aqui."""
+    if (user.email or "").strip().lower() != EMAIL_DONO:
+        raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
     return user
 
 

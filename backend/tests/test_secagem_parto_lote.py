@@ -299,7 +299,11 @@ class TestProtocoloIatf:
         assert ativos[0]["animais"][0]["numero_matriz"] == "500"
         assert ativos[0]["animais"][0]["etapa_atual"] == "D0"
 
-    def test_protocolo_some_da_lista_de_ativos_quando_tudo_realizado(self, client):
+    def test_protocolo_concluido_mostra_proxima_visita_e_candidatas(self, client):
+        # #369: ao concluir tudo (D11 com baixa), o protocolo não some da
+        # lista — passa a aparecer com concluido=True, mostrando a data do
+        # próximo serviço (D11 + intervalo_visita_reprodutiva, padrão 21
+        # dias) e as candidatas herd-wide ao próximo repasse.
         c, engine = client
         c.post("/reproducao/protocolo-iatf", json={
             "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
@@ -309,10 +313,18 @@ class TestProtocoloIatf:
             from fazenda.models import ProtocoloIatfAplicacao
             for ap in s.exec(select(ProtocoloIatfAplicacao)).all():
                 ap.realizada = True
+                if ap.dia == 11:
+                    ap.data_realizacao = date(2026, 7, 19)
                 s.add(ap)
             s.commit()
         r = c.get("/reproducao/protocolo-iatf/ativos")
-        assert r.json() == []
+        ativos = r.json()
+        assert len(ativos) == 1
+        item = ativos[0]
+        assert item["concluido"] is True
+        assert item["data_d11"] == "2026-07-19"
+        assert item["proxima_visita"] == "2026-08-09"
+        assert "candidatas_proxima_visita" in item
 
 
 class TestRegistrarServico:

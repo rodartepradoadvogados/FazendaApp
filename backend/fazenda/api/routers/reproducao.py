@@ -362,19 +362,72 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
     """
     Protocolos IATF com pelo menos uma etapa ainda não realizada — para ver de
     relance em qual dia (D0/D7/D9/D11) está cada animal em andamento.
+
+    Um protocolo com TODAS as etapas concluídas (D11/inseminação já com
+    baixa) some da lista principal, mas continua aparecendo por mais um
+    ciclo (intervalo_visita_reprodutiva dias, editável em Configurações >
+    Parâmetros) como "concluido": True, mostrando a data do próximo serviço
+    (D11 + intervalo) e as candidatas herd-wide ao próximo repasse (mesmo
+    critério de `selecionar_candidatas_iatf`, usado na Agenda) — ver #369.
     """
+    from fazenda.rules.iatf import selecionar_candidatas_iatf
+    from fazenda.rules.parametros import intervalo_visita_reprodutiva
+
+    hoje = date.today()
+    intervalo = intervalo_visita_reprodutiva()
     lancamentos = session.exec(select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc())).all()
     aplicacoes = session.exec(select(ProtocoloIatfAplicacao)).all()
     por_lancamento: dict[int, list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes:
         por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
 
+    _candidatas_cache: list | None = None
+
+    def candidatas_herd() -> list[dict]:
+        nonlocal _candidatas_cache
+        if _candidatas_cache is None:
+            animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+            servicos = session.exec(select(Servico).where(Servico.ult_ocorrencia == 1)).all()
+            diag_por_animal = {s.numero_matriz: s.diagnostico for s in servicos}
+            iatf_input = [
+                {
+                    "numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
+                    "diagnostico_ultimo": diag_por_animal.get(a.numero),
+                }
+                for a in animais
+            ]
+            candidatas = selecionar_candidatas_iatf(iatf_input)
+            _candidatas_cache = [
+                {"numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo}
+                for c in candidatas
+            ]
+        return _candidatas_cache
+
     ativos = []
     for lanc in lancamentos:
         aps = por_lancamento.get(lanc.id, [])
         pendentes = [a for a in aps if not a.realizada]
+        d11s = [a for a in aps if a.dia == 11]
+
         if not pendentes:
+            if not d11s:
+                continue  # protocolo sem etapa D11 cadastrada — nada a projetar
+            data_d11 = max((a.data_realizacao or a.data_prevista) for a in d11s)
+            proxima_visita = data_d11 + timedelta(days=intervalo)
+            if hoje > proxima_visita + timedelta(days=7):
+                continue  # já passou da janela útil — não mostra mais
+            ativos.append({
+                "lancamento_id": lanc.id,
+                "nome_protocolo": lanc.nome_protocolo,
+                "data_d0": lanc.data_d0.isoformat(),
+                "animais": [],
+                "concluido": True,
+                "data_d11": data_d11.isoformat(),
+                "proxima_visita": proxima_visita.isoformat(),
+                "candidatas_proxima_visita": candidatas_herd(),
+            })
             continue
+
         por_animal: dict[str, list[ProtocoloIatfAplicacao]] = {}
         for ap in aps:
             por_animal.setdefault(ap.numero_matriz, []).append(ap)
@@ -391,6 +444,7 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
             "nome_protocolo": lanc.nome_protocolo,
             "data_d0": lanc.data_d0.isoformat(),
             "animais": animais_status,
+            "concluido": False,
         })
     return ativos
 
