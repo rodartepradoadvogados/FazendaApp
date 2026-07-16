@@ -376,6 +376,54 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
     return {"lancamentos": registros, "total": len(registros)}
 
 
+@router.get("/possiveis-duplicados")
+def possiveis_duplicados(
+    tipo: str, valor_total: float, fornecedor_cliente: str = "", data_emissao: date | None = None,
+    excluir_numero_lancamento: str = "", session: Session = Depends(get_session),
+) -> list[dict]:
+    """
+    Lançamentos já existentes parecidos com o que está sendo digitado agora —
+    mesmo tipo (receita/despesa), fornecedor/cliente igual, valor dentro de
+    uma pequena tolerância e data próxima. Usado no formulário para avisar
+    "possível duplicado" antes de salvar, com uma comparação lado a lado.
+    """
+    fornecedor_norm = (fornecedor_cliente or "").strip().lower()
+    tolerancia_valor = max(0.01, abs(valor_total) * 0.01)  # 1% do valor, ou 1 centavo — o que for maior
+    janela_dias = 10
+
+    candidatos = session.exec(select(ContaGerencial).where(ContaGerencial.tipo == tipo)).all()
+    por_numero: dict[str, ContaGerencial] = {}
+    for c in candidatos:
+        if excluir_numero_lancamento and c.numero_lancamento == excluir_numero_lancamento:
+            continue
+        if fornecedor_norm and (c.fornecedor_cliente or "").strip().lower() != fornecedor_norm:
+            continue
+        if c.valor_total is None or abs(c.valor_total - valor_total) > tolerancia_valor:
+            continue
+        data_referencia = c.data_emissao or c.data_competencia
+        if data_emissao and data_referencia and abs((data_referencia - data_emissao).days) > janela_dias:
+            continue
+        # Uma nota parcelada tem várias linhas com o mesmo numero_lancamento —
+        # mostra só uma vez (a de menor id) por lançamento encontrado.
+        chave = c.numero_lancamento or str(c.id)
+        if chave not in por_numero or c.id < por_numero[chave].id:
+            por_numero[chave] = c
+
+    achados = [
+        {
+            "id": c.id, "numero_lancamento": c.numero_lancamento, "tipo": c.tipo,
+            "fornecedor_cliente": c.fornecedor_cliente, "valor_total": c.valor_total,
+            "numero_documento": c.numero_nota,
+            "data_emissao": c.data_emissao.isoformat() if c.data_emissao else None,
+            "data_competencia": c.data_competencia.isoformat() if c.data_competencia else None,
+            "centro_custo": c.centro_custo, "origem": c.origem,
+        }
+        for c in por_numero.values()
+    ]
+    achados.sort(key=lambda a: a["numero_lancamento"] or "", reverse=True)
+    return achados[:10]
+
+
 @router.get("/itens-por-conta")
 def itens_por_conta(
     data_inicio: date = Query(...),
@@ -599,19 +647,23 @@ router.put("/formas-pagamento-cadastro/{item_id}")(_atualizar_forma_pgto)
 # Seed inicial — migra as listas fixas que existiam antes (TIPOS_DOCUMENTO,
 # FORMAS_PAGAMENTO) para os cadastros acima, mais os itens pedidos que ainda
 # não existiam (Ordem de serviço/Outros; dinheiro/outros) — idempotente.
-SEED_TIPOS_DOCUMENTO = [*TIPOS_DOCUMENTO, "Ordem de serviço", "Outros"]
+SEED_TIPOS_DOCUMENTO = [*TIPOS_DOCUMENTO, "Boleto", "Ordem de serviço", "Outros"]
 SEED_FORMAS_PAGAMENTO_CADASTRO = [*FORMAS_PAGAMENTO, "dinheiro", "outros"]
 
 
 def seed_tipos_documento_formas_pagamento(session: Session) -> None:
-    if not session.exec(select(TipoDocumento)).first():
-        for nome in SEED_TIPOS_DOCUMENTO:
+    # Só acrescenta os nomes que ainda não existem — nunca duplica, e continua
+    # funcionando em bancos que já tinham a lista antiga (ex.: sem "Boleto").
+    existentes_doc = {t.nome for t in session.exec(select(TipoDocumento)).all()}
+    for nome in SEED_TIPOS_DOCUMENTO:
+        if nome not in existentes_doc:
             session.add(TipoDocumento(nome=nome))
-        session.commit()
-    if not session.exec(select(FormaPagamentoCadastro)).first():
-        for nome in SEED_FORMAS_PAGAMENTO_CADASTRO:
+    session.commit()
+    existentes_forma = {f.nome for f in session.exec(select(FormaPagamentoCadastro)).all()}
+    for nome in SEED_FORMAS_PAGAMENTO_CADASTRO:
+        if nome not in existentes_forma:
             session.add(FormaPagamentoCadastro(nome=nome))
-        session.commit()
+    session.commit()
 
 
 class PlanoContaGerencialIn(BaseModel):

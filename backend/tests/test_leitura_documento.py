@@ -103,6 +103,26 @@ class TestLerDocumento:
         assert d["tipo_documento"] == "recibo"
         assert d["data_pagamento"] == "2026-07-05"
 
+    def test_extrai_boleto_parcelado(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        payload = {
+            "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro",
+            "numero_documento": "00001-2", "data_emissao": None, "data_pagamento": None,
+            "valor_total": 850.0, "conta_bancaria": None, "itens": [], "observacao": None,
+            "parcela_num": 2, "parcela_total": 6, "linha_digitavel": "12345.67890 12345.678901 12345.678901 1 12340000085000",
+            "data_vencimento": "2026-08-10",
+        }
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("boleto.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["tipo_documento"] == "boleto"
+        assert d["parcela_num"] == 2
+        assert d["parcela_total"] == 6
+        assert d["data_vencimento"] == "2026-08-10"
+
     def test_recusa_da_ia_vira_erro_400(self, client, monkeypatch):
         c, engine = client
         monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")

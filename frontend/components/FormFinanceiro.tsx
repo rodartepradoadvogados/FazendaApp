@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
-  lerDocumentoFinanceiro, formatBRL, fetchPedidos,
+  lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, type LancamentoParecido,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -157,12 +157,18 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [xmlTexto, setXmlTexto] = useState("");
   const [importando, setImportando] = useState(false);
   const [erroXml, setErroXml] = useState<string | null>(null);
+  const [avisoDocumento, setAvisoDocumento] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  // Detecção de possível duplicado — comparação lado a lado antes de salvar.
+  const [duplicados, setDuplicados] = useState<LancamentoParecido[]>([]);
+  const [confirmandoDuplicado, setConfirmandoDuplicado] = useState(false);
+  const [verificandoDuplicado, setVerificandoDuplicado] = useState(false);
 
   function atualizarItem(idx: number, patch: Partial<Item>) {
     setItens((arr) => arr.map((it, i) => {
@@ -314,10 +320,15 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
   // Nota fiscal ou recibo em PDF/JPEG/PNG — leitura automática via IA.
   // Recibo (já pago) preenche o pagamento imediato; nota fiscal nasce em aberto.
+  // Boleto: se a IA achou "parcela X/Y" no próprio boleto, já monta o
+  // parcelamento com essa quantidade; senão, deixa como lançamento único e
+  // é o usuário quem decide (documento avulso ou marcar como parcelado).
   function aplicarExtracaoDocumento(dados: any) {
+    setAvisoDocumento(null);
     aplicarXml(dados);
     const ehRecibo = dados.tipo_documento === "recibo";
-    setTipoDocumento(ehRecibo ? "Recibo" : "Nota fiscal");
+    const ehBoleto = dados.tipo_documento === "boleto";
+    setTipoDocumento(ehRecibo ? "Recibo" : ehBoleto ? "Boleto" : "Nota fiscal");
     if (ehRecibo) {
       setJaPago(true);
       if (dados.data_pagamento) setDataPagamento(dados.data_pagamento);
@@ -325,6 +336,23 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       if (dados.conta_bancaria) setContaBancaria(dados.conta_bancaria);
       if (!dados.itens?.length && dados.valor_total != null) {
         setItens([{ ...itemVazio(), produto: dados.observacao || "Recibo anexado", valor_total: String(dados.valor_total), modoValor: "total" }]);
+      }
+    } else if (ehBoleto) {
+      if (dados.data_vencimento) setDataVencimento(dados.data_vencimento);
+      if (!dados.itens?.length && dados.valor_total != null) {
+        setItens([{ ...itemVazio(), produto: dados.observacao || "Boleto anexado", valor_total: String(dados.valor_total), modoValor: "total" }]);
+      }
+      if (dados.parcela_num && dados.parcela_total && dados.parcela_total > 1) {
+        // O próprio boleto indica "parcela X/Y" — monta o plano com Y
+        // parcelas iguais (a divisão automática recalcula os valores; o
+        // usuário ajusta manualmente se as parcelas não forem iguais).
+        setParcelado(true);
+        setQtdParcelas(String(dados.parcela_total));
+      } else {
+        setAvisoDocumento(
+          "Boleto avulso: não achei indicação de parcelamento neste documento. Revise se é um lançamento único " +
+          "ou marque \"Parcelar\" abaixo se ele fizer parte de um plano.",
+        );
       }
     }
   }
@@ -402,6 +430,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     const validos = itens.filter((i) => i.produto.trim());
     if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
     if (valorLiquido <= 0) { setErro("O valor líquido do lançamento deve ser positivo."); return; }
+    if (!confirmandoDuplicado) {
+      setVerificandoDuplicado(true);
+      try {
+        const achados = await fetchPossiveisDuplicados({
+          tipo, valor_total: valorLiquido, fornecedor_cliente: fornecedor, data_emissao: dataEmissao || undefined,
+        });
+        if (achados.length) { setDuplicados(achados); setConfirmandoDuplicado(true); return; }
+      } finally {
+        setVerificandoDuplicado(false);
+      }
+    }
     if (!parcelado && jaPago && diferencaPagamento !== 0 && !confirmando) { setConfirmando(true); return; }
     setSalvando(true);
     try {
@@ -413,7 +452,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar lançamento");
     } finally {
-      setSalvando(false); setConfirmando(false);
+      setSalvando(false); setConfirmando(false); setConfirmandoDuplicado(false); setDuplicados([]);
     }
   }
 
@@ -466,6 +505,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
           </div>
         )}
         {erroXml && <p style={{ color: "var(--red)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{erroXml}</p>}
+        {avisoDocumento && <p style={{ color: "var(--amber)", fontSize: "0.75rem", marginTop: "0.4rem" }}>{avisoDocumento}</p>}
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
           XML reconhece vários produtos/serviços da mesma nota. PDF/JPEG/PNG usa leitura automática por IA — identifica se é
           nota fiscal (nasce em aberto) ou recibo (nasce já pago) — os campos ficam abaixo, todos editáveis.
@@ -721,8 +761,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
 
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando}>
-          {salvando ? "Salvando…" : "Salvar lançamento"}
+        <button className="btn-primary" title="Salvar este lançamento financeiro" onClick={salvar} disabled={salvando || verificandoDuplicado}>
+          {salvando ? "Salvando…" : verificandoDuplicado ? "Verificando…" : "Salvar lançamento"}
         </button>
       </div>
 
@@ -803,6 +843,33 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
             onCancelar={() => setAbrirNovoFornecedor(false)}
           />
         </Modal>
+      )}
+
+      {confirmandoDuplicado && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" style={{ width: "560px", maxWidth: "95vw" }}>
+            <div className="flex items-center gap-2 mb-2"><AlertTriangle size={18} style={{ color: "var(--amber)" }} /><strong>Possível lançamento duplicado</strong></div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+              Já existe {duplicados.length > 1 ? "lançamentos parecidos" : "um lançamento parecido"} com o mesmo fornecedor/cliente,
+              valor próximo e data próxima. Confira antes de salvar de novo.
+            </p>
+            <div style={{ overflowX: "auto" }}>
+              <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
+                <thead><tr><th></th><th>Novo lançamento</th>{duplicados.map((d) => <th key={d.id}>Nº {d.numero_lancamento || d.id}</th>)}</tr></thead>
+                <tbody>
+                  <tr><td style={{ color: "var(--text-muted)" }}>Fornecedor/cliente</td><td>{fornecedor || "—"}</td>{duplicados.map((d) => <td key={d.id}>{d.fornecedor_cliente || "—"}</td>)}</tr>
+                  <tr><td style={{ color: "var(--text-muted)" }}>Valor</td><td>{formatBRL(valorLiquido)}</td>{duplicados.map((d) => <td key={d.id}>{formatBRL(d.valor_total || 0)}</td>)}</tr>
+                  <tr><td style={{ color: "var(--text-muted)" }}>Data de emissão</td><td>{dataEmissao || "—"}</td>{duplicados.map((d) => <td key={d.id}>{d.data_emissao || d.data_competencia || "—"}</td>)}</tr>
+                  <tr><td style={{ color: "var(--text-muted)" }}>Nº documento</td><td>{numeroDocumento || "—"}</td>{duplicados.map((d) => <td key={d.id}>{d.numero_documento || "—"}</td>)}</tr>
+                </tbody>
+              </table>
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <button className="btn-primary" title="Salvar mesmo assim (não é duplicado)" onClick={salvar}><Check size={14} /> Salvar mesmo assim</button>
+              <button className="btn-ghost" title="Cancelar e revisar os dados" onClick={() => { setConfirmandoDuplicado(false); setDuplicados([]); }}><X size={14} /> Cancelar</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {confirmando && (
