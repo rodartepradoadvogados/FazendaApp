@@ -53,7 +53,12 @@ def _usuario_id_seguro(user: Usuario) -> int | None:
 
 class OrdenhaIn(BaseModel):
     numero_matriz: str
-    ordenhas: list[float]
+    ordenhas: list[float] = []
+    # Se preenchido, grava só o total do dia (sem quebrar em ordenha1/2/3) —
+    # usado quando a planilha/lançamento só informa o total, sem detalhar por
+    # ordenha; nesse caso `ordenhas` fica vazio e os relatórios que abrem por
+    # ordenha simplesmente não têm o que mostrar para esse registro.
+    total_kg: float | None = None
 
 
 class ControlesIn(BaseModel):
@@ -116,20 +121,28 @@ def criar_controles(
     usuario_id = _usuario_id_seguro(user)
     criados = []
     for entrada in dados.entradas:
-        if not entrada.ordenhas or not any(entrada.ordenhas):
+        if entrada.total_kg is not None:
+            producao_kg = round(entrada.total_kg, 2)
+            o1 = o2 = o3 = None
+        elif entrada.ordenhas and any(entrada.ordenhas):
+            ordenhas = entrada.ordenhas
+            producao_kg = round(sum(ordenhas), 2)
+            o1 = ordenhas[0] if len(ordenhas) > 0 else None
+            o2 = ordenhas[1] if len(ordenhas) > 1 else None
+            o3 = ordenhas[2] if len(ordenhas) > 2 else None
+        else:
             continue
         animal = session.exec(select(Animal).where(Animal.numero == entrada.numero_matriz)).first()
-        ordenhas = entrada.ordenhas
         registro = ControleLeiteiro(
             animal_id=animal.id if animal else None,
             numero_matriz=entrada.numero_matriz,
             raca=animal.raca if animal else None,
             data_controle=dados.data_controle,
-            producao_kg=round(sum(ordenhas), 2),
+            producao_kg=producao_kg,
             del_no_controle=animal.del_dias if animal else None,
-            ordenha1_kg=ordenhas[0] if len(ordenhas) > 0 else None,
-            ordenha2_kg=ordenhas[1] if len(ordenhas) > 1 else None,
-            ordenha3_kg=ordenhas[2] if len(ordenhas) > 2 else None,
+            ordenha1_kg=o1,
+            ordenha2_kg=o2,
+            ordenha3_kg=o3,
             usuario_id=usuario_id,
         )
         session.add(registro)
@@ -154,6 +167,10 @@ CONTROLE_LEITEIRO_APELIDOS = {
     "ordenha1_kg": ["primeira ordenha kg", "1 ordenha kg", "ordenha1 kg", "ordenha1"],
     "ordenha2_kg": ["segunda ordenha kg", "2 ordenha kg", "ordenha2 kg", "ordenha2"],
     "ordenha3_kg": ["terceira ordenha kg", "3 ordenha kg", "ordenha3 kg", "ordenha3"],
+    # Fallback: se nenhuma ordenha individual vier preenchida, usa o total do
+    # dia — grava só a soma, sem quebrar por ordenha (relatórios que abrem por
+    # ordenha não têm o que mostrar para essa linha, e é isso mesmo).
+    "total_kg": ["total", "total kg", "total do dia", "producao total", "producao total kg"],
 }
 MODELO_CONTROLE_LEITEIRO_ANIMAL = {
     "colunas": ["Número", "Data", "Primeira ordenha (kg)", "Segunda ordenha (kg)", "Terceira ordenha (kg)", "Total"],
@@ -220,31 +237,34 @@ async def importar_controle_leiteiro(
     erros: list[str] = []
     por_data: dict[date, list[OrdenhaIn]] = {}
 
-    def _ordenhas(row_norm: dict) -> list[float] | None:
+    def _ordenhas_ou_total(row_norm: dict) -> tuple[list[float], float | None] | None:
         o1 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha1_kg"]))
         o2 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha2_kg"]))
         o3 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha3_kg"]))
-        if o1 is None and o2 is None and o3 is None:
-            return None
-        return [o1 or 0, o2 or 0, o3 or 0] if o3 is not None else [o1 or 0, o2 or 0]
+        if o1 is not None or o2 is not None or o3 is not None:
+            return ([o1 or 0, o2 or 0, o3 or 0] if o3 is not None else [o1 or 0, o2 or 0]), None
+        total = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["total_kg"]))
+        return ([], total) if total is not None else None
 
     if tem_numero:
         for i, row_norm in enumerate(linhas_norm, start=2):
             numero = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["numero_matriz"]).strip()
             data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
-            ordenhas = _ordenhas(row_norm)
-            if not numero or not data_linha or ordenhas is None:
-                erros.append(f"Linha {i}: número, data e ao menos uma ordenha são obrigatórios.")
+            resultado = _ordenhas_ou_total(row_norm)
+            if not numero or not data_linha or resultado is None:
+                erros.append(f"Linha {i}: número, data e ao menos uma ordenha (ou o total) são obrigatórios.")
                 continue
-            por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=numero, ordenhas=ordenhas))
+            ordenhas, total = resultado
+            por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=numero, ordenhas=ordenhas, total_kg=total))
     else:
         for i, row_norm in enumerate(linhas_norm, start=2):
             lote_valor = valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["lote"]).strip()
             data_linha = parse_date(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["data_controle"]))
-            ordenhas = _ordenhas(row_norm)
-            if not lote_valor or not data_linha or ordenhas is None:
-                erros.append(f"Linha {i}: lote, data e ao menos uma ordenha são obrigatórios.")
+            resultado = _ordenhas_ou_total(row_norm)
+            if not lote_valor or not data_linha or resultado is None:
+                erros.append(f"Linha {i}: lote, data e ao menos uma ordenha (ou o total) são obrigatórios.")
                 continue
+            ordenhas, total = resultado
             lote = _resolver_lote(session, lote_valor)
             if not lote:
                 erros.append(f'Linha {i}: lote "{lote_valor}" não encontrado no cadastro.')
@@ -255,9 +275,14 @@ async def importar_controle_leiteiro(
                 erros.append(f'Linha {i}: lote "{lote_valor}" não tem nenhum animal no momento — pesagem não distribuída.')
                 continue
             n = len(animais_lote)
-            ordenhas_por_vaca = [round(v / n, 2) for v in ordenhas]
-            for a in animais_lote:
-                por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, ordenhas=ordenhas_por_vaca))
+            if total is not None:
+                total_por_vaca = round(total / n, 2)
+                for a in animais_lote:
+                    por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, total_kg=total_por_vaca))
+            else:
+                ordenhas_por_vaca = [round(v / n, 2) for v in ordenhas]
+                for a in animais_lote:
+                    por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, ordenhas=ordenhas_por_vaca))
 
     criados = 0
     for dia, entradas in por_data.items():
@@ -385,6 +410,58 @@ def relatorio_pesagens(
 
     linhas.sort(key=lambda l: chave_numero(l["numero_matriz"]))
     return {"linhas": linhas, "total": len(linhas)}
+
+
+# ---------------------------------------------------------------------------
+# Importação de planilha (Excel ou CSV) de pesagem corporal — mesmo padrão do
+# controle leiteiro/qualidade do leite acima: atalho direto na tela de
+# Lançamentos, distinto do CSV genérico de Configurações > Importar dados.
+# ---------------------------------------------------------------------------
+PESAGEM_CORPORAL_APELIDOS = {
+    "numero_matriz": ["numero do animal", "numero animal", "numero", "numero matriz", "no", "n", "vaca", "animal", "brinco", "id"],
+    "data_pesagem": ["data", "data pesagem", "data da pesagem"],
+    "peso_kg": ["peso kg", "peso", "peso vivo", "peso vivo kg"],
+}
+MODELO_PESAGEM_CORPORAL = {
+    "colunas": ["Número do animal", "Data", "Peso (kg)"],
+    "exemplo": ["464", "05/07/2026", "420,5"],
+}
+
+
+@router.get("/pesagens/modelo-excel")
+def modelo_excel_pesagem_corporal() -> Response:
+    return _xlsx_response(
+        MODELO_PESAGEM_CORPORAL["colunas"], MODELO_PESAGEM_CORPORAL["exemplo"],
+        "Pesagem corporal", "modelo_pesagem_corporal.xlsx",
+    )
+
+
+@router.post("/pesagens/importar")
+async def importar_pesagem_corporal_planilha(
+    file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    content = await file.read()
+    linhas = list(iter_planilha_rows(file.filename or "", content))
+    if not linhas:
+        return {"criados": 0, "erros": ["Planilha vazia ou em formato não reconhecido."]}
+
+    erros: list[str] = []
+    por_data: dict[date, list[PesoIn]] = {}
+    for i, row in enumerate(linhas, start=2):
+        row_norm = {normalizar_cabecalho(k): v for k, v in row.items()}
+        numero = valor_por_apelido(row_norm, PESAGEM_CORPORAL_APELIDOS["numero_matriz"]).strip()
+        data_linha = parse_date(valor_por_apelido(row_norm, PESAGEM_CORPORAL_APELIDOS["data_pesagem"]))
+        peso = parse_float(valor_por_apelido(row_norm, PESAGEM_CORPORAL_APELIDOS["peso_kg"]))
+        if not numero or not data_linha or not peso:
+            erros.append(f"Linha {i}: número do animal, data e peso são obrigatórios.")
+            continue
+        por_data.setdefault(data_linha, []).append(PesoIn(numero_matriz=numero, peso_kg=peso))
+
+    criados = 0
+    for dia, entradas in por_data.items():
+        resultado = criar_pesagens(PesagensIn(data_pesagem=dia, entradas=entradas), session, user)
+        criados += resultado["criados"]
+    return {"criados": criados, "erros": erros}
 
 
 class QualidadeLeiteIn(BaseModel):

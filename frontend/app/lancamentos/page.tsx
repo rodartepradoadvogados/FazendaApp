@@ -3,7 +3,7 @@ import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
-  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check, Download,
+  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
@@ -30,6 +30,7 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
+import { UploadPlanilha } from "@/components/UploadPlanilha";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
 import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
 import BaixarAnimal from "@/components/BaixarAnimal";
@@ -1068,7 +1069,8 @@ function classeColostragemUI(brix: number | null, proteina: number | null): { tx
   return { txt: "—", cor: "var(--text-muted)" };
 }
 
-function FormParto({ animais }: { animais: AnimalRow[] }) {
+function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
+  const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [matriz, setMatriz] = useState("");
   const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
   const [tipoParto, setTipoParto] = useState("");
@@ -1145,6 +1147,73 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
     }
     return null;
+  }
+
+  // Lançamento em lote: partos simples (sem gêmeos/colostro/IgG) de várias
+  // matrizes de um mesmo lote de uma vez — mesma data e tipo de parto para
+  // todas, cria/retenção de placenta editável linha a linha. Cada linha chama
+  // o mesmo endpoint do lançamento único (não existe endpoint de parto em
+  // lote no backend); a mudança de lote da mãe (que pede confirmação one-by-one
+  // no modo "Uma matriz") não é feita automaticamente aqui para não abrir N
+  // caixas de confirmação — só a alocação da cria (sem confirmação) é mantida.
+  const [loteBatch, setLoteBatch] = useState("");
+  const [selBatch, setSelBatch] = useState<Set<string>>(new Set());
+  const [dadosBatch, setDadosBatch] = useState<Record<string, { criaNumero: string; criaSexo: string; criaBaixada: boolean; retencaoPlacenta: boolean }>>({});
+  const [salvandoBatch, setSalvandoBatch] = useState(false);
+  const [erroBatch, setErroBatch] = useState<string | null>(null);
+  const [sucessoBatch, setSucessoBatch] = useState<string | null>(null);
+
+  const animaisDoLoteBatch = useMemo(() => (loteBatch ? animais.filter((a) => a.grupo_primario === loteBatch) : []), [animais, loteBatch]);
+
+  useEffect(() => {
+    setSelBatch(new Set(animaisDoLoteBatch.map((a) => a.numero)));
+  }, [loteBatch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function toggleBatch(numero: string) {
+    setSelBatch((p) => { const s = new Set(p); s.has(numero) ? s.delete(numero) : s.add(numero); return s; });
+  }
+  function toggleTodosBatch() {
+    setSelBatch((p) => (p.size === animaisDoLoteBatch.length && animaisDoLoteBatch.length ? new Set() : new Set(animaisDoLoteBatch.map((a) => a.numero))));
+  }
+  function campoBatch(numero: string) {
+    return dadosBatch[numero] || { criaNumero: "", criaSexo: "", criaBaixada: false, retencaoPlacenta: false };
+  }
+  function setCampoBatch(numero: string, patch: Partial<{ criaNumero: string; criaSexo: string; criaBaixada: boolean; retencaoPlacenta: boolean }>) {
+    setDadosBatch((p) => ({ ...p, [numero]: { ...campoBatch(numero), ...patch } }));
+  }
+
+  async function salvarLote() {
+    setErroBatch(null); setSucessoBatch(null);
+    const alvo = Array.from(selBatch);
+    if (!alvo.length) { setErroBatch("Selecione ao menos uma matriz do lote."); return; }
+    if (!dataParto) { setErroBatch("Informe a data do parto."); return; }
+    setSalvandoBatch(true);
+    let partosOk = 0;
+    const criasOk: string[] = [];
+    const falhas: string[] = [];
+    for (const numero of alvo) {
+      const d = campoBatch(numero);
+      try {
+        const crias = d.criaNumero ? [{ numero: d.criaNumero, sexo: d.criaSexo === "Macho" ? "M" : "F", nasceu_viva: !d.criaBaixada }] : [];
+        const r = await criarParto({
+          numero_matriz: numero, data_parto: dataParto, tipo_parto: tipoParto || undefined,
+          crias, retencao_placenta: d.retencaoPlacenta, gemelar: false,
+        });
+        partosOk += 1;
+        for (const c of r.crias_criadas as string[]) {
+          criasOk.push(c);
+          await alocarSemConfirmar(c, d.criaSexo === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhas);
+        }
+      } catch (e: any) {
+        falhas.push(`${numero}: ${e.message || "erro ao registrar parto"}`);
+      }
+    }
+    setSucessoBatch(
+      `${partosOk} de ${alvo.length} parto(s) registrado(s)${criasOk.length ? `; cria(s) cadastrada(s): ${criasOk.join(", ")}` : ""}.` +
+      `${falhas.length ? ` Atenção: ${falhas.join("; ")}.` : ""} A mudança de lote das mães não é automática aqui — use Rebanho > Movimentar animais, se precisar.`
+    );
+    if (partosOk) { setSelBatch(new Set()); setDadosBatch({}); setLoteBatch(""); }
+    setSalvandoBatch(false);
   }
 
   // Todo parto pergunta se a mãe muda para o lote 3 — independentemente de
@@ -1234,6 +1303,96 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
     <>
       {manualColostroAberto && <ManualColostroModal onClose={() => setManualColostroAberto(false)} />}
       {manualSangueAberto && <ManualSangueModal onClose={() => setManualSangueAberto(false)} />}
+
+      <div className="mb-3">
+        <TabBar<"animal" | "lote">
+          abas={[
+            { id: "animal", label: "Uma matriz", title: "Lançar o parto de uma matriz, com cria, colostragem e IgG" },
+            { id: "lote", label: "Várias matrizes (lote)", title: "Selecionar um lote e lançar partos simples de várias matrizes de uma vez" },
+          ]}
+          ativa={modo}
+          onChange={setModo}
+        />
+      </div>
+
+      {modo === "lote" ? (
+        <>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Campo label="Lote">
+              <select style={inputStyle} value={loteBatch} onChange={(e) => setLoteBatch(e.target.value)}>
+                <option value="">Selecione…</option>
+                {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+              </select>
+            </Campo>
+            <Campo label="Data do parto (todas)"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
+            <Campo label="Tipo de parto (todas)">
+              <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
+                <option value="">Selecione…</option><option>Normal</option>
+                <option>Distócico moderado</option><option>Distócico severo</option>
+                <option>Cesariana</option>
+              </select>
+            </Campo>
+          </div>
+
+          {loteBatch ? (
+            <div className="card mt-3" style={{ padding: 0 }}>
+              <div className="card-header m-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+                <span>Matrizes do lote {loteBatch} ({animaisDoLoteBatch.length})</span>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodosBatch} disabled={!animaisDoLoteBatch.length}>
+                  {selBatch.size === animaisDoLoteBatch.length && animaisDoLoteBatch.length ? "Limpar seleção" : "Selecionar todos"}
+                </button>
+              </div>
+              <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
+                <table className="fazenda-table" style={{ margin: 0 }}>
+                  <thead><tr><th></th><th>Nº</th><th>Nº da cria (vazio = baixa)</th><th>Sexo da cria</th><th>Cria baixada?</th><th>Retenção de placenta</th></tr></thead>
+                  <tbody>
+                    {animaisDoLoteBatch.map((a) => {
+                      const d = campoBatch(a.numero);
+                      const marcada = selBatch.has(a.numero);
+                      return (
+                        <tr key={a.numero} style={{ opacity: marcada ? 1 : 0.45 }}>
+                          <td><input type="checkbox" checked={marcada} onChange={() => toggleBatch(a.numero)} /></td>
+                          <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                          <td><input style={inputStyle} disabled={!marcada} value={d.criaNumero} onChange={(e) => setCampoBatch(a.numero, { criaNumero: e.target.value })} placeholder="ex.: 483" /></td>
+                          <td>
+                            <select style={inputStyle} disabled={!marcada} value={d.criaSexo} onChange={(e) => setCampoBatch(a.numero, { criaSexo: e.target.value })}>
+                              <option value="">—</option><option>Fêmea</option><option>Macho</option>
+                            </select>
+                          </td>
+                          <td>
+                            <select style={inputStyle} disabled={!marcada} value={d.criaBaixada ? "Sim" : "Não"} onChange={(e) => setCampoBatch(a.numero, { criaBaixada: e.target.value === "Sim" })}>
+                              <option>Não</option><option>Sim</option>
+                            </select>
+                          </td>
+                          <td style={{ textAlign: "center" }}>
+                            <input type="checkbox" disabled={!marcada} checked={d.retencaoPlacenta} onChange={(e) => setCampoBatch(a.numero, { retencaoPlacenta: e.target.checked })} />
+                          </td>
+                        </tr>
+                      );
+                    })}
+                    {!animaisDoLoteBatch.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal neste lote.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : (
+            <p style={nota}>Selecione um lote para ver a lista de matrizes e lançar vários partos de uma vez.</p>
+          )}
+
+          <p style={nota}>
+            Modo simplificado: grava matriz, data, tipo de parto, cria e retenção de placenta de cada uma. Para
+            parto gemelar, colostragem e IgG, use "Uma matriz". A mudança de lote da mãe (lote 3) precisa ser feita
+            depois, manualmente, em Rebanho {"›"} Movimentar animais.
+          </p>
+
+          {erroBatch && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroBatch}</p>}
+          {sucessoBatch && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucessoBatch}</p>}
+          <div className="flex items-center gap-3 mt-4">
+            <button className="btn-primary" onClick={salvarLote} disabled={salvandoBatch}>{salvandoBatch ? "Salvando…" : "Salvar todos"}</button>
+          </div>
+        </>
+      ) : (
+        <>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Matriz (nº)"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a matriz que pariu…" /></Campo>
         <Campo label="Data do parto"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
@@ -1376,6 +1535,8 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
+        </>
+      )}
     </>
   );
 }
@@ -1383,58 +1544,6 @@ function FormParto({ animais }: { animais: AnimalRow[] }) {
 // Upload de planilha (Excel/.xlsx ou CSV) — usado tanto em Controle leiteiro
 // (por animal ou por lote, um botão de modelo cada) quanto em Qualidade do
 // leite (um modelo só). O parser do backend identifica o formato sozinho.
-function UploadPlanilha({ modelos, onImportar }: {
-  modelos: { label: string; baixar: () => Promise<void> }[];
-  onImportar: (file: File) => Promise<{ criados: number; erros: string[] }>;
-}) {
-  const [arquivo, setArquivo] = useState<File | null>(null);
-  const [enviando, setEnviando] = useState(false);
-  const [resultado, setResultado] = useState<{ criados: number; erros: string[] } | null>(null);
-  const [erro, setErro] = useState<string | null>(null);
-
-  async function importar() {
-    if (!arquivo) return;
-    setEnviando(true); setErro(null); setResultado(null);
-    try {
-      const r = await onImportar(arquivo);
-      setResultado(r);
-      setArquivo(null);
-    } catch (e: any) {
-      setErro(e.message || "Erro ao importar planilha");
-    } finally {
-      setEnviando(false);
-    }
-  }
-
-  return (
-    <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
-      <p style={{ fontSize: "0.78rem", fontWeight: 700, color: "var(--dourado-light)", marginBottom: "0.5rem" }}>Importar de planilha (Excel ou CSV)</p>
-      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
-        {modelos.map((m) => (
-          <button key={m.label} type="button" className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => m.baixar().catch(() => setErro("Erro ao baixar o modelo."))}>
-            <Download size={13} /> {m.label}
-          </button>
-        ))}
-      </div>
-      <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-        <input type="file" accept=".xlsx,.xlsm,.csv" onChange={(e) => { setArquivo(e.target.files?.[0] || null); setResultado(null); setErro(null); }} style={{ fontSize: "0.8rem" }} />
-        <button type="button" className="btn-primary" disabled={!arquivo || enviando} onClick={importar}>{enviando ? "Importando…" : "Importar"}</button>
-      </div>
-      {resultado && (
-        <p style={{ fontSize: "0.78rem", marginTop: "0.6rem", color: resultado.erros.length ? "var(--amber)" : "var(--green-light)" }}>
-          {resultado.criados} lançamento(s) criado(s){resultado.erros.length ? ` — ${resultado.erros.length} linha(s) com erro:` : "."}
-          {resultado.erros.length > 0 && (
-            <ul style={{ marginTop: "0.3rem", paddingLeft: "1.1rem", color: "var(--text-muted)" }}>
-              {resultado.erros.slice(0, 10).map((e, i) => <li key={i}>{e}</li>)}
-            </ul>
-          )}
-        </p>
-      )}
-      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.5rem" }}>{erro}</p>}
-    </div>
-  );
-}
-
 function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lotesLact: string[] }) {
   const [modo, setModo] = useState<"vaca" | "lote" | "planilha">("vaca");
   const [vaca, setVaca] = useState("");
@@ -3663,7 +3772,7 @@ export default function LancamentosPage() {
         {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
         {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
         {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
-        {sel === "parto" && <FormParto animais={animais} />}
+        {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
         {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
         {sel === "pesagem" && <FormPesagemCorporal animais={animais} lotes={lotes} />}
         {sel === "secagem" && <FormSecagem animais={animais} estoque={estoque} produtos={produtosSanidade} />}

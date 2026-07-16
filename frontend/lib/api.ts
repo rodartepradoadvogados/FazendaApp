@@ -1531,6 +1531,18 @@ export async function criarPesagensCorporais(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar pesagem corporal"); }
   return res.json();
 }
+
+export function baixarModeloPesagemCorporal() {
+  return baixarArquivoAutenticado("/producao/pesagens/modelo-excel", "modelo_pesagem_corporal.xlsx");
+}
+
+export async function importarPesagemCorporalPlanilha(file: File): Promise<{ criados: number; erros: string[] }> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/producao/pesagens/importar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  return res.json();
+}
 // ── Qualidade do leite ──
 export async function fetchQualidadeLeite() {
   const res = await authFetch(`${API}/producao/qualidade-leite`, { cache: "no-store" });
