@@ -37,6 +37,8 @@ const LISTAS: { chave: string; rotulo: string }[] = [
   { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
   { chave: "vazias_por_diagnostico", rotulo: "Vazias por diagnóstico (novo serviço)" },
   { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
+  // Só aparece quando o parâmetro "usa_adesivo_deteccao_cio" está ativo.
+  { chave: "observacao_cio", rotulo: "Observação de cio — adesivo de repasse" },
 ];
 
 function detalhe(chave: string, a: Animal): string {

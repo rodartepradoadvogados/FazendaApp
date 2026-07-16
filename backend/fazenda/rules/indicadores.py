@@ -13,27 +13,39 @@ from __future__ import annotations
 from datetime import date, timedelta
 from typing import Optional
 
-from fazenda.rules.agenda_veterinario import PESO_APTA_MIN
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.iatf import SIT_REP_CANDIDATAS
-from fazenda.rules.parametros import BENCHMARK_METAS
+from fazenda.rules.parametros import (
+    BENCHMARK_METAS,
+    data_corte_taxa_concepcao,
+    gestacao_dias_min,
+    gestacao_dias_referencia,
+    peso_apta_min,
+    pev_dias,
+)
 
 # Códigos de grupo (2 primeiros dígitos do grupo_primario).
 GRUPOS_LACTACAO = {"01", "02", "03"}
 GRUPO_PRE_PARTO = "04"
 GRUPO_SECAS = "05"
 
-# Taxa de concepção considerada sempre a partir desta data.
-CONCEPCAO_DESDE = date(2026, 1, 1)
+def _concepcao_desde() -> date:
+    """Taxa de concepção considerada sempre a partir desta data — editável em
+    Configurações > Parâmetros (data_corte_taxa_concepcao). Função (não
+    constante de módulo) para ler o valor atual do banco a cada chamada, sem
+    depender da ordem de import x criação de tabelas no startup."""
+    return data_corte_taxa_concepcao()
 
-# Piso biológico do intervalo entre partos (IEP).
-# Uma nova cria exige, no mínimo, a gestação (~9 meses) somada ao período de
-# espera voluntária (PEV) até a matriz emprenhar de novo. Dois registros de
-# parto mais próximos que isso são o mesmo evento (duplicidade na fonte) e não
-# representam um intervalo real — são descartados para não distorcer a média.
-GESTACAO_MINIMA_DIAS = 280  # Holandês (menor gestação entre as raças)
-PEV_DIAS = 45               # período de espera voluntária mínimo
-IEP_MINIMO_DIAS = GESTACAO_MINIMA_DIAS + PEV_DIAS  # 325 dias (~10,7 meses)
+
+def _iep_minimo_dias() -> int:
+    """Piso biológico do intervalo entre partos (IEP).
+    Uma nova cria exige, no mínimo, a gestação (~9 meses) somada ao período de
+    espera voluntária (PEV) até a matriz emprenhar de novo. Dois registros de
+    parto mais próximos que isso são o mesmo evento (duplicidade na fonte) e
+    não representam um intervalo real — são descartados para não distorcer a
+    média. Ambos editáveis em Configurações > Parâmetros
+    (gestacao_dias_min/pev_dias) — ~325 dias (~10,7 meses) por padrão."""
+    return gestacao_dias_min() + pev_dias()
 
 
 def _classificar_situacao_reprodutiva(sit_rep: Optional[str]) -> str:
@@ -75,9 +87,9 @@ def _diag_upper(s: str | None) -> str:
     return (s or "").strip().upper()
 
 
-def _no_periodo(s: dict) -> bool:
+def _no_periodo(s: dict, desde: date) -> bool:
     ds = s.get("data_servico")
-    return isinstance(ds, date) and ds >= CONCEPCAO_DESDE
+    return isinstance(ds, date) and ds >= desde
 
 
 def _del_serv(s: dict) -> Optional[float]:
@@ -91,6 +103,7 @@ def _del_serv(s: dict) -> Optional[float]:
 
 
 def _iep_dias(partos: list[dict]) -> Optional[int]:
+    iep_minimo = _iep_minimo_dias()
     por_matriz: dict[str, list[date]] = {}
     for p in partos:
         d = p.get("data_parto")
@@ -101,7 +114,7 @@ def _iep_dias(partos: list[dict]) -> Optional[int]:
     for datas in por_matriz.values():
         distintos: list[date] = []
         for d in sorted(set(datas)):
-            if not distintos or (d - distintos[-1]).days >= IEP_MINIMO_DIAS:
+            if not distintos or (d - distintos[-1]).days >= iep_minimo:
                 distintos.append(d)
         for ant, atu in zip(distintos, distintos[1:]):
             intervalos.append((atu - ant).days)
@@ -123,7 +136,7 @@ _BENCH_LABELS: dict[str, tuple[str, str]] = {
 }
 
 
-def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dict]) -> list[dict]:
+def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dict], desde: date) -> list[dict]:
     """Painel de benchmark reprodutivo (Prenhez = Serviço × Concepção) para um
     subconjunto do rebanho — usado para 'todas', 'vaca' e 'novilha'."""
     prenhes = vazias = inseminadas = 0
@@ -138,7 +151,7 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
     aptas = prenhes + vazias + inseminadas
     total = len(animais)
 
-    serv_periodo = [s for s in servicos if _no_periodo(s)]
+    serv_periodo = [s for s in servicos if _no_periodo(s, desde)]
     pos = sum(1 for s in serv_periodo if _diag_upper(s.get("diagnostico")) == "POSITIVO")
     neg = sum(1 for s in serv_periodo if _diag_upper(s.get("diagnostico")) == "NEGATIVO")
     diag = pos + neg
@@ -187,7 +200,7 @@ def _repro_benchmark(animais: list[dict], servicos: list[dict], partos: list[dic
 
 
 def _benchmark_categorias(
-    animais: list[dict], servicos: list[dict], partos: list[dict], vacas_nums: set,
+    animais: list[dict], servicos: list[dict], partos: list[dict], vacas_nums: set, desde: date,
 ) -> dict:
     """Benchmark separado por categoria: todas / vaca (já pariu) / novilha."""
     animais_vaca = [a for a in animais if a.get("numero") in vacas_nums]
@@ -195,9 +208,9 @@ def _benchmark_categorias(
     serv_vaca = [s for s in servicos if (s.get("ordem_parto") or 0) >= 1]
     serv_novilha = [s for s in servicos if (s.get("ordem_parto") or 0) < 1]
     return {
-        "todas": _repro_benchmark(animais, servicos, partos),
-        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos),
-        "novilha": _repro_benchmark(animais_novilha, serv_novilha, []),
+        "todas": _repro_benchmark(animais, servicos, partos, desde),
+        "vaca": _repro_benchmark(animais_vaca, serv_vaca, partos, desde),
+        "novilha": _repro_benchmark(animais_novilha, serv_novilha, [], desde),
     }
 
 
@@ -219,12 +232,13 @@ def _reproducao_categorias(
       inseminada nem prenhe (sit_rep diferente de "Ins."/"Ges.") — apta a
       novo serviço.
     - Novilha: nulípara (nunca teve nenhum Serviço) que já atingiu o peso
-      mínimo de 1ª cobertura (PESO_APTA_MIN, mesmo limiar usado em
+      mínimo de 1ª cobertura (peso_apta_min(), mesmo parâmetro usado em
       agenda_veterinario.py para "novilhas_aptas_vazias" — reaproveitado
-      aqui para não divergir o número mágico em dois lugares); novilha não
-      tem parto, então o critério de DEL não se aplica a ela.
+      aqui para não divergir o número em dois lugares); novilha não tem
+      parto, então o critério de DEL não se aplica a ela.
     "Todas" soma os dois grupos.
     """
+    peso_apta = peso_apta_min()
     resultado: dict[str, dict] = {}
     for chave, filtro in (
         ("todas", lambda a: True),
@@ -270,7 +284,7 @@ def _reproducao_categorias(
             if numero in numeros_com_servico:
                 continue  # já tem QUALQUER histórico de serviço — não é nulípara
             peso = peso_por_animal.get(numero)
-            if peso is not None and peso >= PESO_APTA_MIN:
+            if peso is not None and peso >= peso_apta:
                 aptas_nums.append(numero)
 
         resultado[chave] = {
@@ -305,6 +319,7 @@ def calcular_indicadores(
     histórico 04/05 só para não quebrar quem não passa o cadastro."""
     hoje = data_ref or date.today()
     peso_por_animal = peso_por_animal or {}
+    concepcao_desde = _concepcao_desde()
     if lotes:
         codigos_secas = {l.get("codigo") for l in lotes if l.get("status_lactacao") == "seca"}
         codigos_pre_parto = {l.get("codigo") for l in lotes if l.get("pre_parto")}
@@ -363,8 +378,8 @@ def calcular_indicadores(
     # ---------------------------------------------------------------
     # Concepção — serviços diagnosticados (POSITIVO / NEGATIVO) desde 01/01/2026
     # ---------------------------------------------------------------
-    pos = sum(1 for s in servicos if _no_periodo(s) and _diag_upper(s.get("diagnostico")) == "POSITIVO")
-    neg = sum(1 for s in servicos if _no_periodo(s) and _diag_upper(s.get("diagnostico")) == "NEGATIVO")
+    pos = sum(1 for s in servicos if _no_periodo(s, concepcao_desde) and _diag_upper(s.get("diagnostico")) == "POSITIVO")
+    neg = sum(1 for s in servicos if _no_periodo(s, concepcao_desde) and _diag_upper(s.get("diagnostico")) == "NEGATIVO")
     diagnosticados = pos + neg
     taxa_concepcao = round(100 * pos / diagnosticados, 1) if diagnosticados else None
 
@@ -403,7 +418,7 @@ def calcular_indicadores(
         # apenas entre partos efetivamente distintos.
         distintos: list[date] = []
         for d in sorted(set(datas)):
-            if not distintos or (d - distintos[-1]).days >= IEP_MINIMO_DIAS:
+            if not distintos or (d - distintos[-1]).days >= _iep_minimo_dias():
                 distintos.append(d)
         for anterior, atual in zip(distintos, distintos[1:]):
             intervalos.append((atual - anterior).days)
@@ -413,10 +428,11 @@ def calcular_indicadores(
 
     # ---------------------------------------------------------------
     # Partos previstos — só matrizes ATUALMENTE prenhes (sit_rep = "Ges.").
-    # Parto provável = data do último serviço POSITIVO + 280 dias de gestação.
+    # Parto provável = data do último serviço POSITIVO + gestacao_dias_referencia()
+    # (ponto médio da faixa editável gestacao_dias_min/max).
     # Uma matriz por linha (não conta serviços antigos nem vazias/PEV).
     # ---------------------------------------------------------------
-    GESTACAO_PREVISTA_DIAS = 280
+    gestacao_prevista_dias = gestacao_dias_referencia()
     ult_pos: dict[str, date] = {}
     for s in servicos:
         d = s.get("data_servico")
@@ -435,7 +451,7 @@ def calcular_indicadores(
         data_serv = ult_pos.get(num)
         if not data_serv:
             continue
-        parto = data_serv + timedelta(days=GESTACAO_PREVISTA_DIAS)
+        parto = data_serv + timedelta(days=gestacao_prevista_dias)
         dias = (parto - hoje).days
         if 0 <= dias <= 90:
             previstos_datas[num] = parto.isoformat()
@@ -449,11 +465,11 @@ def calcular_indicadores(
                 previstos_nums["em_30_dias"].append(num)
 
     # ---------------------------------------------------------------
-    # Benchmark reprodutivo (eficiência) — desde CONCEPCAO_DESDE.
+    # Benchmark reprodutivo (eficiência) — desde a data de corte (_concepcao_desde()).
     # Modelo dos "medidores": Prenhez = Serviço × Concepção.
     # Calculado para todas / vaca (já pariu) / novilha.
     # ---------------------------------------------------------------
-    benchmark_categorias = _benchmark_categorias(animais, servicos, partos, vacas_nums)
+    benchmark_categorias = _benchmark_categorias(animais, servicos, partos, vacas_nums, concepcao_desde)
     benchmark = benchmark_categorias["todas"]
     _bt = {b["chave"]: b["valor"] for b in benchmark}
 
@@ -482,7 +498,7 @@ def calcular_indicadores(
             "partos_previstos": previstos,
             "partos_previstos_nums": previstos_nums,
             "partos_previstos_datas": previstos_datas,
-            "concepcao_desde": CONCEPCAO_DESDE.isoformat(),
+            "concepcao_desde": concepcao_desde.isoformat(),
             "taxa_servico_pct": _bt.get("taxa_servico"),
             "taxa_prenhez_ciclo_pct": _bt.get("taxa_prenhez_ciclo"),
             "servicos_por_prenhez": _bt.get("servicos_por_prenhez"),

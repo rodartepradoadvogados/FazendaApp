@@ -1,6 +1,6 @@
 """
 Testes da agenda/roteiro do veterinário do serviço — classificação do
-rebanho em 10 listas.
+rebanho em 11 listas.
 """
 from __future__ import annotations
 
@@ -82,33 +82,43 @@ class TestExclusoes:
         r = c.get("/reproducao/agenda-veterinario")
         assert all(a["numero_matriz"] != "2" for lst in r.json()["listas"].values() for a in lst)
 
-    def test_novilha_abaixo_300kg_nunca_entra(self, client):
+    def test_novilha_abaixo_300kg_nao_entra_em_novilhas_aptas_vazias(self, client):
+        # Gate de aptidão (#364): restrito a "novilhas_aptas_vazias" — sem
+        # servico e sem atingir peso_apta_min, a novilha cai em
+        # pendentes_classificacao (não fica mais invisível em todo lugar).
         c, engine = client
         _add_animal(engine, "3", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "3", 200)
         r = c.get("/reproducao/agenda-veterinario")
-        assert all(a["numero_matriz"] != "3" for lst in r.json()["listas"].values() for a in lst)
+        listas = r.json()["listas"]
+        assert all(a["numero_matriz"] != "3" for a in listas["novilhas_aptas_vazias"])
+        assert any(a["numero_matriz"] == "3" for a in listas["pendentes_classificacao"])
 
-    def test_vaca_com_peso_mas_idade_insuficiente_nunca_entra(self, client):
+    def test_vaca_com_peso_mas_idade_insuficiente_fica_pendente(self, client):
+        # Gate de aptidão só vale para novilha ("novilhas_aptas_vazias") — para
+        # vaca sem serviço, idade não muda nada: ela cai em pendentes_classificacao.
         c, engine = client
         _add_animal(engine, "4", "Vaca", idade_meses=10)
         _add_peso(engine, "4", PESO_APTO)
         r = c.get("/reproducao/agenda-veterinario")
-        assert all(a["numero_matriz"] != "4" for lst in r.json()["listas"].values() for a in lst)
+        listas = r.json()["listas"]
+        assert any(a["numero_matriz"] == "4" for a in listas["pendentes_classificacao"])
 
-    def test_vaca_com_idade_mas_peso_insuficiente_nunca_entra(self, client):
+    def test_vaca_com_idade_mas_peso_insuficiente_fica_pendente(self, client):
         c, engine = client
         _add_animal(engine, "5", "Vaca", idade_meses=IDADE_APTA)
         _add_peso(engine, "5", 250)
         r = c.get("/reproducao/agenda-veterinario")
-        assert all(a["numero_matriz"] != "5" for lst in r.json()["listas"].values() for a in lst)
+        listas = r.json()["listas"]
+        assert any(a["numero_matriz"] == "5" for a in listas["pendentes_classificacao"])
 
-    def test_sem_idade_registrada_nunca_entra(self, client):
+    def test_sem_idade_registrada_fica_pendente(self, client):
         c, engine = client
         _add_animal(engine, "6", "Vaca")
         _add_peso(engine, "6", PESO_APTO)
         r = c.get("/reproducao/agenda-veterinario")
-        assert all(a["numero_matriz"] != "6" for lst in r.json()["listas"].values() for a in lst)
+        listas = r.json()["listas"]
+        assert any(a["numero_matriz"] == "6" for a in listas["pendentes_classificacao"])
 
 
 class TestInseminadas:
@@ -231,11 +241,13 @@ class TestPendentesClassificacao:
         item = next(a for a in r.json()["listas"]["pendentes_classificacao"] if a["numero_matriz"] == "40")
         assert "motivo" in item and item["motivo"]
 
-    def test_novilha_sem_peso_nunca_entra(self, client):
+    def test_novilha_sem_peso_fica_pendente(self, client):
         c, engine = client
         _add_animal(engine, "41", "Novilha", idade_meses=IDADE_APTA)
         r = c.get("/reproducao/agenda-veterinario")
-        assert all(a["numero_matriz"] != "41" for lst in r.json()["listas"].values() for a in lst)
+        listas = r.json()["listas"]
+        assert all(a["numero_matriz"] != "41" for a in listas["novilhas_aptas_vazias"])
+        assert any(a["numero_matriz"] == "41" for a in listas["pendentes_classificacao"])
 
 
 class TestVaziasPorDiagnostico:

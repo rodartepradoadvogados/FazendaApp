@@ -24,12 +24,13 @@ from fazenda.rules.iatf import (
     calcular_necessidade_hormonios,
     selecionar_candidatas_iatf,
 )
+from fazenda.rules.parametros import (
+    dias_contas_a_pagar_agenda as _dias_contas_a_pagar_padrao,
+    dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
+    intervalo_bst as _intervalo_bst_padrao,
+    intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
+)
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
-
-DIAS_CONTAS_A_PAGAR = 10  # janela de contas a pagar
-INTERVALO_VISITA_REPRODUTIVA = 21  # dias — mesmo ciclo usado na Análise Reprodutiva
-INTERVALO_BST = 12  # dias
-DIAS_REINSEMINACAO = 15  # dias — meta p/ próximo serviço de uma matriz marcada p/ retoque
 
 
 @dataclass
@@ -109,7 +110,7 @@ class AgendaEngine:
         estoque: list[dict],
         contas: list[dict],
         eventos_manuais: list[dict],
-        dias_contas_a_pagar: int = DIAS_CONTAS_A_PAGAR,
+        dias_contas_a_pagar: int | None = None,
         proxima_visita_bst_real: date | None = None,
     ) -> AgendaResult:
         """
@@ -135,6 +136,10 @@ class AgendaEngine:
         """
         result = AgendaResult(data_referencia=data_referencia)
         eventos: list[AgendaItem] = []
+        dias_contas_a_pagar = dias_contas_a_pagar if dias_contas_a_pagar is not None else _dias_contas_a_pagar_padrao()
+        intervalo_visita_reprodutiva = _intervalo_visita_reprodutiva_padrao()
+        intervalo_bst = _intervalo_bst_padrao()
+        dias_reinseminacao = _dias_reinseminacao_referencia()
 
         # Índices auxiliares
         servico_por_animal: dict[str, dict] = {
@@ -169,8 +174,8 @@ class AgendaEngine:
         datas_servico = [s["data_servico"] for s in servicos if s.get("data_servico")]
         if datas_servico:
             ultimo_servico = max(datas_servico)
-            result.proxima_visita_iatf = ultimo_servico + timedelta(days=INTERVALO_VISITA_REPRODUTIVA)
-            result.proxima_visita_bst = ultimo_servico + timedelta(days=INTERVALO_BST)
+            result.proxima_visita_iatf = ultimo_servico + timedelta(days=intervalo_visita_reprodutiva)
+            result.proxima_visita_bst = ultimo_servico + timedelta(days=intervalo_bst)
         # A data real (última aplicação de BST + 12 dias, avançada até cair no
         # futuro) sempre tem prioridade sobre a estimativa acima — que é só um
         # chute por analogia ao serviço reprodutivo, usado apenas quando a
@@ -188,7 +193,7 @@ class AgendaEngine:
             if not ancora:
                 continue
             eventos.append(AgendaItem(
-                data=ancora + timedelta(days=DIAS_REINSEMINACAO),
+                data=ancora + timedelta(days=dias_reinseminacao),
                 categoria="Reprodutivo",
                 descricao=f"Retoque — reconfirmar diagnóstico de {s['numero_matriz']}",
                 numero_animal=s["numero_matriz"],

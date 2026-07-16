@@ -1,20 +1,26 @@
 """
-Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 10
+Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 11
 listas para orientar a visita reprodutiva. Machos e bezerras nunca entram em
-nenhuma lista. Os demais só entram em qualquer lista (exceto "verificar
-aptidão", que tem critério próprio) depois de atingir 15 meses E 300 kg.
+nenhuma lista.
 
-Parâmetros de análise (documentados aqui para aparecerem também na tela):
-  - Gate geral de entrada: só entra em qualquer lista (exceto "verificar
-    aptidão") quem já tem 15 meses ou mais E 300 kg ou mais. Quem não atingiu
-    os dois não aparece em lista nenhuma.
-  - Verificar aptidão: novilha com 280 kg ou mais, 15 meses ou mais, e que
-    nunca tenha sido inseminada nem coberta (nenhum registro de serviço).
+Parâmetros de análise (todos editáveis em Configurações > Parâmetros — ver
+`fazenda.rules.parametros`; documentados aqui para aparecerem também na tela):
+  - Gate de aptidão (idade_apta_min_meses/peso_apta_min, padrão 15 meses e
+    300 kg): só entram na lista "novilhas aptas vazias" (protocolos de
+    novilha apta) — NÃO é mais um filtro geral que esconde a novilha das
+    demais listas (toque, reconfirmação, pré-parto etc.); ver #364.
+  - Verificar aptidão (idade_verificar_aptidao_meses/peso_verificar_aptidao_min,
+    padrão 14 meses e 280 kg — limiar mais baixo, de "olho nela em breve"):
+    novilha que nunca tenha sido inseminada nem coberta (nenhum registro de
+    serviço).
   - Inseminada de 1 a 29 dias: aguardar 30 dias para o toque.
   - Inseminada de 30 a 59 dias: dar o toque; se não tiver toque nessa fase,
     fica marcada como "toque atrasado".
   - Inseminada com 60 dias ou mais: reconfirmar; se não tiver reconfirmação
     nessa fase, fica marcada como "atrasada para reconfirmação".
+  - Observação de cio (11ª lista, só quando usa_adesivo_deteccao_cio=true):
+    inseminadas entre 15 e 28 dias — subconjunto de "inseminadas 1-29" — para
+    acompanhar o adesivo de detecção de cio de repasse.
   - Vazias por diagnóstico (10ª lista): diagnóstico negativo no toque OU
     perda de prenhez confirmada na reconfirmação — precisam de novo serviço.
     Fica separada de "pendentes de classificação", que é só para dado
@@ -24,13 +30,16 @@ from __future__ import annotations
 
 from datetime import date
 
-from fazenda.rules.lote_criterios import GESTACAO_DIAS
-
-IDADE_APTA_MIN_MESES = 15.0
-PESO_APTA_MIN = 300.0
-PESO_VERIFICAR_APTIDAO_MIN = 280.0
-PRE_PARTO_MIN = 31
-PRE_PARTO_MAX = 60
+from fazenda.rules.parametros import (
+    gestacao_dias_referencia,
+    idade_apta_min_meses,
+    idade_verificar_aptidao_meses,
+    peso_apta_min,
+    peso_verificar_aptidao_min,
+    pre_parto_max,
+    pre_parto_min,
+    usa_adesivo_deteccao_cio,
+)
 
 
 def _categoria(animal: dict) -> str:
@@ -67,7 +76,16 @@ def classificar_rebanho(
         "novilhas_aptas_vazias": [], "novilhas_gestantes": [], "verificar_aptidao": [],
         "verificar_pre_parto": [], "vacas_gestantes": [],
         "vazias_por_diagnostico": [], "pendentes_classificacao": [],
+        "observacao_cio": [],
     }
+    gestacao_dias = gestacao_dias_referencia()
+    peso_apta = peso_apta_min()
+    idade_apta = idade_apta_min_meses()
+    peso_verificar = peso_verificar_aptidao_min()
+    idade_verificar = idade_verificar_aptidao_meses()
+    pre_parto_de = pre_parto_min()
+    pre_parto_ate = pre_parto_max()
+    usa_adesivo = usa_adesivo_deteccao_cio()
 
     for animal in animais:
         if animal.get("eh_semen") or animal.get("sexo") == "M":
@@ -85,8 +103,8 @@ def classificar_rebanho(
 
         if (
             categoria == "novilha"
-            and peso is not None and peso >= PESO_VERIFICAR_APTIDAO_MIN
-            and idade is not None and idade >= IDADE_APTA_MIN_MESES
+            and peso is not None and peso >= peso_verificar
+            and idade is not None and idade >= idade_verificar
             and servico is None
         ):
             listas["verificar_aptidao"].append({
@@ -96,12 +114,12 @@ def classificar_rebanho(
                 "diagnostico": None, "diagnostico_reconfirmacao": None,
             })
 
-        apto_geral = (
-            idade is not None and idade >= IDADE_APTA_MIN_MESES
-            and peso is not None and peso >= PESO_APTA_MIN
-        )
-        if not apto_geral:
-            continue  # abaixo de 15 meses ou 300kg: não entra em nenhuma outra lista
+        # Nota #364: o gate de idade/peso (idade_apta_min_meses/peso_apta_min)
+        # NÃO é mais um filtro geral aqui — ele só passa a valer dentro do
+        # bloco "novilha" abaixo, restrito à lista "novilhas_aptas_vazias".
+        # As demais listas (toque, reconfirmação, pré-parto, vazias por
+        # diagnóstico etc.) seguem valendo para qualquer novilha/vaca com
+        # histórico de serviço, independente de idade/peso.
 
         data_servico = servico.get("data_servico") if servico else None
         dias_insem = (hoje - data_servico).days if data_servico else None
@@ -115,7 +133,7 @@ def classificar_rebanho(
 
         dpp = None
         if gestante_confirmada and data_servico:
-            dpp = GESTACAO_DIAS - (hoje - data_servico).days
+            dpp = round(gestacao_dias - (hoje - data_servico).days)
 
         classificado = False
         base = {
@@ -130,6 +148,11 @@ def classificar_rebanho(
             if 1 <= dias_insem <= 29:
                 listas["inseminadas_1_29"].append(base)
                 classificado = True
+                # Observação de cio (repasse): subconjunto de "1-29 dias", só
+                # quando a fazenda usa adesivo de detecção de cio (parâmetro
+                # usa_adesivo_deteccao_cio) — ver #365.
+                if usa_adesivo and 15 <= dias_insem <= 28:
+                    listas["observacao_cio"].append(base)
             elif 30 <= dias_insem <= 59:
                 listas["inseminadas_30_59"].append({**base, "atrasada": not tocada})
                 classificado = True
@@ -139,14 +162,17 @@ def classificar_rebanho(
 
         if categoria == "novilha":
             vazia = not gestante_confirmada and not em_aberto
-            if vazia and peso is not None and peso >= PESO_APTA_MIN:
+            # Gate de aptidão (#364): restrito a esta lista — idade/peso
+            # mínimos NÃO afetam nenhuma outra lista acima/abaixo.
+            apta = idade is not None and idade >= idade_apta and peso is not None and peso >= peso_apta
+            if vazia and apta:
                 listas["novilhas_aptas_vazias"].append(base)
                 classificado = True
             if gestante_confirmada:
                 listas["novilhas_gestantes"].append({**base, "dias_para_parto": dpp})
                 classificado = True
 
-        if gestante_confirmada and dpp is not None and PRE_PARTO_MIN <= dpp <= PRE_PARTO_MAX:
+        if gestante_confirmada and dpp is not None and pre_parto_de <= dpp <= pre_parto_ate:
             listas["verificar_pre_parto"].append({**base, "dias_para_parto": dpp})
             classificado = True
 

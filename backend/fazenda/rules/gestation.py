@@ -5,7 +5,8 @@ Dias de gestação por raça (validados com o dono):
   Holandês            280 dias
   Girolando           287 dias
   Gir / Zebu / GO     295 dias
-  (padrão para raças não mapeadas: 287 dias)
+  (padrão para raças não mapeadas: ponto médio da faixa editável
+  gestacao_dias_min/max — ver `fazenda.rules.parametros`)
 """
 from __future__ import annotations
 
@@ -13,6 +14,7 @@ from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Optional
 
+from fazenda.rules.parametros import gestacao_dias_referencia
 
 # Dias de gestação por raça (mapeamento normalizado → chave lowercase sem acento)
 GESTACAO_DIAS: dict[str, int] = {
@@ -27,18 +29,17 @@ GESTACAO_DIAS: dict[str, int] = {
     "gir/zebu": 295,
 }
 
-DEFAULT_GESTACAO = 287  # Girolando como padrão
 
-
-def dias_gestacao(raca: str | None) -> int:
-    """Retorna o número de dias de gestação para a raça informada."""
-    if not raca:
-        return DEFAULT_GESTACAO
-    raca_norm = raca.strip().lower()
-    for chave, dias in GESTACAO_DIAS.items():
-        if chave in raca_norm:
-            return dias
-    return DEFAULT_GESTACAO
+def dias_gestacao(raca: str | None) -> float:
+    """Retorna o número de dias de gestação para a raça informada. Raça não
+    mapeada (ou não informada) cai no ponto médio da faixa editável em
+    Configurações > Parâmetros (gestacao_dias_min/max)."""
+    if raca:
+        raca_norm = raca.strip().lower()
+        for chave, dias in GESTACAO_DIAS.items():
+            if chave in raca_norm:
+                return dias
+    return gestacao_dias_referencia()
 
 
 @dataclass

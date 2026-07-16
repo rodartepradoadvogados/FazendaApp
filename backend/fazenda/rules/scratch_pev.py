@@ -7,7 +7,8 @@ SCRATCH (adesivo):
   - Diagnóstico NEGATIVO cancela o scratch (a inseminação não conta prazo).
 
 PEV (Período de Espera Voluntário):
-  - 45 dias após o parto — quando o animal está liberado para inseminar.
+  - pev_dias (editável em Configurações > Parâmetros, padrão 45) após o
+    parto — quando o animal está liberado para inseminar.
   - Emitir aviso só se o animal ainda não está gestante.
 """
 from __future__ import annotations
@@ -15,9 +16,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
+from fazenda.rules.parametros import pev_dias
 
 DIAS_SCRATCH = 14
-DIAS_PEV = 45
 
 
 @dataclass
@@ -92,7 +93,7 @@ def calcular_pev(
         ResultadoPEV com data de liberação e status.
     """
     hoje = data_referencia or date.today()
-    data_pev = data_parto + timedelta(days=DIAS_PEV)
+    data_pev = data_parto + timedelta(days=pev_dias())
     dias_restantes = max(0, (data_pev - hoje).days)
 
     return ResultadoPEV(

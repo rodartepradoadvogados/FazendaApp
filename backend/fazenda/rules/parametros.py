@@ -1,68 +1,281 @@
 """
-Parâmetros da fazenda — metas e configurações zootécnicas de referência.
+Parâmetros da fazenda — metas e configurações zootécnicas/financeiras
+editáveis pelo usuário (Configurações > Parâmetros).
 
-São os valores que orientam metas, alertas e faixas dos indicadores (verde/
-vermelho). Por enquanto ficam centralizados aqui como padrões editáveis no
-código; a UI os apresenta como um painel de referência. Baseados nos
-parâmetros gerenciais usuais de rebanho leiteiro e ajustáveis à realidade da
-Fazenda Estreito Ponte de Pedra.
+Persistidos na tabela `parametro_fazenda` (ver `fazenda.models.ParametroFazenda`).
+`DEFINICOES` abaixo é só a lista de sementes (chave/grupo/label/valor/tipo/
+unidade) usada por `seed_parametros()` para popular o banco na primeira vez —
+depois de seedado, o valor que vale é sempre o do banco (editável via
+`PUT /parametros/{chave}`), nunca mais esta lista.
+
+`get_param()` preserva a assinatura antiga (chave, padrao) -> float|int|None
+para não quebrar nenhum dos ~15 call sites espalhados pelas regras/relatórios;
+`get_param_bool()`/`get_param_date()` cobrem os novos parâmetros booleanos e
+de data (ex.: uso de adesivo de detecção de cio, data de corte da concepção).
 """
 from __future__ import annotations
 
-# Valores de referência (metas / configurações atuais).
-PARAMETROS: dict = {
-    "manejo": {
-        "titulo": "Manejo reprodutivo",
-        "itens": [
-            {"chave": "periodo_seco_dias", "label": "Período seco", "valor": 60, "unidade": "dias"},
-            {"chave": "pev_dias", "label": "Período de espera voluntária (PEV)", "valor": 45, "unidade": "dias"},
-            {"chave": "dias_toque", "label": "Dias para toque (diagnóstico)", "valor": 30, "unidade": "dias"},
-            {"chave": "dias_reconfirmacao", "label": "Dias para reconfirmação", "valor": 30, "unidade": "dias"},
-            {"chave": "intervalo_visita_reprodutiva", "label": "Intervalo da visita reprodutiva", "valor": 21, "unidade": "dias"},
-            {"chave": "intervalo_bst", "label": "Intervalo de aplicação de BST", "valor": 12, "unidade": "dias"},
-            {"chave": "intervalo_visita_vet", "label": "Intervalo de visitas do veterinário", "valor": 30, "unidade": "dias"},
-            {"chave": "dias_reinseminacao", "label": "Meta de dias para re-inseminação", "valor": 15, "unidade": "dias"},
-            {"chave": "idade_maturidade_novilha", "label": "Idade de maturidade da novilha", "valor": 16, "unidade": "meses"},
-        ],
-    },
-    "metas_reproducao": {
-        "titulo": "Metas reprodutivas",
-        "itens": [
-            {"chave": "meta_del_max_1o_servico", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
-            {"chave": "meta_del_medio_1o_servico", "label": "DEL médio ao 1º serviço", "valor": 70, "unidade": "dias"},
-            {"chave": "meta_del_medio", "label": "DEL médio do rebanho", "valor": 200, "unidade": "dias"},
-            {"chave": "meta_taxa_servico", "label": "Taxa de serviço em vacas", "valor": 50, "unidade": "%"},
-            {"chave": "meta_taxa_concepcao", "label": "Taxa de concepção em vacas", "valor": 35, "unidade": "%"},
-            {"chave": "meta_taxa_prenhez", "label": "Taxa de prenhez em vacas", "valor": 18, "unidade": "%"},
-            {"chave": "meta_concepcao_novilha", "label": "Taxa de concepção da novilha", "valor": 60, "unidade": "%"},
-            {"chave": "meta_iep_meses", "label": "Intervalo entre partos (IEP)", "valor": 14, "unidade": "meses"},
-            {"chave": "meta_taxa_perda_prenhez", "label": "Taxa de perda de prenhez", "valor": 15, "unidade": "%"},
-        ],
-    },
-    "producao_descarte": {
-        "titulo": "Produção e descarte",
-        "itens": [
-            {"chave": "taxa_reposicao", "label": "Taxa de reposição", "valor": 25, "unidade": "%"},
-            {"chave": "producao_minima_secagem", "label": "Produção mínima de leite para secagem", "valor": 15, "unidade": "kg/dia"},
-            {"chave": "meses_queda_reprodutiva", "label": "Meses de queda reprodutiva (ex.: estresse calórico)", "valor": 4, "unidade": "meses"},
-            {"chave": "concepcao_meses_queda", "label": "Taxa de concepção nos meses de queda", "valor": 25, "unidade": "%"},
-        ],
-    },
+from datetime import date
+
+from sqlmodel import Session, select
+
+# Rótulo de cada grupo, na ordem em que aparecem na tela de Parâmetros.
+GRUPO_TITULOS: dict[str, str] = {
+    "manejo": "Manejo reprodutivo",
+    "aptidao_novilha": "Aptidão de novilhas",
+    "gestacao_parto": "Gestação e parto",
+    "bst": "BST (Lactotropin)",
+    "reinseminacao_cio": "Reinseminação e observação de cio",
+    "agenda_sistema": "Agenda e sistema",
+    "metas_reproducao": "Metas reprodutivas",
+    "producao_descarte": "Produção e descarte",
 }
 
+# Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
+# cada chave aparece (nunca sobrescreve um valor já editado no banco).
+DEFINICOES: list[dict] = [
+    # ---- Manejo reprodutivo ------------------------------------------------
+    {"chave": "periodo_seco_dias", "grupo": "manejo", "label": "Período seco", "valor": 60, "unidade": "dias"},
+    {"chave": "pev_dias", "grupo": "manejo", "label": "Período de espera voluntária (PEV)", "valor": 45, "unidade": "dias"},
+    {"chave": "dias_toque", "grupo": "manejo", "label": "Dias para toque (diagnóstico)", "valor": 30, "unidade": "dias"},
+    {"chave": "dias_reconfirmacao", "grupo": "manejo", "label": "Dias para reconfirmação", "valor": 30, "unidade": "dias"},
+    {"chave": "intervalo_visita_reprodutiva", "grupo": "manejo", "label": "Intervalo da visita reprodutiva", "valor": 21, "unidade": "dias"},
+    {"chave": "intervalo_bst", "grupo": "manejo", "label": "Intervalo de aplicação de BST", "valor": 12, "unidade": "dias"},
+    {"chave": "intervalo_visita_vet", "grupo": "manejo", "label": "Intervalo de visitas do veterinário", "valor": 30, "unidade": "dias"},
+    {"chave": "idade_maturidade_novilha", "grupo": "manejo", "label": "Idade de maturidade da novilha", "valor": 16, "unidade": "meses"},
+
+    # ---- Aptidão de novilhas (gate de entrada em listas de análise/
+    # relatório/vacinação/protocolos de novilhas aptas) ----------------------
+    {"chave": "peso_apta_min", "grupo": "aptidao_novilha", "label": "Peso mínimo de aptidão", "valor": 300, "unidade": "kg"},
+    {"chave": "peso_verificar_aptidao_min", "grupo": "aptidao_novilha", "label": "Peso mínimo p/ verificar aptidão", "valor": 280, "unidade": "kg"},
+    {"chave": "idade_apta_min_meses", "grupo": "aptidao_novilha", "label": "Idade mínima de aptidão", "valor": 15, "unidade": "meses"},
+    {"chave": "idade_verificar_aptidao_meses", "grupo": "aptidao_novilha", "label": "Idade mínima p/ verificar aptidão", "valor": 14, "unidade": "meses"},
+
+    # ---- Gestação e parto ---------------------------------------------------
+    {"chave": "gestacao_dias_min", "grupo": "gestacao_parto", "label": "Gestação — dias mínimo", "valor": 280, "unidade": "dias"},
+    {"chave": "gestacao_dias_max", "grupo": "gestacao_parto", "label": "Gestação — dias máximo", "valor": 295, "unidade": "dias"},
+    {"chave": "pre_parto_min", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias mínimo", "valor": 31, "unidade": "dias"},
+    {"chave": "pre_parto_max", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias máximo", "valor": 60, "unidade": "dias"},
+
+    # ---- BST -----------------------------------------------------------------
+    {"chave": "del_minimo_bst", "grupo": "bst", "label": "DEL mínimo para BST", "valor": 60, "unidade": "dias"},
+    {"chave": "dias_antes_secagem_bst", "grupo": "bst", "label": "Dias antes da secagem para sair do BST", "valor": 15, "unidade": "dias"},
+
+    # ---- Reinseminação e observação de cio ------------------------------------
+    {"chave": "dias_reinseminacao_min", "grupo": "reinseminacao_cio", "label": "Dias para reinseminação — mínimo", "valor": 18, "unidade": "dias"},
+    {"chave": "dias_reinseminacao_max", "grupo": "reinseminacao_cio", "label": "Dias para reinseminação — máximo", "valor": 25, "unidade": "dias"},
+    {"chave": "usa_adesivo_deteccao_cio", "grupo": "reinseminacao_cio", "label": "Utiliza adesivos para detecção de cio de repasse?", "valor": "false", "tipo": "bool"},
+
+    # ---- Agenda e sistema ------------------------------------------------------
+    {"chave": "janela_eventos_sanitarios_passado", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no passado", "valor": 120, "unidade": "dias"},
+    {"chave": "janela_eventos_sanitarios_futuro", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no futuro", "valor": 180, "unidade": "dias"},
+    {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
+    {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
+
+    # ---- Metas reprodutivas ----------------------------------------------------
+    {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
+    {"chave": "meta_del_medio_1o_servico", "grupo": "metas_reproducao", "label": "DEL médio ao 1º serviço", "valor": 70, "unidade": "dias"},
+    {"chave": "meta_del_medio", "grupo": "metas_reproducao", "label": "DEL médio do rebanho", "valor": 200, "unidade": "dias"},
+    {"chave": "meta_taxa_servico", "grupo": "metas_reproducao", "label": "Taxa de serviço em vacas", "valor": 50, "unidade": "%"},
+    {"chave": "meta_taxa_concepcao", "grupo": "metas_reproducao", "label": "Taxa de concepção em vacas", "valor": 35, "unidade": "%"},
+    {"chave": "meta_taxa_prenhez", "grupo": "metas_reproducao", "label": "Taxa de prenhez em vacas", "valor": 18, "unidade": "%"},
+    {"chave": "meta_concepcao_novilha", "grupo": "metas_reproducao", "label": "Taxa de concepção da novilha", "valor": 60, "unidade": "%"},
+    {"chave": "meta_iep_meses", "grupo": "metas_reproducao", "label": "Intervalo entre partos (IEP)", "valor": 14, "unidade": "meses"},
+    {"chave": "meta_taxa_perda_prenhez", "grupo": "metas_reproducao", "label": "Taxa de perda de prenhez", "valor": 15, "unidade": "%"},
+
+    # ---- Produção e descarte -----------------------------------------------
+    {"chave": "taxa_reposicao", "grupo": "producao_descarte", "label": "Taxa de reposição", "valor": 25, "unidade": "%"},
+    {"chave": "producao_minima_secagem", "grupo": "producao_descarte", "label": "Produção mínima de leite para secagem", "valor": 15, "unidade": "kg/dia"},
+    {"chave": "meses_queda_reprodutiva", "grupo": "producao_descarte", "label": "Meses de queda reprodutiva (ex.: estresse calórico)", "valor": 4, "unidade": "meses"},
+    {"chave": "concepcao_meses_queda", "grupo": "producao_descarte", "label": "Taxa de concepção nos meses de queda", "valor": 25, "unidade": "%"},
+]
+
+
+def seed_parametros(session: Session) -> None:
+    """Popula o banco com as definições acima — só cria o que ainda não
+    existe (nunca sobrescreve um valor já editado). Idempotente, chamado no
+    startup como os demais `seed_*`."""
+    from fazenda.models import ParametroFazenda
+
+    existentes = {p.chave for p in session.exec(select(ParametroFazenda)).all()}
+    for item in DEFINICOES:
+        if item["chave"] in existentes:
+            continue
+        session.add(ParametroFazenda(
+            chave=item["chave"],
+            grupo=item["grupo"],
+            label=item["label"],
+            valor=str(item["valor"]),
+            tipo=item.get("tipo", "int"),
+            unidade=item.get("unidade"),
+        ))
+    session.commit()
+
+
+def _linha(chave: str):
+    """Busca a linha do parâmetro no banco. Cai em None (o chamador usa o
+    `padrao`) se a tabela ainda não existir — ex.: testes de regra "puros"
+    que chamam `avaliar_bst`/`dias_gestacao`/`calcular_indicadores` direto,
+    sem passar pelo startup da API (`create_db_and_tables`/`seed_parametros`)
+    — mantém essas funções utilizáveis sem depender de banco."""
+    from sqlalchemy.exc import OperationalError, ProgrammingError
+
+    from fazenda.database import engine
+    from fazenda.models import ParametroFazenda
+    try:
+        with Session(engine) as session:
+            return session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == chave)).first()
+    except (OperationalError, ProgrammingError):
+        return None
+
+
 def get_param(chave: str, padrao: float | int | None = None) -> float | int | None:
-    """Retorna o valor de um parâmetro de manejo/meta por chave (ex.: 'pev_dias',
-    'meta_del_max_1o_servico', 'periodo_seco_dias'). Usado pelos relatórios
-    gerenciais para semaforizar (verde/amarelo/vermelho) com base nas metas."""
-    for grupo in PARAMETROS.values():
-        for item in grupo.get("itens", []):
-            if item.get("chave") == chave:
-                return item.get("valor")
-    return padrao
+    """Retorna o valor numérico (int/float) de um parâmetro por chave (ex.:
+    'pev_dias', 'meta_del_max_1o_servico', 'periodo_seco_dias'). Usado pelos
+    relatórios gerenciais e pelas regras de negócio para semaforizar
+    (verde/amarelo/vermelho) e calcular datas com base nas metas/parâmetros."""
+    row = _linha(chave)
+    if row is None:
+        return padrao
+    try:
+        if row.tipo == "float":
+            return float(row.valor)
+        return int(float(row.valor))
+    except (TypeError, ValueError):
+        return padrao
+
+
+def get_param_bool(chave: str, padrao: bool = False) -> bool:
+    """Retorna o valor booleano de um parâmetro (ex.: 'usa_adesivo_deteccao_cio')."""
+    row = _linha(chave)
+    if row is None:
+        return padrao
+    return (row.valor or "").strip().lower() in ("1", "true", "sim", "yes")
+
+
+def get_param_date(chave: str, padrao: date | None = None) -> date | None:
+    """Retorna o valor de data de um parâmetro (ex.: 'data_corte_taxa_concepcao')."""
+    row = _linha(chave)
+    if row is None or not row.valor:
+        return padrao
+    try:
+        return date.fromisoformat(row.valor)
+    except ValueError:
+        return padrao
+
+
+# ---------------------------------------------------------------------------
+# Acessores nomeados — usados pelas regras espalhadas (agenda_veterinario,
+# lote_criterios, relatorios_gerenciais, gestation, indicadores, bst,
+# scratch_pev, dry_off, eventos_sanitarios, agenda_engine) no lugar dos
+# antigos módulo-constantes fixos, para que a edição em Configurações >
+# Parâmetros passe a valer de fato em todo lugar (ver tarefa #363).
+# ---------------------------------------------------------------------------
+def peso_apta_min() -> float:
+    return float(get_param("peso_apta_min", 300) or 300)
+
+
+def peso_verificar_aptidao_min() -> float:
+    return float(get_param("peso_verificar_aptidao_min", 280) or 280)
+
+
+def idade_apta_min_meses() -> float:
+    return float(get_param("idade_apta_min_meses", 15) or 15)
+
+
+def idade_verificar_aptidao_meses() -> float:
+    return float(get_param("idade_verificar_aptidao_meses", 14) or 14)
+
+
+def gestacao_dias_min() -> int:
+    return int(get_param("gestacao_dias_min", 280) or 280)
+
+
+def gestacao_dias_max() -> int:
+    return int(get_param("gestacao_dias_max", 295) or 295)
+
+
+def gestacao_dias_referencia() -> int:
+    """Ponto médio (arredondado) da faixa de gestação — usado onde é preciso
+    um único valor escalar para estimar a data provável de parto (não uma
+    faixa min/max). Consolida os antigos valores fragmentados (283 em
+    lote_criterios, 280 em relatorios_gerenciais/indicadores, dict por raça
+    em gestation.py)."""
+    return round((gestacao_dias_min() + gestacao_dias_max()) / 2)
+
+
+def pre_parto_min() -> int:
+    return int(get_param("pre_parto_min", 31) or 31)
+
+
+def pre_parto_max() -> int:
+    return int(get_param("pre_parto_max", 60) or 60)
+
+
+def pev_dias() -> int:
+    return int(get_param("pev_dias", 45) or 45)
+
+
+def periodo_seco_dias() -> int:
+    return int(get_param("periodo_seco_dias", 60) or 60)
+
+
+def intervalo_bst() -> int:
+    return int(get_param("intervalo_bst", 12) or 12)
+
+
+def intervalo_visita_reprodutiva() -> int:
+    return int(get_param("intervalo_visita_reprodutiva", 21) or 21)
+
+
+def dias_reinseminacao_min() -> int:
+    return int(get_param("dias_reinseminacao_min", 18) or 18)
+
+
+def dias_reinseminacao_max() -> int:
+    return int(get_param("dias_reinseminacao_max", 25) or 25)
+
+
+def dias_reinseminacao_referencia() -> int:
+    """Ponto médio (arredondado) da faixa de dias para reinseminação — usado
+    onde é preciso uma única data-alvo (ex.: item "Retoque" da Agenda), não
+    uma faixa min/max."""
+    return round((dias_reinseminacao_min() + dias_reinseminacao_max()) / 2)
+
+
+def usa_adesivo_deteccao_cio() -> bool:
+    return get_param_bool("usa_adesivo_deteccao_cio", False)
+
+
+def del_minimo_bst() -> int:
+    return int(get_param("del_minimo_bst", 60) or 60)
+
+
+def dias_antes_secagem_bst() -> int:
+    return int(get_param("dias_antes_secagem_bst", 15) or 15)
+
+
+def janela_eventos_sanitarios_passado() -> int:
+    return int(get_param("janela_eventos_sanitarios_passado", 120) or 120)
+
+
+def janela_eventos_sanitarios_futuro() -> int:
+    return int(get_param("janela_eventos_sanitarios_futuro", 180) or 180)
+
+
+def dias_contas_a_pagar_agenda() -> int:
+    return int(get_param("dias_contas_a_pagar_agenda", 10) or 10)
+
+
+def data_corte_taxa_concepcao() -> date:
+    from datetime import date as _date
+    return get_param_date("data_corte_taxa_concepcao", _date(2026, 1, 1)) or _date(2026, 1, 1)
 
 
 # Metas do benchmark (nosso valor será comparado a estes) — usadas na capa.
-# meta = alvo da fazenda; media_pais = referência de mercado.
+# meta = alvo da fazenda; media_pais = referência de mercado. Ainda não
+# exposto na UI de Parâmetros (candidato a exposição futura — ver CSV
+# entregue ao usuário em 2026-07-16).
 BENCHMARK_METAS: dict[str, dict] = {
     "taxa_servico":        {"meta": 50.0, "media_pais": 55.0, "maior_melhor": True},
     "taxa_concepcao":      {"meta": 35.0, "media_pais": 40.0, "maior_melhor": True},

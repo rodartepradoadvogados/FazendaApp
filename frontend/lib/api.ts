@@ -492,6 +492,16 @@ export async function fetchParametros() {
   return res.json();
 }
 
+export async function atualizarParametro(chave: string, valor: number | string | boolean) {
+  const res = await authFetch(`${API}/parametros/${chave}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ valor }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  return res.json();
+}
+
 // ── Lotes (cadastro + parâmetros) ──
 export async function fetchLotes() {
   const res = await authFetch(`${API}/lotes/`, { cache: "no-store" });

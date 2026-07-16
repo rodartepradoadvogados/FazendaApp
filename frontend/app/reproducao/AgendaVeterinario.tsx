@@ -27,6 +27,9 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
   { key: "verificar_pre_parto", label: "Verificar pré-parto (31–60 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
   { key: "vazias_por_diagnostico", label: "Vazias por diagnóstico (negativo/perda) — novo serviço", color: "var(--red)", extra: "motivo" },
   { key: "pendentes_classificacao", label: "Pendentes de classificação (dado faltante)", color: "var(--text-muted)", extra: "motivo" },
+  // Só aparece (pílula com contagem > 0) quando o parâmetro
+  // "usa_adesivo_deteccao_cio" está ativo — ver Configurações > Parâmetros.
+  { key: "observacao_cio", label: "Observação de cio — adesivo de repasse (15–28 dias)", color: "var(--dourado)" },
 ];
 
 function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: (numero: string) => void; onCancelar: () => void }) {

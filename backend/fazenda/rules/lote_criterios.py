@@ -6,18 +6,20 @@ sugestões automáticas de movimentação entre lotes.
 Duas suposições documentadas (não há campo explícito no cadastro para isso):
   - "Em tratamento": animal com aplicação de sanidade nos últimos
     EM_TRATAMENTO_DIAS dias (janela de tratamento/observação ainda em curso).
-  - Gestação: duração padrão de GESTACAO_DIAS dias, usada para estimar
+  - Gestação: duração dada pela faixa editável gestacao_dias_min/max (ver
+    `fazenda.rules.parametros`) — usa o ponto médio da faixa para estimar
     "dias para o parto" a partir da data do serviço com diagnóstico positivo.
-  - "Pré-parto" (flag simples): gestante com PRÉ-PARTO_DIAS dias ou menos
-    para o parto estimado (mesmo limiar usado na agenda do veterinário).
+  - "Pré-parto" (flag simples): gestante com pre_parto_max dias ou menos para
+    o parto estimado (mesmo teto usado na janela de pré-parto da agenda do
+    veterinário — ver `fazenda.rules.parametros.pre_parto_max`).
 """
 from __future__ import annotations
 
 from datetime import date, timedelta
 
-GESTACAO_DIAS = 283
+from fazenda.rules.parametros import gestacao_dias_referencia, pre_parto_max
+
 EM_TRATAMENTO_DIAS = 15
-PRE_PARTO_DIAS = 60
 
 
 def _categoria_normalizada(animal: dict) -> str:
@@ -44,7 +46,7 @@ def dias_para_parto(numero: str, servicos_por_animal: dict[str, list[dict]], hoj
     if not servico:
         return None
     dias_gestacao = (hoje - servico["data_servico"]).days
-    return GESTACAO_DIAS - dias_gestacao
+    return round(gestacao_dias_referencia() - dias_gestacao)
 
 
 def esta_em_tratamento(numero: str, sanidades_por_animal: dict[str, list[dict]], hoje: date) -> bool:
@@ -84,7 +86,7 @@ def animal_atende_criterios(
     dpp = dias_para_parto(numero, servicos_por_animal, hoje)
 
     if lote.pre_parto:
-        if dpp is None or dpp > PRE_PARTO_DIAS or dpp < 0:
+        if dpp is None or dpp > pre_parto_max() or dpp < 0:
             return False
 
     peso = peso_por_animal.get(numero)

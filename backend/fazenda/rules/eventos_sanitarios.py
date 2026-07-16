@@ -21,19 +21,16 @@ from sqlmodel import Session, select
 
 from fazenda.models import Animal, CalendarioSanitario, Estoque, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
-
-# Janela de geração: um gatilho recente (até 120 dias atrás) ainda pendura na
-# Agenda; a projeção por época vai até 180 dias à frente.
-JANELA_PASSADO = 120
-HORIZONTE_FUTURO = 180
+from fazenda.rules.parametros import janela_eventos_sanitarios_futuro, janela_eventos_sanitarios_passado
 
 
 def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None, hoje: date) -> list[date]:
-    """Datas da recorrência dentro da janela [hoje-120, hoje+180]."""
+    """Datas da recorrência dentro da janela [hoje-janela_passado, hoje+janela_futuro]
+    (editável em Configurações > Parâmetros, padrão 120/180 dias)."""
     if not (base and valor and unidade):
         return []
-    minimo = hoje - timedelta(days=JANELA_PASSADO)
-    limite = hoje + timedelta(days=HORIZONTE_FUTURO)
+    minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
+    limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
     saida: list[date] = []
     d = base
     guarda = 0
@@ -208,8 +205,8 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
         if ev.tipo_agendamento != "evento" or not ev.gatilho:
             continue
 
-        minimo = hoje - timedelta(days=JANELA_PASSADO)
-        limite = hoje + timedelta(days=HORIZONTE_FUTURO)
+        minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
+        limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
         # Lista de (numero, data_gatilho).
         gatilhos: list[tuple[str, date]] = []
 

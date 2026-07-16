@@ -1,5 +1,6 @@
 """
-Regra de Secagem — 60 dias antes do parto provável.
+Regra de Secagem — periodo_seco_dias (editável em Configurações > Parâmetros,
+padrão 60) antes do parto provável.
 
 Restrições (Seção 5):
   - SOMENTE vacas que já pariram (ordem_parto > 0 OU já tem lactação)
@@ -11,8 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, timedelta
 
-
-DIAS_ANTECEDENCIA_SECAGEM = 60
+from fazenda.rules.parametros import periodo_seco_dias
 
 
 @dataclass
@@ -42,10 +42,11 @@ def calcular_secagem(
     Returns:
         ResultadoSecagem — se deve_secar=False, não gerar evento de secagem.
     """
+    dias_antecedencia = periodo_seco_dias()
     # Novilha de 1ª cria nunca seca
     if ordem_parto is not None and ordem_parto == 0:
         return ResultadoSecagem(
-            data_secagem=data_parto_provavel - timedelta(days=DIAS_ANTECEDENCIA_SECAGEM),
+            data_secagem=data_parto_provavel - timedelta(days=dias_antecedencia),
             data_parto_provavel=data_parto_provavel,
             numero_matriz=numero_matriz,
             deve_secar=False,
@@ -55,14 +56,14 @@ def calcular_secagem(
     # Animal não está em lactação (já está seca ou nunca produziu)
     if not em_lactacao:
         return ResultadoSecagem(
-            data_secagem=data_parto_provavel - timedelta(days=DIAS_ANTECEDENCIA_SECAGEM),
+            data_secagem=data_parto_provavel - timedelta(days=dias_antecedencia),
             data_parto_provavel=data_parto_provavel,
             numero_matriz=numero_matriz,
             deve_secar=False,
             motivo_exclusao="Não está em lactação — não precisa de secagem",
         )
 
-    data_secagem = data_parto_provavel - timedelta(days=DIAS_ANTECEDENCIA_SECAGEM)
+    data_secagem = data_parto_provavel - timedelta(days=dias_antecedencia)
     return ResultadoSecagem(
         data_secagem=data_secagem,
         data_parto_provavel=data_parto_provavel,

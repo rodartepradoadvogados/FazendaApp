@@ -55,6 +55,7 @@ from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
+from fazenda.rules.parametros import seed_parametros
 
 
 @asynccontextmanager
@@ -101,6 +102,9 @@ async def lifespan(app: FastAPI):
         bootstrap_touros_naab(session)
         # Lembrete admin (a cada 3 meses) para importar o catálogo de touros NAAB.
         seed_lembrete_touros(session)
+        # Parâmetros da fazenda — só cria as chaves que ainda não existem
+        # (nunca sobrescreve um valor já editado pela UI de Parâmetros).
+        seed_parametros(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield
