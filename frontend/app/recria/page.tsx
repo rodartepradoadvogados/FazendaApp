@@ -8,11 +8,12 @@ import { useEffect, useMemo, useState } from "react";
 import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, Wheat, Download } from "lucide-react";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
+import { UploadPlanilha } from "@/components/UploadPlanilha";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
   fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez, fetchRecriaCocho, criarRecriaCocho, excluirRecriaCocho,
-  fetchRecriaDossie, ehAdmin,
+  fetchRecriaDossie, ehAdmin, baixarModeloCocho, importarCochoPlanilha,
   type RecriaCurva, type RecriaOcorrencia, type RecriaBenchmark, type RecriaIdadeParto, type RecriaCocho,
 } from "@/lib/api";
 
@@ -476,6 +477,10 @@ function AbaNutricao() {
           <button className="btn-primary" onClick={salvar} style={{ display: "inline-flex", alignItems: "center", gap: 6 }}><PlusCircle size={15} /> Registrar</button>
           {msg && <span style={{ fontSize: "0.82rem", color: msg.tipo === "ok" ? "var(--green-light)" : "var(--red)" }}>{msg.txt}</span>}
         </div>
+        <UploadPlanilha
+          modelos={[{ label: "Modelo de leitura de cocho", baixar: baixarModeloCocho }]}
+          onImportar={async (file) => { const r = await importarCochoPlanilha(file); carregar(); return r; }}
+        />
       </div>
 
       {/* Estabilidade de consumo (IMS) */}

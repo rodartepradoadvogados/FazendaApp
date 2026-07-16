@@ -178,7 +178,9 @@ FLUXOS: dict[str, dict] = {
             C("fornecedor_cliente", "Fornecedor", "texto", obrigatorio=False),
             C("valor_total", "Valor total", "numero", obrigatorio=False),
             C("numero_documento", "Nº do documento", "texto", obrigatorio=False),
+            C("tipo_documento", "Tipo de documento", "texto", obrigatorio=False),
             C("data_emissao", "Data de emissão", "data", obrigatorio=False),
+            C("forma_pagamento", "Forma de pagamento", "texto", obrigatorio=False),
         ],
     },
     "receita": {
@@ -187,7 +189,9 @@ FLUXOS: dict[str, dict] = {
             C("fornecedor_cliente", "Cliente", "texto", obrigatorio=False),
             C("valor_total", "Valor total", "numero", obrigatorio=False),
             C("numero_documento", "Nº do documento", "texto", obrigatorio=False),
+            C("tipo_documento", "Tipo de documento", "texto", obrigatorio=False),
             C("data_emissao", "Data de emissão", "data", obrigatorio=False),
+            C("forma_pagamento", "Forma de pagamento", "texto", obrigatorio=False),
         ],
     },
 }
@@ -323,7 +327,7 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
     fornecedor/cliente precisa já existir no cadastro (Configurações >
     Cadastro > Fornecedores); nunca é criado à revelia a partir do texto lido
     do documento."""
-    from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, criar_lancamento
+    from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
     from fazenda.models import ContaGerencial, Fornecedor
 
     forn = (dados.get("fornecedor_cliente") or "").strip()
@@ -351,26 +355,43 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
         vt = it.get("valor_total")
         if vt is None and it.get("quantidade") and it.get("valor_unitario"):
             vt = round(it["quantidade"] * it["valor_unitario"], 2)
-        itens.append(ItemIn(produto=produto, quantidade=it.get("quantidade"),
-                             valor_unitario=it.get("valor_unitario"), valor_total=float(vt or 0)))
+        itens.append(ItemIn(
+            produto=produto, quantidade=it.get("quantidade"), valor_unitario=it.get("valor_unitario"),
+            valor_total=float(vt or 0), codigo_conta_gerencial=it.get("codigo_conta_gerencial") or None,
+            nome_conta_gerencial=it.get("nome_conta_gerencial") or None,
+        ))
     # Sem itens, ou itens sem preço próprio (ex.: vieram como texto solto) —
     # usa o valor total do documento inteiro num item único, em vez de deixar
     # o lançamento com valor zero (rejeitado pela validação de valor líquido).
     if not itens or not sum(i.valor_total for i in itens):
         itens = [ItemIn(produto=forn or "Documento recebido pelo Telegram", valor_total=float(dados.get("valor_total") or 0))]
 
-    eh_recibo = dados.get("tipo_documento") == "recibo"
+    # tipo_documento: usa o que veio do cadastro (editado na tela de Aprovações,
+    # closed dropdown) quando presente; senão cai no heurístico antigo do OCR
+    # ("recibo" minúsculo/sem acento vindo da extração do documento).
+    tipo_documento_bruto = dados.get("tipo_documento")
+    eh_recibo = str(tipo_documento_bruto or "").strip().lower() in ("recibo", "recibo/comprovante")
+    tipo_documento = tipo_documento_bruto if tipo_documento_bruto and tipo_documento_bruto not in ("recibo", "nota_fiscal") \
+        else ("Recibo" if eh_recibo else "Nota fiscal")
+
     data_emissao = _d_opt(dados.get("data_emissao"))
-    data_pagamento = _d_opt(dados.get("data_pagamento")) if eh_recibo else None
+    parcelas_dados = dados.get("parcelas") or []
+    parcelas = [
+        ParcelaIn(data_vencimento=_d(p["data_vencimento"]), valor=float(p["valor"]))
+        for p in parcelas_dados if isinstance(p, dict) and p.get("data_vencimento") and p.get("valor")
+    ]
+    data_pagamento = _d_opt(dados.get("data_pagamento")) if not parcelas else None
     valor_total = sum(i.valor_total for i in itens)
 
     lanc = LancamentoIn(
         tipo=tipo, itens=itens, fornecedor_cliente=dados.get("fornecedor_cliente"),
-        numero_documento=dados.get("numero_documento"),
-        tipo_documento="Nota fiscal" if not eh_recibo else "Recibo/comprovante",
+        numero_documento=dados.get("numero_documento"), tipo_documento=tipo_documento,
         data_emissao=data_emissao, data_vencimento=data_emissao or data_pagamento,
+        parcelas=parcelas,
         data_pagamento=data_pagamento, valor_pago=valor_total if data_pagamento else None,
-        conta_bancaria=dados.get("conta_bancaria") if eh_recibo else None,
+        conta_bancaria=dados.get("conta_bancaria") if data_pagamento else None,
+        numero_documento_pagamento=dados.get("numero_documento_pagamento") if data_pagamento else None,
+        forma_pagamento=dados.get("forma_pagamento") if data_pagamento else None,
     )
     res = criar_lancamento(dados=lanc, session=session)
     # Marca a origem "telegram" (LancamentoIn não carrega esse campo) para
