@@ -67,8 +67,12 @@ export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; lab
   );
 }
 
-/** Linha de lista com seta (menus e resultados). */
-export function MobLinha({ icone, titulo, subtitulo, href, onClick }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void }) {
+/** Linha de lista com seta (menus e resultados). `alt` alterna a cor da linha
+ * em sequência — mesmo tratamento de `MobCard` (ver comentário lá): tingido
+ * translúcido da paleta ativa no claro, contorno vinho/verde fixo alternado
+ * no escuro. Usado em Rebanho > Animais para diferenciar linhas em sequência. */
+export function MobLinha({ icone, titulo, subtitulo, href, onClick, alt }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void; alt?: 0 | 1 }) {
+  const classe = ["mob-linha", alt === 0 ? "mob-card-a" : alt === 1 ? "mob-card-b" : ""].filter(Boolean).join(" ");
   const conteudo = (
     <>
       {icone && <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(184,134,11,0.12)", color: "var(--mob-dourado-2)", flexShrink: 0 }}>{icone}</span>}
@@ -79,8 +83,8 @@ export function MobLinha({ icone, titulo, subtitulo, href, onClick }: { icone?: 
       <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
     </>
   );
-  if (href) return <Link href={href} className="mob-linha" style={{ marginBottom: "0.6rem" }}>{conteudo}</Link>;
-  return <button type="button" className="mob-linha" style={{ marginBottom: "0.6rem" }} onClick={onClick}>{conteudo}</button>;
+  if (href) return <Link href={href} className={classe} style={{ marginBottom: "0.6rem" }}>{conteudo}</Link>;
+  return <button type="button" className={classe} style={{ marginBottom: "0.6rem" }} onClick={onClick}>{conteudo}</button>;
 }
 
 /** Campo com rótulo (label em cima, controle grande embaixo). */

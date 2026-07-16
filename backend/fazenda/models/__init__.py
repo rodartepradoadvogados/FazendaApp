@@ -782,6 +782,13 @@ class Estoque(SQLModel, table=True):
     # lançamentos ANTERIORES a ela não repercutem no saldo/custo (só faz sentido
     # para itens estocáveis). None = sem recorte (considera tudo).
     data_inicio_controle: Optional[date] = None
+    # Vínculo com o cadastro de Alimento (Configurações > Cadastro > Alimentação
+    # > Alimentos) — um item de estoque só pode estar linkado a UM alimento
+    # (campo escalar), mas um alimento pode ter vários itens de estoque
+    # apontando para ele (ex.: "Silagem de milho" comprada de fornecedores
+    # diferentes, cada um seu próprio item de estoque). Usado para resolver
+    # a "necessidade mensal" por vínculo real em vez de casar nomes.
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
 
 
 # ---------------------------------------------------------------------------
@@ -1480,6 +1487,39 @@ class EstoqueSemen(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Dieta (plano alimentar por lote)
 # ---------------------------------------------------------------------------
+class CategoriaAlimento(SQLModel, table=True):
+    """Categoria de alimento (Volumoso, Concentrado, Mineral...), editável em
+    Configurações > Cadastro > Alimentação > Categorias. Agrupa os Alimentos
+    cadastrados — puramente organizacional, sem regra de cálculo própria."""
+
+    __tablename__ = "categoria_alimento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class Alimento(SQLModel, table=True):
+    """Cadastro de alimento (Configurações > Cadastro > Alimentação >
+    Alimentos) — distinto do item de Estoque: um Alimento é o conceito
+    nutricional (ex.: "Silagem de milho"), que pode estar vinculado a um ou
+    mais itens de Estoque (ver `Estoque.alimento_id`) de onde vem a baixa
+    física quando a dieta é lançada. Um Alimento sem nenhum Estoque vinculado
+    ainda é válido (ex.: acabou de ser cadastrado), mas fica marcado como
+    pendente de vínculo nas telas onde aparece."""
+
+    __tablename__ = "alimento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    categoria_alimento_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id")
+    observacao: Optional[str] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Dieta(SQLModel, table=True):
     """Uma linha por (lote, ingrediente) do DIETA.csv — quantidade por cabeça/dia."""
 
@@ -1531,6 +1571,11 @@ class DietaItemProgramado(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     dieta_lancamento_id: int = Field(foreign_key="dieta_lancamento.id", index=True)
     alimento: str
+    # Vínculo com o cadastro de Alimento, quando escolhido via o seletor (em
+    # vez de texto livre) — permite resolver o(s) item(ns) de Estoque vinculados
+    # sem depender de casar `alimento` (nome) com `Estoque.nome`. Fica None para
+    # lançamentos antigos ou alimentos ainda sem cadastro correspondente.
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
     quantidade: float
     unidade: str
     # Base da quantidade do ingrediente: "MN" (matéria natural, padrão) ou "MS"
@@ -1561,6 +1606,9 @@ class TabelaNutricionalProduto(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True, unique=True)
     ordem: int = 0
+    # Vínculo opcional com o cadastro de Alimento — quando presente, a tela de
+    # cadastro do Alimento pode oferecer "cadastrar tabela nutricional" direto.
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
 
 
 class TabelaNutricionalValor(SQLModel, table=True):
@@ -1587,6 +1635,9 @@ class AnaliseBromatologica(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     data: date
     alimento: str = Field(index=True)
+    # Vínculo opcional com o cadastro de Alimento (ver `Alimento`) — permite
+    # oferecer "fazer análise bromatológica" direto do cadastro do alimento.
+    alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
     ms_pct: Optional[float] = None  # matéria seca (%)
     pb_pct: Optional[float] = None  # proteína bruta (%)
     fdn_pct: Optional[float] = None  # fibra em detergente neutro (%)

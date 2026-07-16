@@ -13,16 +13,19 @@
 //     fazenda (MS, PB, FDN, FDA, NDT, EE, cinzas, Ca, P) — diferente da
 //     Tabela Nutricional (referência padrão) e da Matéria seca (só %MS).
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical } from "lucide-react";
+import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical, Tag, Wheat, Pencil, Check, X, AlertTriangle } from "lucide-react";
 import {
   fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
   criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin,
   fetchAnaliseBromatologica, criarAnaliseBromatologica, type AnaliseBromatologica,
   type ContextoDieta, type ApresentacaoDieta,
+  fetchCategoriasAlimento, criarCategoriaAlimento, atualizarCategoriaAlimento, excluirCategoriaAlimento, type CategoriaAlimento,
+  fetchAlimentos, criarAlimento, atualizarAlimento, excluirAlimento, type Alimento,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
+import { pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, type PrefillNovoAlimento } from "@/lib/alimentoEstoqueBridge";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
@@ -59,12 +62,16 @@ const input: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 export default function CadastroAlimentacao() {
-  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica">("ver");
+  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica" | "categorias" | "alimentos">("ver");
+  const [prefillAlimento, setPrefillAlimento] = useState<PrefillNovoAlimento | null>(null);
+
+  useEffect(() => onPedidoCadastroDeAlimento((dados) => { setPrefillAlimento(dados); setAba("alimentos"); }), []);
+
   return (
     <div>
       <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent], ["tabela-nutricional", "Tabela Nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical]] as const).map(([id, label, Icon]) => (
+          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "% Matéria seca", Percent], ["tabela-nutricional", "Cadastro de tabela nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical], ["categorias", "Categorias", Tag], ["alimentos", "Alimentos", Wheat]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
                 border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
@@ -76,7 +83,263 @@ export default function CadastroAlimentacao() {
         </div>
         <TabelaNutricionalBotao />
       </div>
-      {aba === "ver" ? <VisualizarDietas /> : aba === "ms" ? <MateriaSeca /> : aba === "tabela-nutricional" ? <TabelaNutricionalCadastroInline /> : <AnaliseBromatologicaTab />}
+      {aba === "ver" && <VisualizarDietas />}
+      {aba === "ms" && <MateriaSeca />}
+      {aba === "tabela-nutricional" && <TabelaNutricionalCadastroInline />}
+      {aba === "bromatologica" && <AnaliseBromatologicaTab />}
+      {aba === "categorias" && <CategoriasAlimentoTab />}
+      {aba === "alimentos" && (
+        <AlimentosTab
+          prefill={prefillAlimento}
+          onPrefillConsumido={() => setPrefillAlimento(null)}
+          onIrParaTabelaNutricional={() => setAba("tabela-nutricional")}
+          onIrParaBromatologica={() => setAba("bromatologica")}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Categorias de alimento ───────────────────────────
+function CategoriasAlimentoTab() {
+  const [itens, setItens] = useState<CategoriaAlimento[] | null>(null);
+  const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [nome, setNome] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = () => fetchCategoriasAlimento().then(setItens).catch((e: any) => setErro(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const abrirNovo = () => { setNome(""); setEditando("novo"); setErro(null); };
+  const abrirEdicao = (c: CategoriaAlimento) => { setNome(c.nome); setEditando(c.id); setErro(null); };
+
+  const salvar = async () => {
+    if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      if (editando === "novo") await criarCategoriaAlimento({ nome: nome.trim() });
+      else if (typeof editando === "number") await atualizarCategoriaAlimento(editando, { nome: nome.trim() });
+      setEditando(null);
+      await carregar();
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const excluir = async (c: CategoriaAlimento) => {
+    if (!window.confirm(`Excluir a categoria "${c.nome}"?`)) return;
+    try { await excluirCategoriaAlimento(c.id); await carregar(); }
+    catch (e: any) { setErro(e.message); }
+  };
+
+  return (
+    <div className="card">
+      <div className="card-header mb-2 flex items-center justify-between">
+        <span className="flex items-center gap-2"><Tag size={16} /> Categorias de alimento</span>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+          <Plus size={14} /> Nova categoria
+        </button>
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+        Agrupa os alimentos cadastrados na aba "Alimentos" (ex.: Volumoso, Concentrado, Mineral) — livremente editável.
+      </p>
+      {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
+
+      {editando === "novo" && (
+        <div className="flex items-center gap-2 mb-3">
+          <input autoFocus style={input} placeholder="Nome da categoria" value={nome} onChange={(e) => setNome(e.target.value)} />
+          <button className="btn-primary" style={{ fontSize: "0.78rem" }} onClick={salvar} disabled={salvando}><Check size={14} /></button>
+          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditando(null)}><X size={14} /></button>
+        </div>
+      )}
+
+      {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {itens && (
+        <div className="space-y-2">
+          {itens.map((c) => (
+            <div key={c.id} className="flex items-center justify-between gap-2" style={{ padding: "0.5rem 0.7rem", borderRadius: 8, background: "var(--surface-2)", border: "1px solid var(--border)" }}>
+              {editando === c.id ? (
+                <>
+                  <input autoFocus style={{ ...input, flex: 1 }} value={nome} onChange={(e) => setNome(e.target.value)} />
+                  <button className="btn-primary" style={{ fontSize: "0.72rem" }} onClick={salvar} disabled={salvando}><Check size={13} /></button>
+                  <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
+                </>
+              ) : (
+                <>
+                  <span style={{ fontWeight: 600, fontSize: "0.85rem" }}>{c.nome}</span>
+                  <div className="flex items-center gap-1">
+                    <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => abrirEdicao(c)}><Pencil size={13} /></button>
+                    <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(c)}><Trash2 size={13} /></button>
+                  </div>
+                </>
+              )}
+            </div>
+          ))}
+          {!itens.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma categoria cadastrada ainda.</p>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────── Alimentos (cadastro) ───────────────────────────
+function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, onIrParaBromatologica }: {
+  prefill: PrefillNovoAlimento | null; onPrefillConsumido: () => void;
+  onIrParaTabelaNutricional: () => void; onIrParaBromatologica: () => void;
+}) {
+  const [itens, setItens] = useState<Alimento[] | null>(null);
+  const [categorias, setCategorias] = useState<CategoriaAlimento[]>([]);
+  const [estoqueItens, setEstoqueItens] = useState<(EstoqueItemPicker & { id: number; alimento_id?: number | null })[]>([]);
+  const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [nome, setNome] = useState("");
+  const [categoriaId, setCategoriaId] = useState("");
+  const [observacao, setObservacao] = useState("");
+  const [estoqueIds, setEstoqueIds] = useState<number[]>([]);
+  const [buscaEstoque, setBuscaEstoque] = useState("");
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const carregar = () => fetchAlimentos().then(setItens).catch((e: any) => setErro(e.message));
+  useEffect(() => {
+    carregar();
+    fetchCategoriasAlimento().then(setCategorias).catch(() => {});
+    fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {});
+  }, []);
+
+  const abrirNovo = () => {
+    setNome(prefill?.nome || ""); setCategoriaId(""); setObservacao("");
+    setEstoqueIds(prefill?.estoqueId ? [prefill.estoqueId] : []);
+    setEditando("novo"); setErro(null);
+  };
+  useEffect(() => { if (prefill) abrirNovo(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [prefill]);
+
+  const abrirEdicao = (a: Alimento) => {
+    setNome(a.nome); setCategoriaId(a.categoria_alimento_id ? String(a.categoria_alimento_id) : "");
+    setObservacao(a.observacao || ""); setEstoqueIds((a.estoque_vinculado || []).map((e: any) => e.id));
+    setEditando(a.id); setErro(null);
+  };
+  const cancelar = () => { setEditando(null); onPrefillConsumido(); };
+
+  const salvar = async () => {
+    if (!nome.trim()) { setErro("Nome é obrigatório."); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const dados = {
+        nome: nome.trim(), categoria_alimento_id: categoriaId ? Number(categoriaId) : null,
+        observacao: observacao.trim() || null, estoque_ids: estoqueIds,
+      };
+      const salvo = editando === "novo" ? await criarAlimento(dados) : await atualizarAlimento(editando as number, dados);
+      setEditando(null);
+      onPrefillConsumido();
+      await carregar();
+
+      // Vínculo obrigatório: alimento deve estar ligado a pelo menos um
+      // produto de estoque — se ainda não está, oferece criar/vincular um.
+      if (!estoqueIds.length) {
+        const converter = window.confirm(`"${salvo.nome}" ainda não está vinculado a nenhum item de Estoque. Deseja cadastrar o produto de estoque correspondente agora?`);
+        if (converter) { pedirCadastroDeEstoque({ nome: salvo.nome, finalidade: "Ração/Alimento", alimentoId: salvo.id }); return; }
+      }
+      if (window.confirm(`Deseja cadastrar a tabela nutricional de "${salvo.nome}" agora?`)) { onIrParaTabelaNutricional(); return; }
+      if (window.confirm(`Deseja registrar uma análise bromatológica de "${salvo.nome}" agora?`)) { onIrParaBromatologica(); return; }
+    } catch (e: any) { setErro(e.message); }
+    finally { setSalvando(false); }
+  };
+
+  const excluir = async (a: Alimento) => {
+    if (!window.confirm(`Excluir o alimento "${a.nome}"? Os itens de estoque vinculados ficam sem vínculo, sem serem apagados.`)) return;
+    try { await excluirAlimento(a.id); await carregar(); }
+    catch (e: any) { setErro(e.message); }
+  };
+
+  const nomeCategoria = (id: number | null) => categorias.find((c) => c.id === id)?.nome || "—";
+  const termoEstoque = buscaEstoque.trim().toLowerCase();
+  const estoqueFiltrado = estoqueItens.filter((e) => !termoEstoque || e.nome.toLowerCase().includes(termoEstoque));
+
+  return (
+    <div className="card">
+      <div className="card-header mb-2 flex items-center justify-between">
+        <span className="flex items-center gap-2"><Wheat size={16} /> Alimentos</span>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+          <Plus size={14} /> Novo alimento
+        </button>
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+        O cadastro de alimento (ex.: "Silagem de milho") é o conceito nutricional usado nas dietas — distinto do item de
+        Estoque, de onde sai a baixa física quando a dieta é lançada. Um alimento pode ter vários itens de Estoque
+        vinculados; um item de Estoque só pode estar vinculado a um alimento por vez.
+      </p>
+      {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
+
+      {editando !== null && (
+        <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: 8, padding: "1rem", marginBottom: "1rem" }}>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+            <div><label style={lbl}>Nome do alimento</label><input style={input} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+            <div><label style={lbl}>Categoria</label>
+              <select style={input} value={categoriaId} onChange={(e) => setCategoriaId(e.target.value)}>
+                <option value="">—</option>
+                {categorias.map((c) => <option key={c.id} value={c.id}>{c.nome}</option>)}
+              </select>
+            </div>
+            <div style={{ gridColumn: "1 / -1" }}><label style={lbl}>Observação</label>
+              <input style={input} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
+          </div>
+
+          <label style={lbl}>Itens de Estoque vinculados ({estoqueIds.length})</label>
+          <input style={{ ...input, marginBottom: "0.4rem" }} placeholder="Buscar produto…" value={buscaEstoque} onChange={(e) => setBuscaEstoque(e.target.value)} />
+          <div style={{ maxHeight: "220px", overflowY: "auto", border: "1px solid var(--border)", borderRadius: 6, marginBottom: "0.8rem" }}>
+            {estoqueFiltrado.map((e) => {
+              const jaLinkadoOutro = e.alimento_id != null && !estoqueIds.includes(e.id);
+              return (
+                <label key={e.id} className="flex items-center gap-2" style={{ padding: "0.35rem 0.6rem", fontSize: "0.8rem", borderBottom: "1px solid var(--border)", cursor: "pointer" }}>
+                  <input
+                    type="checkbox" checked={estoqueIds.includes(e.id)}
+                    onChange={(ev) => setEstoqueIds((prev) => ev.target.checked ? [...prev, e.id] : prev.filter((id) => id !== e.id))}
+                  />
+                  <span style={{ flex: 1 }}>{e.nome}</span>
+                  {jaLinkadoOutro && <span style={{ fontSize: "0.68rem", color: "var(--amber)" }} title="Marcar aqui remove o vínculo do outro alimento">já vinculado a outro alimento</span>}
+                </label>
+              );
+            })}
+            {!estoqueFiltrado.length && <p style={{ padding: "0.6rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhum item de estoque encontrado.</p>}
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
+              <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
+            </button>
+            <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}>
+              <X size={14} /> Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {itens && (
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Alimento</th><th>Categoria</th><th>Estoque vinculado</th><th></th></tr></thead>
+            <tbody>
+              {itens.map((a) => (
+                <tr key={a.id}>
+                  <td style={{ fontWeight: 700 }}>{a.nome}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{nomeCategoria(a.categoria_alimento_id)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>
+                    {a.estoque_vinculado?.length
+                      ? a.estoque_vinculado.map((e: any) => e.nome).join(", ")
+                      : <span style={{ color: "var(--amber)", display: "flex", alignItems: "center", gap: "0.3rem" }}><AlertTriangle size={12} /> Sem produto de estoque vinculado</span>}
+                  </td>
+                  <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                    <button className="btn-ghost" style={{ fontSize: "0.72rem", marginRight: "0.3rem" }} onClick={() => abrirEdicao(a)}><Pencil size={13} /> Editar</button>
+                    <button className="btn-ghost" style={{ fontSize: "0.72rem", color: "var(--red)" }} onClick={() => excluir(a)}><Trash2 size={13} /></button>
+                  </td>
+                </tr>
+              ))}
+              {!itens.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum alimento cadastrado ainda.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

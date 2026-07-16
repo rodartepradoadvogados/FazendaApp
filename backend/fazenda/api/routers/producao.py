@@ -1035,7 +1035,7 @@ def relatorio_bst(session: Session = Depends(get_session)) -> dict:
     animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
     aplicacoes = [
         s for s in session.exec(select(Sanidade)).all()
-        if MARCADORES_BST_PRODUCAO.search(s.produto or "")
+        if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
     ]
     registros = []
     for s in aplicacoes:

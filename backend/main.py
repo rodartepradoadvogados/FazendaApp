@@ -53,6 +53,7 @@ from fazenda.api.routers.cadastro import (
 )
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
+from fazenda.api.routers.alimentacao import seed_alimentos
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -105,6 +106,10 @@ async def lifespan(app: FastAPI):
         # Parâmetros da fazenda — só cria as chaves que ainda não existem
         # (nunca sobrescreve um valor já editado pela UI de Parâmetros).
         seed_parametros(session)
+        # Categorias de alimento (Volumoso/Concentrado/Mineral) + cadastro de
+        # Alimento — vinculado automaticamente a itens de Estoque de mesmo
+        # nome, quando existirem.
+        seed_alimentos(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield

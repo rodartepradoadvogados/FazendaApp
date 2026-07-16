@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
 import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, Wheat, Pill, Scale, Baby } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAlimentacao from "./CadastroAlimentacao";
@@ -57,10 +58,20 @@ export default function Cadastro({
   const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("principios");
   const [abaCentralSemenInterna, setAbaCentralSemenInterna] = useState<AbaCentralSemen>("estoque-semen");
   const aba = abaExterna ?? abaInterna;
+  const setAba = onAbaChange ?? setAbaInterna;
   const abaSanitario = abaSanitarioExterna ?? abaSanitarioInterna;
   const setAbaSanitario = onAbaSanitarioChange ?? setAbaSanitarioInterna;
   const abaCentralSemen = abaCentralSemenExterna ?? abaCentralSemenInterna;
   const setAbaCentralSemen = onAbaCentralSemenChange ?? setAbaCentralSemenInterna;
+
+  // Conversão bidirecional Alimento ↔ Estoque (ver lib/alimentoEstoqueBridge)
+  // — quando a tela irmã pede pra "ir pra lá", só troca a aba EXTERNA daqui;
+  // quem abre o formulário já preenchido é a própria tela de destino.
+  useEffect(() => {
+    const off1 = onPedidoCadastroDeEstoque(() => setAba("estoque"));
+    const off2 = onPedidoCadastroDeAlimento(() => setAba("alimentacao"));
+    return () => { off1(); off2(); };
+  }, [setAba]);
 
   return (
     <div className="p-6 animate-in">

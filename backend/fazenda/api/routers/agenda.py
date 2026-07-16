@@ -185,7 +185,10 @@ def calcular_agenda(
     # Casamento por palavra inteira (\b) — não por substring — para não achar
     # falso positivo em produtos como "carboidrato" ou "substância".
     MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
-    sanidades_bst = [s for s in session.exec(select(Sanidade)).all() if MARCADORES_BST.search(s.produto or "")]
+    sanidades_bst = [
+        s for s in session.exec(select(Sanidade)).all()
+        if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
+    ]
     datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
     proxima_visita_bst_real: date | None = None
     if datas_bst:

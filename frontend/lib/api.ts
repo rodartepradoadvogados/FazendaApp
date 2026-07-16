@@ -1194,6 +1194,66 @@ export async function fetchEstadoBaixaAlimentacao() {
   return res.json();
 }
 
+// ── Categorias de alimento e cadastro de Alimento (Configurações > Cadastro
+// > Alimentação > Categorias / Alimentos) ──
+export type CategoriaAlimento = { id: number; nome: string; ativo: boolean };
+export async function fetchCategoriasAlimento(): Promise<CategoriaAlimento[]> {
+  const res = await authFetch(`${API}/alimentacao/categorias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Categorias de alimento error: ${res.status}`);
+  return res.json();
+}
+export async function criarCategoriaAlimento(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/alimentacao/categorias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar categoria"); }
+  return res.json();
+}
+export async function atualizarCategoriaAlimento(id: number, dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/alimentacao/categorias/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar categoria"); }
+  return res.json();
+}
+export async function excluirCategoriaAlimento(id: number) {
+  const res = await authFetch(`${API}/alimentacao/categorias/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir categoria"); }
+  return res.json();
+}
+
+export type Alimento = {
+  id: number; nome: string; categoria_alimento_id: number | null; observacao: string | null; ativo: boolean;
+  estoque_vinculado: any[];
+};
+export async function fetchAlimentos(): Promise<Alimento[]> {
+  const res = await authFetch(`${API}/alimentacao/alimentos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Alimentos error: ${res.status}`);
+  return res.json();
+}
+export type AlimentoIn = {
+  nome: string; categoria_alimento_id?: number | null; observacao?: string | null; ativo?: boolean; estoque_ids?: number[];
+};
+export async function criarAlimento(dados: AlimentoIn): Promise<Alimento> {
+  const res = await authFetch(`${API}/alimentacao/alimentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alimento"); }
+  return res.json();
+}
+export async function atualizarAlimento(id: number, dados: AlimentoIn): Promise<Alimento> {
+  const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar alimento"); }
+  return res.json();
+}
+export async function excluirAlimento(id: number) {
+  const res = await authFetch(`${API}/alimentacao/alimentos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alimento"); }
+  return res.json();
+}
+
 // ── Lançamento de dieta (Lançamentos > Alimentação) ──
 export async function fetchAlimentosPadrao() {
   const res = await authFetch(`${API}/alimentacao/alimentos-padrao`, { cache: "no-store" });

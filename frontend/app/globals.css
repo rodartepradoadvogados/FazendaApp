@@ -541,6 +541,21 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 2px solid var(--mob-verde-fixo);
 }
 
+/* Mesma alternância acima, mas para .mob-linha (Rebanho > Animais) — seletor
+   composto para vencer as declarações de background/border do .mob-linha
+   base independente da ordem no arquivo. */
+.mob-linha.mob-card-b {
+  background: color-mix(in srgb, var(--mob-vinho) 14%, var(--mob-surface));
+  border-color: color-mix(in srgb, var(--mob-vinho) 32%, var(--mob-border));
+}
+:root[data-theme="escuro"] .mob-linha.mob-card-a {
+  border: 2px solid var(--mob-vinho-fixo);
+}
+:root[data-theme="escuro"] .mob-linha.mob-card-b {
+  background: var(--mob-surface);
+  border: 2px solid var(--mob-verde-fixo);
+}
+
 /* Agenda do Veterinário (Menu): caixas com fundo translúcido da cor da
    PALETA ativa no claro (--mob-acao já segue a paleta escolhida), sem
    atrapalhar a leitura; no escuro, o fundo volta ao normal e só o contorno

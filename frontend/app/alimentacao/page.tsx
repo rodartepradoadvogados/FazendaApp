@@ -141,7 +141,11 @@ function NecessidadeMensal() {
               <td style={{ textAlign: "right", fontWeight: 700 }}>{fmt(i.necessidade_mes)} {i.unidade}</td>
               <td style={{ textAlign: "right" }}>{i.sacos_mes ?? "—"}</td>
               <td style={{ fontSize: "0.76rem", color: i.item_estoque_vinculado ? "var(--green-light)" : "var(--amber)" }}>
-                {i.item_estoque_vinculado ? (i.ensacado ? `Ensacado (${i.kg_por_saco} kg/saco)` : "Vinculado (a granel)") : "Sem item de estoque com esse nome"}
+                {i.item_estoque_vinculado
+                  ? (i.ensacado ? `Ensacado (${i.kg_por_saco} kg/saco)` : "Vinculado (a granel)")
+                  : i.alimento_sem_vinculo
+                    ? "Alimento cadastrado, mas sem produto de estoque vinculado — cadastre o vínculo em Configurações › Cadastro › Alimentação › Alimentos"
+                    : "Sem item de estoque nem alimento cadastrado com esse nome"}
               </td>
             </tr>
           ))}
