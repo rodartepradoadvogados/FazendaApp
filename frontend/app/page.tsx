@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw } from "lucide-react";
 import {
-  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, formatBRL,
+  fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -16,6 +16,11 @@ const SIT_CORES: Record<string, string> = {
 const LACTACAO = ["01", "02", "03"];
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
 
+// "Descartados" = baixas definitivas cujo tipo é descarte (não conta morte nem venda simples).
+const TIPOS_DESCARTE = ["descarte_voluntario", "descarte_involuntario"];
+const LABEL_TIPO_BAIXA: Record<string, string> = { descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário" };
+const LABEL_MOTIVO_BAIXA: Record<string, string> = { venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença" };
+
 export default function Home() {
   const [d, setD] = useState<any>(null);
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
@@ -25,6 +30,10 @@ export default function Home() {
   const [recarregando, setRecarregando] = useState(false);
   // Quando qualquer fetch falha, alguns cards mostram "—"; sinalizamos isso num banner.
   const [erroCarga, setErroCarga] = useState(false);
+
+  const [baixas, setBaixas] = useState<any[]>([]);
+  const [desdeDescarte, setDesdeDescarte] = useState(() => `${new Date().getFullYear()}-01-01`);
+  const [modalDescartados, setModalDescartados] = useState<{ title: string; list: any[] } | null>(null);
 
   const carregar = () => {
     setRecarregando(true);
@@ -41,6 +50,7 @@ export default function Home() {
       });
     }).finally(() => setRecarregando(false));
     fetchAnimais().then(setAnimais).catch(() => {});
+    fetchBaixas().then(setBaixas).catch(() => {});
   };
 
   useEffect(() => { carregar(); }, []);
@@ -106,6 +116,8 @@ export default function Home() {
     );
   };
   const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
+  const aDescartarList: AnimalRow[] = animais.filter((a) => a.a_descartar);
+  const descartadosList = baixas.filter((b) => TIPOS_DESCARTE.includes(b.tipo_baixa) && (!desdeDescarte || b.data_baixa >= desdeDescarte));
 
   return (
     <div className="p-6 animate-in">
@@ -249,6 +261,24 @@ export default function Home() {
               ))}
             </div>
           ) : null}
+          <div className="grid grid-cols-2 gap-2 mb-2" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
+            <KPI l="A descartar (atual)" v={aDescartarList.length} c="var(--amber)"
+              podeClicar={aDescartarList.length > 0}
+              onClick={() => setModal({ title: "A descartar (atual)", list: aDescartarList })} />
+            <div className="kpi-card" style={{ cursor: descartadosList.length ? "pointer" : undefined }}>
+              <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--red)" }}
+                onClick={() => descartadosList.length && setModalDescartados({ title: "Descartados", list: descartadosList })}>
+                {descartadosList.length}
+              </p>
+              <p className="kpi-label flex items-center gap-1 flex-wrap">
+                Descartados
+                <span style={{ fontSize: "0.68rem" }}>desde</span>
+                <input type="date" value={desdeDescarte} onClick={(e) => e.stopPropagation()}
+                  onChange={(e) => setDesdeDescarte(e.target.value)}
+                  style={{ fontSize: "0.68rem", padding: "0.05rem 0.25rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "4px" }} />
+              </p>
+            </div>
+          </div>
           {donutRep.length ? (
             <ResponsiveContainer width="100%" height={200}>
               <PieChart>
@@ -298,6 +328,36 @@ export default function Home() {
       </div>
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
+      {modalDescartados && (
+        <div onClick={() => setModalDescartados(null)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 60, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "680px", maxWidth: "95vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0 }}>
+                {modalDescartados.title} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({modalDescartados.list.length})</span>
+              </div>
+              <button onClick={() => setModalDescartados(null)} className="btn-ghost" aria-label="Fechar">✕</button>
+            </div>
+            <div style={{ overflowY: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr><th>Nº</th><th>Tipo</th><th>Motivo</th><th>Data</th><th style={{ textAlign: "right" }}>Valor</th><th>Cliente</th></tr></thead>
+                <tbody>
+                  {modalDescartados.list.map((b: any) => (
+                    <tr key={b.id}>
+                      <td style={{ fontWeight: 700 }}>{b.numero_animal}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{LABEL_TIPO_BAIXA[b.tipo_baixa] || b.tipo_baixa}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{LABEL_MOTIVO_BAIXA[b.motivo] || b.motivo}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{b.data_baixa}</td>
+                      <td style={{ textAlign: "right" }}>{b.valor != null ? formatBRL(b.valor) : "—"}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{b.cliente || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

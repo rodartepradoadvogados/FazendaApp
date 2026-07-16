@@ -582,9 +582,16 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
     const cods = new Set(lotesSelecionadosInsem);
     return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
   }, [animais, lotesSelecionadosInsem]);
+  // Ao escolher lote(s), começa com todas as aptas do(s) lote(s) marcadas;
+  // a janela suspensa abaixo permite desmarcar animal a animal.
+  const [selLoteInsem, setSelLoteInsem] = useState<Set<string>>(new Set());
+  const toggleLoteInsem = (n: string) => setSelLoteInsem((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelLoteInsem(new Set(animaisDoLoteInsem.map((a) => a.numero)));
+  }, [lotesSelecionadosInsem.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const alvoFinal = useMemo(
-    () => (origemSelecao === "avulsa" && vinculoInsem === "lote" ? new Set(animaisDoLoteInsem.map((a) => a.numero)) : sel),
-    [origemSelecao, vinculoInsem, animaisDoLoteInsem, sel]
+    () => (origemSelecao === "avulsa" && vinculoInsem === "lote" ? selLoteInsem : sel),
+    [origemSelecao, vinculoInsem, selLoteInsem, sel]
   );
 
   useEffect(() => {
@@ -720,21 +727,20 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                   placeholder="Selecionar lote(s)…"
                 />
                 {lotesSelecionadosInsem.length > 0 && (
-                  <div style={{ marginTop: "0.6rem", overflowX: "auto" }}>
-                    <table className="fazenda-table">
-                      <thead><tr><th>Nº</th><th>Lote</th><th>Sit. rep.</th></tr></thead>
-                      <tbody>
-                        {animaisDoLoteInsem.map((a) => (
-                          <tr key={a.numero}>
-                            <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                            <td>{a.grupo_primario || "—"}</td>
-                            <td>{a.sit_rep || "—"}</td>
-                          </tr>
-                        ))}
-                        {!animaisDoLoteInsem.length && <tr><td colSpan={3} style={{ color: "var(--text-muted)", padding: "0.6rem" }}>Nenhuma apta nesse(s) lote(s).</td></tr>}
-                      </tbody>
-                    </table>
-                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>{animaisDoLoteInsem.length} animal(is) apta(s) no(s) lote(s) selecionado(s).</p>
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <AnimalPickerModal
+                      animais={animaisDoLoteInsem} selecionados={selLoteInsem} onToggle={toggleLoteInsem}
+                      titulo="Ajustar aptas do(s) lote(s) selecionado(s)"
+                      placeholder="Ajustar aptas do(s) lote(s)…"
+                      colunas={[
+                        { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                        { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                        { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                      ]}
+                    />
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                      {selLoteInsem.size} de {animaisDoLoteInsem.length} apta(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                    </p>
                   </div>
                 )}
               </div>
@@ -845,9 +851,16 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
     const cods = new Set(lotesSelecionados);
     return servidas.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
   }, [servidas, lotesSelecionados]);
+  // Ao escolher lote(s), começa com todas as servidas do(s) lote(s) marcadas;
+  // a janela suspensa abaixo permite desmarcar animal a animal.
+  const [selLote, setSelLote] = useState<Set<string>>(new Set());
+  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
+  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
   const numerosAlvo = useMemo(
-    () => (vinculo === "lote" ? new Set(animaisDoLote.map((a) => a.numero)) : selecionados),
-    [vinculo, animaisDoLote, selecionados]
+    () => (vinculo === "lote" ? selLote : selecionados),
+    [vinculo, selLote, selecionados]
   );
 
   const [data, setData] = useState("");
@@ -940,22 +953,21 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
               placeholder="Selecionar lote(s)…"
             />
             {lotesSelecionados.length > 0 && (
-              <div style={{ marginTop: "0.6rem", overflowX: "auto" }}>
-                <table className="fazenda-table">
-                  <thead><tr><th>Nº</th><th>Lote</th><th>Sit. rep.</th><th>Última IA/cobertura</th></tr></thead>
-                  <tbody>
-                    {animaisDoLote.map((a) => (
-                      <tr key={a.numero}>
-                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                        <td>{a.grupo_primario || "—"}</td>
-                        <td>{a.sit_rep || "—"}</td>
-                        <td>{ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                      </tr>
-                    ))}
-                    {!animaisDoLote.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", padding: "0.6rem" }}>Nenhuma servida nesse(s) lote(s).</td></tr>}
-                  </tbody>
-                </table>
-                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>{animaisDoLote.length} animal(is) servida(s) no(s) lote(s) selecionado(s).</p>
+              <div style={{ marginTop: "0.6rem" }}>
+                <AnimalPickerModal
+                  animais={animaisDoLote} selecionados={selLote} onToggle={toggleLote}
+                  titulo="Ajustar servidas do(s) lote(s) selecionado(s)"
+                  placeholder="Ajustar servidas do(s) lote(s)…"
+                  colunas={[
+                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                    { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                    { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
+                  ]}
+                />
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {selLote.size} de {animaisDoLote.length} servida(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                </p>
               </div>
             )}
           </div>
