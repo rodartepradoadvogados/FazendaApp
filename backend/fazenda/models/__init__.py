@@ -1179,6 +1179,36 @@ class MotivoVenda(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class Raca(SQLModel, table=True):
+    """Raça de animal (Girolando, Holandês, Gir...), cadastrável em Configurações — substitui o select fixo do cadastro de animal."""
+
+    __tablename__ = "raca"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class GrauSangue(SQLModel, table=True):
+    """
+    Grau de sangue / composição racial cadastrável (ex.: "1/2 Holandês x Gir",
+    "3/4 Holandês", "PO Holandês"). `fracao_holandes` (0 a 1) é a fração de
+    sangue Holandês na escala de absorção Holandês x Gir usada na pecuária
+    leiteira brasileira — permite calcular automaticamente o grau de sangue
+    da cria no parto (média entre mãe e pai). Graus fora dessa escala (ex.:
+    "PCOD Holandês") ficam com `fracao_holandes=None` — só rótulo, sem cálculo.
+    """
+
+    __tablename__ = "grau_sangue_cadastro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    fracao_holandes: Optional[float] = None
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class ServicoCadastro(SQLModel, table=True):
     """
     Serviço cadastrável para lançamento financeiro (ex.: manutenção de trator,

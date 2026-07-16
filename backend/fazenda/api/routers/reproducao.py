@@ -19,6 +19,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
 router = APIRouter(prefix="/reproducao", tags=["reproducao"])
@@ -261,8 +262,9 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
             continue
         if session.exec(select(Animal).where(Animal.numero == cria.numero)).first():
             continue  # já cadastrada — não sobrescreve
+        raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
         session.add(Animal(
-            numero=cria.numero, sexo=cria.sexo, raca=mae.raca, data_nasc=dados.data_parto,
+            numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
         ))
         crias_criadas.append(cria.numero)

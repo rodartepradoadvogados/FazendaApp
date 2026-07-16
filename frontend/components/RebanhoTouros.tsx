@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Dna, Search, Warehouse, FlaskConical, Database } from "lucide-react";
-import { fetchEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
+import { Dna, Search, Warehouse, FlaskConical, Database, X } from "lucide-react";
+import { fetchEstoqueSemen, fetchTouros, fetchAnimais, type Touro } from "@/lib/api";
+import type { AnimalRow } from "./AnimalModal";
 
 type EstoqueSemenItem = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null;
@@ -11,6 +12,7 @@ type EstoqueSemenItem = {
 
 type Fonte = "fazenda" | "semen";
 type OrigemSemen = "estoque" | "naab";
+type MachoAnimal = AnimalRow & { sexo?: string | null; nome?: string | null };
 
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -26,8 +28,13 @@ const cardBtn = (ativo: boolean): React.CSSProperties => ({
  * Rebanho > Touros — filtro em cascata para consultar os touros disponíveis:
  * 1) fonte (touros da fazenda × sêmen); 2) se fazenda, qual touro (Frederico/
  * Sevaverde); se sêmen, estoque cadastrado × banco de dados NAAB.
+ *
+ * Clique numa linha abre a ficha do animal quando ele existe no cadastro de
+ * Animal (só touros da fazenda, casados por nome com sexo="M"); sêmen em
+ * estoque e o catálogo NAAB não têm ficha de animal — abrem um modal com os
+ * dados cadastrados sobre o touro.
  */
-export default function RebanhoTouros() {
+export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero: string) => void } = {}) {
   const [fonte, setFonte] = useState<Fonte | null>(null);
   const [origemSemen, setOrigemSemen] = useState<OrigemSemen | null>(null);
   const [estoque, setEstoque] = useState<EstoqueSemenItem[] | null>(null);
@@ -35,10 +42,64 @@ export default function RebanhoTouros() {
   const [erroNaab, setErroNaab] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
   const [tourosFazenda, setTourosFazenda] = useState<string[]>([]);
+  const [machos, setMachos] = useState<MachoAnimal[]>([]);
+  const [detalhe, setDetalhe] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
 
   useEffect(() => {
     fetchEstoqueSemen().then(setEstoque).catch(() => setEstoque([]));
+    fetchAnimais({ incluirMachos: true }).then((d) => setMachos(d.filter((a: MachoAnimal) => a.sexo === "M"))).catch(() => {});
   }, []);
+
+  const abrirTouroFazenda = (touroNome: string, f: EstoqueSemenItem) => {
+    const animal = machos.find((a) => (a.nome || "").trim().toLowerCase() === touroNome.trim().toLowerCase());
+    if (animal && onAbrirFicha) { onAbrirFicha(animal.numero); return; }
+    setDetalhe({
+      titulo: touroNome,
+      campos: [
+        ["Local de armazenamento", f.local_armazenamento || "—"],
+        ["Observação", f.observacao || "—"],
+        ["Ativo", f.ativo ? "Sim" : "Não"],
+      ],
+    });
+  };
+
+  const abrirDetalheEstoque = (e: EstoqueSemenItem) => {
+    setDetalhe({
+      titulo: e.touro_nome,
+      campos: [
+        ["Código", e.codigo || "—"],
+        ["NAAB", e.naab || "—"],
+        ["Central", e.central || "—"],
+        ["Tipo", e.tipo],
+        ["Doses", String(e.doses)],
+        ["Valor/dose", e.valor_unitario ? `R$ ${fmt(e.valor_unitario, 2)}` : "—"],
+        ["Local de armazenamento", e.local_armazenamento || "—"],
+        ["Observação", e.observacao || "—"],
+        ["Ativo", e.ativo ? "Sim" : "Não"],
+      ],
+    });
+  };
+
+  const abrirDetalheNaab = (t: Touro) => {
+    setDetalhe({
+      titulo: t.nome || t.naab,
+      campos: [
+        ["NAAB", t.naab],
+        ["Central", t.central || "—"],
+        ["Raça", t.raca || "—"],
+        ["TPI", fmt(t.tpi)],
+        ["Leite (kg)", fmt(t.leite_kg)],
+        ["Gordura (kg)", fmt(t.gordura_kg)],
+        ["Proteína (kg)", fmt(t.proteina_kg)],
+        ["NM$", fmt(t.nm_dolar)],
+        ["Facilidade de parto", fmt(t.facilidade_parto)],
+        ["Fertilidade das filhas (DPR)", fmt(t.fertilidade_filhas)],
+        ["CCS (score)", fmt(t.ccs_score)],
+        ["Fonte", t.fonte || "—"],
+        ["Rodada da prova", t.rodada_prova || "—"],
+      ],
+    });
+  };
 
   useEffect(() => {
     if (origemSemen === "naab" && naab === null) {
@@ -116,7 +177,7 @@ export default function RebanhoTouros() {
                 <thead><tr><th>Touro</th><th>Local</th><th>Observação</th><th>Ativo</th></tr></thead>
                 <tbody>
                   {fazendaFiltrada.map((f) => (
-                    <tr key={f.id}>
+                    <tr key={f.id} style={{ cursor: "pointer" }} onClick={() => abrirTouroFazenda(f.touro_nome, f)} title="Ver ficha/detalhes do touro">
                       <td style={{ fontWeight: 700 }}>{f.touro_nome}</td>
                       <td style={{ fontSize: "0.8rem" }}>{f.local_armazenamento || "—"}</td>
                       <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{f.observacao || "—"}</td>
@@ -156,7 +217,7 @@ export default function RebanhoTouros() {
                 <thead><tr><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th style={{ textAlign: "right" }}>Doses</th><th style={{ textAlign: "right" }}>Valor/dose</th></tr></thead>
                 <tbody>
                   {estoqueFiltrado.map((e) => (
-                    <tr key={e.id}>
+                    <tr key={e.id} style={{ cursor: "pointer" }} onClick={() => abrirDetalheEstoque(e)} title="Ver detalhes do touro">
                       <td style={{ fontWeight: 700 }}>{e.touro_nome}</td>
                       <td style={{ fontSize: "0.8rem" }}>{e.codigo || "—"}</td>
                       <td style={{ fontSize: "0.8rem" }}>{e.naab || "—"}</td>
@@ -181,7 +242,7 @@ export default function RebanhoTouros() {
                   <thead><tr><th>NAAB</th><th>Touro</th><th>Central</th><th>Raça</th><th style={{ textAlign: "right" }}>TPI</th><th style={{ textAlign: "right" }}>Leite (kg)</th></tr></thead>
                   <tbody>
                     {naabFiltrado.slice(0, 200).map((t) => (
-                      <tr key={t.id ?? t.naab}>
+                      <tr key={t.id ?? t.naab} style={{ cursor: "pointer" }} onClick={() => abrirDetalheNaab(t)} title="Ver detalhes do touro">
                         <td style={{ fontWeight: 700 }}>{t.naab}</td>
                         <td style={{ fontSize: "0.8rem" }}>{t.nome || "—"}</td>
                         <td style={{ fontSize: "0.8rem" }}>{t.central || "—"}</td>
@@ -201,6 +262,36 @@ export default function RebanhoTouros() {
           )}
         </div>
       )}
+
+      {detalhe && <DetalheTouroModal titulo={detalhe.titulo} campos={detalhe.campos} onFechar={() => setDetalhe(null)} />}
+    </div>
+  );
+}
+
+/** Modal simples de detalhes do touro — usado quando ele não tem ficha de Animal
+ * própria (sêmen em estoque, catálogo NAAB, ou touro da fazenda sem cadastro). */
+function DetalheTouroModal({ titulo, campos, onFechar }: { titulo: string; campos: [string, string][]; onFechar: () => void }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onFechar}>
+      <div className="card" style={{ maxWidth: 420, width: "90%", maxHeight: "80vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
+        <div className="card-header mb-3 flex items-center justify-between">
+          <span className="flex items-center gap-2"><Dna size={16} /> {titulo}</span>
+          <button className="btn-ghost" onClick={onFechar}><X size={16} /></button>
+        </div>
+        <table className="fazenda-table" style={{ margin: 0 }}>
+          <tbody>
+            {campos.map(([label, valor]) => (
+              <tr key={label}>
+                <td style={{ fontSize: "0.78rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{label}</td>
+                <td style={{ fontSize: "0.85rem", fontWeight: 600 }}>{valor}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
+          Este touro não tem ficha de animal cadastrada no rebanho — os dados acima são os únicos registrados sobre ele.
+        </p>
+      </div>
     </div>
   );
 }

@@ -24,8 +24,8 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
-    Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
-    ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario,
+    GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
+    ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario,
     ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
@@ -997,6 +997,40 @@ def seed_motivos_venda(session: Session) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Raça e Grau de sangue — cadastráveis em Configurações, substituindo o select
+# fixo (Girolando/Holandês/Gir/Outra) e o datalist de grau de sangue que
+# existiam hardcoded em CadastroAnimalForm. `fracao_holandes` de cada grau de
+# sangue é a posição na escala de absorção Holandês x Gir (0 = PO Gir, 1 = PO
+# Holandês) — usada para calcular automaticamente o grau de sangue da cria no
+# parto (ver calcular_grau_sangue_cria em fazenda.rules.genetica).
+# ---------------------------------------------------------------------------
+SEED_RACAS = ["Girolando", "Holandês", "Gir", "Jersey", "Outra"]
+
+SEED_GRAUS_SANGUE = [
+    ("PO Gir", 0.0),
+    ("1/2 Holandês x Gir", 0.5),
+    ("3/4 Holandês", 0.75),
+    ("7/8 Holandês", 0.875),
+    ("15/16 Holandês", 0.9375),
+    ("31/32 Holandês", 0.96875),
+    ("PCOD Holandês", None),
+    ("PO Holandês", 1.0),
+]
+
+
+def seed_racas_grau_sangue(session: Session) -> None:
+    """Cria as raças e graus de sangue padrão se as tabelas ainda estiverem vazias (idempotente)."""
+    if not session.exec(select(Raca)).first():
+        for nome in SEED_RACAS:
+            session.add(Raca(nome=nome))
+        session.commit()
+    if not session.exec(select(GrauSangue)).first():
+        for nome, fracao in SEED_GRAUS_SANGUE:
+            session.add(GrauSangue(nome=nome, fracao_holandes=fracao))
+        session.commit()
+
+
+# ---------------------------------------------------------------------------
 # Cadastro de Serviços (lançamento financeiro > produto OU serviço) — ex.:
 # manutenção de trator, frete, quilometragem. Lista aberta/extensível.
 # ---------------------------------------------------------------------------
@@ -1284,6 +1318,53 @@ _listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoC
 router.get("/servicos")(_listar_servicos)
 router.post("/servicos")(_criar_servico)
 router.put("/servicos/{item_id}")(_atualizar_servico)
+
+_listar_racas, _criar_raca, _atualizar_raca = _crud_nome_ativo(Raca)
+router.get("/racas")(_listar_racas)
+router.post("/racas")(_criar_raca)
+router.put("/racas/{item_id}")(_atualizar_raca)
+
+
+class GrauSangueIn(BaseModel):
+    nome: str
+    fracao_holandes: Optional[float] = None
+    ativo: bool = True
+
+
+@router.get("/graus-sangue")
+def listar_graus_sangue(session: Session = Depends(get_session)) -> list[dict]:
+    return [g.model_dump() for g in session.exec(select(GrauSangue).order_by(GrauSangue.id)).all()]
+
+
+@router.post("/graus-sangue")
+def criar_grau_sangue(dados: GrauSangueIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(GrauSangue).where(GrauSangue.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um grau de sangue com o nome '{nome}'")
+    obj = GrauSangue(nome=nome, fracao_holandes=dados.fracao_holandes, ativo=dados.ativo)
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
+
+
+@router.put("/graus-sangue/{item_id}")
+def atualizar_grau_sangue(item_id: int, dados: GrauSangueIn, session: Session = Depends(get_session)) -> dict:
+    obj = session.get(GrauSangue, item_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Grau de sangue não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    obj.nome = nome
+    obj.fracao_holandes = dados.fracao_holandes
+    obj.ativo = dados.ativo
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
 
 
 # ---------------------------------------------------------------------------

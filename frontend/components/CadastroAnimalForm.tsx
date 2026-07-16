@@ -1,17 +1,18 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Beef, Check, Search } from "lucide-react";
-import { fetchAnimais, criarAnimalFicha, atualizarAnimalFicha } from "@/lib/api";
+import { fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue } from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
 
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
-// Graus de sangue padrão (Holandês x Gir / Girolando). O campo é livre — estas
-// são apenas sugestões pré-configuradas; o usuário pode digitar outro.
-const GRAUS_SANGUE = [
+// Fallback caso o cadastro (Configurações > Cadastro > Raças e grau de
+// sangue) ainda não tenha sido carregado/semeado.
+const GRAUS_SANGUE_FALLBACK = [
   "1/2 Holandês x Gir", "3/4 Holandês", "7/8 Holandês", "15/16 Holandês",
   "31/32 Holandês", "PCOD Holandês", "PO Holandês",
 ];
+const RACAS_FALLBACK = ["Girolando", "Holandês", "Gir", "Outra"];
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -58,12 +59,22 @@ export default function CadastroAnimalForm() {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const [racas, setRacas] = useState<string[]>(RACAS_FALLBACK);
+  const [grausSangue, setGrausSangue] = useState<string[]>(GRAUS_SANGUE_FALLBACK);
 
   useEffect(() => {
     fetchAnimais({}).then((d) => {
       setAnimais(d);
       const grupos = Array.from(new Set(d.map((a: AnimalRow) => a.grupo_primario).filter(Boolean))) as string[];
       setLotes(grupos.sort());
+    }).catch(() => {});
+    fetchRacas().then((d) => {
+      const ativas = d.filter((r: any) => r.ativo).map((r: any) => r.nome as string);
+      if (ativas.length) setRacas(ativas);
+    }).catch(() => {});
+    fetchGrausSangue().then((d) => {
+      const ativos = d.filter((g: any) => g.ativo).map((g: any) => g.nome as string);
+      if (ativos.length) setGrausSangue(ativos);
     }).catch(() => {});
   }, []);
 
@@ -153,15 +164,16 @@ export default function CadastroAnimalForm() {
               </select>
             </Campo>
             <Campo label="Raça">
-              <select style={inputStyle} value={form.raca} onChange={(e) => setForm({ ...form, raca: e.target.value })}>
-                <option>Girolando</option><option>Holandês</option><option>Gir</option><option>Outra</option>
-              </select>
+              <input style={inputStyle} list="racas-cadastro" value={form.raca}
+                onChange={(e) => setForm({ ...form, raca: e.target.value })}
+                placeholder="Selecione ou digite…" />
+              <datalist id="racas-cadastro">{racas.map((r) => <option key={r} value={r} />)}</datalist>
             </Campo>
             <Campo label="Grau de sangue">
               <input style={inputStyle} list="graus-sangue" value={form.grau_sangue}
                 onChange={(e) => setForm({ ...form, grau_sangue: e.target.value })}
                 placeholder="Selecione ou digite…" />
-              <datalist id="graus-sangue">{GRAUS_SANGUE.map((g) => <option key={g} value={g} />)}</datalist>
+              <datalist id="graus-sangue">{grausSangue.map((g) => <option key={g} value={g} />)}</datalist>
             </Campo>
             <Campo label="Categoria">
               <select style={inputStyle} value={form.categoria_abrev} onChange={(e) => setForm({ ...form, categoria_abrev: e.target.value })}>
