@@ -744,7 +744,7 @@ export async function fetchBaixas() {
   return res.json();
 }
 export async function criarBaixaAnimal(dados: {
-  animais: string[]; tipo_baixa: string; motivo: string; motivo_doenca?: string;
+  animais: string[]; tipo_baixa: string; motivo: string; motivo_doenca?: string; motivo_outro?: string;
   valor?: number; cliente?: string; tipo_valor?: string; venda_recria?: boolean; data_baixa: string; observacao?: string; responsavel?: string;
   pagar_comissao?: boolean; corretor_nome?: string; valor_comissao?: number; forma_comissao?: string;
 }) {
@@ -1615,10 +1615,10 @@ export async function importarQualidadeLeitePlanilha(file: File): Promise<{ cria
   return res.json();
 }
 
-// ── Entrega mensal do leite ──
+// ── Venda mensal do leite ──
 export async function fetchEntregaLeiteMensal() {
   const res = await authFetch(`${API}/producao/entrega-leite`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Entrega mensal do leite error: ${res.status}`);
+  if (!res.ok) throw new Error(`Venda mensal do leite error: ${res.status}`);
   return res.json();
 }
 export async function criarEntregaLeiteMensal(dados: { competencia: string; quantidade_litros: number; observacao?: string | null }) {

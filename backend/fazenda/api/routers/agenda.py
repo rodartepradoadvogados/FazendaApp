@@ -696,6 +696,13 @@ class RealizadoIn(BaseModel):
     # que gera a aplicação em Sanidade e a baixa; sem ele, cai nos hormônios
     # cadastrados no lançamento (comportamento anterior).
     medicamentos: list[MedicamentoIatfIn] | None = None
+    # Overrides opcionais do produto/dose/unidade/via aplicados de fato — só
+    # usados quando evento_id é de uma aplicação agendada ("aplic_agendada_");
+    # sem eles, mantém os valores gravados na hora do agendamento.
+    produto: str | None = None
+    dose: float | None = None
+    unidade: str | None = None
+    via: str | None = None
 
 
 def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
@@ -744,33 +751,47 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     session.commit()
 
 
-def _baixar_aplicacao_agendada(session: Session, evento_id: str) -> None:
+def _baixar_aplicacao_agendada(
+    session: Session, evento_id: str,
+    produto: str | None = None, dose: float | None = None, unidade: str | None = None, via: str | None = None,
+) -> None:
     """Confirma uma aplicação programada: cria o registro de Sanidade e dá a
-    baixa de estoque (quando a unidade bate com a do estoque)."""
+    baixa de estoque (quando a unidade bate com a do estoque). Os overrides
+    (produto/dose/unidade/via) vêm do painel de "dar baixa" do app/site — o
+    usuário pode ajustar o que foi de fato aplicado antes de confirmar; sem
+    eles, usa os valores gravados na hora do agendamento."""
     aid = int(evento_id.removeprefix("aplic_agendada_"))
     ag = session.get(AplicacaoAgendada, aid)
     if not ag or ag.aplicado:
         return
     hoje = date.today()
+    produto_final = produto or ag.produto
+    dose_final = dose if dose is not None else ag.dose
+    unidade_final = unidade or ag.unidade
+    via_final = via or ag.via
     ag.aplicado = True
     ag.data_aplicacao = hoje
+    ag.produto = produto_final
+    ag.dose = dose_final
+    ag.unidade = unidade_final
+    ag.via = via_final
     session.add(ag)
 
     session.add(Sanidade(
-        numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
-        dose=ag.dose, unidade=ag.unidade, via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+        numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=produto_final,
+        dose=dose_final, unidade=unidade_final, via=via_final, responsavel=ag.responsavel, obs=ag.observacao,
         natureza=ag.natureza or "curativo",
     ))
 
-    estoque_item = session.exec(select(Estoque).where(Estoque.nome == ag.produto)).first()
-    if ag.dose and estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(ag.unidade, estoque_item.unidade):
-        estoque_item.quantidade = (estoque_item.quantidade or 0) - ag.dose
+    estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto_final)).first()
+    if dose_final and estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(unidade_final, estoque_item.unidade):
+        estoque_item.quantidade = (estoque_item.quantidade or 0) - dose_final
         if estoque_item.estoque_minimo is not None:
             estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
         estoque_item.atualizado_em = datetime.utcnow()
         session.add(estoque_item)
         session.add(MovimentoEstoque(
-            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=ag.dose,
+            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=dose_final,
             unidade=estoque_item.unidade, data_movimento=hoje,
             observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
         ))
@@ -1014,7 +1035,7 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
         if dados.evento_id.startswith("protocolo_sanitario_"):
             _baixar_protocolo_sanitario(session, dados.evento_id)
         elif dados.evento_id.startswith("aplic_agendada_"):
-            _baixar_aplicacao_agendada(session, dados.evento_id)
+            _baixar_aplicacao_agendada(session, dados.evento_id, dados.produto, dados.dose, dados.unidade, dados.via)
         elif dados.evento_id.startswith("vacina_pre_parto_"):
             _baixar_vacina_pre_parto(session, dados.evento_id)
     return {"marcado": True}

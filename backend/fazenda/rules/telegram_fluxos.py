@@ -73,7 +73,7 @@ METODOS_DIAG = [("Palpação", "Palpação (toque)"), ("Ultrassom", "Ultrassom")
 NATUREZA_SERVICO = [("cio_natural", "Cio natural (IA)"), ("iatf", "IATF (protocolo)"), ("monta_natural", "Monta natural")]
 RESULTADOS_RECONF = [("positivo", "Confirmada (positivo)"), ("negativo", "Perdeu a gestação (negativo)")]
 TIPOS_BAIXA = [("morte", "Morte"), ("descarte_voluntario", "Descarte voluntário"), ("descarte_involuntario", "Descarte involuntário")]
-MOTIVOS_BAIXA = [("venda", "Venda"), ("abate", "Abate"), ("acidente", "Acidente"), ("doenca", "Doença")]
+MOTIVOS_BAIXA = [("venda", "Venda"), ("abate", "Abate"), ("acidente", "Acidente"), ("doenca", "Doença"), ("macho", "Macho"), ("outros", "Outros")]
 SEXO_CRIA = [("F", "Fêmea"), ("M", "Macho")]
 # Unidades aceitas na aplicação/baixa de estoque (mesma lista de rules/unidades).
 UNIDADES = [("ml", "ml"), ("L", "L"), ("unidade", "unidade"), ("dose", "dose"),

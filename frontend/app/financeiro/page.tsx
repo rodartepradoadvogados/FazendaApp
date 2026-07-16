@@ -2612,7 +2612,7 @@ function CustoLitroLeiteView() {
             <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
               <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
                 Nenhuma entrega mensal de leite cadastrada — sem litros no período, o custo por litro fica indefinido.
-                Lance em <strong>Lançamentos → Produção → Entrega mensal do leite</strong>.
+                Lance em <strong>Lançamentos → Produção → Venda mensal do leite</strong>.
               </p>
             </div>
           )}
@@ -2620,7 +2620,7 @@ function CustoLitroLeiteView() {
             <div className="card-header mb-3">Custo por litro de leite</div>
             <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
               Custo de alimentação do período (mesmas contas marcadas para o RMCA) dividido pelos litros de leite entregues
-              no período (Entrega mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.
+              no período (Venda mensal do leite), projetados proporcionalmente por dia quando o período não cobre o mês inteiro.
             </p>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
               <KPI v={formatBRL(dados.custo_total)} l="Custo de alimentação" c="var(--red)" />

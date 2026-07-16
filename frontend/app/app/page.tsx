@@ -172,7 +172,7 @@ export default function AgendaMovel() {
     return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.categoria_preventiva === "exame";
   }
   function elegivelBaixaInline(e: Evento): boolean {
-    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario") && !!e.numero_animal;
+    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario" || e.tipo === "aplicacao_agendada") && !!e.numero_animal;
   }
   type CampoBaixa = { produto: string; dose: string; unidade: string; via: string; principioAtivoId: string; veterinario: string; freqValor: string; freqUnidade: string };
   const camposIniciaisBaixa = (e: Evento): CampoBaixa => ({
@@ -192,27 +192,41 @@ export default function AgendaMovel() {
 
   async function confirmarBaixaInline(e: Evento) {
     const c = camposBaixa[e.id] || camposIniciaisBaixa(e);
-    const exame = ehExameSanitario(e);
-    const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
     setAviso(null);
     setResolvendoBaixa((p) => new Set(p).add(e.id));
     try {
-      await enviarOuEnfileirar("/sanidade/calendario/cadastrar-preventivo", {
-        evento_sanitario_id: e.evento_sanitario_id,
-        categoria_alvo: e.categoria_alvo || undefined,
-        data_evento: e.data,
-        frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
-        frequencia_unidade: c.freqUnidade,
-        animais: e.numero_animal ? [e.numero_animal] : [],
-        aplicar: !exame,
-        veterinario: exame ? (c.veterinario || undefined) : undefined,
-        produto: exame ? undefined : (c.produto || undefined),
-        dose: exame || !c.dose ? undefined : Number(c.dose),
-        unidade: exame ? undefined : (c.unidade || undefined),
-        via: exame ? undefined : (c.via || undefined),
-        principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
-      }, `Dar baixa: ${e.descricao}`, "POST");
-      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      let r: any;
+      if (e.tipo === "aplicacao_agendada") {
+        // Aplicação programada (BST, hormônio avulso etc.) — sem cadastro de
+        // recorrência (isso é exclusivo do calendário sanitário); confirma
+        // direto com os valores ajustados no painel.
+        r = await enviarOuEnfileirar("/agenda/realizados", {
+          evento_id: e.id,
+          produto: c.produto || undefined,
+          dose: c.dose ? Number(c.dose) : undefined,
+          unidade: c.unidade || undefined,
+          via: c.via || undefined,
+        }, `Concluir: ${resumo(e)}`, "POST");
+      } else {
+        const exame = ehExameSanitario(e);
+        const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
+        await enviarOuEnfileirar("/sanidade/calendario/cadastrar-preventivo", {
+          evento_sanitario_id: e.evento_sanitario_id,
+          categoria_alvo: e.categoria_alvo || undefined,
+          data_evento: e.data,
+          frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
+          frequencia_unidade: c.freqUnidade,
+          animais: e.numero_animal ? [e.numero_animal] : [],
+          aplicar: !exame,
+          veterinario: exame ? (c.veterinario || undefined) : undefined,
+          produto: exame ? undefined : (c.produto || undefined),
+          dose: exame || !c.dose ? undefined : Number(c.dose),
+          unidade: exame ? undefined : (c.unidade || undefined),
+          via: exame ? undefined : (c.via || undefined),
+          principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
+        }, `Dar baixa: ${e.descricao}`, "POST");
+        r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      }
       setFeitos((p) => new Set(p).add(e.id));
       setBaixaAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
       setAviso(r.enviado ? { tipo: "ok", msg: "Baixa registrada." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
@@ -649,20 +663,22 @@ export default function AgendaMovel() {
                   </div>
                 </div>
               )}
-              <div style={{ marginBottom: "0.7rem" }}>
-                <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Repetir a cada</label>
-                <div style={{ display: "flex", gap: "0.4rem" }}>
-                  <input type="number" min={0} inputMode="numeric" className="mob-input" style={{ width: 70 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (só esta aplicação, sem agendamento futuro)" />
-                  <select className="mob-input" value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
-                    <option value="dias">dia(s)</option>
-                    <option value="meses">mês(es)</option>
-                    <option value="anos">ano(s)</option>
-                  </select>
+              {e.tipo !== "aplicacao_agendada" && (
+                <div style={{ marginBottom: "0.7rem" }}>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Repetir a cada</label>
+                  <div style={{ display: "flex", gap: "0.4rem" }}>
+                    <input type="number" min={0} inputMode="numeric" className="mob-input" style={{ width: 70 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (só esta aplicação, sem agendamento futuro)" />
+                    <select className="mob-input" value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
+                      <option value="dias">dia(s)</option>
+                      <option value="meses">mês(es)</option>
+                      <option value="anos">ano(s)</option>
+                    </select>
+                  </div>
+                  {Number(campos.freqValor) === 0 && (
+                    <p style={{ fontSize: "0.7rem", color: "var(--mob-ambar)", marginTop: "0.25rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
+                  )}
                 </div>
-                {Number(campos.freqValor) === 0 && (
-                  <p style={{ fontSize: "0.7rem", color: "var(--mob-ambar)", marginTop: "0.25rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
-                )}
-              </div>
+              )}
               <button type="button" className="mob-btn" disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaInline(e)}>
                 <Check size={14} style={{ marginRight: 6 }} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
               </button>

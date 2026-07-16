@@ -19,7 +19,9 @@ const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0,
 // "Descartados" = baixas definitivas cujo tipo é descarte (não conta morte nem venda simples).
 const TIPOS_DESCARTE = ["descarte_voluntario", "descarte_involuntario"];
 const LABEL_TIPO_BAIXA: Record<string, string> = { descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário" };
-const LABEL_MOTIVO_BAIXA: Record<string, string> = { venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença" };
+const LABEL_MOTIVO_BAIXA: Record<string, string> = {
+  venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença", macho: "Macho", outros: "Outros",
+};
 
 export default function Home() {
   const [d, setD] = useState<any>(null);

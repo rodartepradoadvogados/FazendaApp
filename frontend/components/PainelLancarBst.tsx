@@ -1,8 +1,9 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
-import { aplicarBstLote, marcarInaptaBst } from "@/lib/api";
+import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { MultiFiltro } from "@/components/ui";
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -75,14 +76,38 @@ export function TabelasStatusBst({ agenda, selecionados, onToggle }: { agenda: a
  */
 export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtualizado: () => void }) {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const [lotesFiltro, setLotesFiltro] = useState<string[]>([]);
   const [dataAplicacao, setDataAplicacao] = useState(() => new Date().toISOString().slice(0, 10));
   const [produto, setProduto] = useState("Lactotropin");
   const [dose, setDose] = useState("");
-  const [unidade, setUnidade] = useState("mL");
+  const [unidade, setUnidade] = useState("unidade");
   const [responsavel, setResponsavel] = useState("");
   const [confirmacao, setConfirmacao] = useState<"agendar" | "aplicar" | null>(null);
   const [ocupado, setOcupado] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [estoqueItens, setEstoqueItens] = useState<any[]>([]);
+  const [pessoas, setPessoas] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchEstoque().then(setEstoqueItens).catch(() => setEstoqueItens([]));
+    fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
+  }, []);
+
+  // Boostin só aparece como opção de produto se já tiver saldo em estoque —
+  // caso contrário o lançamento continua só com Lactotropin, mas o item já
+  // fica cadastrado (seed no backend) para quando o saldo for lançado.
+  const boostinDisponivel = useMemo(
+    () => estoqueItens.some((i) => (i.nome || "").trim().toLowerCase() === "boostin" && (i.quantidade || 0) > 0),
+    [estoqueItens]
+  );
+  useEffect(() => {
+    if (produto === "Boostin" && !boostinDisponivel) setProduto("Lactotropin");
+  }, [boostinDisponivel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const pessoasAtivas = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
 
   const toggle = (numero: string) => setSelecionados((prev) => {
     const novo = new Set(prev);
@@ -127,11 +152,35 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const futura = dataAplicacao > new Date().toISOString().slice(0, 10);
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
+  const lotesDisponiveis = useMemo(() => {
+    const todos: any[] = [
+      ...(agenda?.bst_elegiveis ?? []),
+      ...(agenda?.bst_nunca_aplicados ?? []),
+      ...(agenda?.bst_excluidos ?? []),
+    ];
+    return Array.from(new Set(todos.map((b) => b.grupo).filter(Boolean))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  }, [agenda]);
+
+  const agendaFiltrada = useMemo(() => {
+    if (!lotesFiltro.length) return agenda;
+    const filtro = (lista: any[]) => (lista ?? []).filter((b) => lotesFiltro.includes(b.grupo));
+    return {
+      ...agenda,
+      bst_elegiveis: filtro(agenda?.bst_elegiveis),
+      bst_nunca_aplicados: filtro(agenda?.bst_nunca_aplicados),
+      bst_excluidos: filtro(agenda?.bst_excluidos),
+    };
+  }, [agenda, lotesFiltro]);
+
   return (
     <div className="space-y-4">
       {erro && <div className="alert-critico"><AlertTriangle size={16} /><span>{erro}</span></div>}
 
-      <TabelasStatusBst agenda={agenda} selecionados={selecionados} onToggle={toggle} />
+      <div style={{ maxWidth: "280px" }}>
+        <MultiFiltro label="Filtrar por lote" opcoes={lotesDisponiveis} selecionados={lotesFiltro} onChange={setLotesFiltro} />
+      </div>
+
+      <TabelasStatusBst agenda={agendaFiltrada} selecionados={selecionados} onToggle={toggle} />
 
       <div className="card">
         <div className="card-header mb-2">Lançar para os selecionados ({selecionados.size})</div>
@@ -144,13 +193,19 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data da aplicação</label>
             <input type="date" style={inputStyle} value={dataAplicacao} onChange={(e) => setDataAplicacao(e.target.value)} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
-            <input style={{ ...inputStyle, width: "9rem" }} value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="Lactotropin" /></div>
+            <select style={{ ...inputStyle, width: "9rem" }} value={produto} onChange={(e) => setProduto(e.target.value)}>
+              <option value="Lactotropin">Lactotropin</option>
+              {boostinDisponivel && <option value="Boostin">Boostin</option>}
+            </select></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Dose</label>
             <input type="number" step="0.01" style={{ ...inputStyle, width: "5.5rem" }} value={dose} onChange={(e) => setDose(e.target.value)} /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Unidade</label>
-            <input style={{ ...inputStyle, width: "5rem" }} value={unidade} onChange={(e) => setUnidade(e.target.value)} placeholder="mL" /></div>
+            <input style={{ ...inputStyle, width: "5rem" }} value={unidade} onChange={(e) => setUnidade(e.target.value)} placeholder="unidade" /></div>
           <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Responsável</label>
-            <input style={{ ...inputStyle, width: "9rem" }} value={responsavel} onChange={(e) => setResponsavel(e.target.value)} placeholder="Opcional" /></div>
+            <select style={{ ...inputStyle, width: "9rem" }} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+              <option value="">Opcional</option>
+              {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+            </select></div>
           <button className="btn-primary" disabled={!selecionados.size || ocupado} onClick={() => setConfirmacao(futura ? "agendar" : "aplicar")}>
             <Check size={14} /> Aplicar BST
           </button>

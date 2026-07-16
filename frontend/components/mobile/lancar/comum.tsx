@@ -196,25 +196,28 @@ export function SeletorAnimal({ animais, valor, onChange, placeholder }:
     );
   }
 
-  const filtrados = filtrarAnimais(animais, q).slice(0, 8);
+  // Abre direto para seleção — a lista completa (ordenada por número) aparece
+  // assim que o campo é tocado, sem precisar digitar nada; a busca só filtra
+  // essa lista. Nunca é possível "enviar" texto livre: só o toque num item
+  // chama onChange.
+  const ordenados = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
+  const filtrados = filtrarAnimais(ordenados, q).slice(0, 30);
   return (
     <div>
       <div style={{ position: "relative" }}>
         <Search size={17} style={{ position: "absolute", left: 12, top: "50%", transform: "translateY(-50%)", color: "var(--mob-muted)", pointerEvents: "none" }} />
         <input className="mob-input" autoFocus value={q} onChange={(e) => setQ(e.target.value)}
-          placeholder={placeholder || "Buscar brinco ou nome…"} style={{ paddingLeft: "2.5rem" }} />
+          placeholder={placeholder || "Buscar brinco ou nome (ou toque numa vaca abaixo)…"} style={{ paddingLeft: "2.5rem" }} />
       </div>
-      {q.trim() !== "" && (
-        <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.4rem" }}>
-          {filtrados.map((a) => (
-            <button key={a.numero} type="button" className="mob-btn-2" style={{ justifyContent: "flex-start", textAlign: "left", padding: "0.7rem 0.9rem" }}
-              onClick={() => { onChange(a.numero); setEditando(false); setQ(""); }}>
-              <span><strong>{a.numero}</strong>{rotuloAnimal(a) ? ` · ${rotuloAnimal(a)}` : ""}</span>
-            </button>
-          ))}
-          {filtrados.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", padding: "0.2rem" }}>Nenhum animal encontrado.</p>}
-        </div>
-      )}
+      <div style={{ marginTop: "0.4rem", display: "grid", gap: "0.4rem", maxHeight: "50vh", overflowY: "auto" }}>
+        {filtrados.map((a) => (
+          <button key={a.numero} type="button" className="mob-btn-2" style={{ justifyContent: "flex-start", textAlign: "left", padding: "0.7rem 0.9rem" }}
+            onClick={() => { onChange(a.numero); setEditando(false); setQ(""); }}>
+            <span><strong>{a.numero}</strong>{rotuloAnimal(a) ? ` · ${rotuloAnimal(a)}` : ""}</span>
+          </button>
+        ))}
+        {filtrados.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", padding: "0.2rem" }}>Nenhum animal encontrado.</p>}
+      </div>
     </div>
   );
 }
