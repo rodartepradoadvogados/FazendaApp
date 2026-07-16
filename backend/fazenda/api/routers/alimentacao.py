@@ -19,8 +19,8 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AlimentacaoEstado, Animal, Dieta, DietaItemProgramado, DietaLancamento, DietaRegistroReal, Estoque,
-    IngredienteMS, Lote, MovimentoEstoque, Usuario,
+    AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
+    DietaRegistroReal, Estoque, IngredienteMS, Lote, MovimentoEstoque, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
 from fazenda.rules.auditoria import mapa_usuarios
@@ -50,6 +50,24 @@ def _dietas_e_animais(session: Session) -> tuple[list[dict], list[dict]]:
 
 def _lotes_cadastro(session: Session) -> list[dict]:
     return [l.model_dump() for l in session.exec(select(Lote)).all()]
+
+
+def _estoque_por_alimento(session: Session) -> tuple[dict[str, list[dict]], set[str]]:
+    """Vínculo Alimento → Estoque (ver `Estoque.alimento_id`), chaveado pelo
+    nome do Alimento normalizado (trim + minúsculas) — usado como segunda
+    tentativa quando o nome do ingrediente do plano de dieta não casa
+    diretamente com nenhum `Estoque.nome` (ver `calcular_necessidade_mensal`
+    e `_dar_baixa_automatica`)."""
+    alimentos = {a.id: a for a in session.exec(select(Alimento)).all()}
+    por_alimento: dict[str, list[dict]] = {}
+    for e in session.exec(select(Estoque).where(Estoque.alimento_id.is_not(None))).all():  # type: ignore[union-attr]
+        alimento = alimentos.get(e.alimento_id)
+        if not alimento:
+            continue
+        chave = alimento.nome.strip().lower()
+        por_alimento.setdefault(chave, []).append(e.model_dump())
+    cadastrados = {a.nome.strip().lower() for a in alimentos.values()}
+    return por_alimento, cadastrados
 
 
 def _dar_baixa_automatica(session: Session) -> dict:
@@ -90,10 +108,17 @@ def _dar_baixa_automatica(session: Session) -> dict:
 
     dietas, animais = _dietas_e_animais(session)
     consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
+    estoque_por_alimento, _ = _estoque_por_alimento(session)
 
     itens_baixados = []
     for item in consumo_total:
         estoque_item = session.exec(select(Estoque).where(Estoque.nome == item["ingrediente"])).first()
+        if not estoque_item:
+            # Sem item de Estoque com o mesmo nome — tenta pelo vínculo via
+            # cadastro de Alimento (mesma resolução usada na necessidade mensal).
+            candidatos = estoque_por_alimento.get((item["ingrediente"] or "").strip().lower())
+            if candidatos:
+                estoque_item = session.get(Estoque, candidatos[0]["id"])
         if not estoque_item or not item["consumo_dia"] or estoque_item.estocavel is False:
             continue
         # Gatilho de comunicação: só deduz insumo cujo estoque inicial/primeira
@@ -132,7 +157,8 @@ def necessidade_mensal(session: Session = Depends(get_session)) -> dict:
     dietas, animais = _dietas_e_animais(session)
     consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
     estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(select(Estoque)).all()}
-    return {"itens": calcular_necessidade_mensal(consumo_total, estoque_por_nome)}
+    estoque_por_alimento, alimentos_cadastrados = _estoque_por_alimento(session)
+    return {"itens": calcular_necessidade_mensal(consumo_total, estoque_por_nome, estoque_por_alimento, alimentos_cadastrados)}
 
 
 @router.get("/estado-baixa")
@@ -140,6 +166,197 @@ def estado_baixa(session: Session = Depends(get_session)) -> dict:
     """Última data em que a baixa automática de estoque foi aplicada."""
     estado = session.get(AlimentacaoEstado, 1)
     return {"ultima_data_deducao": estado.ultima_data_deducao.isoformat() if estado and estado.ultima_data_deducao else None}
+
+
+# ---------------------------------------------------------------------------
+# Categorias de alimento (Configurações > Cadastro > Alimentação >
+# Categorias) e cadastro de Alimento (...> Alimentos) — a camada que
+# normaliza o vínculo com o Estoque em vez de depender do nome bater
+# (ver `calcular_necessidade_mensal`/`_dar_baixa_automatica` acima).
+# ---------------------------------------------------------------------------
+CATEGORIAS_ALIMENTO_PADRAO = ["Volumoso", "Concentrado", "Mineral"]
+
+
+def _seed_categorias_alimento(session: Session) -> None:
+    existentes = {c.nome for c in session.exec(select(CategoriaAlimento)).all()}
+    novas = [CategoriaAlimento(nome=nome) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
+    if novas:
+        session.add_all(novas)
+        session.commit()
+
+
+# Alimentos padrão + categoria sugerida — preenche o cadastro na primeira
+# vez com os alimentos já usados pela fazenda (mesmos nomes de ALIMENTOS_PADRAO,
+# para que o vínculo funcione de cara com dietas já lançadas) mais os
+# exemplos adicionais pedidos explicitamente (silagens específicas, mineral).
+# Cada alimento é ligado automaticamente a um item de Estoque de MESMO NOME,
+# se existir um — do contrário fica "sem vínculo" até o usuário linkar.
+_ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str]] = [
+    ("Silagem", "Volumoso"), ("Silagem de milho", "Volumoso"), ("Silagem de sorgo", "Volumoso"),
+    ("Ração Teck Milk 24%", "Concentrado"), ("Milk Proteico", "Concentrado"), ("Corte 21", "Concentrado"),
+    ("Ração Bezerro 1", "Concentrado"), ("Ração Bezerro 2", "Concentrado"),
+    ("Ração Pré-parto", "Mineral"), ("Reprodução 80", "Mineral"),
+]
+
+
+def seed_alimentos(session: Session) -> None:
+    """Idempotente — só cria o que ainda não existe (nunca sobrescreve edição
+    manual). Chamado no startup (ver `main.py`)."""
+    _seed_categorias_alimento(session)
+    categorias = {c.nome: c.id for c in session.exec(select(CategoriaAlimento)).all()}
+    existentes = {a.nome for a in session.exec(select(Alimento)).all()}
+    estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(select(Estoque)).all()}
+    novos = []
+    for nome, categoria_nome in _ALIMENTOS_PADRAO_CATEGORIA:
+        if nome in existentes:
+            continue
+        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome))
+        novos.append(alimento)
+    if novos:
+        session.add_all(novos)
+        session.commit()
+        for alimento in novos:
+            session.refresh(alimento)
+            item = estoque_por_nome.get(alimento.nome.strip().lower())
+            if item and item.alimento_id is None:
+                item.alimento_id = alimento.id
+                session.add(item)
+        session.commit()
+
+
+@router.get("/categorias")
+def listar_categorias_alimento(session: Session = Depends(get_session)) -> list[dict]:
+    _seed_categorias_alimento(session)
+    return [c.model_dump() for c in session.exec(select(CategoriaAlimento).order_by(CategoriaAlimento.nome)).all()]
+
+
+class CategoriaAlimentoIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+@router.post("/categorias", status_code=201)
+def criar_categoria_alimento(dados: CategoriaAlimentoIn, session: Session = Depends(get_session)) -> dict:
+    if session.exec(select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome)).first():
+        raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
+    cat = CategoriaAlimento(nome=dados.nome, ativo=dados.ativo)
+    session.add(cat)
+    session.commit()
+    session.refresh(cat)
+    return cat.model_dump()
+
+
+@router.put("/categorias/{categoria_id}")
+def atualizar_categoria_alimento(categoria_id: int, dados: CategoriaAlimentoIn, session: Session = Depends(get_session)) -> dict:
+    cat = session.get(CategoriaAlimento, categoria_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    outra = session.exec(select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome, CategoriaAlimento.id != categoria_id)).first()
+    if outra:
+        raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
+    cat.nome = dados.nome
+    cat.ativo = dados.ativo
+    session.add(cat)
+    session.commit()
+    return cat.model_dump()
+
+
+@router.delete("/categorias/{categoria_id}")
+def excluir_categoria_alimento(categoria_id: int, session: Session = Depends(get_session)) -> dict:
+    cat = session.get(CategoriaAlimento, categoria_id)
+    if not cat:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada")
+    em_uso = session.exec(select(Alimento).where(Alimento.categoria_alimento_id == categoria_id)).first()
+    if em_uso:
+        raise HTTPException(status_code=409, detail=f'Categoria em uso pelo alimento "{em_uso.nome}" — mova ou exclua o(s) alimento(s) primeiro')
+    session.delete(cat)
+    session.commit()
+    return {"ok": True}
+
+
+def _serializar_alimento(session: Session, a: Alimento) -> dict:
+    vinculados = session.exec(select(Estoque).where(Estoque.alimento_id == a.id)).all()
+    return {**a.model_dump(), "estoque_vinculado": [e.model_dump() for e in vinculados]}
+
+
+@router.get("/alimentos")
+def listar_alimentos(session: Session = Depends(get_session)) -> list[dict]:
+    return [_serializar_alimento(session, a) for a in session.exec(select(Alimento).order_by(Alimento.nome)).all()]
+
+
+class AlimentoIn(BaseModel):
+    nome: str
+    categoria_alimento_id: int | None = None
+    observacao: str | None = None
+    ativo: bool = True
+    # Itens de Estoque a vincular a este alimento — substitui o conjunto
+    # anterior (ver `_vincular_estoque_ao_alimento`).
+    estoque_ids: list[int] = []
+
+
+def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_ids: list[int]) -> None:
+    """Substitui o conjunto de itens de Estoque vinculados a este Alimento
+    pelos informados. Um item de Estoque só pode estar vinculado a UM
+    alimento por vez (campo escalar `Estoque.alimento_id`) — vincular aqui
+    "rouba" o vínculo de qualquer outro alimento que o item estivesse usando."""
+    atuais = session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all()
+    for e in atuais:
+        if e.id not in estoque_ids:
+            e.alimento_id = None
+            session.add(e)
+    for eid in estoque_ids:
+        item = session.get(Estoque, eid)
+        if item and item.alimento_id != alimento_id:
+            item.alimento_id = alimento_id
+            session.add(item)
+    session.commit()
+
+
+@router.post("/alimentos", status_code=201)
+def criar_alimento(dados: AlimentoIn, session: Session = Depends(get_session)) -> dict:
+    if session.exec(select(Alimento).where(Alimento.nome == dados.nome)).first():
+        raise HTTPException(status_code=409, detail=f'Já existe um alimento chamado "{dados.nome}"')
+    alimento = Alimento(
+        nome=dados.nome, categoria_alimento_id=dados.categoria_alimento_id,
+        observacao=dados.observacao, ativo=dados.ativo,
+    )
+    session.add(alimento)
+    session.commit()
+    session.refresh(alimento)
+    _vincular_estoque_ao_alimento(session, alimento.id, dados.estoque_ids)
+    return _serializar_alimento(session, alimento)
+
+
+@router.put("/alimentos/{alimento_id}")
+def atualizar_alimento(alimento_id: int, dados: AlimentoIn, session: Session = Depends(get_session)) -> dict:
+    alimento = session.get(Alimento, alimento_id)
+    if not alimento:
+        raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    outro = session.exec(select(Alimento).where(Alimento.nome == dados.nome, Alimento.id != alimento_id)).first()
+    if outro:
+        raise HTTPException(status_code=409, detail=f'Já existe um alimento chamado "{dados.nome}"')
+    alimento.nome = dados.nome
+    alimento.categoria_alimento_id = dados.categoria_alimento_id
+    alimento.observacao = dados.observacao
+    alimento.ativo = dados.ativo
+    alimento.atualizado_em = datetime.utcnow()
+    session.add(alimento)
+    session.commit()
+    _vincular_estoque_ao_alimento(session, alimento_id, dados.estoque_ids)
+    return _serializar_alimento(session, alimento)
+
+
+@router.delete("/alimentos/{alimento_id}")
+def excluir_alimento(alimento_id: int, session: Session = Depends(get_session)) -> dict:
+    alimento = session.get(Alimento, alimento_id)
+    if not alimento:
+        raise HTTPException(status_code=404, detail="Alimento não encontrado")
+    for e in session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all():
+        e.alimento_id = None
+        session.add(e)
+    session.delete(alimento)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -573,8 +790,16 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
     session.add(dieta)
     session.commit()
     session.refresh(dieta)
+    # Resolve o alimento_id automaticamente pelo nome do item de Estoque
+    # escolhido no formulário (EstoquePicker) — sem exigir nenhuma mudança na
+    # tela de lançamento: se existir um Alimento com esse mesmo nome (ou um
+    # item de Estoque já vinculado a um Alimento), o vínculo entra sozinho.
+    estoque_por_nome = {e.nome: e for e in session.exec(select(Estoque)).all()}
+    alimento_por_nome = {a.nome: a.id for a in session.exec(select(Alimento)).all()}
     for item in dados.itens:
-        session.add(DietaItemProgramado(dieta_lancamento_id=dieta.id, **item.model_dump()))
+        estoque_item = estoque_por_nome.get(item.alimento)
+        alimento_id = (estoque_item.alimento_id if estoque_item else None) or alimento_por_nome.get(item.alimento)
+        session.add(DietaItemProgramado(dieta_lancamento_id=dieta.id, alimento_id=alimento_id, **item.model_dump()))
     session.commit()
     return _serializar_dieta(session, dieta)
 

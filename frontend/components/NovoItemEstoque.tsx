@@ -4,6 +4,7 @@ import { Check, X } from "lucide-react";
 import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
 const UNIDADES = ["ml", "kg", "L", "unidade", "dose", "metro", "saca 30kg", "saca 60kg"];
 
@@ -32,7 +33,7 @@ const vazio = {
 
 type PrincipioAtivo = { id: number; nome: string; ativo?: boolean };
 
-export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (item?: any) => void; onCancelar: () => void }) {
+export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onCriado: (item?: any) => void; onCancelar: () => void; prefill?: PrefillNovoEstoque | null }) {
   const [form, setForm] = useState(vazio);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
@@ -49,6 +50,11 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
   }, []);
 
   const set = (patch: Partial<typeof vazio>) => setForm((p) => ({ ...p, ...patch }));
+
+  useEffect(() => {
+    if (prefill) set({ nome: prefill.nome, finalidade: prefill.finalidade || "Ração/Alimento" });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefill]);
 
   async function salvar() {
     if (!form.nome.trim()) { setErro("Nome é obrigatório."); return; }
@@ -83,8 +89,16 @@ export default function NovoItemEstoque({ onCriado, onCancelar }: { onCriado: (i
         principio_ativo: str(form.principio_ativo),
         principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : undefined,
         classificacao_medicamento: str(form.classificacao_medicamento),
+        alimento_id: prefill?.alimentoId,
       });
       setForm(vazio);
+      // Se o item é ração/alimento e ainda não veio de um Alimento já
+      // cadastrado (prefill.alimentoId), pergunta se quer criar o Alimento
+      // correspondente — vínculo inverso do "converter em produto".
+      if (form.finalidade === "Ração/Alimento" && !prefill?.alimentoId) {
+        const converter = window.confirm(`Deseja também cadastrar "${criado.nome}" como Alimento (Configurações > Cadastro > Alimentação > Alimentos), para uso em dietas?`);
+        if (converter) pedirCadastroDeAlimento({ nome: criado.nome, estoqueId: criado.id });
+      }
       onCriado(criado);
     } catch (e: any) {
       setErro(e.message || "Erro ao cadastrar item");

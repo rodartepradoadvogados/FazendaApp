@@ -71,6 +71,7 @@ class EstoqueIn(BaseModel):
     principio_ativo: str | None = None
     principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
+    alimento_id: int | None = None
 
 
 def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
@@ -118,6 +119,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         principio_ativo=dados.principio_ativo,
         principio_ativo_id=dados.principio_ativo_id,
         classificacao_medicamento=dados.classificacao_medicamento,
+        alimento_id=dados.alimento_id,
     )
     session.add(item)
     session.commit()

@@ -340,8 +340,8 @@ export default function Ficha({ numeroInicial, destacarInicial }: { numeroInicia
       <div className="mob-secao">Todos os animais{ordenados.length ? ` (${ordenados.length})` : ""}</div>
       {carregando && <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>}
       {!carregando && !ordenados.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>}
-      {ordenados.map((r) => (
-        <MobLinha key={r.numero} titulo={`Brinco ${r.numero}${r.nome ? ` · ${r.nome}` : ""}`} subtitulo={subtituloAnimal(r)} onClick={() => setAberto(r.numero)} />
+      {ordenados.map((r, i) => (
+        <MobLinha key={r.numero} alt={(i % 2) as 0 | 1} titulo={`Brinco ${r.numero}${r.nome ? ` · ${r.nome}` : ""}`} subtitulo={subtituloAnimal(r)} onClick={() => setAberto(r.numero)} />
       ))}
     </div>
   );

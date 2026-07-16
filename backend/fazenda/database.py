@@ -50,7 +50,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "qualidade_leite": [("nul", "FLOAT"), ("usuario_id", "INTEGER")],
     "pesagem_corporal": [("fase", "VARCHAR"), ("usuario_id", "INTEGER")],
     "dieta_lancamento": [("base_quantidade", "VARCHAR"), ("leite_bezerros_kg_dia", "FLOAT"), ("usuario_id", "INTEGER")],
-    "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT")],
+    "dieta_item_programado": [("base", "VARCHAR"), ("ms_pct", "FLOAT"), ("alimento_id", "INTEGER")],
     "dieta_registro_real": [("usuario_id", "INTEGER")],
     "protocolo_iatf_lancamento": [("retroativo", "BOOLEAN"), ("usuario_id", "INTEGER")],
     "sanidade": [
@@ -92,7 +92,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("laboratorio", "VARCHAR"),
         ("volume_por_apresentacao", "FLOAT"), ("volume_unidade", "VARCHAR"),
         ("estoque_inicializado", "BOOLEAN"),
+        ("alimento_id", "INTEGER"),
     ],
+    "tabela_nutricional_produto": [("alimento_id", "INTEGER")],
+    "analise_bromatologica": [("alimento_id", "INTEGER")],
     "principio_ativo": [
         ("categoria", "VARCHAR"),
         ("categoria_software", "VARCHAR"), ("uso_principal", "VARCHAR"), ("justificativa", "VARCHAR"),

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { Package, Pencil, Check, X, AlertTriangle, Plus, Search } from "lucide-react";
 import { fetchItensEstoqueCadastro, atualizarMetaEstoque, fetchFornecedores } from "@/lib/api";
 import NovoItemEstoque from "./NovoItemEstoque";
+import { onPedidoCadastroDeEstoque, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
 
 const UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"];
 const MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"];
@@ -34,10 +35,12 @@ export default function CadastroEstoqueMeta() {
   const [considerarRmca, setConsiderarRmca] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
+  const [prefillNovo, setPrefillNovo] = useState<PrefillNovoEstoque | null>(null);
   const [busca, setBusca] = useState("");
 
   const carregar = () => fetchItensEstoqueCadastro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); fetchFornecedores().then(setFornecedores).catch(() => {}); }, []);
+  useEffect(() => onPedidoCadastroDeEstoque((dados) => { setPrefillNovo(dados); setNovoAberto(true); }), []);
 
   const abrirEdicao = (it: Item) => {
     setEditando(it.id);
@@ -91,7 +94,13 @@ export default function CadastroEstoqueMeta() {
         indicador RMCA (Financeiro) quando tem baixa de "Saída de ajuste" — desmarque itens que não são ração/alimento.
       </p>
 
-      {novoAberto && <NovoItemEstoque onCriado={() => { setNovoAberto(false); carregar(); }} onCancelar={() => setNovoAberto(false)} />}
+      {novoAberto && (
+        <NovoItemEstoque
+          prefill={prefillNovo}
+          onCriado={() => { setNovoAberto(false); setPrefillNovo(null); carregar(); }}
+          onCancelar={() => { setNovoAberto(false); setPrefillNovo(null); }}
+        />
+      )}
 
       {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}

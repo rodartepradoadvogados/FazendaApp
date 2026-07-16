@@ -9,7 +9,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
-import { PainelLancarBst } from "@/components/PainelLancarBst";
+import { TabelasStatusBst } from "@/components/PainelLancarBst";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -710,7 +710,11 @@ function RelatoriosBstView() {
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Incluir no próximo BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
       </div>
 
-      <PainelLancarBst agenda={agenda} onAtualizado={carregar} />
+      <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+        Situação atual das candidatas (leitura). Para lançar uma aplicação, agendar ou marcar animal como inapto, use{" "}
+        <strong>Lançamentos › Produção › BST</strong>.
+      </p>
+      <TabelasStatusBst agenda={agenda} />
 
       <div className="card">
         <div className="card-header mb-2 flex items-center gap-2"><Filter size={14} /> Filtrar histórico</div>

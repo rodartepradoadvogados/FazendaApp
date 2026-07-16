@@ -106,17 +106,40 @@ def calcular_consumo(dietas: list[dict], animais: list[dict], lotes_cadastro: li
     }
 
 
-def calcular_necessidade_mensal(consumo_total: list[dict], estoque_por_nome: dict[str, dict]) -> list[dict]:
+def calcular_necessidade_mensal(
+    consumo_total: list[dict],
+    estoque_por_nome: dict[str, dict],
+    estoque_por_alimento: dict[str, list[dict]] | None = None,
+    alimentos_cadastrados: set[str] | None = None,
+) -> list[dict]:
     """
     Projeta o consumo diário para uma janela de 30 dias. Quando o ingrediente
-    tem um item de estoque vinculado (mesmo nome) embalado em sacas com peso
-    conhecido (unidade_embalagem="Saca", medida_embalagem="kg/saca"), converte
-    kg em sacos (arredondando para cima — não dá pra comprar meio saco).
+    tem um item de estoque vinculado embalado em sacas com peso conhecido
+    (unidade_embalagem="Saca", medida_embalagem="kg/saca"), converte kg em
+    sacos (arredondando para cima — não dá pra comprar meio saco).
+
+    O vínculo com o Estoque é resolvido em duas etapas: (1) nome idêntico ao
+    de um item de Estoque (comportamento histórico, mantido para não quebrar
+    quem já tem os nomes casando); (2) se não achar, casa o nome do
+    ingrediente com o cadastro de `Alimento` (Configurações > Cadastro >
+    Alimentação > Alimentos) e usa o(s) item(ns) de Estoque vinculados a ele
+    (`Estoque.alimento_id`) — a via correta para ingredientes cujo nome no
+    plano de dieta não é igual ao nome do produto no Estoque.
     """
+    estoque_por_alimento = estoque_por_alimento or {}
+    alimentos_cadastrados = alimentos_cadastrados or set()
     saida = []
     for item in consumo_total:
         kg_mes = round(item["consumo_dia"] * DIAS_MES, 2)
+        nome_normalizado = (item["ingrediente"] or "").strip().lower()
         estoque_item = estoque_por_nome.get(item["ingrediente"])
+        alimento_sem_vinculo = False
+        if estoque_item is None:
+            candidatos = estoque_por_alimento.get(nome_normalizado)
+            if candidatos:
+                estoque_item = candidatos[0]
+            elif nome_normalizado in alimentos_cadastrados:
+                alimento_sem_vinculo = True
         ensacado = bool(
             estoque_item and estoque_item.get("unidade_embalagem") == "Saca"
             and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
@@ -132,5 +155,10 @@ def calcular_necessidade_mensal(consumo_total: list[dict], estoque_por_nome: dic
             "kg_por_saco": kg_por_saco,
             "sacos_mes": sacos,
             "item_estoque_vinculado": estoque_item is not None,
+            # Alimento já está cadastrado (Configurações > Cadastro > Alimentação
+            # > Alimentos), mas ainda sem nenhum item de Estoque vinculado —
+            # distinto de "nome desconhecido" (nem o Estoque nem o Alimento
+            # reconhecem esse ingrediente).
+            "alimento_sem_vinculo": alimento_sem_vinculo,
         })
     return saida
