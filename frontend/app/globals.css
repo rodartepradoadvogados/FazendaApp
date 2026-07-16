@@ -190,6 +190,13 @@ body {
   font-family: 'Inter', sans-serif;
 }
 
+/* Cursivo usado só no "milk" da marca d'água da tela de login (ver
+   LoginWatermark.tsx) — a fonte em si vem do Dancing_Script carregado em
+   layout.tsx como a variável --font-script. */
+.font-script {
+  font-family: var(--font-script), cursive;
+}
+
 /* Estado de foco visível para navegação por teclado — anel duplo (contorno +
    miolo na cor da página) para ler tanto sobre fundos claros quanto escuros.
    :focus-visible (não :focus) para não aparecer em cliques de mouse/toque. */

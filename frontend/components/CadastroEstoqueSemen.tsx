@@ -54,6 +54,8 @@ export default function CadastroEstoqueSemen() {
   const [itens, setItens] = useState<Semen[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busca, setBusca] = useState("");
+  // Filtro rápido de saldo: "positivo" (doses > 0) ou "negativo" (doses <= 0).
+  const [filtroSaldo, setFiltroSaldo] = useState<"todos" | "positivo" | "negativo">("todos");
 
   // Formulário fixo de inclusão no topo.
   const [novo, setNovo] = useState<Form>(formVazio);
@@ -125,9 +127,12 @@ export default function CadastroEstoqueSemen() {
   };
 
   const termoBusca = normalizar(busca.trim());
-  const filtrados = (itens ?? []).filter((s) =>
-    !termoBusca || normalizar(`${s.touro_nome} ${s.codigo ?? ""} ${s.naab ?? ""} ${s.central ?? ""} ${s.observacao ?? ""}`).includes(termoBusca)
-  );
+  const filtrados = (itens ?? []).filter((s) => {
+    if (termoBusca && !normalizar(`${s.touro_nome} ${s.codigo ?? ""} ${s.naab ?? ""} ${s.central ?? ""} ${s.observacao ?? ""}`).includes(termoBusca)) return false;
+    if (filtroSaldo === "positivo" && !(s.doses > 0)) return false;
+    if (filtroSaldo === "negativo" && !(s.doses <= 0)) return false;
+    return true;
+  });
 
   return (
     <div className="card">
@@ -190,9 +195,25 @@ export default function CadastroEstoqueSemen() {
 
       {itens && (
         <>
-          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
-            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
-            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar touro…" title="Buscar por touro, código, central ou observação" />
+          <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+            <div style={{ position: "relative", flex: "1 1 220px" }}>
+              <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+              <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar touro…" title="Buscar por touro, código, central ou observação" />
+            </div>
+            {([
+              ["todos", "Todos"],
+              ["positivo", "Só estoque positivo"],
+              ["negativo", "Só estoque negativo"],
+            ] as const).map(([v, label]) => (
+              <button key={v} type="button" onClick={() => setFiltroSaldo(v)}
+                title={v === "positivo" ? "Mostrar só touros com doses acima de zero" : v === "negativo" ? "Mostrar só touros com doses zeradas ou negativas" : "Mostrar todos os touros"}
+                style={{ fontSize: "0.75rem", padding: "0.35rem 0.75rem", borderRadius: "999px", cursor: "pointer", whiteSpace: "nowrap",
+                  border: "1px solid " + (filtroSaldo === v ? "var(--dourado)" : "var(--border)"),
+                  background: filtroSaldo === v ? "var(--dourado)" : "transparent",
+                  color: filtroSaldo === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: filtroSaldo === v ? 700 : 500 }}>
+                {label}
+              </button>
+            ))}
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">

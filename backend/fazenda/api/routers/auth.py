@@ -9,7 +9,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import MODULOS, criar_token, exigir_admin, get_current_user, hash_senha, verificar_senha
+from datetime import datetime
+
+from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_admin, exigir_dono, get_current_user, hash_senha, verificar_senha
 from fazenda.database import get_session
 from fazenda.models import Usuario
 
@@ -27,6 +29,7 @@ class NovoUsuario(BaseModel):
     nome: str | None = None
     papel: str = "operador"
     permissoes: list[str] = []
+    email: str | None = None
 
 
 class EditarUsuario(BaseModel):
@@ -36,16 +39,19 @@ class EditarUsuario(BaseModel):
     permissoes: list[str] | None = None
     ativo: bool | None = None
     senha: str | None = None
+    email: str | None = None
 
 
 class PreferenciasIn(BaseModel):
     paleta: str | None = None
+    email: str | None = None
 
 
 def _publico(u: Usuario) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
-            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho"}
+            "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
+            "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO}
 
 
 @router.post("/login")
@@ -53,6 +59,9 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     user = session.exec(select(Usuario).where(Usuario.username == dados.username)).first()
     if not user or not user.ativo or not verificar_senha(dados.senha, user.senha_hash):
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos")
+    user.ultimo_login = datetime.utcnow()
+    session.add(user)
+    session.commit()
     return {"token": criar_token(user.username), "usuario": _publico(user)}
 
 
@@ -66,6 +75,17 @@ def listar_usuarios(_: Usuario = Depends(exigir_admin), session: Session = Depen
     return [_publico(u) for u in session.exec(select(Usuario)).all()]
 
 
+@router.get("/usuarios/acessos")
+def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
+    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono)."""
+    usuarios = session.exec(select(Usuario)).all()
+    return [
+        {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel, "ativo": u.ativo,
+         "ultimo_login": u.ultimo_login.isoformat() if u.ultimo_login else None}
+        for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True)
+    ]
+
+
 @router.get("/modulos")
 def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
     return MODULOS
@@ -77,7 +97,7 @@ def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_admin), sessio
         raise HTTPException(status_code=400, detail="Usuário já existe")
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
     novo = Usuario(username=dados.username, nome=dados.nome, senha_hash=hash_senha(dados.senha),
-                   papel=dados.papel, permissoes=perms)
+                   papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None)
     session.add(novo)
     session.commit()
     session.refresh(novo)
@@ -106,6 +126,8 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
         u.ativo = dados.ativo
     if dados.senha:
         u.senha_hash = hash_senha(dados.senha)
+    if dados.email is not None:
+        u.email = dados.email.strip() or None
     session.add(u)
     session.commit()
     session.refresh(u)
@@ -114,11 +136,13 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
 
 @router.put("/preferencias")
 def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
-    """Preferências pessoais (ex.: paleta de cores) — cada usuário edita as suas, sem precisar ser admin."""
+    """Preferências pessoais (paleta, e-mail) — cada usuário edita as suas, sem precisar ser admin."""
     if dados.paleta is not None:
         if dados.paleta not in ("vinho", "verde"):
             raise HTTPException(status_code=400, detail="Paleta inválida")
         user.paleta = dados.paleta
+    if dados.email is not None:
+        user.email = dados.email.strip() or None
     session.add(user)
     session.commit()
     session.refresh(user)

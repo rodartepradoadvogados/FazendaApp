@@ -2,6 +2,7 @@
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
+import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -36,6 +37,14 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
     setEstado("logado");
   }, [path, router, ehApp]);
+
+  // Desloga sozinho após 15 min sem interação (mouse/teclado/toque/rolagem) —
+  // segurança dos dados da fazenda e controle de acessos do proprietário.
+  // Ativo em qualquer tela logada, tanto no site quanto no app móvel (/app).
+  useEffect(() => {
+    if (estado !== "logado") return;
+    return iniciarMonitorInatividade();
+  }, [estado]);
 
   if (path === "/login") return <>{children}</>;
 

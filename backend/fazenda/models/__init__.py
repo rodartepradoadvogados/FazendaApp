@@ -1738,6 +1738,10 @@ class Usuario(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     # Preferência pessoal de paleta de cores — "vinho" (padrão) ou "verde".
     paleta: Optional[str] = None
+    # E-mail pessoal (opcional) — usado hoje só para identificar o dono da
+    # fazenda e liberar o relatório de acessos (ver fazenda.auth.exigir_dono).
+    email: Optional[str] = None
+    ultimo_login: Optional[datetime] = None
 
 
 # ---------------------------------------------------------------------------

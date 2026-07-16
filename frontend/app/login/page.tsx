@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { LogIn, Loader2 } from "lucide-react";
 import { login } from "@/lib/api";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { LoginWatermark } from "@/components/LoginWatermark";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -33,8 +34,9 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", background: "var(--bg)" }}>
-      <div className="card" style={{ width: "380px", maxWidth: "100%" }}>
+    <div style={{ position: "relative", minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", padding: "1.5rem", background: "var(--bg)", overflow: "hidden" }}>
+      <LoginWatermark />
+      <div className="card" style={{ position: "relative", zIndex: 1, width: "380px", maxWidth: "100%" }}>
         <div className="mb-1" style={{ textAlign: "center" }}>
           <CowDataWordmark size="1.6rem" />
           <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.2rem" }}>Estreito Ponte de Pedra · Jairo Nasser</p>
