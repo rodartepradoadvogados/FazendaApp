@@ -1,7 +1,6 @@
 "use client";
 // Peças compartilhadas das telas do Rebanho no app móvel:
-// busca de um único animal, normalização sem acento e a lista de
-// "animais recentes" guardada em localStorage.
+// busca de um único animal e normalização sem acento.
 import { useEffect, useMemo, useState } from "react";
 import { Search, X } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
@@ -19,20 +18,6 @@ export type AnimalMob = {
 /** minúsculas + sem acento, para busca tolerante. */
 export function normalizar(s: unknown): string {
   return (s == null ? "" : String(s)).normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().trim();
-}
-
-// ── Animais recentes (localStorage) ──────────────────────────────────────────
-const CHAVE_RECENTES = "mob_animais_recentes";
-export type Recente = { numero: string; categoria_abrev?: string | null; grupo_primario?: string | null };
-
-export function lerRecentes(): Recente[] {
-  try { return JSON.parse(localStorage.getItem(CHAVE_RECENTES) || "[]"); } catch { return []; }
-}
-export function registrarRecente(r: Recente) {
-  try {
-    const atuais = lerRecentes().filter((x) => x.numero !== r.numero);
-    localStorage.setItem(CHAVE_RECENTES, JSON.stringify([r, ...atuais].slice(0, 5)));
-  } catch { /* cheio/indisponível */ }
 }
 
 export function subtituloAnimal(a: { categoria_abrev?: string | null; grupo_primario?: string | null }): string {

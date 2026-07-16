@@ -519,6 +519,31 @@ html, body { max-width: 100%; overflow-x: hidden; }
   border: 2px solid var(--mob-verde-fixo);
 }
 
+/* Agenda do Veterinário (Menu): caixas com fundo translúcido da cor da
+   PALETA ativa no claro (--mob-acao já segue a paleta escolhida), sem
+   atrapalhar a leitura; no escuro, o fundo volta ao normal e só o contorno
+   fica na cor da paleta. */
+.mob-card-vet {
+  background: color-mix(in srgb, var(--mob-acao) 14%, var(--mob-surface));
+  border-color: color-mix(in srgb, var(--mob-acao) 32%, var(--mob-border));
+}
+:root[data-theme="escuro"] .mob-card-vet {
+  background: var(--mob-surface);
+  border: 2px solid var(--mob-acao);
+}
+
+/* Tinta genérica por categoria (Rebanho > Lotes: Composição/Indicadores) —
+   mesmo tratamento do .mob-card-vet acima, mas com a cor vinda de
+   --tint-cor (setada inline por lote/situação reprodutiva) em vez de fixa. */
+.mob-tint {
+  background: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 14%, var(--mob-surface));
+  border-color: color-mix(in srgb, var(--tint-cor, var(--mob-muted)) 32%, var(--mob-border));
+}
+:root[data-theme="escuro"] .mob-tint {
+  background: var(--mob-surface);
+  border: 2px solid var(--tint-cor, var(--mob-muted));
+}
+
 /* Inputs grandes (dedo no campo, fonte ≥16px para o iPhone não dar zoom). */
 .mob-input {
   width: 100%;

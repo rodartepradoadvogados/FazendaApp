@@ -7,6 +7,7 @@ import UploadPage from "@/app/upload/page";
 import UsuariosPage from "@/app/usuarios/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
 import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
+import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
@@ -28,6 +29,7 @@ export default function ConfiguracoesPage() {
   // registro de sub-navegação (evita a Sidebar ficar disputada entre pai e filho).
   const [cadastroAba, setCadastroAba] = useState<AbaCadastro>("lotes");
   const [sanitarioAba, setSanitarioAba] = useState<AbaCadastroSanitario>("principios");
+  const [centralSemenAba, setCentralSemenAba] = useState<AbaCentralSemen>("estoque-semen");
   const [parametrosAba, setParametrosAba] = useState<AbaParametros>("gerais");
   const temFinanceiro = podeModulo("financeiro");
   const abasParametrosVisiveis = useMemo(() => ABAS_PARAMETROS.filter(([id]) => id !== "financeiro" || temFinanceiro), [temFinanceiro]);
@@ -57,7 +59,9 @@ export default function ConfiguracoesPage() {
         id: a.id, label: a.label, icon: a.icon,
         children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
           id: cid, label: clabel, icon: cIcon,
-          children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon })) : undefined,
+          children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
+            : cid === "central-semen" ? ABAS_CENTRAL_SEMEN.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
+            : undefined,
         })),
       };
     }
@@ -69,12 +73,13 @@ export default function ConfiguracoesPage() {
     }
     return { id: a.id, label: a.label, icon: a.icon };
   }), [abasVisiveis, abasParametrosVisiveis]);
-  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba)
+  const activeId = aba === "cadastro" ? (cadastroAba === "sanitario" ? sanitarioAba : cadastroAba === "central-semen" ? centralSemenAba : cadastroAba)
     : aba === "parametros" ? parametrosAba
     : (aba ?? "");
   const onSelect = useCallback((id: string) => {
     if (abasVisiveis.some((a) => a.id === id)) { setAba(id as Aba); return; }
     if (ABAS_CADASTRO_SANITARIO.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("sanitario"); setSanitarioAba(id as AbaCadastroSanitario); return; }
+    if (ABAS_CENTRAL_SEMEN.some(([sid]) => sid === id)) { setAba("cadastro"); setCadastroAba("central-semen"); setCentralSemenAba(id as AbaCentralSemen); return; }
     if (abasParametrosVisiveis.some(([pid]) => pid === id)) { setAba("parametros"); setParametrosAba(id as AbaParametros); return; }
     setAba("cadastro"); setCadastroAba(id as AbaCadastro);
   }, [abasVisiveis, abasParametrosVisiveis]);
@@ -95,7 +100,13 @@ export default function ConfiguracoesPage() {
       </div>
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "aparencia" && <div className="px-6"><AparenciaSelector variant="site" /></div>}
-        {aba === "cadastro" && <Cadastro aba={cadastroAba} onAbaChange={setCadastroAba} abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba} />}
+        {aba === "cadastro" && (
+          <Cadastro
+            aba={cadastroAba} onAbaChange={setCadastroAba}
+            abaSanitario={sanitarioAba} onAbaSanitarioChange={setSanitarioAba}
+            abaCentralSemen={centralSemenAba} onAbaCentralSemenChange={setCentralSemenAba}
+          />
+        )}
         {aba === "parametros" && parametrosAba === "gerais" && <ParametrosPage />}
         {aba === "parametros" && parametrosAba === "financeiro" && temFinanceiro && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}

@@ -1241,6 +1241,30 @@ export async function salvarMateriaSeca(dados: { nome: string; ms_pct: number | 
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar matéria seca"); }
   return res.json();
 }
+
+export type AnaliseBromatologica = {
+  id: number; data: string; alimento: string;
+  ms_pct: number | null; pb_pct: number | null; fdn_pct: number | null; fda_pct: number | null;
+  ndt_pct: number | null; ee_pct: number | null; cinzas_pct: number | null; ca_pct: number | null; p_pct: number | null;
+  observacao: string | null; criado_em: string; usuario_nome: string | null;
+};
+export async function fetchAnaliseBromatologica(): Promise<{ registros: AnaliseBromatologica[]; total: number }> {
+  const res = await authFetch(`${API}/alimentacao/analise-bromatologica`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Análise bromatológica error: ${res.status}`);
+  return res.json();
+}
+export async function criarAnaliseBromatologica(dados: {
+  data: string; alimento: string;
+  ms_pct?: number | null; pb_pct?: number | null; fdn_pct?: number | null; fda_pct?: number | null;
+  ndt_pct?: number | null; ee_pct?: number | null; cinzas_pct?: number | null; ca_pct?: number | null; p_pct?: number | null;
+  observacao?: string | null;
+}) {
+  const res = await authFetch(`${API}/alimentacao/analise-bromatologica`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar análise bromatológica"); }
+  return res.json();
+}
 export async function criarDieta(dados: {
   lote: number; responsavel?: string; data_abertura: string; data_prevista_encerramento?: string; observacao?: string;
   base_quantidade?: string; leite_bezerros_kg_dia?: number | null;

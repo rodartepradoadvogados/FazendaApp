@@ -9,34 +9,33 @@ import Farmacia from "./Farmacia";
 import CadastroAnimalForm from "./CadastroAnimalForm";
 import CadastroFornecedores from "./CadastroFornecedores";
 import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
-import CadastroEstoqueSemen from "./CadastroEstoqueSemen";
 import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
 import CadastroServicos from "./CadastroServicos";
 import CadastroTiposMetodosServico from "./CadastroTiposMetodosServico";
 import CadastroPessoas from "./CadastroPessoas";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
-import CadastroTouros from "./CadastroTouros";
+import CentralSemen, { type AbaCentralSemen } from "./CentralSemen";
 import { FormExclusao } from "./FormExclusao";
 
+// Ordem alfabética (pelo rótulo exibido).
 export const ABAS_CADASTRO = [
-  ["lotes", "Lotes", Layers],
+  ["alimentacao", "Alimentação", Wheat],
   ["animal", "Animal (ficha)", Beef],
+  ["recria", "Categorias", Baby],
+  ["central-semen", "Central de Sêmen", Dna],
+  ["excluir", "Excluir cadastros", Trash2],
+  ["farmacia", "Farmácia", Pill],
   ["fornecedores", "Fornecedores", Truck],
   ["estoque", "Itens de estoque", Package],
-  ["estoque-semen", "Estoque de sêmen", Dna],
-  ["touros", "Touros (NAAB)", Dna],
-  ["farmacia", "Farmácia", Pill],
-  ["alimentacao", "Alimentação", Wheat],
-  ["motivos", "Motivos de movimentação", ArrowRightLeft],
+  ["lotes", "Lotes", Layers],
   ["motivos-baixa", "Motivos de baixa", HeartCrack],
-  ["servicos", "Serviços", Wrench],
-  ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
+  ["motivos", "Motivos de movimentação", ArrowRightLeft],
+  ["pesagem", "Pesagem do rebanho", Scale],
   ["pessoas", "Pessoas", Users],
   ["sanitario", "Sanitário", HeartPulse],
-  ["pesagem", "Pesagem do rebanho", Scale],
-  ["recria", "Categorias", Baby],
-  ["excluir", "Excluir cadastros", Trash2],
+  ["servicos", "Serviços", Wrench],
+  ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
 ] as const;
 export type AbaCadastro = (typeof ABAS_CADASTRO)[number][0];
 
@@ -45,15 +44,23 @@ export type AbaCadastro = (typeof ABAS_CADASTRO)[number][0];
 // árvore completa de sub-navegação (Configurações › Cadastro › Sanitário),
 // já que só um componente pode ser dono do registro por vez sem risco de um
 // sobrescrever o outro na mesma renderização.
-export default function Cadastro({ aba: abaExterna, onAbaChange, abaSanitario: abaSanitarioExterna, onAbaSanitarioChange }: {
+export default function Cadastro({
+  aba: abaExterna, onAbaChange,
+  abaSanitario: abaSanitarioExterna, onAbaSanitarioChange,
+  abaCentralSemen: abaCentralSemenExterna, onAbaCentralSemenChange,
+}: {
   aba?: AbaCadastro; onAbaChange?: (id: AbaCadastro) => void;
   abaSanitario?: AbaCadastroSanitario; onAbaSanitarioChange?: (id: AbaCadastroSanitario) => void;
+  abaCentralSemen?: AbaCentralSemen; onAbaCentralSemenChange?: (id: AbaCentralSemen) => void;
 } = {}) {
   const [abaInterna, setAbaInterna] = useState<AbaCadastro>("lotes");
   const [abaSanitarioInterna, setAbaSanitarioInterna] = useState<AbaCadastroSanitario>("principios");
+  const [abaCentralSemenInterna, setAbaCentralSemenInterna] = useState<AbaCentralSemen>("estoque-semen");
   const aba = abaExterna ?? abaInterna;
   const abaSanitario = abaSanitarioExterna ?? abaSanitarioInterna;
   const setAbaSanitario = onAbaSanitarioChange ?? setAbaSanitarioInterna;
+  const abaCentralSemen = abaCentralSemenExterna ?? abaCentralSemenInterna;
+  const setAbaCentralSemen = onAbaCentralSemenChange ?? setAbaCentralSemenInterna;
 
   return (
     <div className="p-6 animate-in">
@@ -68,8 +75,7 @@ export default function Cadastro({ aba: abaExterna, onAbaChange, abaSanitario: a
       {aba === "animal" && <CadastroAnimalForm />}
       {aba === "fornecedores" && <CadastroFornecedores />}
       {aba === "estoque" && <CadastroEstoqueMeta />}
-      {aba === "estoque-semen" && <CadastroEstoqueSemen />}
-      {aba === "touros" && <CadastroTouros />}
+      {aba === "central-semen" && <CentralSemen abaControlada={abaCentralSemen} onAbaChange={setAbaCentralSemen} />}
       {aba === "farmacia" && <Farmacia />}
       {aba === "alimentacao" && <CadastroAlimentacao />}
       {aba === "motivos" && <CadastroMotivosMovimentacao />}

@@ -1,9 +1,15 @@
 """
 Agenda/roteiro do veterinário do serviço — classifica o rebanho fêmea em 10
-listas para orientar a visita reprodutiva. Machos, bezerras e novilhas com
-peso confirmado abaixo de 260 kg nunca entram em nenhuma lista.
+listas para orientar a visita reprodutiva. Machos e bezerras nunca entram em
+nenhuma lista. Os demais só entram em qualquer lista (exceto "verificar
+aptidão", que tem critério próprio) depois de atingir 15 meses E 300 kg.
 
 Parâmetros de análise (documentados aqui para aparecerem também na tela):
+  - Gate geral de entrada: só entra em qualquer lista (exceto "verificar
+    aptidão") quem já tem 15 meses ou mais E 300 kg ou mais. Quem não atingiu
+    os dois não aparece em lista nenhuma.
+  - Verificar aptidão: novilha com 280 kg ou mais, 15 meses ou mais, e que
+    nunca tenha sido inseminada nem coberta (nenhum registro de serviço).
   - Inseminada de 1 a 29 dias: aguardar 30 dias para o toque.
   - Inseminada de 30 a 59 dias: dar o toque; se não tiver toque nessa fase,
     fica marcada como "toque atrasado".
@@ -20,8 +26,9 @@ from datetime import date
 
 from fazenda.rules.lote_criterios import GESTACAO_DIAS
 
+IDADE_APTA_MIN_MESES = 15.0
 PESO_APTA_MIN = 300.0
-PESO_VERIFICAR_APTIDAO_MIN = 260.0
+PESO_VERIFICAR_APTIDAO_MIN = 280.0
 PRE_PARTO_MIN = 31
 PRE_PARTO_MAX = 60
 
@@ -35,6 +42,18 @@ def _categoria(animal: dict) -> str:
     if "vaca" in texto:
         return "vaca"
     return ""
+
+
+def _idade_meses(animal: dict, hoje: date) -> float | None:
+    idade = animal.get("idade_meses")
+    if idade is not None:
+        return idade
+    nasc = animal.get("data_nasc")
+    if not nasc:
+        return None
+    if isinstance(nasc, str):
+        nasc = date.fromisoformat(nasc)
+    return round((hoje - nasc).days / 30.44, 1)
 
 
 def classificar_rebanho(
@@ -61,10 +80,29 @@ def classificar_rebanho(
 
         numero = animal["numero"]
         peso = peso_por_animal.get(numero)
-        if categoria == "novilha" and peso is not None and peso < PESO_VERIFICAR_APTIDAO_MIN:
-            continue  # abaixo de 260kg: nunca entra em nenhuma lista
-
+        idade = _idade_meses(animal, hoje)
         servico = servico_por_animal.get(numero)
+
+        if (
+            categoria == "novilha"
+            and peso is not None and peso >= PESO_VERIFICAR_APTIDAO_MIN
+            and idade is not None and idade >= IDADE_APTA_MIN_MESES
+            and servico is None
+        ):
+            listas["verificar_aptidao"].append({
+                "numero_matriz": numero, "categoria": categoria, "peso": peso,
+                "dias_inseminada": None, "data_servico": None,
+                "tocada": False, "reconfirmada": False,
+                "diagnostico": None, "diagnostico_reconfirmacao": None,
+            })
+
+        apto_geral = (
+            idade is not None and idade >= IDADE_APTA_MIN_MESES
+            and peso is not None and peso >= PESO_APTA_MIN
+        )
+        if not apto_geral:
+            continue  # abaixo de 15 meses ou 300kg: não entra em nenhuma outra lista
+
         data_servico = servico.get("data_servico") if servico else None
         dias_insem = (hoje - data_servico).days if data_servico else None
         tocada = bool(servico and servico.get("data_diagnostico"))
@@ -107,9 +145,6 @@ def classificar_rebanho(
             if gestante_confirmada:
                 listas["novilhas_gestantes"].append({**base, "dias_para_parto": dpp})
                 classificado = True
-            if vazia and peso is not None and PESO_VERIFICAR_APTIDAO_MIN <= peso < PESO_APTA_MIN:
-                listas["verificar_aptidao"].append(base)
-                classificado = True
 
         if gestante_confirmada and dpp is not None and PRE_PARTO_MIN <= dpp <= PRE_PARTO_MAX:
             listas["verificar_pre_parto"].append({**base, "dias_para_parto": dpp})
@@ -126,9 +161,6 @@ def classificar_rebanho(
             elif perda_prenhez:
                 motivo = "Perda de prenhez confirmada na reconfirmação, aguardando novo serviço."
                 listas["vazias_por_diagnostico"].append({**base, "motivo": motivo})
-            elif categoria == "novilha" and peso is None:
-                motivo = "Novilha sem peso registrado — não é possível confirmar aptidão."
-                listas["pendentes_classificacao"].append({**base, "motivo": motivo})
             elif not servico:
                 motivo = f"{categoria.capitalize()} sem histórico de serviço nem diagnóstico de gestação registrado."
                 listas["pendentes_classificacao"].append({**base, "motivo": motivo})

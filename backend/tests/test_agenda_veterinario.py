@@ -1,6 +1,6 @@
 """
 Testes da agenda/roteiro do veterinário do serviço — classificação do
-rebanho em 9 listas.
+rebanho em 10 listas.
 """
 from __future__ import annotations
 
@@ -15,6 +15,10 @@ import fazenda.database as database
 from fazenda.models import Animal, PesagemCorporal, Servico
 
 HOJE = date(2026, 7, 8)
+
+# Idade/peso "aptos" padrão para testes que não estão testando o gate em si.
+IDADE_APTA = 24.0
+PESO_APTO = 320.0
 
 
 @pytest.fixture
@@ -44,9 +48,10 @@ def client():
     main.app.dependency_overrides.clear()
 
 
-def _add_animal(engine, numero, categoria_abrev, sexo="F", eh_semen=False, ativo=True):
+def _add_animal(engine, numero, categoria_abrev, sexo="F", eh_semen=False, ativo=True, idade_meses=None):
     with Session(engine) as s:
-        s.add(Animal(numero=numero, categoria_abrev=categoria_abrev, sexo=sexo, eh_semen=eh_semen, ativo=ativo))
+        s.add(Animal(numero=numero, categoria_abrev=categoria_abrev, sexo=sexo, eh_semen=eh_semen, ativo=ativo,
+                      idade_meses=idade_meses))
         s.commit()
 
 
@@ -65,35 +70,60 @@ def _add_servico(engine, numero, dias_atras, **kwargs):
 class TestExclusoes:
     def test_macho_nunca_entra(self, client):
         c, engine = client
-        _add_animal(engine, "1", "Touro", sexo="M")
+        _add_animal(engine, "1", "Touro", sexo="M", idade_meses=IDADE_APTA)
+        _add_peso(engine, "1", PESO_APTO)
         r = c.get("/reproducao/agenda-veterinario")
         assert all(a["numero_matriz"] != "1" for lst in r.json()["listas"].values() for a in lst)
 
     def test_bezerra_nunca_entra(self, client):
         c, engine = client
-        _add_animal(engine, "2", "Bezerra")
+        _add_animal(engine, "2", "Bezerra", idade_meses=IDADE_APTA)
+        _add_peso(engine, "2", PESO_APTO)
         r = c.get("/reproducao/agenda-veterinario")
         assert all(a["numero_matriz"] != "2" for lst in r.json()["listas"].values() for a in lst)
 
-    def test_novilha_abaixo_260kg_nunca_entra(self, client):
+    def test_novilha_abaixo_300kg_nunca_entra(self, client):
         c, engine = client
-        _add_animal(engine, "3", "Novilha")
+        _add_animal(engine, "3", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "3", 200)
         r = c.get("/reproducao/agenda-veterinario")
         assert all(a["numero_matriz"] != "3" for lst in r.json()["listas"].values() for a in lst)
+
+    def test_vaca_com_peso_mas_idade_insuficiente_nunca_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "4", "Vaca", idade_meses=10)
+        _add_peso(engine, "4", PESO_APTO)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert all(a["numero_matriz"] != "4" for lst in r.json()["listas"].values() for a in lst)
+
+    def test_vaca_com_idade_mas_peso_insuficiente_nunca_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "5", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "5", 250)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert all(a["numero_matriz"] != "5" for lst in r.json()["listas"].values() for a in lst)
+
+    def test_sem_idade_registrada_nunca_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "6", "Vaca")
+        _add_peso(engine, "6", PESO_APTO)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert all(a["numero_matriz"] != "6" for lst in r.json()["listas"].values() for a in lst)
 
 
 class TestInseminadas:
     def test_1_a_29_dias(self, client):
         c, engine = client
-        _add_animal(engine, "10", "Vaca")
+        _add_animal(engine, "10", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "10", PESO_APTO)
         _add_servico(engine, "10", 10)
         r = c.get("/reproducao/agenda-veterinario")
         assert any(a["numero_matriz"] == "10" for a in r.json()["listas"]["inseminadas_1_29"])
 
     def test_30_a_59_sem_toque_fica_atrasada(self, client):
         c, engine = client
-        _add_animal(engine, "11", "Vaca")
+        _add_animal(engine, "11", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "11", PESO_APTO)
         _add_servico(engine, "11", 40)
         r = c.get("/reproducao/agenda-veterinario")
         item = next(a for a in r.json()["listas"]["inseminadas_30_59"] if a["numero_matriz"] == "11")
@@ -101,7 +131,8 @@ class TestInseminadas:
 
     def test_60_mais_sem_reconfirmacao_fica_atrasada(self, client):
         c, engine = client
-        _add_animal(engine, "12", "Vaca")
+        _add_animal(engine, "12", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "12", PESO_APTO)
         _add_servico(engine, "12", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO")
         r = c.get("/reproducao/agenda-veterinario")
         item = next(a for a in r.json()["listas"]["inseminadas_60_mais"] if a["numero_matriz"] == "12")
@@ -110,7 +141,8 @@ class TestInseminadas:
 
     def test_gestante_confirmada_sai_das_listas_1_2_3(self, client):
         c, engine = client
-        _add_animal(engine, "13", "Vaca")
+        _add_animal(engine, "13", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "13", PESO_APTO)
         _add_servico(engine, "13", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO",
                      data_reconfirmacao=HOJE - timedelta(days=5), diagnostico_reconfirmacao="POSITIVO")
         r = c.get("/reproducao/agenda-veterinario")
@@ -122,21 +154,14 @@ class TestInseminadas:
 class TestNovilhas:
     def test_apta_vazia_300kg_sem_servico(self, client):
         c, engine = client
-        _add_animal(engine, "20", "Novilha")
+        _add_animal(engine, "20", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "20", 320)
         r = c.get("/reproducao/agenda-veterinario")
         assert any(a["numero_matriz"] == "20" for a in r.json()["listas"]["novilhas_aptas_vazias"])
 
-    def test_verificar_aptidao_260_a_299(self, client):
-        c, engine = client
-        _add_animal(engine, "21", "Novilha")
-        _add_peso(engine, "21", 280)
-        r = c.get("/reproducao/agenda-veterinario")
-        assert any(a["numero_matriz"] == "21" for a in r.json()["listas"]["verificar_aptidao"])
-
     def test_novilha_gestante_confirmada(self, client):
         c, engine = client
-        _add_animal(engine, "22", "Novilha")
+        _add_animal(engine, "22", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "22", 350)
         _add_servico(engine, "22", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO",
                      data_reconfirmacao=HOJE - timedelta(days=5), diagnostico_reconfirmacao="POSITIVO")
@@ -145,17 +170,51 @@ class TestNovilhas:
 
     def test_inseminada_nao_reconfirmada_nao_entra_em_gestantes(self, client):
         c, engine = client
-        _add_animal(engine, "23", "Novilha")
+        _add_animal(engine, "23", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "23", 350)
         _add_servico(engine, "23", 40, data_diagnostico=HOJE - timedelta(days=10), diagnostico="POSITIVO")
         r = c.get("/reproducao/agenda-veterinario")
         assert not any(a["numero_matriz"] == "23" for a in r.json()["listas"]["novilhas_gestantes"])
 
 
+class TestVerificarAptidao:
+    """Critério próprio: >=280kg, >=15 meses, nunca inseminada/coberta."""
+
+    def test_280kg_15_meses_sem_servico_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "21", "Novilha", idade_meses=15)
+        _add_peso(engine, "21", 280)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert any(a["numero_matriz"] == "21" for a in r.json()["listas"]["verificar_aptidao"])
+
+    def test_abaixo_280kg_nao_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "24", "Novilha", idade_meses=15)
+        _add_peso(engine, "24", 270)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert not any(a["numero_matriz"] == "24" for a in r.json()["listas"]["verificar_aptidao"])
+
+    def test_abaixo_15_meses_nao_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "25", "Novilha", idade_meses=10)
+        _add_peso(engine, "25", 300)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert not any(a["numero_matriz"] == "25" for a in r.json()["listas"]["verificar_aptidao"])
+
+    def test_ja_teve_servico_nao_entra(self, client):
+        c, engine = client
+        _add_animal(engine, "26", "Novilha", idade_meses=IDADE_APTA)
+        _add_peso(engine, "26", 320)
+        _add_servico(engine, "26", 5)
+        r = c.get("/reproducao/agenda-veterinario")
+        assert not any(a["numero_matriz"] == "26" for a in r.json()["listas"]["verificar_aptidao"])
+
+
 class TestPreParto:
     def test_gestante_31_a_60_dias_para_parto(self, client):
         c, engine = client
-        _add_animal(engine, "30", "Vaca")
+        _add_animal(engine, "30", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "30", PESO_APTO)
         # gestação de 283 dias; faltando 45 dias -> serviço há 238 dias
         _add_servico(engine, "30", 238, data_diagnostico=HOJE - timedelta(days=200), diagnostico="POSITIVO",
                      data_reconfirmacao=HOJE - timedelta(days=170), diagnostico_reconfirmacao="POSITIVO")
@@ -166,23 +225,24 @@ class TestPreParto:
 class TestPendentesClassificacao:
     def test_vaca_sem_servico_fica_pendente(self, client):
         c, engine = client
-        _add_animal(engine, "40", "Vaca")
+        _add_animal(engine, "40", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "40", PESO_APTO)
         r = c.get("/reproducao/agenda-veterinario")
         item = next(a for a in r.json()["listas"]["pendentes_classificacao"] if a["numero_matriz"] == "40")
         assert "motivo" in item and item["motivo"]
 
-    def test_novilha_sem_peso_fica_pendente(self, client):
+    def test_novilha_sem_peso_nunca_entra(self, client):
         c, engine = client
-        _add_animal(engine, "41", "Novilha")
+        _add_animal(engine, "41", "Novilha", idade_meses=IDADE_APTA)
         r = c.get("/reproducao/agenda-veterinario")
-        item = next(a for a in r.json()["listas"]["pendentes_classificacao"] if a["numero_matriz"] == "41")
-        assert "peso" in item["motivo"].lower()
+        assert all(a["numero_matriz"] != "41" for lst in r.json()["listas"].values() for a in lst)
 
 
 class TestVaziasPorDiagnostico:
     def test_negativo_no_toque_vai_para_lista_propria(self, client):
         c, engine = client
-        _add_animal(engine, "50", "Vaca")
+        _add_animal(engine, "50", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "50", PESO_APTO)
         _add_servico(engine, "50", 40, data_diagnostico=HOJE - timedelta(days=10), diagnostico="NEGATIVO")
         r = c.get("/reproducao/agenda-veterinario")
         listas = r.json()["listas"]
@@ -192,7 +252,8 @@ class TestVaziasPorDiagnostico:
 
     def test_perda_de_prenhez_vai_para_lista_propria(self, client):
         c, engine = client
-        _add_animal(engine, "51", "Vaca")
+        _add_animal(engine, "51", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "51", PESO_APTO)
         _add_servico(engine, "51", 70, data_diagnostico=HOJE - timedelta(days=40), diagnostico="POSITIVO",
                      data_reconfirmacao=HOJE - timedelta(days=5), diagnostico_reconfirmacao="NEGATIVO")
         r = c.get("/reproducao/agenda-veterinario")

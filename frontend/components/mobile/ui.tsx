@@ -24,8 +24,8 @@ export function corCategoria(cat?: string | null): string {
  * no claro, branco vs. um tom leve da paleta ativa; no escuro, preto contornado
  * de vinho vs. preto contornado de verde (fixos, sem seguir a paleta). Usado na
  * Agenda e na Ficha do animal para diferenciar cartões em sequência. */
-export function MobCard({ children, style, onClick, alt }: { children: ReactNode; style?: CSSProperties; onClick?: () => void; alt?: 0 | 1 }) {
-  const classe = alt == null ? "mob-card" : `mob-card ${alt === 0 ? "mob-card-a" : "mob-card-b"}`;
+export function MobCard({ children, style, onClick, alt, className }: { children: ReactNode; style?: CSSProperties; onClick?: () => void; alt?: 0 | 1; className?: string }) {
+  const classe = [alt == null ? "mob-card" : `mob-card ${alt === 0 ? "mob-card-a" : "mob-card-b"}`, className].filter(Boolean).join(" ");
   return <div className={classe} style={{ padding: "0.95rem 1rem", ...style }} onClick={onClick}>{children}</div>;
 }
 

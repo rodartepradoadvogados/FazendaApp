@@ -21,7 +21,7 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
   { key: "inseminadas_30_59", label: "Inseminadas 30–59 dias — toque", color: "var(--dourado)", extra: "atrasada" },
   { key: "inseminadas_60_mais", label: "Inseminadas 60+ dias — reconfirmação", color: "var(--amber)", extra: "atrasada", reconfirmavel: true },
   { key: "novilhas_aptas_vazias", label: "Novilhas aptas vazias (≥300 kg)", color: "var(--green-light)" },
-  { key: "verificar_aptidao", label: "Verificar aptidão (260–299 kg)", color: "var(--text-muted)" },
+  { key: "verificar_aptidao", label: "Verificar aptidão (≥280 kg, nunca servida)", color: "var(--text-muted)" },
   { key: "novilhas_gestantes", label: "Novilhas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
   { key: "vacas_gestantes", label: "Vacas gestantes", color: "var(--green-light)", extra: "dias_para_parto" },
   { key: "verificar_pre_parto", label: "Verificar pré-parto (31–60 dias p/ parto)", color: "var(--red)", extra: "dias_para_parto" },
@@ -84,8 +84,9 @@ export default function AgendaVeterinarioPage() {
       <div className="mb-4">
         <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda do veterinário</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos, bezerras e novilhas
-          abaixo de 260 kg não entram em nenhuma lista. Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
+          Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos e bezerras nunca
+          entram em nenhuma lista; os demais só entram (exceto em "Verificar aptidão") ao atingir 15 meses e 300 kg.
+          Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
         </p>
       </div>
 
