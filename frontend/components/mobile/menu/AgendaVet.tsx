@@ -32,7 +32,7 @@ const LISTAS: { chave: string; rotulo: string }[] = [
   { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias (reconfirmar)" },
   { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas e vazias (inseminar)" },
   { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
-  { chave: "verificar_aptidao", rotulo: "Verificar aptidão (260–300 kg)" },
+  { chave: "verificar_aptidao", rotulo: "Verificar aptidão (≥280 kg, nunca servida)" },
   { chave: "verificar_pre_parto", rotulo: "Pré-parto (verificar)" },
   { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
   { chave: "vazias_por_diagnostico", rotulo: "Vazias por diagnóstico (novo serviço)" },

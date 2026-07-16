@@ -22,10 +22,24 @@ type AnimalLote = {
   ult_cl_kg?: number | null;
 };
 
+// Cor por situação reprodutiva (sit_rep) — valores reais vindos do backend.
 const SIT_COR: Record<string, string> = {
-  "Prenha": "var(--mob-verde)", "Inseminada": "var(--mob-azul)", "Vazia": "var(--mob-vermelho)",
-  "Pré-parto": "var(--mob-laranja)", "Seca": "var(--mob-amarelo)",
+  "Ges.": "var(--mob-azul)",
+  "Ins.": "var(--mob-dourado)",
+  "Vaz. pev": "var(--mob-amarelo)",
+  "Vaz. apt.": "var(--mob-verde)",
+  "Vaz. atr.": "var(--mob-vinho)",
 };
+
+// Cor do "quadro" de cada lote, pelo tipo indicado no nome do grupo.
+function corLote(lote: string): string {
+  const t = lote.toLowerCase();
+  if (t.includes("novilh")) return "var(--mob-verde)";
+  if (t.includes("seca")) return "var(--mob-laranja)";
+  if (t.includes("pré-parto") || t.includes("pre-parto")) return "var(--mob-roxo)";
+  if (t.includes("bezerr")) return "var(--mob-azul)";
+  return "var(--mob-vinho)";
+}
 
 function useAnimaisPorLote() {
   const [animais, setAnimais] = useState<AnimalLote[]>([]);
@@ -60,13 +74,13 @@ function Composicao() {
     <div>
       {porLote.map(([lote, lista]) => (
         <details key={lote} style={{ marginBottom: "0.7rem" }}>
-          <summary style={{ cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
+          <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
             <span>{lote}</span>
             <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>
           </summary>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
             {lista.map((a) => (
-              <MobCard key={a.numero}>
+              <MobCard key={a.numero} className="mob-tint" style={{ ["--tint-cor" as any]: SIT_COR[a.sit_rep || ""] || "var(--mob-muted)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontWeight: 800 }}>{a.numero}{a.nome ? ` · ${a.nome}` : ""}</span>
                   <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>{a.categoria_abrev || a.categoria_completa || "—"}</span>
@@ -105,7 +119,7 @@ function Indicadores() {
         });
 
         return (
-          <MobCard key={lote} style={{ marginBottom: "0.7rem" }}>
+          <MobCard key={lote} className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), marginBottom: "0.7rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.6rem" }}>
               <span style={{ fontWeight: 800, fontSize: "1rem" }}>{lote}</span>
               <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>

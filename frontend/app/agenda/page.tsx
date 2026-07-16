@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, Target, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
@@ -11,7 +11,7 @@ import { VIAS_APLICACAO } from "@/lib/constants";
 
 // Unidades aceitas na aplicação (mesma lista usada em Sanidade/Cadastro).
 const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
-import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -52,6 +52,20 @@ function badgeClasse(categoria: string): string {
 function categoriaLabel(categoria: string): string {
   return categoria ? categoria.charAt(0).toUpperCase() + categoria.slice(1) : categoria;
 }
+// Cor de destaque por categoria — usada como borda/pontinho nas linhas da
+// linha do tempo, no lugar da pílula de categoria repetida em toda linha.
+const COR_CATEGORIA: Record<string, string> = {
+  "Reprodutivo":       "var(--green-light)",
+  "Sanidade":          "var(--dourado-light)",
+  "Produção":          "var(--blue)",
+  "Gestão/Financeiro": "#e8837a",
+  "Atividades":        "var(--text-muted)",
+};
+const COR_CATEGORIA_LC: Record<string, string> = Object.fromEntries(Object.entries(COR_CATEGORIA).map(([k, v]) => [k.toLowerCase(), v]));
+function corCategoria(categoria: string): string {
+  return COR_CATEGORIA_LC[(categoria || "").toLowerCase()] || "var(--text-muted)";
+}
+const LEGENDA_CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro"];
 
 export default function AgendaPage() {
   const [data, setData] = useState(today());
@@ -92,7 +106,6 @@ export default function AgendaPage() {
     { header: "Grupo", render: (a: AnimalRow) => a.grupo_primario || "—" },
     { header: "Categoria", render: (a: AnimalRow) => a.categoria_abrev || a.categoria_completa || "—" },
   ];
-  const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [datasAbertas, setDatasAbertas] = useState<Set<string>>(new Set());
   const toggleData = (d: string) => setDatasAbertas(p => { const n = new Set(p); n.has(d) ? n.delete(d) : n.add(d); return n; });
   // Painéis recolhíveis (candidatas IATF, BST aptos, BST excluídos) — começam recolhidos.
@@ -489,7 +502,17 @@ export default function AgendaPage() {
   // Extrai o valor de "Conta a pagar: X — R$ 1,234.56" (formatação :,.2f do Python — vírgula de milhar, ponto decimal).
   const extrairValor = (desc: string) => { const m = desc.match(/R\$\s*([\d,]+\.\d{2})/); return m ? m[1].replace(/,/g, "") : null; };
 
-  const renderEventos = (lista: any[]) => {
+  // Tira colorida à esquerda da linha (categoria) no lugar da pílula repetida
+  // em toda linha — só a cor muda o suficiente para identificar a categoria.
+  const tdAccent = (categoria: string) => <td style={{ padding: 0, width: 4, background: corCategoria(categoria) }}></td>;
+  // "N dias atrasado" — só aparece na seção de Atrasados (mostrarAtraso=true).
+  const pillAtraso = (dataEvento: string) => (
+    <span style={{ marginLeft: "0.5rem", fontSize: "0.68rem", fontWeight: 700, color: "var(--red)", background: "rgba(220,38,38,0.12)", padding: "0.05rem 0.45rem", borderRadius: 999, whiteSpace: "nowrap" }}>
+      {diasEntre(dataEvento, hoje)} dia{diasEntre(dataEvento, hoje) !== 1 ? "s" : ""} atrasado
+    </span>
+  );
+
+  const renderEventos = (lista: any[], mostrarAtraso?: boolean) => {
     const porData = new Map<string, any[]>();
     lista.forEach((e: any) => { (porData.get(e.data) ?? porData.set(e.data, []).get(e.data)!).push(e); });
     return Array.from(porData.keys()).sort().map((d) => {
@@ -535,7 +558,7 @@ export default function AgendaPage() {
           {aberto && (
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Categoria</th><th>Nº Animal</th><th>Descrição</th><th>Obs.</th><th>Origem</th><th></th></tr></thead>
+                <thead><tr><th></th><th>Nº Animal</th><th>Descrição</th><th>Obs.</th><th>Origem</th><th></th></tr></thead>
                 <tbody>
                   {linhas.map((linha, i) => {
                     if (linha.tipo === "simples") {
@@ -554,9 +577,9 @@ export default function AgendaPage() {
                       return (
                         <React.Fragment key={i}>
                           <tr>
-                            <td><span className={badgeClasse(e.categoria)} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>{categoriaLabel(e.categoria)}</span></td>
+                            {tdAccent(e.categoria)}
                             <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
-                            <td style={{ fontSize: "0.83rem" }}>{e.descricao}</td>
+                            <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
                             <td>
@@ -647,11 +670,11 @@ export default function AgendaPage() {
                       return (
                         <React.Fragment key={`iatf-${i}`}>
                           <tr style={{ cursor: "pointer" }} onClick={() => abrirIatf(e.id, e.animais)}>
-                            <td><span className={BADGE_CLASS["Reprodutivo"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Reprodutivo</span></td>
+                            {tdAccent("Reprodutivo")}
                             <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
-                            <td style={{ fontSize: "0.83rem" }}>
+                            <td style={{ fontSize: "0.83rem" }} title="Reprodutivo">
                               {abertoIatf ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                              {e.descricao}
+                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
                             </td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
@@ -745,11 +768,11 @@ export default function AgendaPage() {
                       return (
                         <React.Fragment key={`inducao-${i}`}>
                           <tr style={{ cursor: "pointer" }} onClick={() => abrirInducao(e.id, e.animais)}>
-                            <td><span className={BADGE_CLASS["Produção"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Produção</span></td>
+                            {tdAccent("Produção")}
                             <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.animais.length} animal(is)</td>
-                            <td style={{ fontSize: "0.83rem" }}>
+                            <td style={{ fontSize: "0.83rem" }} title="Produção">
                               {abertoInducao ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                              {e.descricao}
+                              {e.descricao}{mostrarAtraso && pillAtraso(e.data)}
                             </td>
                             <td style={{ color: "var(--amber)", fontSize: "0.78rem", fontWeight: e.observacao ? 700 : 400 }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: "var(--amber)" }}>manual</td>
@@ -803,11 +826,11 @@ export default function AgendaPage() {
                     return (
                       <React.Fragment key={`g-${i}`}>
                         <tr style={{ cursor: "pointer" }} onClick={() => togglePainel(chaveGrupo)}>
-                          <td><span className={BADGE_CLASS["Gestão/Financeiro"]} style={{ padding: "0.1rem 0.5rem", borderRadius: "4px", fontSize: "0.7rem", whiteSpace: "nowrap" }}>Gestão/Financeiro</span></td>
+                          {tdAccent("Gestão/Financeiro")}
                           <td>—</td>
-                          <td style={{ fontSize: "0.83rem" }}>
+                          <td style={{ fontSize: "0.83rem" }} title="Gestão/Financeiro">
                             {abertoGrupo ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                            Nota/lançamento <strong>{ref}</strong> — {itens.length} item{itens.length !== 1 ? "s" : ""} — R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}
+                            Nota/lançamento <strong>{ref}</strong> — {itens.length} item{itens.length !== 1 ? "s" : ""} — R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}{mostrarAtraso && pillAtraso(itens[0]?.data || d)}
                           </td>
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>
@@ -817,14 +840,22 @@ export default function AgendaPage() {
                             </a>
                           </td>
                         </tr>
-                        {abertoGrupo && itens.map((it: any, j: number) => (
-                          <tr key={`g-${i}-${j}`} style={{ background: "var(--surface-2)" }}>
+                        {abertoGrupo && (
+                          <tr style={{ background: "var(--surface-2)" }}>
                             <td></td><td></td>
-                            <td colSpan={2} style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{it.descricao}{it.observacao ? ` · ${it.observacao}` : ""}</td>
-                            <td></td>
+                            <td colSpan={3} style={{ padding: "0.4rem 0.9rem" }}>
+                              <div style={{ display: "flex", flexWrap: "wrap", gap: "0.4rem" }}>
+                                {itens.map((it: any, j: number) => (
+                                  <span key={`g-${i}-${j}`} title={it.observacao || undefined}
+                                    style={{ fontSize: "0.74rem", color: "var(--text-muted)", background: "var(--surface)", border: "1px solid var(--border)", borderRadius: 999, padding: "0.2rem 0.65rem" }}>
+                                    {it.descricao}
+                                  </span>
+                                ))}
+                              </div>
+                            </td>
                             <td></td>
                           </tr>
-                        ))}
+                        )}
                       </React.Fragment>
                     );
                   })}
@@ -850,6 +881,12 @@ export default function AgendaPage() {
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
   const bstNuncaAplicados = agenda?.bst_nunca_aplicados || [];
+  // "IATF atual" — animais com alguma etapa de protocolo (D0/D7/D9/D11) em
+  // aberto agora, contados sem repetir o mesmo animal em dois dias.
+  const iatfAtual = new Set(
+    (agenda?.eventos || []).filter((e: any) => e.tipo === "protocolo_iatf").flatMap((e: any) => e.animais || [])
+  ).size;
+  const estoqueAlertasTotal = (agenda?.estoque_negativo?.length || 0) + (agenda?.estoque_abaixo_minimo?.length || 0);
 
   // Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
   // rebanho (calculada no backend; ex.: último serviço 03/07 -> visita 24/07).
@@ -932,80 +969,62 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* KPIs bloco */}
+      {/* Quadros rápidos — cada quadro clicável expande/recolhe a lista logo
+          abaixo (mesmo estado listaAtiva de antes); Pendências e Alertas de
+          estoque são só informativos, já que suas próprias seções (Atrasados
+          na linha do tempo; card de Estoque) ficam sempre visíveis abaixo. */}
       {loading && !agenda ? (
-        <div className="mb-5"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
+        <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
       ) : agenda && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-5">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
           {[
-            { label: "Candidatas IATF", value: agenda.totais?.candidatas_iatf, color: "var(--blue)",
-              list: candidatas.map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias })) },
-            { label: "BST Aptos", value: bstAptos.length, color: "var(--green-light)",
-              list: bstAptos.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
-            { label: "BST Excluídos", value: bstExcl.length, color: "var(--amber)",
-              list: bstExcl.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
-            { label: "Incluir no próximo BST", value: bstNuncaAplicados.length, color: "var(--blue)",
-              list: bstNuncaAplicados.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
-            { label: "Total Eventos", value: agenda.totais?.eventos, color: "var(--dourado-light)" },
-          ].map((k: any) => {
-            const clic = k.list && k.list.length;
-            return (
-              <div key={k.label} className="kpi-card" style={{ padding: "0.9rem", cursor: clic ? "pointer" : undefined }}
-                onClick={() => clic && setModal({ title: k.label, list: k.list })}>
-                <p className="kpi-value" style={{ fontSize: "1.6rem", color: k.color }}>{k.value ?? "—"}</p>
-                <p className="kpi-label flex items-center gap-1">{k.label}{clic ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
-              </div>
-            );
-          })}
+            { key: "iatf", label: "Candidatas IATF", value: candidatas.length, color: "var(--blue)", clicavel: candidatas.length > 0 },
+            { key: null, label: "IATF atual", value: iatfAtual, color: "var(--green-light)", clicavel: false },
+            { key: "bstAptos", label: "BST aptos", value: bstAptos.length, color: "var(--green-light)", clicavel: bstAptos.length > 0 },
+            { key: "bstExcl", label: "BST excluídos", value: bstExcl.length, color: "var(--amber)", clicavel: bstExcl.length > 0 },
+            { key: "bstNunca", label: "Incluir no próximo BST", value: bstNuncaAplicados.length, color: "var(--blue)", clicavel: bstNuncaAplicados.length > 0 },
+            { key: null, label: "Pendências", value: eventosPendentes.length, color: "var(--red)", destaque: eventosPendentes.length > 0 },
+            { key: null, label: "Alertas de estoque", value: estoqueAlertasTotal, color: "var(--amber)" },
+          ].map((k: any) => (
+            <div key={k.label} className="kpi-card"
+              style={{ padding: "0.9rem", cursor: k.clicavel ? "pointer" : undefined, border: k.destaque ? "1px solid var(--red)" : undefined }}
+              onClick={() => k.clicavel && k.key && toggleLista(k.key)}>
+              <p className="kpi-value" style={{ fontSize: "1.6rem", color: k.destaque ? "var(--red)" : k.color }}>{k.value ?? "—"}</p>
+              <p className="kpi-label flex items-center gap-1" style={{ color: k.destaque ? "var(--red)" : undefined }}>
+                {k.label}
+                {k.clicavel ? (listaAtiva.has(k.key) ? <ChevronDown size={11} /> : <ChevronRight size={11} />) : null}
+              </p>
+            </div>
+          ))}
         </div>
       )}
+      {eventosPendentes.length > 0 && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginBottom: "0.5rem" }}>
+          Pendências: tudo que não foi realizado até o dia anterior a hoje.
+        </p>
+      )}
 
-      {/* Listas lado a lado — cada uma expande/recolhe ao clicar, sem ocupar linhas repetidas */}
+      {/* Legenda de categorias — mesma cor usada na tira à esquerda de cada
+          linha da agenda mais abaixo. */}
+      <div className="flex items-center gap-3 mb-4" style={{ flexWrap: "wrap", fontSize: "0.75rem", color: "var(--text-muted)" }}>
+        {LEGENDA_CATEGORIAS.map((c) => (
+          <span key={c} className="flex items-center gap-1">
+            <span style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: corCategoria(c) }} />
+            {c}
+          </span>
+        ))}
+        {(proxVisita || proxBST) && (
+          <span style={{ marginLeft: "auto" }}>
+            {proxVisita && <>Próx. visita IATF: <strong style={{ color: "var(--text)" }}>{proxVisita}</strong></>}
+            {proxVisita && proxBST && " · "}
+            {proxBST && <>Próx. BST: <strong style={{ color: "var(--text)" }}>{proxBST}</strong></>}
+          </span>
+        )}
+      </div>
+
+      {/* Listas expansíveis — abrem/fecham a partir do clique nos quadros acima */}
       {(candidatas.length > 0 || bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0) && (
         <div className="mb-4">
-          <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
-            {candidatas.length > 0 && (
-              <button onClick={() => toggleLista("iatf")} title="Mostrar/ocultar as fêmeas candidatas à IATF"
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (listaAtiva.has("iatf") ? "var(--dourado)" : "var(--border)"),
-                  background: listaAtiva.has("iatf") ? "rgba(94,26,46,0.4)" : "transparent",
-                  color: listaAtiva.has("iatf") ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: listaAtiva.has("iatf") ? 700 : 500 }}>
-                {listaAtiva.has("iatf") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                Candidatas IATF ({candidatas.length}){proxVisita && <span style={{ fontWeight: 400, fontSize: "0.72rem" }}> — próx. visita {proxVisita}</span>}
-              </button>
-            )}
-            {bstAptos.length > 0 && (
-              <button onClick={() => toggleLista("bstAptos")} title="Mostrar/ocultar as fêmeas aptas ao BST"
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (listaAtiva.has("bstAptos") ? "var(--green-light)" : "var(--border)"),
-                  background: listaAtiva.has("bstAptos") ? "rgba(20,83,45,0.4)" : "transparent",
-                  color: listaAtiva.has("bstAptos") ? "var(--green-light)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstAptos") ? 700 : 500 }}>
-                {listaAtiva.has("bstAptos") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                BST — Aptas ({bstAptos.length}){proxBST && <span style={{ fontWeight: 400, fontSize: "0.72rem" }}> — próx. BST {proxBST}</span>}
-              </button>
-            )}
-            {bstExcl.length > 0 && (
-              <button onClick={() => toggleLista("bstExcl")} title="Mostrar/ocultar as fêmeas excluídas do BST e o motivo"
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (listaAtiva.has("bstExcl") ? "var(--amber)" : "var(--border)"),
-                  background: listaAtiva.has("bstExcl") ? "rgba(120,90,10,0.35)" : "transparent",
-                  color: listaAtiva.has("bstExcl") ? "var(--amber)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstExcl") ? 700 : 500 }}>
-                {listaAtiva.has("bstExcl") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                BST — Excluídos ({bstExcl.length})
-              </button>
-            )}
-            {bstNuncaAplicados.length > 0 && (
-              <button onClick={() => toggleLista("bstNunca")} title="Mostrar/ocultar as fêmeas que entram no próximo BST — nunca aplicadas que estarão aptas na próxima data, e animais retirados do BST (bolinha amarela) para reanálise"
-                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
-                  border: "1px solid " + (listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--border)"),
-                  background: listaAtiva.has("bstNunca") ? "rgba(30,64,124,0.35)" : "transparent",
-                  color: listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstNunca") ? 700 : 500 }}>
-                {listaAtiva.has("bstNunca") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                Incluir no próximo BST ({bstNuncaAplicados.length})
-              </button>
-            )}
-          </div>
-
           {listaAtiva.has("iatf") && (
             <div className="card mb-2" style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
@@ -1249,41 +1268,38 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Pendentes (eventos anteriores a hoje ainda em aberto) — sempre visível, mesmo vazia */}
-      <div className="card mb-4" style={{ border: eventosPendentes.length ? "1px solid var(--amber)" : "1px solid var(--border)" }}>
-        <div className="card-header mb-3 flex items-center justify-between" style={{ color: eventosPendentes.length ? "var(--amber)" : "var(--text-muted)" }}>
-          <span className="flex items-center gap-2"><AlertTriangle size={15} /> Agenda de Pendentes ({eventosPendentes.length})</span>
-          <ExportarBotoes titulo="Agenda de Pendentes" nomeArquivoBase="agenda_pendentes" colunas={COLUNAS_AGENDA} linhas={eventosPendentes} />
-        </div>
-        {loading ? (
-          <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center", fontSize: "0.85rem" }}>Carregando…</p>
-        ) : eventosPendentes.length > 0 ? (
-          <div className="space-y-2">{renderEventos(eventosPendentes)}</div>
-        ) : (
-          <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center", fontSize: "0.85rem" }}>0 pendências — tudo em dia.</p>
-        )}
-      </div>
-
-      {/* Agenda do dia presente em diante */}
+      {/* Linha do tempo unificada — Atrasados (antes de hoje) seguido de Hoje/
+          próximos, em vez de dois cards separados (KPI+lista fragmentados). */}
       <div className="card">
         <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-          <span>Eventos — hoje e próximos ({eventosFuturos.length})</span>
+          <span>Agenda ({eventosPendentes.length + eventosFuturos.length})</span>
           <div className="flex items-center gap-2">
             {!ate && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>}
-            <ExportarBotoes titulo="Agenda — Eventos" nomeArquivoBase="agenda_eventos" colunas={COLUNAS_AGENDA} linhas={eventosFuturos} />
+            <ExportarBotoes titulo="Agenda" nomeArquivoBase="agenda" colunas={COLUNAS_AGENDA} linhas={[...eventosPendentes, ...eventosFuturos]} />
           </div>
         </div>
-        <div style={{ marginTop: "0.75rem" }}>
         {loading ? (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
-        ) : eventosFuturos.length > 0 ? (
-          <div className="space-y-2">{renderEventos(eventosFuturos)}</div>
         ) : (
-          <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>
-            Nenhum evento futuro no filtro. Faça o upload dos CSV na aba Upload.
-          </p>
+          <div style={{ marginTop: "0.75rem" }}>
+            {eventosPendentes.length > 0 && (
+              <>
+                <div className="flex items-center gap-2" style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
+                  <AlertTriangle size={14} /> Atrasados ({eventosPendentes.length})
+                </div>
+                <div className="space-y-2 mb-3">{renderEventos(eventosPendentes, true)}</div>
+              </>
+            )}
+            <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
+              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
+            </div>
+            {eventosFuturos.length > 0 ? (
+              <div className="space-y-2">{renderEventos(eventosFuturos)}</div>
+            ) : (
+              <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>Nenhum evento no filtro atual.</p>
+            )}
+          </div>
         )}
-        </div>
       </div>
 
       {/* Modal adicionar evento */}
@@ -1412,7 +1428,6 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
   );
 }

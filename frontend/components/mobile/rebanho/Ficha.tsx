@@ -1,13 +1,13 @@
 "use client";
 // Tela REBANHO › aba "Ficha do Animal".
-// Busca grande + lista de recentes; ao tocar num animal abre a ficha completa
-// (só leitura) numa sub-tela, com seções recolhíveis. Offline: ficha via cache
-// por animal (chave "ficha_<numero>").
+// Busca grande + lista completa de animais; ao tocar num animal abre a ficha
+// completa (só leitura) numa sub-tela, com seções recolhíveis. Offline: ficha
+// via cache por animal (chave "ficha_<numero>").
 import { useEffect, useState } from "react";
-import { fetchFichaAnimal, formatDate, registrarColostragem } from "@/lib/api";
+import { fetchAnimais, fetchFichaAnimal, formatDate, registrarColostragem } from "@/lib/api";
 import { fetchComCache, cacheEm } from "@/lib/offline";
 import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
-import { BuscaAnimal, lerRecentes, registrarRecente, subtituloAnimal, type Recente } from "./comum";
+import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
 
 type Ficha = {
   animal: Record<string, unknown>;
@@ -105,8 +105,6 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
         if (dados) {
           setFicha(dados);
           setDoCache(doCache);
-          const a = dados.animal || {};
-          registrarRecente({ numero, categoria_abrev: (a.categoria_abrev as string) ?? null, grupo_primario: (a.grupo_primario as string) ?? null });
         } else {
           setErro("Sem internet e sem cópia salva desta ficha.");
         }
@@ -318,22 +316,32 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
 
 export default function Ficha({ numeroInicial, destacarInicial }: { numeroInicial?: string | null; destacarInicial?: string | null } = {}) {
   const [aberto, setAberto] = useState<string | null>(numeroInicial ?? null);
-  const [recentes, setRecentes] = useState<Recente[]>([]);
+  const [animais, setAnimais] = useState<AnimalMob[]>([]);
+  const [carregando, setCarregando] = useState(true);
 
-  useEffect(() => { setRecentes(lerRecentes()); }, [aberto]);
+  useEffect(() => {
+    let vivo = true;
+    fetchComCache<AnimalMob[]>("animais", () => fetchAnimais()).then(({ dados }) => {
+      if (vivo) { setAnimais(dados || []); setCarregando(false); }
+    });
+    return () => { vivo = false; };
+  }, []);
 
   const destacar = destacarInicial === "colostragem" || destacarInicial === "igg" ? destacarInicial : null;
 
   if (aberto) return <FichaDetalhe numero={aberto} onVoltar={() => setAberto(null)} destacarInicial={aberto === numeroInicial ? destacar : null} />;
 
+  const ordenados = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+
   return (
     <div>
       <BuscaAnimal valor="" onEscolher={(n) => { if (n) setAberto(n); }} />
 
-      <div className="mob-secao">Animais recentes</div>
-      {recentes.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal aberto ainda. Use a busca acima.</p>}
-      {recentes.map((r) => (
-        <MobLinha key={r.numero} titulo={`Brinco ${r.numero}`} subtitulo={subtituloAnimal(r)} onClick={() => setAberto(r.numero)} />
+      <div className="mob-secao">Todos os animais{ordenados.length ? ` (${ordenados.length})` : ""}</div>
+      {carregando && <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>}
+      {!carregando && !ordenados.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>}
+      {ordenados.map((r) => (
+        <MobLinha key={r.numero} titulo={`Brinco ${r.numero}${r.nome ? ` · ${r.nome}` : ""}`} subtitulo={subtituloAnimal(r)} onClick={() => setAberto(r.numero)} />
       ))}
     </div>
   );
