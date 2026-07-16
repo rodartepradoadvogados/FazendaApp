@@ -2,7 +2,7 @@
 // Tela REBANHO do app de campo: duas sub-abas — Animais (ficha do animal,
 // consulta) e Lotes (Composição / Indicadores).
 // Movimentar e Baixar ficam na tela LANÇAR.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PawPrint, LayoutGrid } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
@@ -14,6 +14,20 @@ const TITULOS: Record<Aba, string> = { animais: "Animais", lotes: "Lotes" };
 
 export default function Pagina() {
   const [aba, setAba] = useState<Aba | null>(null);
+  const [numeroInicial, setNumeroInicial] = useState<string | null>(null);
+  const [destacarInicial, setDestacarInicial] = useState<string | null>(null);
+
+  // Chegou da Agenda com uma pendência de colostro/IgG (link /app/rebanho?numero=...&destacar=...).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const numero = params.get("numero");
+    const destacar = params.get("destacar");
+    if (numero) {
+      setNumeroInicial(numero);
+      setDestacarInicial(destacar);
+      setAba("animais");
+    }
+  }, []);
 
   if (!aba) {
     return (
@@ -33,7 +47,7 @@ export default function Pagina() {
   return (
     <div>
       <MobVoltar titulo={TITULOS[aba]} onVoltar={() => setAba(null)} />
-      {aba === "animais" && <Ficha />}
+      {aba === "animais" && <Ficha numeroInicial={numeroInicial} destacarInicial={destacarInicial} />}
       {aba === "lotes" && <Lotes />}
     </div>
   );

@@ -510,10 +510,17 @@ function PreventivoBst() {
           lista.map((b: any) => (
             <MobCard key={b.numero_matriz} style={{ marginBottom: "0.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
-                <span style={{ fontWeight: 700 }}>{b.numero_matriz}</span>
+                <span style={{ fontWeight: 700, display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  {b.requer_reanalise && (
+                    <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: "var(--mob-ambar)" }} />
+                  )}
+                  {b.numero_matriz}
+                </span>
                 <span style={{ color: "var(--mob-muted)", fontSize: "0.82rem" }}>Lote {b.grupo || "—"}</span>
               </div>
-              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>DEL: {b.del_dias ?? "—"}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>
+                DEL: {b.del_dias ?? "—"}{b.requer_reanalise ? ` · ${b.motivo_exclusao || "Revisar"}` : ""}
+              </div>
             </MobCard>
           ))
         )}
@@ -528,7 +535,7 @@ function PreventivoBst() {
         <strong>{dados?.proxima_visita_bst ? formatDate(dados.proxima_visita_bst) : "—"}</strong>.
       </p>
       <Lista titulo="Aptas" lista={aptos} cor="var(--mob-verde)" />
-      <Lista titulo="Nunca aplicadas" lista={nuncaAplicados} cor="var(--mob-azul)" />
+      <Lista titulo="Incluir no próximo BST" lista={nuncaAplicados} cor="var(--mob-azul)" />
       <Lista titulo="Excluídas" lista={excl} cor="var(--mob-ambar)" />
     </>
   );

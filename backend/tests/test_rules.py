@@ -275,6 +275,26 @@ class TestIndicadores:
         assert r["reproducao"]["taxa_prenhez_pct"] is None
         assert r["reproducao"]["iep_dias"] is None
 
+    def test_reproducao_categorias_4_grupos_padrao(self):
+        # Situação Reprodutiva da Capa: Prenhas/Inseminadas/PEV/A inseminar são
+        # o padrão; Vaz. atr. entra em "a_inseminar" (mesmo critério do IATF);
+        # qualquer sit_rep fora do padrão (aqui, em branco) vira "nao_classificadas".
+        animais = [
+            {"numero": "1", "grupo_primario": "01 - VACAS", "sit_rep": "Ges."},
+            {"numero": "2", "grupo_primario": "01 - VACAS", "sit_rep": "Ins."},
+            {"numero": "3", "grupo_primario": "01 - VACAS", "sit_rep": "Vaz. pev"},
+            {"numero": "4", "grupo_primario": "01 - VACAS", "sit_rep": "Vaz. apt."},
+            {"numero": "5", "grupo_primario": "01 - VACAS", "sit_rep": "Vaz. atr."},
+            {"numero": "6", "grupo_primario": "01 - VACAS", "sit_rep": ""},
+        ]
+        r = calcular_indicadores(animais, [], [], data_ref=date(2026, 7, 5))
+        cat = r["reproducao_categorias"]["todas"]
+        assert cat["prenhes"] == 1
+        assert cat["inseminadas"] == 1
+        assert cat["pev"] == 1
+        assert cat["a_inseminar"] == 2  # Vaz. apt. + Vaz. atr.
+        assert cat["nao_classificadas"] == 1
+
     def test_iep_ignora_partos_duplicados(self):
         # Registros de parto separados por menos que uma gestação são o mesmo
         # evento (duplicidade) e não podem contar como intervalo entre partos.

@@ -944,7 +944,7 @@ export default function AgendaPage() {
               list: bstAptos.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "BST Excluídos", value: bstExcl.length, color: "var(--amber)",
               list: bstExcl.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
-            { label: "BST Nunca aplicadas", value: bstNuncaAplicados.length, color: "var(--blue)",
+            { label: "Incluir no próximo BST", value: bstNuncaAplicados.length, color: "var(--blue)",
               list: bstNuncaAplicados.map((b: any) => ({ numero: b.numero_matriz, grupo_primario: b.grupo, del_dias: b.del_dias })) },
             { label: "Total Eventos", value: agenda.totais?.eventos, color: "var(--dourado-light)" },
           ].map((k: any) => {
@@ -995,13 +995,13 @@ export default function AgendaPage() {
               </button>
             )}
             {bstNuncaAplicados.length > 0 && (
-              <button onClick={() => toggleLista("bstNunca")} title="Mostrar/ocultar as fêmeas aptas ao BST que nunca receberam aplicação"
+              <button onClick={() => toggleLista("bstNunca")} title="Mostrar/ocultar as fêmeas que entram no próximo BST — nunca aplicadas que estarão aptas na próxima data, e animais retirados do BST (bolinha amarela) para reanálise"
                 style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.4rem 0.9rem", borderRadius: "999px", cursor: "pointer",
                   border: "1px solid " + (listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--border)"),
                   background: listaAtiva.has("bstNunca") ? "rgba(30,64,124,0.35)" : "transparent",
                   color: listaAtiva.has("bstNunca") ? "var(--blue)" : "var(--text-muted)", fontWeight: listaAtiva.has("bstNunca") ? 700 : 500 }}>
                 {listaAtiva.has("bstNunca") ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-                BST — Nunca aplicadas ({bstNuncaAplicados.length})
+                Incluir no próximo BST ({bstNuncaAplicados.length})
               </button>
             )}
           </div>
@@ -1097,7 +1097,7 @@ export default function AgendaPage() {
                     <tr key={i}>
                       <td>
                         {b.requer_reanalise && (
-                          <span title="Excluída manualmente do BST — revisar" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
+                          <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
                         )}
                       </td>
                       <td style={{ fontWeight: 700 }}>{b.numero_matriz}</td>
