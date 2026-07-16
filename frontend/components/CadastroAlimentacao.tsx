@@ -1,25 +1,22 @@
 "use client";
-// Configurações > Cadastro > Alimentação — onde o veterinário/nutricionista
-// cadastra a dieta dos animais. Duas visões:
-//   • "Cadastrar nova dieta": por lote, mostra o contexto (nº/nome, nº de
-//     animais, última dieta, último controle leiteiro de cada animal e um
-//     resumo — DEL médio, média do CL, data do CL) e permite lançar os
-//     produtos com cálculo automático (total/dia, total/trato, por cabeça e o
-//     somatório de kg do vagão). Datas de início e provável fim. Um único botão
-//     salva todas as dietas configuradas.
+// Configurações > Cadastro > Alimentação — dados mestres de alimentação
+// (o lançamento de nova dieta em si vive em Lançamentos > Alimentação, via o
+// mesmo CadastrarNovaDieta exportado deste arquivo). Três abas:
 //   • "Visualizar dietas": lista as dietas lançadas e abre a apresentação como
 //     o funcionário a vê (produtos, por cabeça, total/dia, total/trato e kg no
 //     vagão).
-// Ao salvar uma nova dieta num lote que já tem dieta ativa, pergunta se deseja
-// encerrar a atual na data de início da nova.
+//   • "Matéria seca": % de MS de cada ingrediente padrão, usado para converter
+//     entre matéria natural e matéria seca nas dietas.
+//   • "Tabela Nutricional": cadastro da grade nutriente × produto (mesmos
+//     dados que o botão "Tabela nutricional" exibe em modo consulta).
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, Wheat, ClipboardList, ChevronDown, ChevronRight, Percent } from "lucide-react";
+import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2 } from "lucide-react";
 import {
   fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
   criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, type ContextoDieta, type ApresentacaoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
-import { TabelaNutricionalBotao, CadastrarTabelaNutricionalBotao } from "./TabelaNutricional";
+import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 
 const NUM_TRATOS = 2;
@@ -57,12 +54,12 @@ const input: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 export default function CadastroAlimentacao() {
-  const [aba, setAba] = useState<"nova" | "ver" | "ms">("nova");
+  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional">("ver");
   return (
     <div>
       <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          {([["nova", "Cadastrar nova dieta", Wheat], ["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent]] as const).map(([id, label, Icon]) => (
+          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent], ["tabela-nutricional", "Tabela Nutricional", Table2]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
                 border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
@@ -72,12 +69,9 @@ export default function CadastroAlimentacao() {
             </button>
           ))}
         </div>
-        <div className="flex items-center gap-2">
-          <TabelaNutricionalBotao />
-          <CadastrarTabelaNutricionalBotao />
-        </div>
+        <TabelaNutricionalBotao />
       </div>
-      {aba === "nova" ? <CadastrarNovaDieta /> : aba === "ver" ? <VisualizarDietas /> : <MateriaSeca />}
+      {aba === "ver" ? <VisualizarDietas /> : aba === "ms" ? <MateriaSeca /> : <TabelaNutricionalCadastroInline />}
     </div>
   );
 }
