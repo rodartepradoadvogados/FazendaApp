@@ -43,9 +43,10 @@ type Opcoes = {
   produtos: string[];
   contas_bancarias: string[];
   tipos_documento: string[];
+  formas_pagamento: string[];
 };
 
-const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [] };
+const OPCOES_VAZIAS: Opcoes = { contas_gerenciais: [], centros_custo: [], fornecedores: [], produtos: [], contas_bancarias: [], tipos_documento: [], formas_pagamento: [] };
 
 function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string): Parcela[] {
   if (qtd <= 0) return [];
@@ -150,6 +151,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [valorPago, setValorPago] = useState("");
   const [contaBancaria, setContaBancaria] = useState("");
   const [numeroDocumentoPagamento, setNumeroDocumentoPagamento] = useState("");
+  const [formaPagamento, setFormaPagamento] = useState("");
 
   const [xmlAberto, setXmlAberto] = useState(false);
   const [xmlTexto, setXmlTexto] = useState("");
@@ -223,7 +225,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento,
       dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, pedidoId, entregue, desconto, acrescimo,
       parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
-      numeroDocumentoPagamento, salvoEm: new Date().toISOString(),
+      numeroDocumentoPagamento, formaPagamento, salvoEm: new Date().toISOString(),
     };
   }
   function aplicarRascunho(d: any) {
@@ -237,6 +239,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setParcelado(!!d.parcelado); setQtdParcelas(d.qtdParcelas || "2"); setParcelas(Array.isArray(d.parcelas) ? d.parcelas : []);
     setJaPago(!!d.jaPago); setDataPagamento(d.dataPagamento || ""); setValorPago(d.valorPago || "");
     setContaBancaria(d.contaBancaria || ""); setNumeroDocumentoPagamento(d.numeroDocumentoPagamento || "");
+    setFormaPagamento(d.formaPagamento || "");
   }
 
   // Está "sujo" (com trabalho a perder) se já tem item preenchido ou dados da nota.
@@ -255,7 +258,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, dataEmissao, dataVencimento,
       dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo, parcelado, qtdParcelas, parcelas,
-      jaPago, dataPagamento, valorPago, contaBancaria, numeroDocumentoPagamento]);
+      jaPago, dataPagamento, valorPago, contaBancaria, numeroDocumentoPagamento, formaPagamento]);
 
   // Avisa o navegador antes de fechar/atualizar a aba com lançamento em edição.
   useEffect(() => {
@@ -390,6 +393,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       valor_pago: !parcelado && jaPago ? Number(valorPago) || 0 : null,
       conta_bancaria: !parcelado && jaPago ? contaBancaria || null : null,
       numero_documento_pagamento: !parcelado && jaPago ? numeroDocumentoPagamento || null : null,
+      forma_pagamento: !parcelado && jaPago ? formaPagamento || null : null,
     };
   }
 
@@ -697,6 +701,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                 </select>
               </Campo>
               <Campo label="Número do documento de pagamento"><input style={inputStyle} value={numeroDocumentoPagamento} onChange={(e) => setNumeroDocumentoPagamento(e.target.value)} /></Campo>
+              <Campo label="Forma de pagamento">
+                <select style={inputStyle} value={formaPagamento} onChange={(e) => setFormaPagamento(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {opcoes.formas_pagamento.map((f) => <option key={f} value={f}>{f}</option>)}
+                </select>
+              </Campo>
               {diferencaPagamento !== 0 && (
                 <p style={{ gridColumn: "1 / -1", fontSize: "0.78rem", color: diferencaPagamento < 0 ? "var(--green-light)" : "var(--amber)" }}>
                   {diferencaPagamento < 0 ? `Desconto de ${formatBRL(Math.abs(diferencaPagamento))}` : `Acréscimo de ${formatBRL(diferencaPagamento)}`} em relação ao valor líquido (na baixa do pagamento, diferente do desconto/acréscimo da nota acima).

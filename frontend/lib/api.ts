@@ -1832,6 +1832,48 @@ export async function atualizarCentroCusto(id: number, dados: { nome: string; at
   return res.json();
 }
 
+// ── Tipos de documento (Configurações > Parâmetros financeiros) ──
+export async function fetchTiposDocumentoCadastro() {
+  const res = await authFetch(`${API}/financeiro/tipos-documento`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tipos de documento error: ${res.status}`);
+  return res.json();
+}
+export async function criarTipoDocumento(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/tipos-documento`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de documento"); }
+  return res.json();
+}
+export async function atualizarTipoDocumento(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/tipos-documento/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de documento"); }
+  return res.json();
+}
+
+// ── Formas de pagamento (Configurações > Parâmetros financeiros) ──
+export async function fetchFormasPagamentoCadastro() {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Formas de pagamento error: ${res.status}`);
+  return res.json();
+}
+export async function criarFormaPagamentoCadastro(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar forma de pagamento"); }
+  return res.json();
+}
+export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar forma de pagamento"); }
+  return res.json();
+}
+
 export async function criarLancamentoFinanceiro(dados: any) {
   const res = await authFetch(`${API}/financeiro/lancamentos`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

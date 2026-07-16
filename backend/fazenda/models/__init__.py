@@ -577,6 +577,30 @@ class CentroCusto(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Tipo de documento e forma de pagamento (Configurações > Parâmetros
+# financeiros) — antes eram listas fixas em Python (TIPOS_DOCUMENTO,
+# FORMAS_PAGAMENTO em fazenda.api.routers.financeiro); agora cadastráveis,
+# no mesmo padrão de CentroCusto/ContaCorrente.
+# ---------------------------------------------------------------------------
+class TipoDocumento(SQLModel, table=True):
+    __tablename__ = "tipo_documento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FormaPagamentoCadastro(SQLModel, table=True):
+    __tablename__ = "forma_pagamento_cadastro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Orçamento (Financeiro > Planejamento > Orçamento) — uma linha por
 # ano/mês/conta gerencial/centro de custo. Comparado contra o realizado
 # (ContaGerencial/LancamentoItem já existentes) para o relatório orçado x

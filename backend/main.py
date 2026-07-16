@@ -44,7 +44,10 @@ from fazenda.api.routers import (
 )
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
-from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas
+from fazenda.api.routers.financeiro import (
+    seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
+    seed_tipos_documento_formas_pagamento,
+)
 from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
@@ -67,6 +70,7 @@ async def lifespan(app: FastAPI):
         seed_admin(session)
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
+        seed_tipos_documento_formas_pagamento(session)
         normalizar_plano_contas(session)
         # Classificação padrão (serviço/produto/ambos) por palavra-chave —
         # só preenche onde ainda está vazio, nunca sobrescreve edição manual.
