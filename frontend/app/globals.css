@@ -93,6 +93,10 @@
   --pill-active-fg: var(--dourado-light);
   --pill-active-border: var(--vinho);
   --accent-icon: var(--vinho);
+  /* Foto de fundo da marca d'água do login (ver LoginWatermark.tsx): multiply
+     funde melhor que luminosity em fundo claro. */
+  --login-watermark-blend: multiply;
+  --login-watermark-opacity: 0.12;
 }
 
 /* ── Tema MISTO — conteúdo claro, barra lateral vinho sólido ── */
@@ -128,6 +132,8 @@
   --pill-active-fg: var(--dourado-light);
   --pill-active-border: var(--vinho);
   --accent-icon: var(--vinho);
+  --login-watermark-blend: multiply;
+  --login-watermark-opacity: 0.12;
 }
 
 /* ── PALETA "Verde" — dimensão independente do tema, escolhida em
@@ -195,6 +201,15 @@ body {
    layout.tsx como a variável --font-script. */
 .font-script {
   font-family: var(--font-script), cursive;
+}
+
+/* Foto de fundo da marca d'água da tela de login (ver LoginWatermark.tsx):
+   preto-e-branco e bem apagada para não competir com o card de login.
+   luminosity funde bem em fundo escuro; multiply funde bem em fundo claro. */
+.login-watermark-photo {
+  filter: grayscale(1) contrast(1.08) brightness(0.95);
+  opacity: var(--login-watermark-opacity, 0.16);
+  mix-blend-mode: var(--login-watermark-blend, luminosity);
 }
 
 /* Estado de foco visível para navegação por teclado — anel duplo (contorno +
