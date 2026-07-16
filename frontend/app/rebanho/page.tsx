@@ -347,6 +347,8 @@ export default function RebanhoPage() {
   const [aba, setAba] = useState<Aba>("visao");
   // key da visão geral: incrementa ao (re)entrar na aba "visao" para refazer o fetch e evitar dados velhos.
   const [visaoKey, setVisaoKey] = useState(0);
+  // Número pré-selecionado ao abrir a ficha a partir de Touros (clique num touro da fazenda que também é um Animal cadastrado).
+  const [fichaNumeroInicial, setFichaNumeroInicial] = useState<string | undefined>(undefined);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -363,8 +365,8 @@ export default function RebanhoPage() {
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
-        {aba === "ficha" && <FichaAnimal />}
-        {aba === "touros" && <RebanhoTouros />}
+        {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} />}
+        {aba === "touros" && <RebanhoTouros onAbrirFicha={(numero) => { setFichaNumeroInicial(numero); trocarAba("ficha"); }} />}
         {aba === "indicadores" && <IndicadoresGerais />}
       </div>
     </div>

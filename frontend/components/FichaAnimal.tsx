@@ -128,7 +128,7 @@ function CampoEdit({ label, children, destaque }: { label: string; children: Rea
   return <div><label style={destaque ? { ...labelStyle, color: "var(--red)", fontWeight: 700 } : labelStyle}>{label}{destaque ? " — pendente" : ""}</label>{children}</div>;
 }
 
-export default function FichaAnimal() {
+export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string } = {}) {
   const [animais, setAnimais] = useState<AnimalRow[]>([]);
   const [numero, setNumero] = useState("");
   const [ficha, setFicha] = useState<Ficha | null>(null);
@@ -151,12 +151,12 @@ export default function FichaAnimal() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const n = params.get("numero");
+    const n = numeroInicial || params.get("numero");
     const d = params.get("destacar");
     if (d === "colostragem" || d === "igg") { setDestacar(d); setAbrirEdicaoAoCarregar(true); }
     if (n) buscar(n);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [numeroInicial]);
 
   async function buscar(n: string) {
     setNumero(n);

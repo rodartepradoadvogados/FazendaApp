@@ -44,12 +44,15 @@ from fazenda.api.routers import (
 )
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
-from fazenda.api.routers.financeiro import seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas
+from fazenda.api.routers.financeiro import (
+    seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
+    seed_tipos_documento_formas_pagamento,
+)
 from fazenda.api.routers.reproducao import deduplicar_partos
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
-    seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos,
+    seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
 )
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
@@ -67,6 +70,7 @@ async def lifespan(app: FastAPI):
         seed_admin(session)
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
+        seed_tipos_documento_formas_pagamento(session)
         normalizar_plano_contas(session)
         # Classificação padrão (serviço/produto/ambos) por palavra-chave —
         # só preenche onde ainda está vazio, nunca sobrescreve edição manual.
@@ -81,6 +85,7 @@ async def lifespan(app: FastAPI):
         seed_motivos_baixa(session)
         seed_motivos_venda(session)
         seed_servicos(session)
+        seed_racas_grau_sangue(session)
         # Tipos de serviço (Cobertura/IA) e métodos (Monta Natural/IA em cio
         # natural/IATF) — vocabulário do lançamento de Serviço/Inseminação.
         seed_tipos_metodos_servico(session)

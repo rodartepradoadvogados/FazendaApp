@@ -14,8 +14,8 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, LancamentoItem, MovimentoEstoque, Patrimonio,
-    PlanoContaGerencial, SeedFlag, Usuario,
+    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, LancamentoItem, MovimentoEstoque,
+    Patrimonio, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
@@ -196,6 +196,7 @@ class LancamentoIn(BaseModel):
     valor_pago: Optional[float] = None
     conta_bancaria: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
+    forma_pagamento: Optional[str] = None
     # Vincula esta nota fiscal/recibo a um Pedido (Pedidos > módulo próprio) —
     # é só a partir deste vínculo que o pedido passa a refletir em Financeiro.
     pedido_id: Optional[int] = None
@@ -428,14 +429,16 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
     contas_correntes = session.exec(
         select(ContaCorrente).where(ContaCorrente.ativo == True).order_by(ContaCorrente.banco)
     ).all()
+    tipos_doc_cadastrados = [t.nome for t in session.exec(select(TipoDocumento).where(TipoDocumento.ativo == True).order_by(TipoDocumento.nome)).all()]
+    formas_pgto_cadastradas = [f.nome for f in session.exec(select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.ativo == True).order_by(FormaPagamentoCadastro.nome)).all()]
     return {
         "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
         "fornecedores": fornecedores,
         "produtos": produtos,
         "contas_bancarias": [rotulo_conta_corrente(c) for c in contas_correntes],
-        "tipos_documento": TIPOS_DOCUMENTO,
-        "formas_pagamento": FORMAS_PAGAMENTO,
+        "tipos_documento": tipos_doc_cadastrados or TIPOS_DOCUMENTO,
+        "formas_pagamento": formas_pgto_cadastradas or FORMAS_PAGAMENTO,
     }
 
 
@@ -539,6 +542,76 @@ def atualizar_centro_custo(centro_id: int, dados: CentroCustoIn, session: Sessio
     session.commit()
     session.refresh(c)
     return c.model_dump()
+
+
+class NomeAtivoFinanceiroIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+def _crud_nome_ativo_financeiro(model, rotulo: str):
+    """Mesma fábrica de CRUD nome+ativo do cadastro.py, para os cadastros que
+    vivem em Parâmetros financeiros (Tipo de documento, Forma de pagamento)."""
+
+    def listar(session: Session = Depends(get_session)) -> list[dict]:
+        return [m.model_dump() for m in session.exec(select(model).order_by(model.nome)).all()]
+
+    def criar(dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session)) -> dict:
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        if session.exec(select(model).where(model.nome == nome)).first():
+            raise HTTPException(status_code=409, detail=f"Já existe um(a) {rotulo} com esse nome")
+        obj = model(nome=nome, ativo=dados.ativo)
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    def atualizar(item_id: int, dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session)) -> dict:
+        obj = session.get(model, item_id)
+        if not obj:
+            raise HTTPException(status_code=404, detail=f"{rotulo.capitalize()} não encontrado(a)")
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome é obrigatório")
+        obj.nome = nome
+        obj.ativo = dados.ativo
+        session.add(obj)
+        session.commit()
+        session.refresh(obj)
+        return obj.model_dump()
+
+    return listar, criar, atualizar
+
+
+_listar_tipos_doc, _criar_tipo_doc, _atualizar_tipo_doc = _crud_nome_ativo_financeiro(TipoDocumento, "tipo de documento")
+router.get("/tipos-documento")(_listar_tipos_doc)
+router.post("/tipos-documento")(_criar_tipo_doc)
+router.put("/tipos-documento/{item_id}")(_atualizar_tipo_doc)
+
+_listar_formas_pgto, _criar_forma_pgto, _atualizar_forma_pgto = _crud_nome_ativo_financeiro(FormaPagamentoCadastro, "forma de pagamento")
+router.get("/formas-pagamento-cadastro")(_listar_formas_pgto)
+router.post("/formas-pagamento-cadastro")(_criar_forma_pgto)
+router.put("/formas-pagamento-cadastro/{item_id}")(_atualizar_forma_pgto)
+
+
+# Seed inicial — migra as listas fixas que existiam antes (TIPOS_DOCUMENTO,
+# FORMAS_PAGAMENTO) para os cadastros acima, mais os itens pedidos que ainda
+# não existiam (Ordem de serviço/Outros; dinheiro/outros) — idempotente.
+SEED_TIPOS_DOCUMENTO = [*TIPOS_DOCUMENTO, "Ordem de serviço", "Outros"]
+SEED_FORMAS_PAGAMENTO_CADASTRO = [*FORMAS_PAGAMENTO, "dinheiro", "outros"]
+
+
+def seed_tipos_documento_formas_pagamento(session: Session) -> None:
+    if not session.exec(select(TipoDocumento)).first():
+        for nome in SEED_TIPOS_DOCUMENTO:
+            session.add(TipoDocumento(nome=nome))
+        session.commit()
+    if not session.exec(select(FormaPagamentoCadastro)).first():
+        for nome in SEED_FORMAS_PAGAMENTO_CADASTRO:
+            session.add(FormaPagamentoCadastro(nome=nome))
+        session.commit()
 
 
 class PlanoContaGerencialIn(BaseModel):
@@ -794,6 +867,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
             registro.valor_pago = dados.valor_pago
             registro.conta_bancaria = dados.conta_bancaria
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
+            registro.forma_pagamento = dados.forma_pagamento
             registro.desconto_acrescimo = round((dados.valor_pago or 0) - valor_liquido, 2)
         criados.append(registro)
 

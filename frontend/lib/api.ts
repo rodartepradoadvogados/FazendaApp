@@ -607,6 +607,48 @@ export async function atualizarMotivoBaixa(id: number, dados: { nome: string; at
   return res.json();
 }
 
+// ── Raças (Configurações > Cadastro) ──
+export async function fetchRacas() {
+  const res = await authFetch(`${API}/cadastro/racas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Raças error: ${res.status}`);
+  return res.json();
+}
+export async function criarRaca(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/racas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar raça"); }
+  return res.json();
+}
+export async function atualizarRaca(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/racas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar raça"); }
+  return res.json();
+}
+
+// ── Graus de sangue (Configurações > Cadastro) ──
+export async function fetchGrausSangue() {
+  const res = await authFetch(`${API}/cadastro/graus-sangue`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Graus de sangue error: ${res.status}`);
+  return res.json();
+}
+export async function criarGrauSangue(dados: { nome: string; fracao_holandes?: number | null; ativo?: boolean }) {
+  const res = await authFetch(`${API}/cadastro/graus-sangue`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar grau de sangue"); }
+  return res.json();
+}
+export async function atualizarGrauSangue(id: number, dados: { nome: string; fracao_holandes?: number | null; ativo: boolean }) {
+  const res = await authFetch(`${API}/cadastro/graus-sangue/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar grau de sangue"); }
+  return res.json();
+}
+
 // ── Motivos de venda de animal (Configurações > Parâmetros > Parâmetros gerais) ──
 export async function fetchMotivosVenda() {
   const res = await authFetch(`${API}/cadastro/motivos-venda`, { cache: "no-store" });
@@ -1787,6 +1829,48 @@ export async function atualizarCentroCusto(id: number, dados: { nome: string; at
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar centro de custo"); }
+  return res.json();
+}
+
+// ── Tipos de documento (Configurações > Parâmetros financeiros) ──
+export async function fetchTiposDocumentoCadastro() {
+  const res = await authFetch(`${API}/financeiro/tipos-documento`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tipos de documento error: ${res.status}`);
+  return res.json();
+}
+export async function criarTipoDocumento(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/tipos-documento`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de documento"); }
+  return res.json();
+}
+export async function atualizarTipoDocumento(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/tipos-documento/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar tipo de documento"); }
+  return res.json();
+}
+
+// ── Formas de pagamento (Configurações > Parâmetros financeiros) ──
+export async function fetchFormasPagamentoCadastro() {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Formas de pagamento error: ${res.status}`);
+  return res.json();
+}
+export async function criarFormaPagamentoCadastro(dados: { nome: string; ativo?: boolean }) {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar forma de pagamento"); }
+  return res.json();
+}
+export async function atualizarFormaPagamentoCadastro(id: number, dados: { nome: string; ativo: boolean }) {
+  const res = await authFetch(`${API}/financeiro/formas-pagamento-cadastro/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar forma de pagamento"); }
   return res.json();
 }
 

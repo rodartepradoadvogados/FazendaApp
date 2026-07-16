@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, Wheat, Pill, Scale, Baby } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroAlimentacao from "./CadastroAlimentacao";
 import CadastroPesagem from "./CadastroPesagem";
@@ -12,6 +12,7 @@ import CadastroFornecedores from "./CadastroFornecedores";
 import CadastroEstoqueMeta from "./CadastroEstoqueMeta";
 import CadastroMotivosMovimentacao from "./CadastroMotivosMovimentacao";
 import CadastroMotivosBaixa from "./CadastroMotivosBaixa";
+import CadastroRacas from "./CadastroRacas";
 import CadastroServicos from "./CadastroServicos";
 import CadastroTiposMetodosServico from "./CadastroTiposMetodosServico";
 import CadastroPessoas from "./CadastroPessoas";
@@ -34,6 +35,7 @@ export const ABAS_CADASTRO = [
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["pesagem", "Pesagem do rebanho", Scale],
   ["pessoas", "Pessoas", Users],
+  ["racas", "Raças e grau de sangue", GitBranch],
   ["sanitario", "Sanitário", HeartPulse],
   ["servicos", "Serviços", Wrench],
   ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
@@ -91,6 +93,7 @@ export default function Cadastro({
       {aba === "alimentacao" && <CadastroAlimentacao />}
       {aba === "motivos" && <CadastroMotivosMovimentacao />}
       {aba === "motivos-baixa" && <CadastroMotivosBaixa />}
+      {aba === "racas" && <CadastroRacas />}
       {aba === "servicos" && <CadastroServicos />}
       {aba === "tipos-metodos-servico" && <CadastroTiposMetodosServico />}
       {aba === "pessoas" && <CadastroPessoas />}
