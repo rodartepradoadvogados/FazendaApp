@@ -1948,6 +1948,22 @@ export async function lerDocumentoFinanceiro(file: File) {
   return res.json();
 }
 
+export type LancamentoParecido = {
+  id: number; numero_lancamento: string | null; tipo: string; fornecedor_cliente: string | null;
+  valor_total: number | null; numero_documento: string | null; data_emissao: string | null;
+  data_competencia: string | null; centro_custo: string | null; origem: string | null;
+};
+export async function fetchPossiveisDuplicados(params: {
+  tipo: string; valor_total: number; fornecedor_cliente?: string; data_emissao?: string;
+}): Promise<LancamentoParecido[]> {
+  const qs = new URLSearchParams({ tipo: params.tipo, valor_total: String(params.valor_total) });
+  if (params.fornecedor_cliente) qs.set("fornecedor_cliente", params.fornecedor_cliente);
+  if (params.data_emissao) qs.set("data_emissao", params.data_emissao);
+  const res = await authFetch(`${API}/financeiro/possiveis-duplicados?${qs}`, { cache: "no-store" });
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function fetchDRE(params: {
   data_inicio: string;
   data_fim: string;

@@ -936,7 +936,9 @@ class ValeParcela(SQLModel, table=True):
 
 class TelegramPendente(SQLModel, table=True):
     """Documento recebido pelo robô do Telegram, aguardando o usuário responder
-    se é receita ou despesa antes de virar um lançamento financeiro."""
+    se é receita ou despesa antes de virar um lançamento financeiro. Depois de
+    lido (`tipo`/`dados_lidos` preenchidos), continua vivo até o usuário
+    confirmar/corrigir/cancelar — só aí vira (ou não) um LancamentoPendente."""
 
     __tablename__ = "telegram_pendente"
 
@@ -947,6 +949,8 @@ class TelegramPendente(SQLModel, table=True):
     file_name: Optional[str] = None
     mime: Optional[str] = None
     kind: str                            # "xml" | "documento"
+    tipo: Optional[str] = None           # "receita" | "despesa" — preenchido após a escolha
+    dados_lidos: Optional[str] = None    # JSON já extraído do documento, aguardando confirmação
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 

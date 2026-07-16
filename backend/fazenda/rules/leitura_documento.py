@@ -24,11 +24,28 @@ _SCHEMA = {
     "properties": {
         "tipo_documento": {
             "type": "string",
-            "enum": ["nota_fiscal", "recibo"],
+            "enum": ["nota_fiscal", "recibo", "boleto"],
             "description": (
                 "'nota_fiscal' quando for uma nota fiscal eletrônica/DANFE (compra ou venda ainda não paga). "
-                "'recibo' quando for um comprovante de pagamento/transferência já efetivado (recibo, comprovante bancário, PIX)."
+                "'recibo' quando for um comprovante de pagamento/transferência já efetivado (recibo, comprovante bancário, PIX). "
+                "'boleto' quando for um boleto bancário (código de barras/linha digitável, vencimento, ainda não pago)."
             ),
+        },
+        "parcela_num": {
+            "type": ["integer", "null"],
+            "description": "Se o boleto indicar 'parcela X/Y' ou 'X de Y', o número desta parcela (X). Só se aplica a boleto.",
+        },
+        "parcela_total": {
+            "type": ["integer", "null"],
+            "description": "Se o boleto indicar 'parcela X/Y' ou 'X de Y', o total de parcelas (Y). Só se aplica a boleto.",
+        },
+        "linha_digitavel": {
+            "type": ["string", "null"],
+            "description": "Linha digitável ou código de barras do boleto, se legível. Só se aplica a boleto.",
+        },
+        "data_vencimento": {
+            "type": ["string", "null"],
+            "description": "Data de vencimento do boleto, formato YYYY-MM-DD. Só se aplica a boleto.",
         },
         "fornecedor_cliente": {
             "type": ["string", "null"],
@@ -62,13 +79,17 @@ _SCHEMA = {
         },
         "observacao": {"type": ["string", "null"], "description": "Qualquer informação relevante que não caiba nos campos acima."},
     },
-    "required": ["tipo_documento", "fornecedor_cliente", "numero_documento", "data_emissao", "data_pagamento", "valor_total", "conta_bancaria", "itens", "observacao"],
+    "required": [
+        "tipo_documento", "fornecedor_cliente", "numero_documento", "data_emissao", "data_pagamento", "valor_total",
+        "conta_bancaria", "itens", "observacao", "parcela_num", "parcela_total", "linha_digitavel", "data_vencimento",
+    ],
     "additionalProperties": False,
 }
 
 _PROMPT = f"""Você está lendo um documento financeiro anexado no sistema da {NOME_FAZENDA} (fazenda leiteira).
-Identifique se é uma NOTA FISCAL (compra ou venda ainda não paga) ou um RECIBO/COMPROVANTE (pagamento ou \
-transferência já realizado — recibo em papel, comprovante bancário, print de PIX/TED).
+Identifique se é uma NOTA FISCAL (compra ou venda ainda não paga), um RECIBO/COMPROVANTE (pagamento ou \
+transferência já realizado — recibo em papel, comprovante bancário, print de PIX/TED) ou um BOLETO BANCÁRIO \
+(código de barras/linha digitável, com vencimento, ainda não pago).
 
 Se for nota fiscal: extraia fornecedor/cliente, número, data de emissão, valor total e os produtos/serviços \
 discriminados (se houver mais de um item).
@@ -77,6 +98,11 @@ Se for recibo/comprovante: identifique, pelo próprio comprovante, de onde saiu 
 isso te diz se é uma despesa (saiu de conta da fazenda) ou receita (entrou numa conta da fazenda) — e preencha \
 fornecedor_cliente com a contraparte (quem recebeu ou quem pagou), data_pagamento com a data da operação, e \
 conta_bancaria com o banco/agência/conta identificável.
+
+Se for boleto: extraia fornecedor (beneficiário), número do documento/nosso número, valor total, data de \
+vencimento (data_vencimento) e a linha digitável (linha_digitavel), se legível. Procure no boleto por algum \
+texto do tipo "parcela 2/6", "2 de 6" ou "parc. 02/06" — se encontrar, preencha parcela_num e parcela_total \
+com esses números; se não houver essa indicação, deixe ambos null (não é necessariamente parcelado).
 
 Responda só com os campos do schema — não invente valores que não conseguir ler; deixe null."""
 
