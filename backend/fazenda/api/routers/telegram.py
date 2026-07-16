@@ -1,14 +1,19 @@
 """
 Robô do Telegram — intake de documentos financeiros.
 
-O usuário manda um XML de NF-e, uma foto/PDF de nota fiscal ou um recibo/
-comprovante para o robô. O robô pergunta, com botões, se é RECEITA ou DESPESA;
-ao responder, lê o documento com a mesma leitura automática do site
-(`parse_nfe_xml` para XML, `ler_documento`/IA para foto/PDF) e cria um
-LancamentoPendente (tipo "despesa"/"receita") — igual aos lançamentos
-operacionais, NUNCA materializa direto. O lançamento só vira um registro real
-em Contas a pagar/receber (ou pagas/recebidas) quando a conta principal aprova
-em Aprovações (site ou app); ver `fazenda.rules.telegram_fluxos.criar_registro`.
+O usuário manda um XML de NF-e, uma foto/PDF de nota fiscal, boleto ou um
+recibo/comprovante para o robô. O robô pergunta, com botões, se é RECEITA ou
+DESPESA; ao responder, lê o documento com a mesma leitura automática do site
+(`parse_nfe_xml` para XML, `ler_documento`/IA para foto/PDF). Um boleto sem
+indicação de parcelamento pergunta se é avulso ou se o usuário prefere
+informar manualmente (parcelamento novo). Depois de ler, mostra um resumo
+rico (fornecedor, datas, itens) com botões Confirmar/Corrigir/Cancelar — e,
+se faltar algum dado importante, pergunta se quer lançar mesmo assim. Só ao
+confirmar/corrigir vira um LancamentoPendente (tipo "despesa"/"receita") —
+igual aos lançamentos operacionais, NUNCA materializa direto. O lançamento só
+vira um registro real em Contas a pagar/receber (ou pagas/recebidas) quando a
+conta principal aprova em Aprovações (site ou app); ver
+`fazenda.rules.telegram_fluxos.criar_registro`.
 
 Ligado só quando `TELEGRAM_BOT_TOKEN` está configurado. As chamadas do Telegram
 chegam no webhook `/telegram/webhook` (rota pública, validada pelo segredo
@@ -100,6 +105,105 @@ def _ler_documento_pendente(pend: TelegramPendente) -> dict:
         return dados
     from fazenda.rules.leitura_documento import ler_documento
     return ler_documento(conteudo, pend.mime or "application/pdf")
+
+
+# ── Confirmação/correção/cancelamento do lançamento lido do documento ──────
+def _formatar_valor(v) -> str:
+    return f"R$ {float(v or 0):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _campos_faltando_doc(dados: dict) -> list[str]:
+    faltando = []
+    if not str(dados.get("fornecedor_cliente") or "").strip():
+        faltando.append("fornecedor/cliente")
+    if not dados.get("valor_total"):
+        faltando.append("valor total")
+    if not dados.get("data_emissao"):
+        faltando.append("data de emissão")
+    return faltando
+
+
+def _resumo_rico_documento(tipo: str, dados: dict) -> str:
+    linhas = [f"<b>{'Receita' if tipo == 'receita' else 'Despesa'}</b> — {dados.get('tipo_documento') or 'documento'}"]
+    if dados.get("fornecedor_cliente"):
+        linhas.append(f"{'Cliente' if tipo == 'receita' else 'Fornecedor'}: {dados['fornecedor_cliente']}")
+    if dados.get("numero_documento"):
+        linhas.append(f"Nº documento: {dados['numero_documento']}")
+    if dados.get("data_emissao"):
+        linhas.append(f"Data de emissão: {dados['data_emissao']}")
+    if dados.get("data_pagamento"):
+        linhas.append(f"Data de pagamento: {dados['data_pagamento']}")
+    if dados.get("parcela_num") and dados.get("parcela_total"):
+        linhas.append(f"Parcela: {dados['parcela_num']}/{dados['parcela_total']}")
+    itens = dados.get("itens") or []
+    if itens:
+        linhas.append("Itens:")
+        for it in itens:
+            if isinstance(it, str):
+                linhas.append(f"  • {it}")
+                continue
+            if not isinstance(it, dict):
+                continue
+            produto = it.get("produto") or "—"
+            partes_item = [produto]
+            if it.get("nome_conta_gerencial"):
+                partes_item.append(it["nome_conta_gerencial"])
+            if it.get("quantidade") and it.get("valor_unitario"):
+                partes_item.append(f"{it['quantidade']} × {_formatar_valor(it['valor_unitario'])}")
+            if it.get("valor_total") is not None:
+                partes_item.append(f"= {_formatar_valor(it['valor_total'])}")
+            linhas.append("  • " + " — ".join(partes_item))
+    linhas.append(f"<b>Valor total: {_formatar_valor(dados.get('valor_total'))}</b>")
+    return "\n".join(linhas)
+
+
+def _mostrar_confirmacao_documento(pend: TelegramPendente, chat_id: int) -> None:
+    dados = json.loads(pend.dados_lidos)
+    resumo = _resumo_rico_documento(pend.tipo, dados)
+    faltando = _campos_faltando_doc(dados)
+    if faltando:
+        _enviar(chat_id, (
+            f"{resumo}\n\n⚠️ Faltam dados: {', '.join(faltando)}.\nDeseja lançar mesmo assim?"
+        ), botoes=[
+            [{"text": "✅ Sim, lançar mesmo assim", "callback_data": f"confirmarlanc:{pend.id}"}],
+            [{"text": "✖️ Não, cancelar", "callback_data": f"cancel:{pend.id}"}],
+        ])
+        return
+    _enviar(chat_id, resumo, botoes=[
+        [{"text": "✅ Confirmar", "callback_data": f"confirmarlanc:{pend.id}"}],
+        [{"text": "✏️ Corrigir no site", "callback_data": f"corrigirlanc:{pend.id}"}],
+        [{"text": "✖️ Cancelar", "callback_data": f"cancel:{pend.id}"}],
+    ])
+
+
+def _enviar_para_aprovacao_documento(session: Session, pend: TelegramPendente, chat_id: int, nome: str | None, revisar: bool) -> None:
+    dados = json.loads(pend.dados_lidos)
+    tipo = pend.tipo
+    resumo = fx.montar_resumo(tipo, dados)
+    if revisar:
+        resumo = "⚠️ Revisar antes de aprovar — " + resumo
+    pendente = LancamentoPendente(
+        tipo=tipo, payload=pend.dados_lidos, resumo=resumo,
+        solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
+    )
+    session.add(pendente)
+    session.delete(pend)
+    session.commit()
+    forn = dados.get("fornecedor_cliente") or "—"
+    valor = _formatar_valor(dados.get("valor_total"))
+    rotulo_tipo = "receita" if tipo == "receita" else "despesa"
+    if revisar:
+        _enviar(chat_id, (
+            f"📝 Enviado para <b>aprovação</b>, marcado para revisão ({rotulo_tipo}).\n"
+            f"Contraparte: {forn}\nValor: {valor}\n\n"
+            "Corrija os dados na tela de <b>Aprovações</b> (site ou app) antes de aprovar."
+        ))
+    else:
+        _enviar(chat_id, (
+            f"✅ Enviado para <b>aprovação</b> ({rotulo_tipo}).\n"
+            f"Contraparte: {forn}\nValor: {valor}\n\n"
+            "A conta principal vai revisar e aprovar no site ou no app, em <b>Aprovações</b>."
+        ))
 
 
 # ── Webhook ────────────────────────────────────────────────────────────────
@@ -457,32 +561,62 @@ def _tratar_callback(session: Session, cq: dict) -> None:
         try:
             dados = _ler_documento_pendente(pend)
         except RuntimeError as e:
+            session.delete(pend)
+            session.commit()
             _enviar(chat_id, f"⚠️ {e}")
             return
         except Exception as e:  # noqa: BLE001 — mensagem amigável, erro logado pela stack
-            _enviar(chat_id, f"⚠️ Não consegui ler o documento: {e}")
-            return
-        finally:
             session.delete(pend)
             session.commit()
+            _enviar(chat_id, f"⚠️ Não consegui ler o documento: {e}")
+            return
 
-        # Nunca materializa direto — todo lançamento financeiro do robô entra
-        # na fila de aprovação (mesma regra dos lançamentos operacionais).
-        resumo = fx.montar_resumo(tipo, dados)
-        pendente = LancamentoPendente(
-            tipo=tipo, payload=json.dumps(dados, default=str), resumo=resumo,
-            solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
-        )
-        session.add(pendente)
+        # Nunca materializa direto — o documento lido fica em "espera de
+        # confirmação" (mesmo TelegramPendente, agora com os dados extraídos)
+        # até o usuário confirmar/corrigir/cancelar; só aí vira LancamentoPendente
+        # (mesma regra de sempre passar por aprovação).
+        pend.tipo = tipo
+        pend.dados_lidos = json.dumps(dados, default=str)
+        session.add(pend)
         session.commit()
-        forn = dados.get("fornecedor_cliente") or "—"
-        valor = dados.get("valor_total") or 0
+
+        parcela_total = dados.get("parcela_total")
+        eh_boleto_isolado = dados.get("tipo_documento") == "boleto" and not (parcela_total and parcela_total > 1)
+        if eh_boleto_isolado:
+            _enviar(chat_id, (
+                "📎 Este <b>boleto</b> não indica de qual parcelamento faz parte (ou é mesmo avulso).\n"
+                "Quer lançar como <b>documento avulso</b> (um lançamento só) ou prefere <b>informar manualmente</b> "
+                "(por exemplo, se ele faz parte de um parcelamento novo)?"
+            ), botoes=[
+                [{"text": "📄 Lançar como avulso", "callback_data": f"boletoavulso:{pend.id}"}],
+                [{"text": "✍️ Informar manualmente", "callback_data": f"boletomanual:{pend.id}"}],
+                [{"text": "✖️ Cancelar", "callback_data": f"cancel:{pend.id}"}],
+            ])
+            return
+
+        _mostrar_confirmacao_documento(pend, chat_id)
+        return
+
+    if acao == "boletoavulso":
+        _mostrar_confirmacao_documento(pend, chat_id)
+        return
+
+    if acao == "boletomanual":
+        session.delete(pend)
+        session.commit()
         _enviar(chat_id, (
-            f"✅ Enviado para <b>aprovação</b> ({'receita' if tipo == 'receita' else 'despesa'}).\n"
-            f"Contraparte: {forn}\n"
-            f"Valor: R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + "\n\n"
-            "A conta principal vai revisar e aprovar no site ou no app, em <b>Aprovações</b>."
+            "✍️ Ok! Não vou lançar automaticamente. Cadastre esse boleto manualmente em "
+            "<b>Financeiro</b> (site ou app) — lá dá para descrever um parcelamento novo, com todas as parcelas."
         ))
+        return
+
+    if acao == "confirmarlanc":
+        _enviar_para_aprovacao_documento(session, pend, chat_id, nome, revisar=False)
+        return
+
+    if acao == "corrigirlanc":
+        _enviar_para_aprovacao_documento(session, pend, chat_id, nome, revisar=True)
+        return
 
 
 # ── Registro do webhook (chamado no startup) ───────────────────────────────

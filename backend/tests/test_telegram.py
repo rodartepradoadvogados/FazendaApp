@@ -88,10 +88,26 @@ def test_documento_pergunta_e_lanca_despesa(client):
         pid = pend.id
     assert any(e["metodo"] == "sendMessage" and "reply_markup" in e for e in enviados)
 
-    # 2) Usuário toca em "Despesa" → cria um LancamentoPendente (fila de
-    # aprovação), NÃO um lançamento de verdade, e apaga o pendente do documento.
+    # 2) Usuário toca em "Despesa" → lê o documento e mostra um resumo rico
+    # com Confirmar/Corrigir/Cancelar; ainda NÃO cria LancamentoPendente nem
+    # apaga o TelegramPendente (fica em espera de confirmação).
     upd_cb = {"callback_query": {"id": "cb1", "message": {"chat": {"id": CHAT}}, "data": f"lanc:{pid}:despesa"}}
     r = c.post("/telegram/webhook", json=upd_cb, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(LancamentoPendente)).first() is None  # ainda não confirmou
+        pend = s.exec(select(TelegramPendente)).first()
+        assert pend is not None and pend.tipo == "despesa"
+        assert json.loads(pend.dados_lidos)["fornecedor_cliente"] == "Casa do Produtor"
+    ultima = enviados[-1]
+    assert "confirmar" in ultima["text"].lower() or any(
+        "confirmar" in b["text"].lower() for linha in ultima.get("reply_markup", {}).get("inline_keyboard", []) for b in linha
+    )
+
+    # 3) Usuário toca em "Confirmar" → cria um LancamentoPendente (fila de
+    # aprovação), NÃO um lançamento de verdade, e apaga o pendente do documento.
+    upd_confirma = {"callback_query": {"id": "cb2", "message": {"chat": {"id": CHAT}}, "data": f"confirmarlanc:{pid}"}}
+    r = c.post("/telegram/webhook", json=upd_confirma, headers=_hdr())
     assert r.status_code == 200
     with Session(engine) as s:
         assert s.exec(select(ContaGerencial)).first() is None  # nada lançado de verdade ainda
@@ -166,6 +182,9 @@ def test_aprovar_despesa_com_itens_em_texto_solto(client, monkeypatch):
     upd_cb = {"callback_query": {"id": "cb1", "message": {"chat": {"id": CHAT}}, "data": f"lanc:{pid}:despesa"}}
     r = c.post("/telegram/webhook", json=upd_cb, headers=_hdr())
     assert r.status_code == 200
+    upd_confirma = {"callback_query": {"id": "cb2", "message": {"chat": {"id": CHAT}}, "data": f"confirmarlanc:{pid}"}}
+    r = c.post("/telegram/webhook", json=upd_confirma, headers=_hdr())
+    assert r.status_code == 200
     with Session(engine) as s:
         pendente = s.exec(select(LancamentoPendente)).first()
 
@@ -228,3 +247,146 @@ def test_arquivo_tipo_nao_reconhecido_avisa_usuario(client):
         assert s.exec(select(TelegramPendente)).first() is None
     ultima = enviados[-1]
     assert "não reconheci" in ultima["text"].lower()
+
+
+def _enviar_documento(c, file_id="FID-DOC"):
+    upd = {"message": {"chat": {"id": CHAT}, "document": {"file_id": file_id, "file_name": "doc.pdf", "mime_type": "application/pdf"}}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+
+
+def _callback(c, data, cbid="cb"):
+    upd = {"callback_query": {"id": cbid, "message": {"chat": {"id": CHAT}}, "data": data}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+
+
+def test_corrigir_marca_lancamento_para_revisao(client, monkeypatch):
+    """#397 — tocar em "Corrigir" ainda envia para aprovação (a correção em si
+    acontece na tela de Aprovações, que já tem edição completa), mas marca o
+    resumo para chamar a atenção do admin."""
+    c, engine, enviados = client
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    _callback(c, f"corrigirlanc:{pid}")
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
+        pendente = s.exec(select(LancamentoPendente)).first()
+        assert pendente is not None
+        assert "revisar" in pendente.resumo.lower()
+    ultima = enviados[-1]
+    assert "aprovações" in ultima["text"].lower()
+
+
+def test_cancelar_apos_ler_documento_nao_lanca(client):
+    """Cancelar depois de já ter lido o documento (mas antes de confirmar) não
+    deve criar nenhum LancamentoPendente."""
+    c, engine, enviados = client
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    _callback(c, f"cancel:{pid}")
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
+        assert s.exec(select(LancamentoPendente)).first() is None
+
+
+def test_faltando_dados_pergunta_antes_de_confirmar(client, monkeypatch):
+    """#397 — se faltar fornecedor/valor/data de emissão, o robô pergunta se
+    quer lançar mesmo assim antes de mostrar os botões normais."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+        "tipo_documento": "recibo", "fornecedor_cliente": None, "numero_documento": None,
+        "data_emissao": None, "data_pagamento": None, "valor_total": 500.0,
+        "conta_bancaria": None, "itens": [], "observacao": None,
+    })
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    ultima = enviados[-1]
+    assert "faltam dados" in ultima["text"].lower()
+    assert "fornecedor" in ultima["text"].lower()
+    assert "lançar mesmo assim" in ultima["text"].lower()
+
+    _callback(c, f"confirmarlanc:{pid}")
+    with Session(engine) as s:
+        pendente = s.exec(select(LancamentoPendente)).first()
+        assert pendente is not None
+        assert json.loads(pendente.payload)["valor_total"] == 500.0
+
+
+def test_boleto_isolado_pergunta_avulso_ou_manual(client, monkeypatch):
+    """#398 — boleto sem indicação de parcelamento pergunta se é avulso ou se
+    o usuário prefere informar manualmente (ex.: novo parcelamento)."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+        "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
+        "data_emissao": None, "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
+        "itens": [], "observacao": None, "parcela_num": None, "parcela_total": None,
+        "linha_digitavel": "12345", "data_vencimento": "2026-08-10",
+    })
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    ultima = enviados[-1]
+    assert "avulso" in ultima["text"].lower()
+    assert "manualmente" in ultima["text"].lower()
+    with Session(engine) as s:
+        assert s.exec(select(LancamentoPendente)).first() is None  # ainda não decidiu
+
+    # Escolhe "informar manualmente" → não lança nada, só orienta a usar o site.
+    _callback(c, f"boletomanual:{pid}")
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
+        assert s.exec(select(LancamentoPendente)).first() is None
+    assert "financeiro" in enviados[-1]["text"].lower()
+
+
+def test_boleto_avulso_confirma_normalmente(client, monkeypatch):
+    """#398 — escolhendo "avulso", segue para a confirmação normal (#397) e o
+    Confirmar cria o LancamentoPendente."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+        "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
+        "data_emissao": "2026-07-10", "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
+        "itens": [], "observacao": None, "parcela_num": None, "parcela_total": None,
+        "linha_digitavel": "12345", "data_vencimento": "2026-08-10",
+    })
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    _callback(c, f"boletoavulso:{pid}")
+    ultima = enviados[-1]
+    assert "confirmar" in ultima["text"].lower() or any(
+        "confirmar" in b["text"].lower() for linha in ultima.get("reply_markup", {}).get("inline_keyboard", []) for b in linha
+    )
+    _callback(c, f"confirmarlanc:{pid}")
+    with Session(engine) as s:
+        pendente = s.exec(select(LancamentoPendente)).first()
+        assert pendente is not None
+        assert json.loads(pendente.payload)["tipo_documento"] == "boleto"
+
+
+def test_boleto_parcelado_nao_pergunta_avulso(client, monkeypatch):
+    """#398 — quando o documento já indica a parcela (ex.: "2/6"), não faz
+    sentido perguntar se é avulso — já sabemos que faz parte de um plano."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", lambda pend: {
+        "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro", "numero_documento": "00001-2",
+        "data_emissao": "2026-07-10", "data_pagamento": None, "valor_total": 850.0, "conta_bancaria": None,
+        "itens": [], "observacao": None, "parcela_num": 2, "parcela_total": 6,
+        "linha_digitavel": "12345", "data_vencimento": "2026-08-10",
+    })
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+    ultima = enviados[-1]
+    assert "avulso" not in ultima["text"].lower()
+    assert "2/6" in ultima["text"]
