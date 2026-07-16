@@ -31,7 +31,7 @@ HORMONIO_NOMES = {
     "estron": "Estron",
     "sincrocp": "SincroCP",
     "lactotropin": "Lactotropin",
-    "boostin": "Lactotropin",
+    "boostin": "Boostin",
 }
 
 

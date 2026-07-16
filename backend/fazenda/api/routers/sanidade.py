@@ -19,8 +19,10 @@ from fazenda.models import (
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
+from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
 
@@ -480,6 +482,67 @@ def excluir_calendario(calendario_id: int, session: Session = Depends(get_sessio
     session.delete(c)
     session.commit()
     return {"excluido": True, "id": calendario_id}
+
+
+@router.get("/calendario/eventos-vida")
+def listar_eventos_vida(session: Session = Depends(get_session)) -> list[dict]:
+    """Vocabulário de eventos de vida (gatilhos) disponíveis para o relatório
+    abaixo e para o cadastro de evento sanitário por evento — rótulo em
+    português de cada `gatilho` (ver GATILHOS_EVENTO)."""
+    return [{"gatilho": g, "rotulo": ROTULOS_GATILHO.get(g, g)} for g in GATILHOS_EVENTO]
+
+
+@router.get("/calendario/relatorio-eventos-vida")
+def relatorio_eventos_vida(
+    gatilho: str | None = None,
+    evento_sanitario_id: int | None = None,
+    gatilho_lote: str | None = None,
+    gatilho_idade_meses: int | None = None,
+    data_inicio: str = "",
+    data_fim: str = "",
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Relatório "quais animais entrarão em determinado calendário sanitário" —
+    dado um evento de vida (gatilho), lista os animais e a data em que cada um
+    atinge (ou atingiu) esse evento, para identificar quem entrará na próxima
+    aplicação de um calendário sanitário por evento.
+
+    Aceita ou um `evento_sanitario_id` já cadastrado (herda gatilho/lote/idade
+    do cadastro) ou um `gatilho` avulso (exploração livre, sem precisar
+    cadastrar o evento sanitário antes).
+    """
+    nome_evento = None
+    if evento_sanitario_id is not None:
+        ev = session.get(EventoSanitario, evento_sanitario_id)
+        if not ev:
+            raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
+        if ev.tipo_agendamento != "evento" or not ev.gatilho:
+            raise HTTPException(status_code=400, detail="Este evento sanitário não está agendado por evento de vida")
+        gatilho, gatilho_lote, gatilho_idade_meses = ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses
+        nome_evento = ev.nome
+    if not gatilho or gatilho not in GATILHOS_EVENTO:
+        raise HTTPException(status_code=400, detail=f"Gatilho inválido (use: {', '.join(GATILHOS_EVENTO)})")
+
+    animais = {a.numero: a for a in session.exec(select(Animal)).all()}
+    hoje = date.today()
+    linhas = []
+    for numero, quando in _datas_gatilho(session, gatilho, gatilho_lote, gatilho_idade_meses):
+        if data_inicio and quando.isoformat() < data_inicio:
+            continue
+        if data_fim and quando.isoformat() > data_fim:
+            continue
+        a = animais.get(numero)
+        linhas.append({
+            "numero_matriz": numero,
+            "nome": a.nome if a else None,
+            "grupo_primario": a.grupo_primario if a else None,
+            "categoria": (a.categoria_abrev or a.categoria_completa) if a else None,
+            "data_evento": quando.isoformat(),
+            "dias_restantes": (quando - hoje).days,
+        })
+    linhas.sort(key=lambda x: x["data_evento"])
+    return {"gatilho": gatilho, "rotulo": ROTULOS_GATILHO.get(gatilho, gatilho), "evento_sanitario_nome": nome_evento, "animais": linhas}
 
 
 class CadastrarPreventivoIn(BaseModel):

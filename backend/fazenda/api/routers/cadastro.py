@@ -1196,7 +1196,13 @@ def excluir_agendamento_pesagem(item_id: int, session: Session = Depends(get_ses
 # medicamento padrão). Alimenta o calendário sanitário e a Agenda.
 FREQUENCIAS_EVENTO = ["dias", "meses", "anos"]
 TIPOS_AGENDAMENTO = ["nenhum", "epoca", "evento"]
-GATILHOS_EVENTO = ["nascimento", "entrada_lote", "novilha_apta", "secagem", "parto"]
+GATILHOS_EVENTO = [
+    "nascimento", "entrada_lote", "novilha_apta", "secagem", "parto",
+    # Eventos de vida adicionais — mudanças de categoria/fase reprodutiva que
+    # o calendário sanitário também pode usar como gatilho, em vez de uma
+    # frequência periódica (ver fazenda.rules.eventos_sanitarios).
+    "desmama", "mudanca_recria", "inseminacao", "gestacao_confirmada", "mudanca_pre_parto",
+]
 
 
 class EventoSanitarioIn(BaseModel):

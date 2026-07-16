@@ -10,6 +10,7 @@ import {
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
+  atualizarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -17,6 +18,7 @@ import {
   fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
   baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
   fetchPedidos, fetchPedido,
+  fetchCategoriasManejo,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -402,9 +404,26 @@ function InducaoLactacaoAtivos({ recarregarRef }: { recarregarRef: React.Mutable
 function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
   const [protocolos, setProtocolos] = useState<any[]>([]);
   const [protocoloId, setProtocoloId] = useState("");
-  const [emLote, setEmLote] = useState(false);
+  // Animal(is) ou lote(s) — mesmo padrão do Diagnóstico/Secagem.
+  const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
   const [sel, setSel] = useState<Set<string>>(new Set());
-  const [um, setUm] = useState("");
+  const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const codigosLotes = useMemo(
+    () => Array.from(new Set(animais.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [animais]
+  );
+  const animaisDoLoteSel = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [animais, lotesSelecionados]);
+  const [selLote, setSelLote] = useState<Set<string>>(new Set());
+  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelLote(new Set(animaisDoLoteSel.map((a) => a.numero)));
+  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const numerosAlvo = vinculo === "lote" ? selLote : sel;
+
   const [dataD0, setDataD0] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
@@ -412,17 +431,15 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
-  const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
   useEffect(() => { fetchProtocolosInducaoLactacao().then(setProtocolos).catch(() => setProtocolos([])); }, []);
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    const animaisAlvo = emLote ? Array.from(sel) : (um ? [um] : []);
+    const animaisAlvo = Array.from(numerosAlvo);
     if (!protocoloId) { setErro("Selecione o protocolo de indução."); return; }
-    if (!animaisAlvo.length) { setErro(emLote ? "Selecione ao menos um animal." : "Selecione a matriz."); return; }
+    if (!animaisAlvo.length) { setErro("Selecione ao menos uma matriz (ou lote)."); return; }
     if (!dataD0) { setErro(`Informe a data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"}.`); return; }
     setSalvando(true);
     try {
@@ -431,7 +448,7 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
         responsavel: responsavel || undefined, observacao: observacao || undefined,
       });
       setSucesso(`Protocolo "${protocolo?.nome}" lançado para ${r.animais} animal(is) — ${r.eventos_criados} eventos na Agenda.`);
-      setSel(new Set()); setUm("");
+      setSel(new Set()); setLotesSelecionados([]);
       recarregarAtivosRef.current();
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar indução de lactação");
@@ -449,11 +466,6 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
             {protocolos.map((p) => <option key={p.id} value={p.id}>{p.nome} ({p.duracao_dias} dias)</option>)}
           </select>
         </Campo>
-        <Campo label="Seleção">
-          <label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}>
-            <input type="checkbox" checked={emLote} onChange={(e) => setEmLote(e.target.checked)} /> Selecionar vários animais
-          </label>
-        </Campo>
         <Campo label={`Data do ${protocolo?.dia_inicial === 0 ? "D0" : "D1"} (1º dia do cronograma)`}>
           <input type="date" style={inputStyle} value={dataD0} onChange={(e) => setDataD0(e.target.value)} />
         </Campo>
@@ -465,18 +477,51 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
         </Campo>
       </div>
 
-      <div className="mt-3">
-        <label style={lbl}>Matriz (nº)</label>
-        {emLote
-          ? <SelecaoAnimaisTabela
-              animais={animais} selecionados={sel} toggle={toggle} toggleTodos={toggleTodos}
-              colunas={[
-                { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-                { header: "Lote", render: (a) => a.grupo_primario || "—" },
-              ]}
+      <Campo label="Matriz(es) — animal(is) ou lote(s)" full>
+        <TabBar<"animal" | "lote">
+          abas={[
+            { id: "animal", label: "Animal(is)", title: "Selecionar matrizes individualmente" },
+            { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes" },
+          ]}
+          ativa={vinculo}
+          onChange={setVinculo}
+        />
+        {vinculo === "animal" ? (
+          <AnimalPickerModal
+            animais={animais} selecionados={sel} onToggle={toggle}
+            titulo="Escolher matriz(es) para indução de lactação"
+            colunas={[
+              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+            ]}
+          />
+        ) : (
+          <div style={{ marginTop: "0.5rem" }}>
+            <LotePicker
+              opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
+              selecionados={lotesSelecionados}
+              onChange={setLotesSelecionados}
+              placeholder="Selecionar lote(s)…"
             />
-          : <SelectAnimal animais={animais} value={um} onChange={setUm} placeholder="Selecione a matriz…" />}
-      </div>
+            {lotesSelecionados.length > 0 && (
+              <div style={{ marginTop: "0.6rem" }}>
+                <AnimalPickerModal
+                  animais={animaisDoLoteSel} selecionados={selLote} onToggle={toggleLote}
+                  titulo="Ajustar matrizes do(s) lote(s) selecionado(s)"
+                  placeholder="Ajustar matrizes do(s) lote(s)…"
+                  colunas={[
+                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  ]}
+                />
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {selLote.size} de {animaisDoLoteSel.length} matriz(es) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Campo>
 
       {protocolo && (
         <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
@@ -512,7 +557,9 @@ function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size}>
+          {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} animal${numerosAlvo.size !== 1 ? "is" : ""})`}
+        </button>
       </div>
     </>
   );
@@ -2009,6 +2056,10 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<OpcaoNomeAtivo[]>([]);
   const [doencas, setDoencas] = useState<OpcaoNomeAtivo[]>([]);
   const [principios, setPrincipios] = useState<OpcaoNomeAtivo[]>([]);
+  // Categorias de vida (Configurações > Cadastro > Categorias) — a lista real
+  // usada para "período de vida", nada a ver com CATEGORIAS_ANIMAIS (critérios
+  // de lançamento em massa por status reprodutivo, usado mais abaixo neste arquivo).
+  const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
 
   const [editando, setEditando] = useState<number | null>(null);
@@ -2030,8 +2081,37 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
+  // Frequência periódica (regra recorrente do calendário) OU por evento de
+  // vida (desmama, aptidão, secagem…) — nesse 2º modo não cria regra nenhuma:
+  // configura o EVENTO SANITÁRIO selecionado para agendar por animal (mesmo
+  // mecanismo que já gera a Agenda por evento — ver eventos_sanitarios.py).
+  const [modoFreq, setModoFreq] = useState<"periodica" | "evento_vida">("periodica");
+  const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
+  const [gatilho, setGatilho] = useState("nascimento");
+  const [gatilhoLote, setGatilhoLote] = useState("");
+  const [gatilhoIdadeMeses, setGatilhoIdadeMeses] = useState("");
+  const [offsetDias, setOffsetDias] = useState("0");
+
+  useEffect(() => { fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {}); }, []);
+
   const eventoSel = eventos.find((e) => String(e.id) === eventoId) as any;
   const ehExame = eventoSel?.categoria_preventiva === "exame";
+
+  // Ao escolher um evento já cadastrado como "por evento" (tipo_agendamento
+  // == evento), o modo já vem pré-selecionado e os campos de gatilho preenchidos.
+  useEffect(() => {
+    if (!eventoSel) return;
+    if (eventoSel.tipo_agendamento === "evento" && eventoSel.gatilho) {
+      setModoFreq("evento_vida");
+      setGatilho(eventoSel.gatilho);
+      setGatilhoLote(eventoSel.gatilho_lote || "");
+      setGatilhoIdadeMeses(eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "");
+      setOffsetDias(eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0");
+    } else {
+      setModoFreq("periodica");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId]);
 
   const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
   const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
@@ -2039,6 +2119,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     carregarEventos();
     fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
     fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
+    fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {});
     carregarRegras();
   }, []);
   const [abrirNovoEvento, setAbrirNovoEvento] = useState(false);
@@ -2047,6 +2128,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setOutraCategoria(""); setDoencaId(""); setProduto("");
     setPrincipioId(""); setDosagem(""); setUnidade(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
     setDataEvento(""); setObservacao(""); setRealizado(false);
+    setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
   };
 
   const abrirEdicao = (r: RegraCalendario) => {
@@ -2069,9 +2151,28 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!eventoId || !dataEvento || !freqValor) { setErro("Selecione o evento sanitário, a frequência e a data do evento."); return; }
+    if (!eventoId) { setErro("Selecione o evento sanitário."); return; }
+    if (modoFreq === "periodica" && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
+    if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return; }
+    if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return; }
     setSalvando(true);
     try {
+      if (modoFreq === "evento_vida") {
+        // Não cria regra recorrente — configura o EVENTO SANITÁRIO selecionado
+        // para agendar por evento de vida (por animal), preservando os demais
+        // campos já cadastrados nele (produto padrão, dose, doença...).
+        await atualizarEventoSanitario(Number(eventoId), {
+          ...eventoSel, tipo_agendamento: "evento", gatilho,
+          gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
+          gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
+          offset_dias: offsetDias ? Number(offsetDias) : 0,
+        });
+        setSucesso("Evento sanitário configurado para agendar por evento de vida.");
+        limpar();
+        carregarEventos();
+        setSalvando(false);
+        return;
+      }
       const dados = {
         evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
         doenca_id: doencaId ? Number(doencaId) : undefined,
@@ -2118,7 +2219,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
           )}
         </Campo>
         <Campo label="Categoria(s) alvo (período de vida)">
-          <MultiFiltro label="Categorias" opcoes={Array.from(new Set([...CATEGORIAS_ANIMAIS.map((c) => c.label), ...categoriaAlvoSel]))} selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel} />
+          <MultiFiltro label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...categoriaAlvoSel]))} selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel} />
           <div className="flex items-center gap-2 mt-1">
             <input style={{ ...inputStyle, fontSize: "0.78rem" }} value={outraCategoria} onChange={(e) => setOutraCategoria(e.target.value)}
               placeholder="+ outra categoria…"
@@ -2165,15 +2266,50 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             </Campo>
           </>
         )}
-        <Campo label="Frequência">
-          <div className="flex items-center gap-2">
-            <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-            <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-              {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-            </select>
+        <Campo label="Repetir por" full>
+          <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoFreq === "periodica"} onChange={() => setModoFreq("periodica")} /> Frequência periódica
+            </label>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoFreq === "evento_vida"} onChange={() => setModoFreq("evento_vida")} /> Evento de vida do animal
+            </label>
           </div>
         </Campo>
-        <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
+        {modoFreq === "periodica" ? (
+          <>
+            <Campo label="Frequência">
+              <div className="flex items-center gap-2">
+                <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+                <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+                  {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+                </select>
+              </div>
+            </Campo>
+            <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
+          </>
+        ) : (
+          <>
+            <Campo label="Evento de vida">
+              <select style={inputStyle} value={gatilho} onChange={(e) => setGatilho(e.target.value)}>
+                {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
+              </select>
+            </Campo>
+            {gatilho === "entrada_lote" && (
+              <Campo label="Lote do gatilho"><input style={inputStyle} value={gatilhoLote} onChange={(e) => setGatilhoLote(e.target.value)} placeholder="ex.: PRE_PARTO" /></Campo>
+            )}
+            {gatilho === "novilha_apta" && (
+              <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={gatilhoIdadeMeses} onChange={(e) => setGatilhoIdadeMeses(e.target.value)} placeholder="ex.: 13" /></Campo>
+            )}
+            <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={offsetDias} onChange={(e) => setOffsetDias(e.target.value)} /></Campo>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                Este modo não cria uma regra de frequência — ele configura o evento sanitário selecionado para entrar na Agenda
+                automaticamente quando cada animal atingir esse evento de vida (por animal, não por rebanho todo).
+              </p>
+            </div>
+          </>
+        )}
         <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
 
@@ -2182,9 +2318,11 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
           Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
         </p>
       )}
-      <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
-        <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
-      </label>
+      {modoFreq === "periodica" && (
+        <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
+          <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
+        </label>
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -3071,7 +3209,28 @@ const MOTIVOS_SECAGEM = [
 ];
 
 function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] }) {
-  const [matriz, setMatriz] = useState("");
+  // Animal(is) ou lote(s) — dentro de lote, pode escolher mais de um; mesmo
+  // padrão do Diagnóstico (TabBar + AnimalPickerModal/LotePicker).
+  const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
+  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const codigosLotes = useMemo(
+    () => Array.from(new Set(animais.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [animais]
+  );
+  const animaisDoLoteSel = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [animais, lotesSelecionados]);
+  const [selLote, setSelLote] = useState<Set<string>>(new Set());
+  const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelLote(new Set(animaisDoLoteSel.map((a) => a.numero)));
+  }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+  const numerosAlvo = useMemo(() => (vinculo === "lote" ? selLote : selecionados), [vinculo, selLote, selecionados]);
+  const matriz = numerosAlvo.size === 1 ? Array.from(numerosAlvo)[0] : "";
+
   const [info, setInfo] = useState<{ del_atual: number | null; data_prevista_secagem: string | null; deve_secar: boolean | null; motivo_exclusao: string | null; dias_gestacao: number | null } | null>(null);
   const [carregandoInfo, setCarregandoInfo] = useState(false);
   const [dataSecagem, setDataSecagem] = useState(() => new Date().toISOString().slice(0, 10));
@@ -3118,30 +3277,55 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!matriz) { setErro("Selecione a vaca."); return; }
+    if (!numerosAlvo.size) { setErro("Selecione ao menos uma vaca (ou lote)."); return; }
     if (!motivo) { setErro("Selecione o motivo da secagem."); return; }
     const itensValidos = itens.filter((i) => i.produto && Number(i.quantidade) > 0 && i.unidade);
+    const aplicadoEfetivo = aplicado && dataSecagem <= new Date().toISOString().slice(0, 10);
 
     setSalvando(true);
+    // Loop por animal (mesmo padrão do Diagnóstico): registra sucesso/falha por
+    // matriz, sem perder a seleção de quem falhou.
+    const salvos: string[] = [];
+    const falhados: string[] = [];
+    let loteSugerido: { codigo: string; rotulo: string } | null = null;
     try {
-      const aplicadoEfetivo = aplicado && dataSecagem <= new Date().toISOString().slice(0, 10);
-      const r = await criarSecagem({
-        numero_matriz: matriz, data_secagem: dataSecagem, motivo,
-        escore_condicao_corporal: ecc ? Number(ecc) : null,
-        observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
-        produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
-        vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
-        vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
-      });
-      let msg = "Secagem lançada com sucesso.";
-      if (r.avisos?.length) msg += " " + r.avisos.join(" ");
-      if (r.lote_sugerido && window.confirm(`Deseja alocar a vaca ${matriz} no lote ${r.lote_sugerido.rotulo} (lote das secas)?`)) {
-        await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: r.lote_sugerido.codigo, animais: [matriz] });
-        msg += ` Movida para o lote ${r.lote_sugerido.rotulo}.`;
+      for (const numero of numerosAlvo) {
+        try {
+          const r = await criarSecagem({
+            numero_matriz: numero, data_secagem: dataSecagem, motivo,
+            escore_condicao_corporal: ecc ? Number(ecc) : null,
+            observacao: observacao || undefined, responsavel: responsavel || undefined, aplicado: aplicadoEfetivo,
+            produtos: itensValidos.map((i) => ({ produto: i.produto, via: i.via || undefined, quantidade: Number(i.quantidade), unidade: i.unidade })),
+            vacinas_pre_parto: aplicarVacinaPreParto ? vacinasPreParto : [],
+            vacina_pre_parto_aplicada_agora: aplicarVacinaPreParto ? vacinaPreParteAplicadaAgora : false,
+          });
+          if (r.lote_sugerido) loteSugerido = r.lote_sugerido;
+          salvos.push(numero);
+        } catch {
+          falhados.push(numero);
+        }
       }
-      setSucesso(msg);
-      setMatriz(""); setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
-      setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
+      if (falhados.length) {
+        setVinculo("animal"); setLotesSelecionados([]); setSelecionados(new Set(falhados));
+        if (salvos.length) {
+          setSucesso(`Secagem lançada para ${salvos.length} animal(is).`);
+          setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
+        } else {
+          setErro(`Nenhuma secagem lançada. Falharam: ${falhados.join(", ")} — tente novamente.`);
+        }
+      } else {
+        let msg = `Secagem lançada com sucesso para ${salvos.length} animal(is).`;
+        // Só oferece mover para o lote sugerido no caso de 1 animal — com vários,
+        // cada um pode precisar de um lote diferente; mova manualmente se preciso.
+        if (salvos.length === 1 && loteSugerido && window.confirm(`Deseja alocar a vaca ${salvos[0]} no lote ${loteSugerido.rotulo} (lote das secas)?`)) {
+          await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: loteSugerido.codigo, animais: salvos });
+          msg += ` Movida para o lote ${loteSugerido.rotulo}.`;
+        }
+        setSucesso(msg);
+        setSelecionados(new Set()); setLotesSelecionados([]);
+        setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
+        setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
+      }
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar secagem");
     } finally {
@@ -3151,17 +3335,65 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
 
   return (
     <>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Vaca"><SelectAnimal animais={animais} value={matriz} onChange={setMatriz} placeholder="Selecione a vaca…" /></Campo>
-        <Campo label="DEL atual">
-          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
-        </Campo>
-        <Campo label="Dias de gestação">
-          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.dias_gestacao != null ? `${info.dias_gestacao} dias` : "—"} />
-        </Campo>
-        <Campo label="Data prevista de secagem (60 dias antes do parto)">
-          <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
-        </Campo>
+      <Campo label="Vaca(s) — animal(is) ou lote(s)" full>
+        <TabBar<"animal" | "lote">
+          abas={[
+            { id: "animal", label: "Animal(is)", title: "Selecionar vacas individualmente" },
+            { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes" },
+          ]}
+          ativa={vinculo}
+          onChange={setVinculo}
+        />
+        {vinculo === "animal" ? (
+          <AnimalPickerModal
+            animais={animais} selecionados={selecionados} onToggle={toggle}
+            titulo="Escolher vaca(s) para secar"
+            colunas={[
+              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+            ]}
+          />
+        ) : (
+          <div style={{ marginTop: "0.5rem" }}>
+            <LotePicker
+              opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
+              selecionados={lotesSelecionados}
+              onChange={setLotesSelecionados}
+              placeholder="Selecionar lote(s)…"
+            />
+            {lotesSelecionados.length > 0 && (
+              <div style={{ marginTop: "0.6rem" }}>
+                <AnimalPickerModal
+                  animais={animaisDoLoteSel} selecionados={selLote} onToggle={toggleLote}
+                  titulo="Ajustar vacas do(s) lote(s) selecionado(s)"
+                  placeholder="Ajustar vacas do(s) lote(s)…"
+                  colunas={[
+                    { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                    { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  ]}
+                />
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                  {selLote.size} de {animaisDoLoteSel.length} vaca(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </Campo>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
+        {numerosAlvo.size === 1 && (
+          <>
+            <Campo label="DEL atual">
+              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={carregandoInfo ? "Carregando…" : info?.del_atual != null ? `${info.del_atual} dias` : "—"} />
+            </Campo>
+            <Campo label="Dias de gestação">
+              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.dias_gestacao != null ? `${info.dias_gestacao} dias` : "—"} />
+            </Campo>
+            <Campo label="Data prevista de secagem (60 dias antes do parto)">
+              <input style={{ ...inputStyle, opacity: 0.8 }} readOnly value={info?.data_prevista_secagem ? formatDate(info.data_prevista_secagem) : "—"} />
+            </Campo>
+          </>
+        )}
         <Campo label="Data da secagem (pode ser retroativa)"><input type="date" style={inputStyle} value={dataSecagem} onChange={(e) => setDataSecagem(e.target.value)} /></Campo>
         <Campo label="Motivo da secagem">
           <select style={inputStyle} value={motivo} onChange={(e) => setMotivo(e.target.value)}>
@@ -3283,7 +3515,9 @@ function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; est
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button className="btn-primary" onClick={salvar} disabled={salvando || !numerosAlvo.size}>
+          {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} animal${numerosAlvo.size !== 1 ? "is" : ""})`}
+        </button>
       </div>
     </>
   );
@@ -3573,7 +3807,7 @@ const TIPOS_GRUPOS = [
       { id: "secagem", label: "Secagem", icon: Droplet, desc: "Registro de secagem, motivo, ECC e produto(s) — sugere a mudança para o lote de secas." },
       { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
-      { id: "entrega_leite", label: "Entrega mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
+      { id: "entrega_leite", label: "Venda mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
       { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
     ],
   },
@@ -3755,7 +3989,7 @@ export default function LancamentosPage() {
           ) : sel === "qualidade_leite" ? (
             <><strong style={{ color: "var(--text)" }}>Qualidade do leite já grava de verdade.</strong> Lance por uma vaca ou pelo tanque (todas as vacas em lactação) — alimenta o relatório e o gráfico de qualidade em Produção.</>
           ) : sel === "entrega_leite" ? (
-            <><strong style={{ color: "var(--text)" }}>Entrega mensal já grava de verdade.</strong> Compara o controle leiteiro projetado do mês, a receita do laticínio e o que foi de fato entregue.</>
+            <><strong style={{ color: "var(--text)" }}>Venda mensal já grava de verdade.</strong> Compara o controle leiteiro projetado do mês, a receita do laticínio e o que foi de fato entregue.</>
           ) : sel === "parto" ? (
             <><strong style={{ color: "var(--text)" }}>Parto/nascimento já grava de verdade.</strong> Cadastra a cria e sugere o lote de mãe e cria (confirmação antes de mover). Colostragem/IgG da 1ª cria também gravam — veja em Sanidade &gt; Relatório sanitário de bezerras.</>
           ) : sel === "protocolo_iatf" ? (

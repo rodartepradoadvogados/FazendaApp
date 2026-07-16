@@ -16,7 +16,9 @@ type Baixa = {
 const LABEL_TIPO_BAIXA: Record<string, string> = {
   morte: "Morte", descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário",
 };
-const LABEL_MOTIVO: Record<string, string> = { venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença" };
+const LABEL_MOTIVO: Record<string, string> = {
+  venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença", macho: "Macho", outros: "Outros",
+};
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -39,6 +41,7 @@ export default function BaixarAnimal() {
   const [tipoBaixa, setTipoBaixa] = useState("");
   const [motivo, setMotivo] = useState("");
   const [motivoDoenca, setMotivoDoenca] = useState("");
+  const [motivoOutro, setMotivoOutro] = useState("");
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_animal");
   const [cliente, setCliente] = useState("");
@@ -80,7 +83,7 @@ export default function BaixarAnimal() {
   );
 
   const limpar = () => {
-    setSelecionados(new Set()); setBusca(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca("");
+    setSelecionados(new Set()); setBusca(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
@@ -113,6 +116,7 @@ export default function BaixarAnimal() {
       const r = await criarBaixaAnimal({
         animais: Array.from(selecionados), tipo_baixa: tipoBaixa, motivo,
         motivo_doenca: motivo === "doenca" ? motivoDoenca : undefined,
+        motivo_outro: motivo === "outros" ? (motivoOutro.trim() || undefined) : undefined,
         valor: motivo === "venda" ? Number(valor) : undefined,
         tipo_valor: motivo === "venda" ? tipoValor : undefined,
         cliente: motivo === "venda" ? cliente.trim() : undefined,
@@ -224,6 +228,13 @@ export default function BaixarAnimal() {
                 <option value="">Selecione...</option>
                 {opcoes.motivos_doenca.map((d) => <option key={d} value={d}>{d}</option>)}
               </select>
+            </div>
+          )}
+
+          {motivo === "outros" && (
+            <div className="mb-3" style={{ maxWidth: "320px" }}>
+              <label style={labelStyle}>Descreva o motivo (opcional)</label>
+              <input style={selStyle} value={motivoOutro} onChange={(e) => setMotivoOutro(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
             </div>
           )}
 

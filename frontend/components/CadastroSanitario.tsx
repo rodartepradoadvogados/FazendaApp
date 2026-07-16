@@ -377,10 +377,15 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
 const FREQ_UNIDADES = [["dias", "dia(s)"], ["meses", "mês(es)"], ["anos", "ano(s)"]] as const;
 const GATILHOS: [string, string][] = [
   ["nascimento", "Nascimento (quando a cria nasce)"],
+  ["desmama", "Desmama"],
+  ["mudanca_recria", "Mudança para recria"],
   ["entrada_lote", "Entrada num lote (ex.: pré-parto)"],
-  ["novilha_apta", "Novilha atingir certa idade"],
+  ["novilha_apta", "Aptidão (novilha atingir certa idade)"],
+  ["inseminacao", "Inseminação"],
+  ["gestacao_confirmada", "Gestação confirmada"],
   ["secagem", "Secagem"],
   ["parto", "Parto"],
+  ["mudanca_pre_parto", "Mudança para pré-parto"],
 ];
 const GATILHO_LABEL: Record<string, string> = Object.fromEntries(GATILHOS);
 

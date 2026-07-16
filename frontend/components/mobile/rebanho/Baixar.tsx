@@ -16,7 +16,9 @@ type Resultado = "ok" | "offline" | "erro";
 const LABEL_TIPO: Record<string, string> = {
   morte: "Morte", descarte_voluntario: "Descarte voluntário", descarte_involuntario: "Descarte involuntário",
 };
-const LABEL_MOTIVO: Record<string, string> = { venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença" };
+const LABEL_MOTIVO: Record<string, string> = {
+  venda: "Venda", abate: "Abate", acidente: "Acidente", doenca: "Doença", macho: "Macho", outros: "Outros",
+};
 
 export default function Baixar() {
   const [opcoes, setOpcoes] = useState<Opcoes | null>(null);
@@ -28,6 +30,7 @@ export default function Baixar() {
   const [numero, setNumero] = useState("");
   const [tipoBaixa, setTipoBaixa] = useState("");
   const [motivo, setMotivo] = useState("");
+  const [motivoOutro, setMotivoOutro] = useState("");
   const [data, setData] = useState(today());
   const [observacao, setObservacao] = useState("");
   const [confirmar, setConfirmar] = useState(false);
@@ -41,7 +44,7 @@ export default function Baixar() {
   // Qualquer alteração cancela o estado "confirmar".
   function set<T>(setter: (v: T) => void) { return (v: T) => { setter(v); setConfirmar(false); }; }
 
-  function limpar() { setNumero(""); setTipoBaixa(""); setMotivo(""); setData(today()); setObservacao(""); setConfirmar(false); }
+  function limpar() { setNumero(""); setTipoBaixa(""); setMotivo(""); setMotivoOutro(""); setData(today()); setObservacao(""); setConfirmar(false); }
 
   function mudarModo(v: "definitiva" | "a_descartar") { setModo(v); setConfirmar(false); }
 
@@ -85,7 +88,10 @@ export default function Baixar() {
     try {
       const { enviado } = await enviarOuEnfileirar(
         "/baixas/",
-        { animais: [numero], tipo_baixa: tipoBaixa, motivo, data_baixa: data, observacao: observacao || undefined },
+        {
+          animais: [numero], tipo_baixa: tipoBaixa, motivo, data_baixa: data, observacao: observacao || undefined,
+          motivo_outro: motivo === "outros" ? (motivoOutro.trim() || undefined) : undefined,
+        },
         `Baixa — brinco ${numero} (${LABEL_MOTIVO[motivo] || motivo})`,
       );
       setAviso(enviado
@@ -142,6 +148,12 @@ export default function Baixar() {
               {(opcoes?.motivos || []).map((m) => <option key={m} value={m}>{LABEL_MOTIVO[m] || m}</option>)}
             </select>
           </MobCampo>
+
+          {motivo === "outros" && (
+            <MobCampo label="Descreva o motivo (opcional)">
+              <input className="mob-input" value={motivoOutro} onChange={(e) => set(setMotivoOutro)(e.target.value)} placeholder="ex.: transferência para outra fazenda" />
+            </MobCampo>
+          )}
 
           <MobCampo label="Data">
             <input type="date" className="mob-input" value={data} onChange={(e) => set(setData)(e.target.value)} />

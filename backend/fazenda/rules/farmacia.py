@@ -198,6 +198,7 @@ def bootstrap_farmacia(session: Session) -> None:
         session.commit()
     backfill_finalidade_estoque(session)
     normalizar_unidades_estoque(session)
+    seed_boostin(session)
 
 
 # Sinônimos/abreviações legadas (import de planilha, cadastro antigo) da
@@ -216,6 +217,28 @@ def normalizar_unidades_estoque(session: Session) -> None:
         if (item.unidade or "").strip().lower() in _SINONIMOS_UNIDADE_ESTOQUE:
             item.unidade = "unidade"
             session.add(item)
+    session.commit()
+
+
+def seed_boostin(session: Session) -> None:
+    """Cadastra o item de estoque "Boostin" — alternativa ao Lactotropin no BST,
+    mesma unidade ("unidade") e mesma finalidade/categoria do Lactotropin já
+    cadastrado. Fica com saldo zero (não inicializado) até o usuário lançar o
+    estoque real; aparece no seletor de produto do BST mesmo sem saldo, mas só
+    permite baixa a partir do estoque inicial (mesma regra do resto do
+    farmácia). Idempotente: não recria se "Boostin" já existir no cadastro."""
+    ja_existe = session.exec(select(Estoque).where(Estoque.nome == "Boostin")).first()
+    if ja_existe:
+        return
+    lactotropin = session.exec(select(Estoque).where(Estoque.nome.ilike("%lactotropin%"))).first()
+    session.add(Estoque(
+        categoria=lactotropin.categoria if lactotropin else None,
+        finalidade=(lactotropin.finalidade if lactotropin else None) or "Medicamento",
+        nome="Boostin",
+        unidade="unidade",
+        estoque_inicializado=False,
+        quantidade=0,
+    ))
     session.commit()
 
 
