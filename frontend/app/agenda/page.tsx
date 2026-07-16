@@ -232,6 +232,15 @@ export default function AgendaPage() {
     // como resolver sem escolher os animais (aí vale mais abrir o lançamento).
     return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario") && !!e.numero_animal;
   }
+  // Agrupamento do "dar baixa em lote": categoria/lote-alvo (categoria_alvo) +
+  // evento sanitário, para que só entrem no mesmo grupo pendências que fazem
+  // sentido receber os MESMOS dados (mesmo medicamento/dose/via) de uma vez.
+  function grupoLoteChave(e: any): string {
+    return `${e.categoria_alvo || "—"}::${e.evento_sanitario_id ?? ""}`;
+  }
+  function grupoLoteRotulo(e: any): string {
+    return e.categoria_alvo || "Sem lote/categoria definido";
+  }
   const camposIniciais = (e: any): CampoBaixaSanidade => ({
     produto: e.produto || "", dose: e.dose != null ? String(e.dose) : "", unidade: e.unidade || "",
     via: e.via || "", principioAtivoId: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
@@ -264,21 +273,33 @@ export default function AgendaPage() {
       if (atual.has(e.id)) atual.delete(e.id); else { atual.add(e.id); abrirCampos(e); }
       return { ...p, [dia]: atual };
     });
-    setCategoriaLoteDia((p) => (p[dia] ? p : { ...p, [dia]: e.categoria }));
+    setCategoriaLoteDia((p) => (p[dia] ? p : { ...p, [dia]: grupoLoteChave(e) }));
+  };
+  // "Selecionar todos" de um grupo (mesma categoria/lote-alvo + evento): troca
+  // a seleção do dia inteiro para esse grupo e abre a linha única compartilhada
+  // (ver camposBaixa[chaveCamposGrupo(dia)]).
+  const chaveCamposGrupo = (dia: string) => `__grupo__${dia}`;
+  const selecionarTodosGrupo = (dia: string, grupo: string, itens: any[]) => {
+    setSelecionadosLote((p) => ({ ...p, [dia]: new Set(itens.map((it) => it.id)) }));
+    setCategoriaLoteDia((p) => ({ ...p, [dia]: grupo }));
+    if (itens.length) abrirCampos({ ...itens[0], id: chaveCamposGrupo(dia) });
   };
 
   // Chama o mesmo endpoint que a tela de Lançamentos usa para "Preventivo" —
   // cria/atualiza a regra recorrente e, se não for exame, registra a aplicação
   // (com baixa de estoque) já com os dados confirmados/editados aqui mesmo.
-  async function resolverSanidade(e: any): Promise<boolean> {
-    const c = camposBaixa[e.id] || camposIniciais(e);
+  async function resolverSanidade(e: any, camposOverride?: CampoBaixaSanidade): Promise<boolean> {
+    const c = camposOverride || camposBaixa[e.id] || camposIniciais(e);
     const exame = ehExameSanitario(e);
+    // "Repetir a cada" = 0 é intencional: usuário não quer gerar agendamento
+    // futuro, só registrar esta aplicação (ver cadastrar_preventivo no backend).
+    const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
     try {
       await cadastrarPreventivo({
         evento_sanitario_id: e.evento_sanitario_id,
         categoria_alvo: e.categoria_alvo || undefined,
         data_evento: e.data,
-        frequencia_valor: Number(c.freqValor) || 1,
+        frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
         frequencia_unidade: c.freqUnidade,
         animais: e.numero_animal ? [e.numero_animal] : [],
         aplicar: !exame,
@@ -311,16 +332,19 @@ export default function AgendaPage() {
   const confirmarLoteDia = async (dia: string) => {
     const ids = Array.from(selecionadosLote[dia] || []);
     if (!ids.length) return;
+    // Linha única (grupo inteiro selecionado): os mesmos campos valem p/ todos.
+    const camposGrupo = camposBaixa[chaveCamposGrupo(dia)];
     setResolvendoLoteDia((p) => new Set(p).add(dia));
     let falhas = 0;
     for (const id of ids) {
       const e = eventoPorId.get(id);
       if (!e) continue;
-      if (!(await resolverSanidade(e))) falhas++;
+      if (!(await resolverSanidade(e, camposGrupo))) falhas++;
     }
     setResolvendoLoteDia((p) => { const n = new Set(p); n.delete(dia); return n; });
     setSelecionadosLote((p) => { const n = { ...p }; delete n[dia]; return n; });
     setCategoriaLoteDia((p) => { const n = { ...p }; delete n[dia]; return n; });
+    setCamposBaixa((p) => { const n = { ...p }; delete n[chaveCamposGrupo(dia)]; return n; });
     setLoteDia((p) => ({ ...p, [dia]: false }));
     await carregar();
     mostrarFeedback(falhas ? `Baixa em lote concluída com ${falhas} erro(s).` : "Baixa em lote registrada para todos os selecionados.", falhas > 0);
@@ -449,13 +473,16 @@ export default function AgendaPage() {
           <div>
             <label style={rotuloInline}>Repetir a cada</label>
             <div style={{ display: "flex", gap: "0.3rem" }}>
-              <input type="number" inputMode="numeric" style={{ ...inputInline, width: 60 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} />
+              <input type="number" min={0} inputMode="numeric" style={{ ...inputInline, width: 60 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (não gera agendamento futuro, só esta aplicação)" />
               <select style={inputInline} value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
                 <option value="dias">dia(s)</option>
                 <option value="meses">mês(es)</option>
                 <option value="anos">ano(s)</option>
               </select>
             </div>
+            {Number(campos.freqValor) === 0 && (
+              <p style={{ fontSize: "0.66rem", color: "var(--amber)", marginTop: "0.2rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
+            )}
           </div>
         </div>
         {!loteModo && (
@@ -536,13 +563,27 @@ export default function AgendaPage() {
       financeiroPorRef.forEach((itens, ref) => linhas.push({ tipo: "grupo", ref, itens }));
 
       // Pendências elegíveis para o fluxo "dar baixa em lote" (mesmo dia) —
-      // só sanidade com matriz definida (ver elegivelBaixaInline).
+      // só sanidade com matriz definida (ver elegivelBaixaInline). Separadas
+      // por categoria/lote-alvo + evento sanitário (grupoLoteChave), já que só
+      // faz sentido preencher os mesmos dados de uma vez para pendências
+      // realmente iguais.
       const elegiveisDia = evs.filter((e: any) => elegivelBaixaInline(e));
       const loteAtivoDia = !!loteDia[d];
+      const gruposElegiveisDia = new Map<string, any[]>();
+      elegiveisDia.forEach((e: any) => {
+        const g = grupoLoteChave(e);
+        (gruposElegiveisDia.get(g) ?? gruposElegiveisDia.set(g, []).get(g)!).push(e);
+      });
+      const grupoAtivoDia = categoriaLoteDia[d];
+      const itensGrupoAtivo = grupoAtivoDia ? (gruposElegiveisDia.get(grupoAtivoDia) || []) : [];
+      // Todos do grupo selecionados (via "Selecionar todos" ou marcando um a
+      // um) — nesse caso mostra 1 linha só, em vez de um painel por pendência.
+      const modoLinhaUnicaDia = loteAtivoDia && !!grupoAtivoDia && itensGrupoAtivo.length > 1 &&
+        itensGrupoAtivo.every((it) => selecionadosLote[d]?.has(it.id));
 
       return (
         <div key={d} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-          <div style={{ display: "flex", alignItems: "center", background: "var(--surface-2)" }}>
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", background: "var(--surface-2)" }}>
             <button onClick={() => toggleData(d)} style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: "0.6rem", padding: "0.5rem 0.9rem", background: "transparent", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
               {aberto ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
               <span style={{ fontWeight: 700, minWidth: "8rem" }}>{new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short", year: "2-digit" })}</span>
@@ -553,6 +594,22 @@ export default function AgendaPage() {
                 title="Selecione várias pendências da mesma categoria e confirme a baixa de todas juntas, sem sair da Agenda">
                 <input type="checkbox" checked={loteAtivoDia} onChange={() => toggleLoteDia(d)} /> Dar baixa em lote
               </label>
+            )}
+            {loteAtivoDia && gruposElegiveisDia.size > 0 && (
+              <div className="flex items-center gap-1" style={{ flexWrap: "wrap", padding: "0 0.9rem 0.5rem" }}>
+                {Array.from(gruposElegiveisDia.entries()).filter(([g]) => !grupoAtivoDia || g === grupoAtivoDia).map(([g, itens]) => {
+                  const todosDoGrupoSelecionados = itens.length > 0 && itens.every((it) => selecionadosLote[d]?.has(it.id));
+                  return (
+                    <button key={g} className="btn-ghost" style={{ fontSize: "0.68rem", padding: "0.15rem 0.5rem", borderRadius: 999, border: "1px solid var(--border)" }}
+                      title={`${grupoLoteRotulo(itens[0])} — ${itens.length} pendência(s)`}
+                      onClick={() => todosDoGrupoSelecionados
+                        ? (setSelecionadosLote((p) => { const n = { ...p }; delete n[d]; return n; }), setCategoriaLoteDia((p) => { const n = { ...p }; delete n[d]; return n; }))
+                        : selecionarTodosGrupo(d, g, itens)}>
+                      {todosDoGrupoSelecionados ? "Desmarcar todos" : "Selecionar todos"}: {grupoLoteRotulo(itens[0])} ({itens.length})
+                    </button>
+                  );
+                })}
+              </div>
             )}
           </div>
           {aberto && (
@@ -565,7 +622,9 @@ export default function AgendaPage() {
                       const e = linha.e;
                       const elegivel = elegivelBaixaInline(e);
                       const selecionadoLote = elegivel && (selecionadosLote[d]?.has(e.id) ?? false);
-                      const painelAberto = elegivel && (loteAtivoDia ? selecionadoLote : expandidoBaixa.has(e.id));
+                      // Em modo linha única (grupo inteiro selecionado), o painel some daqui
+                      // e some 1 vez só, compartilhado, logo antes do botão de confirmar.
+                      const painelAberto = elegivel && (loteAtivoDia ? (selecionadoLote && !modoLinhaUnicaDia) : expandidoBaixa.has(e.id));
                       const linkFormularioCompleto = (numeroObrigatorio: boolean) => {
                         const ev = e as any;
                         const p = new URLSearchParams({ ir: "preventivo_aplicacao", evento_agenda: e.id });
@@ -612,9 +671,9 @@ export default function AgendaPage() {
                                     <Syringe size={12} /> Dar baixa (aplicar)
                                   </a>
                                 ) : loteAtivoDia ? (
-                                  <label className="flex items-center gap-1" style={{ fontSize: "0.72rem", opacity: (!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? 1 : 0.4, cursor: (!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? "pointer" : "not-allowed" }}
-                                    title={(!categoriaLoteDia[d] || categoriaLoteDia[d] === e.categoria) ? "Selecionar para dar baixa em lote" : "Só é possível combinar pendências da mesma categoria"}>
-                                    <input type="checkbox" disabled={!!categoriaLoteDia[d] && categoriaLoteDia[d] !== e.categoria} checked={selecionadoLote}
+                                  <label className="flex items-center gap-1" style={{ fontSize: "0.72rem", opacity: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? 1 : 0.4, cursor: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "pointer" : "not-allowed" }}
+                                    title={(!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "Selecionar para dar baixa em lote" : "Só é possível combinar pendências da mesma categoria/lote e evento"}>
+                                    <input type="checkbox" disabled={!!categoriaLoteDia[d] && categoriaLoteDia[d] !== grupoLoteChave(e)} checked={selecionadoLote}
                                       onChange={() => toggleSelecaoLote(d, e)} />
                                     Selecionar
                                   </label>
@@ -859,6 +918,17 @@ export default function AgendaPage() {
                       </React.Fragment>
                     );
                   })}
+                  {modoLinhaUnicaDia && itensGrupoAtivo.length > 0 && (
+                    <tr style={{ background: "var(--surface-2)" }}>
+                      <td></td>
+                      <td colSpan={5}>
+                        <div style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem" }}>
+                          {itensGrupoAtivo.length} pendências de "{grupoLoteRotulo(itensGrupoAtivo[0])}" — os dados abaixo valem para todas.
+                        </div>
+                        <PainelConfirmarBaixa e={{ ...itensGrupoAtivo[0], id: chaveCamposGrupo(d) }} loteModo={true} />
+                      </td>
+                    </tr>
+                  )}
                   {loteAtivoDia && (selecionadosLote[d]?.size ?? 0) > 0 && (
                     <tr style={{ background: "var(--surface-2)" }}>
                       <td colSpan={6} style={{ textAlign: "right", padding: "0.6rem 0.9rem" }}>
@@ -1220,25 +1290,30 @@ export default function AgendaPage() {
           quando o saldo normalizar. */}
       {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
         <div className="card mb-4" style={{ border: "1px solid var(--red)" }}>
-          <div className="card-header mb-3 flex items-center gap-2" style={{ color: "var(--red)" }}>
-            <AlertTriangle size={15} /> Estoque — alertas ({estoqueNegativo.length + estoqueAbaixoMinimo.length})
-          </div>
-          <div className="space-y-2">
-            {estoqueNegativo.map((i) => (
-              <div key={`neg_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)" }}>
-                <span style={{ fontSize: "0.83rem" }}>
-                  <strong>{i.nome}</strong> — saldo <strong style={{ color: "var(--red)" }}>negativo</strong> ({i.quantidade} {i.unidade || ""})
-                </span>
-              </div>
-            ))}
-            {estoqueAbaixoMinimo.map((i) => (
-              <div key={`min_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--amber)" }}>
-                <span style={{ fontSize: "0.83rem" }}>
-                  <strong>{i.nome}</strong> — abaixo do mínimo ({i.quantidade} de {i.estoque_minimo} {i.unidade || ""})
-                </span>
-              </div>
-            ))}
-          </div>
+          <button onClick={() => togglePainel("estoqueAlertas")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--red)", cursor: "pointer", textAlign: "left", padding: 0 }}>
+            {paineis.has("estoqueAlertas") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+            <span className="card-header" style={{ margin: 0, color: "var(--red)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <AlertTriangle size={15} /> Estoque — alertas ({estoqueNegativo.length + estoqueAbaixoMinimo.length})
+            </span>
+          </button>
+          {paineis.has("estoqueAlertas") && (
+            <div className="space-y-2 mt-3">
+              {estoqueNegativo.map((i) => (
+                <div key={`neg_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)" }}>
+                  <span style={{ fontSize: "0.83rem" }}>
+                    <strong>{i.nome}</strong> — saldo <strong style={{ color: "var(--red)" }}>negativo</strong> ({i.quantidade} {i.unidade || ""})
+                  </span>
+                </div>
+              ))}
+              {estoqueAbaixoMinimo.map((i) => (
+                <div key={`min_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--amber)" }}>
+                  <span style={{ fontSize: "0.83rem" }}>
+                    <strong>{i.nome}</strong> — abaixo do mínimo ({i.quantidade} de {i.estoque_minimo} {i.unidade || ""})
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
