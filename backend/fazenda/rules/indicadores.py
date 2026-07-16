@@ -15,6 +15,7 @@ from typing import Optional
 
 from fazenda.rules.agenda_veterinario import PESO_APTA_MIN
 from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.iatf import SIT_REP_CANDIDATAS
 from fazenda.rules.parametros import BENCHMARK_METAS
 
 # Códigos de grupo (2 primeiros dígitos do grupo_primario).
@@ -33,6 +34,26 @@ CONCEPCAO_DESDE = date(2026, 1, 1)
 GESTACAO_MINIMA_DIAS = 280  # Holandês (menor gestação entre as raças)
 PEV_DIAS = 45               # período de espera voluntária mínimo
 IEP_MINIMO_DIAS = GESTACAO_MINIMA_DIAS + PEV_DIAS  # 325 dias (~10,7 meses)
+
+
+def _classificar_situacao_reprodutiva(sit_rep: Optional[str]) -> str:
+    """Classifica o `Sit. rep.` bruto em um dos 4 grupos padrão do painel de
+    Situação Reprodutiva (Capa): prenhes / inseminadas / pev / a_inseminar.
+    Qualquer valor fora desse padrão (em branco, ou qualquer outro texto)
+    cai em 'vazias' — mesmo balde usado para animais sem situação reprodutiva
+    definida (ex.: machos, bezerras). 'A inseminar' reaproveita o mesmo
+    critério de candidatas do IATF (SIT_REP_CANDIDATAS = Vaz. apt./Vaz. atr.)
+    para não divergir a mesma regra de negócio em dois lugares."""
+    sit = (sit_rep or "").strip()
+    if sit == "Ges.":
+        return "prenhes"
+    if sit == "Ins.":
+        return "inseminadas"
+    if sit == "Vaz. pev":
+        return "pev"
+    if sit in SIT_REP_CANDIDATAS:
+        return "a_inseminar"
+    return "vazias"
 
 
 def _codigo_grupo(grupo: Optional[str]) -> Optional[str]:
@@ -212,6 +233,13 @@ def _reproducao_categorias(
     ):
         subset = [a for a in animais if filtro(a)]
         prenhes = vazias = inseminadas = 0
+        # Detalhamento usado pelo gráfico de Situação Reprodutiva da Capa —
+        # Prenhas/Inseminadas/PEV/A inseminar são o padrão; qualquer sit_rep
+        # fora desse padrão (em branco ou não reconhecido) cai em
+        # "nao_classificadas". Contadores independentes de `vazias` acima
+        # (que soma TODO "Vaz.*") para não alterar o que já é consumido em
+        # Indicadores > Gerais e no Menu do app.
+        pev = a_inseminar = nao_classificadas = 0
         for a in subset:
             sit = (a.get("sit_rep") or "").strip()
             if sit == "Ges.":
@@ -220,6 +248,13 @@ def _reproducao_categorias(
                 vazias += 1
             elif sit == "Ins.":
                 inseminadas += 1
+            categoria = _classificar_situacao_reprodutiva(sit)
+            if categoria == "pev":
+                pev += 1
+            elif categoria == "a_inseminar":
+                a_inseminar += 1
+            elif categoria == "vazias":
+                nao_classificadas += 1
 
         aptas_nums: list[str] = []
         for a in subset:
@@ -241,6 +276,7 @@ def _reproducao_categorias(
         resultado[chave] = {
             "aptas": len(aptas_nums), "prenhes": prenhes, "vazias": vazias, "inseminadas": inseminadas,
             "aptas_nums": aptas_nums,
+            "pev": pev, "a_inseminar": a_inseminar, "nao_classificadas": nao_classificadas,
         }
     return resultado
 

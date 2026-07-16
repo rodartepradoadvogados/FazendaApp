@@ -26,6 +26,7 @@ import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
+import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
@@ -569,6 +570,23 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
   const toggle = (n: string) => setSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const toggleTodos = () => setSel((p) => (p.size === animais.length && animais.length ? new Set() : new Set(animais.map((a) => a.numero))));
 
+  // Inseminação avulsa: animal(is) ou lote(s) — dentro de lote, pode escolher
+  // mais de um; o protocolo IATF em andamento continua só por animal (D11).
+  const [vinculoInsem, setVinculoInsem] = useState<"animal" | "lote">("animal");
+  const [lotesSelecionadosInsem, setLotesSelecionadosInsem] = useState<string[]>([]);
+  const codigosLotesAptas = useMemo(
+    () => Array.from(new Set(animais.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [animais]
+  );
+  const animaisDoLoteInsem = useMemo(() => {
+    const cods = new Set(lotesSelecionadosInsem);
+    return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [animais, lotesSelecionadosInsem]);
+  const alvoFinal = useMemo(
+    () => (origemSelecao === "avulsa" && vinculoInsem === "lote" ? new Set(animaisDoLoteInsem.map((a) => a.numero)) : sel),
+    [origemSelecao, vinculoInsem, animaisDoLoteInsem, sel]
+  );
+
   useEffect(() => {
     fetchSemenDisponivel().then(setSemen).catch(() => setSemen(null));
     fetchLancamentosIatf().then(setLancamentos).catch(() => setLancamentos([]));
@@ -604,7 +622,7 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    const alvo = Array.from(sel);
+    const alvo = Array.from(alvoFinal);
     if (!alvo.length) { setErro("Selecione ao menos uma matriz."); return; }
     if (!dataServico) { setErro("Informe a data da inseminação."); return; }
     setSalvando(true);
@@ -616,12 +634,12 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         auto_lancar_iatf: tipo === "iatf" ? autoLancar : false,
       });
       if (r.incompativeis.length) {
-        setSel(new Set(r.incompativeis));
+        setVinculoInsem("animal"); setLotesSelecionadosInsem([]); setSel(new Set(r.incompativeis));
         setErro(`${r.incompativeis.join(", ")} não estão em nenhum protocolo IATF. Vincule a um protocolo existente ou marque "lançar protocolo automaticamente (D0 retroativo)" e salve de novo.`);
         if (r.criados) setSucesso(`${r.criados} inseminação(ões) registrada(s).`);
       } else {
         setSucesso(`${r.criados} inseminação(ões) registrada(s)${tipo === "iatf" ? " (IATF)" : tipo === "monta_natural" ? " (monta natural)" : " (cio natural)"}.`);
-        setSel(new Set()); setTouro("");
+        setSel(new Set()); setLotesSelecionadosInsem([]); setTouro("");
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar inseminação");
@@ -652,25 +670,77 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
             { id: "protocolo", label: "Protocolo de IATF atual", title: "Mostrar apenas as matrizes no D11 de um protocolo IATF em andamento" },
           ]}
           ativa={origemSelecao}
-          onChange={(o) => { setOrigemSelecao(o); setSel(new Set()); if (o === "protocolo") setTipo("iatf"); }}
+          onChange={(o) => { setOrigemSelecao(o); setSel(new Set()); setLotesSelecionadosInsem([]); setVinculoInsem("animal"); if (o === "protocolo") setTipo("iatf"); }}
         />
         {origemSelecao === "protocolo" && !animaisProtocolo.length && (
           <p style={{ ...nota, color: "var(--amber)" }}>Nenhuma matriz está no D11 de um protocolo IATF em andamento no momento.</p>
         )}
       </div>
 
-      <Campo label={origemSelecao === "protocolo" ? "Matrizes no D11 do protocolo IATF — pode selecionar várias" : "Matriz / novilha (aptas) — pode selecionar várias"} full>
-        <AnimalPickerModal
-          animais={origemSelecao === "protocolo" ? animaisProtocolo : animais}
-          selecionados={sel} onToggle={toggle}
-          titulo={origemSelecao === "protocolo" ? "Escolher matrizes no D11 (IATF)" : "Escolher matriz / novilha"}
-          colunas={[
-            { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-            { header: "Lote", render: (a) => a.grupo_primario || "—" },
-            { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
-            ...(origemSelecao === "protocolo" ? [{ header: "Protocolo", render: (a: AnimalRow) => mapaProtocoloPorAnimal.get(a.numero) || "—" }] : []),
-          ]}
-        />
+      <Campo label={origemSelecao === "protocolo" ? "Matrizes no D11 do protocolo IATF — pode selecionar várias" : "Matriz / novilha (aptas) — animal(is) ou lote(s)"} full>
+        {origemSelecao === "protocolo" ? (
+          <AnimalPickerModal
+            animais={animaisProtocolo}
+            selecionados={sel} onToggle={toggle}
+            titulo="Escolher matrizes no D11 (IATF)"
+            colunas={[
+              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+              { header: "Protocolo", render: (a: AnimalRow) => mapaProtocoloPorAnimal.get(a.numero) || "—" },
+            ]}
+          />
+        ) : (
+          <>
+            <TabBar<"animal" | "lote">
+              abas={[
+                { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
+                { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — mostra as aptas de cada lote escolhido" },
+              ]}
+              ativa={vinculoInsem}
+              onChange={setVinculoInsem}
+            />
+            {vinculoInsem === "animal" ? (
+              <AnimalPickerModal
+                animais={animais}
+                selecionados={sel} onToggle={toggle}
+                titulo="Escolher matriz / novilha"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                ]}
+              />
+            ) : (
+              <div style={{ marginTop: "0.5rem" }}>
+                <LotePicker
+                  opcoes={opcoesLoteDeAnimais(animais, codigosLotesAptas)}
+                  selecionados={lotesSelecionadosInsem}
+                  onChange={setLotesSelecionadosInsem}
+                  placeholder="Selecionar lote(s)…"
+                />
+                {lotesSelecionadosInsem.length > 0 && (
+                  <div style={{ marginTop: "0.6rem", overflowX: "auto" }}>
+                    <table className="fazenda-table">
+                      <thead><tr><th>Nº</th><th>Lote</th><th>Sit. rep.</th></tr></thead>
+                      <tbody>
+                        {animaisDoLoteInsem.map((a) => (
+                          <tr key={a.numero}>
+                            <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                            <td>{a.grupo_primario || "—"}</td>
+                            <td>{a.sit_rep || "—"}</td>
+                          </tr>
+                        ))}
+                        {!animaisDoLoteInsem.length && <tr><td colSpan={3} style={{ color: "var(--text-muted)", padding: "0.6rem" }}>Nenhuma apta nesse(s) lote(s).</td></tr>}
+                      </tbody>
+                    </table>
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>{animaisDoLoteInsem.length} animal(is) apta(s) no(s) lote(s) selecionado(s).</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </>
+        )}
       </Campo>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
@@ -762,7 +832,24 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
-  const toggleTodos = () => setSelecionados((p) => (p.size === servidas.length && servidas.length ? new Set() : new Set(servidas.map((a) => a.numero))));
+
+  // Animal(is) ou lote(s) — dentro de lote, pode escolher mais de um; a lista de
+  // animais mostrada é sempre a das servidas dentro do(s) lote(s) escolhido(s).
+  const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const codigosLotesServidas = useMemo(
+    () => Array.from(new Set(servidas.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [servidas]
+  );
+  const animaisDoLote = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return servidas.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [servidas, lotesSelecionados]);
+  const numerosAlvo = useMemo(
+    () => (vinculo === "lote" ? new Set(animaisDoLote.map((a) => a.numero)) : selecionados),
+    [vinculo, animaisDoLote, selecionados]
+  );
+
   const [data, setData] = useState("");
   const [metodo, setMetodo] = useState("");
   const [resultado, setResultado] = useState("");
@@ -773,24 +860,24 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   // Animais selecionados com menos de 30 dias desde a última inseminação/cobertura.
   const animaisComAviso = useMemo(() => {
     if (!data) return [];
-    return Array.from(selecionados).filter((n) => {
+    return Array.from(numerosAlvo).filter((n) => {
       const us = ultServico[n];
       if (!us) return false;
       const dias = (new Date(data + "T00:00:00").getTime() - new Date(us + "T00:00:00").getTime()) / 86400000;
       return dias >= 0 && dias < 30;
     });
-  }, [selecionados, data, ultServico]);
+  }, [numerosAlvo, data, ultServico]);
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!selecionados.size || !data || !resultado) { setErro("Selecione ao menos uma matriz, a data e o resultado do diagnóstico."); return; }
+    if (!numerosAlvo.size || !data || !resultado) { setErro("Selecione ao menos uma matriz, a data e o resultado do diagnóstico."); return; }
     setSalvando(true);
     // Loop por animal: registra quais salvaram e quais falharam, para não perder
     // o trabalho já feito nem a seleção dos que precisam de nova tentativa.
     const salvos: string[] = [];
     const falhados: string[] = [];
     try {
-      for (const numero of selecionados) {
+      for (const numero of numerosAlvo) {
         try {
           await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
           salvos.push(numero);
@@ -799,8 +886,8 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
         }
       }
       if (falhados.length) {
-        // Sucesso parcial: mantém selecionados só os que falharam, para reenviar.
-        setSelecionados(new Set(falhados));
+        // Sucesso parcial: passa para seleção individual só com quem falhou, para reenviar.
+        setVinculo("animal"); setLotesSelecionados([]); setSelecionados(new Set(falhados));
         if (salvos.length) {
           setSucesso(`Salvos: ${salvos.length}.`);
           setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
@@ -813,7 +900,7 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
             ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
             : `Diagnóstico salvo para ${salvos.length} animal(is).`
         );
-        setSelecionados(new Set()); setData(""); setMetodo(""); setResultado("");
+        setSelecionados(new Set()); setLotesSelecionados([]); setData(""); setMetodo(""); setResultado("");
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar diagnóstico");
@@ -824,17 +911,55 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
 
   return (
     <>
-      <Campo label="Matriz / novilha (servidas) — pode selecionar várias" full>
-        <AnimalPickerModal
-          animais={servidas} selecionados={selecionados} onToggle={toggle}
-          titulo="Escolher matriz / novilha servida"
-          colunas={[
-            { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
-            { header: "Lote", render: (a) => a.grupo_primario || "—" },
-            { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
-            { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
+      <Campo label="Matriz / novilha (servidas) — animal(is) ou lote(s)" full>
+        <TabBar<"animal" | "lote">
+          abas={[
+            { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
+            { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — mostra as servidas de cada lote escolhido" },
           ]}
+          ativa={vinculo}
+          onChange={setVinculo}
         />
+        {vinculo === "animal" ? (
+          <AnimalPickerModal
+            animais={servidas} selecionados={selecionados} onToggle={toggle}
+            titulo="Escolher matriz / novilha servida"
+            colunas={[
+              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+              { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
+            ]}
+          />
+        ) : (
+          <div style={{ marginTop: "0.5rem" }}>
+            <LotePicker
+              opcoes={opcoesLoteDeAnimais(servidas, codigosLotesServidas)}
+              selecionados={lotesSelecionados}
+              onChange={setLotesSelecionados}
+              placeholder="Selecionar lote(s)…"
+            />
+            {lotesSelecionados.length > 0 && (
+              <div style={{ marginTop: "0.6rem", overflowX: "auto" }}>
+                <table className="fazenda-table">
+                  <thead><tr><th>Nº</th><th>Lote</th><th>Sit. rep.</th><th>Última IA/cobertura</th></tr></thead>
+                  <tbody>
+                    {animaisDoLote.map((a) => (
+                      <tr key={a.numero}>
+                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                        <td>{a.grupo_primario || "—"}</td>
+                        <td>{a.sit_rep || "—"}</td>
+                        <td>{ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
+                      </tr>
+                    ))}
+                    {!animaisDoLote.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", padding: "0.6rem" }}>Nenhuma servida nesse(s) lote(s).</td></tr>}
+                  </tbody>
+                </table>
+                <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>{animaisDoLote.length} animal(is) servida(s) no(s) lote(s) selecionado(s).</p>
+              </div>
+            )}
+          </div>
+        )}
       </Campo>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
@@ -2236,7 +2361,7 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   );
 }
 
-// ─────────────────────── BST — seleção nas tabelas (Aptas/Nunca aplicadas/Inaptas) ───────────────────────
+// ─────────────────────── BST — seleção nas tabelas (Aptas/Incluir no próximo BST/Inaptas) ───────────────────────
 function BstLancamentoView() {
   const [dados, setDados] = useState<any | null>(null);
   const carregar = () => fetchAgenda().then(setDados).catch(() => setDados(null));
@@ -3328,7 +3453,7 @@ const TIPOS_GRUPOS = [
       { id: "inducao_lactacao", label: "Indução de lactação", icon: Syringe, desc: "Lança o protocolo de indução (18 ou 28 dias) em um ou vários animais — gera o cronograma completo na Agenda." },
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Entrega mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
-      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Nunca aplicadas/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
+      { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
     ],
   },
   {

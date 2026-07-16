@@ -4,9 +4,9 @@
 // (só leitura) numa sub-tela, com seções recolhíveis. Offline: ficha via cache
 // por animal (chave "ficha_<numero>").
 import { useEffect, useState } from "react";
-import { fetchFichaAnimal, formatDate } from "@/lib/api";
+import { fetchFichaAnimal, formatDate, registrarColostragem } from "@/lib/api";
 import { fetchComCache, cacheEm } from "@/lib/offline";
-import { MobCard, MobVoltar, MobLinha } from "@/components/mobile/ui";
+import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
 import { BuscaAnimal, lerRecentes, registrarRecente, subtituloAnimal, type Recente } from "./comum";
 
 type Ficha = {
@@ -80,11 +80,18 @@ function Secao({ titulo, linhas, campos, altInicio }: { titulo: string; linhas: 
   );
 }
 
-function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => void }) {
+function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: string; onVoltar: () => void; destacarInicial?: "colostragem" | "igg" | null }) {
   const [ficha, setFicha] = useState<Ficha | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [doCache, setDoCache] = useState(false);
+
+  const [editColostro, setEditColostro] = useState(false);
+  const [formColostro, setFormColostro] = useState<Record<string, string>>({});
+  const [salvando, setSalvando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [destacar, setDestacar] = useState<"colostragem" | "igg" | null>(destacarInicial ?? null);
+  const [abrirEdicaoAoCarregar, setAbrirEdicaoAoCarregar] = useState(!!destacarInicial);
 
   useEffect(() => {
     let vivo = true;
@@ -111,6 +118,55 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
   const baixa = ficha?.baixa as Record<string, unknown> | null;
   const compra = ficha?.compra as Record<string, unknown> | null;
   const pai = ficha?.pai;
+
+  function abrirEditColostro() {
+    const c: Record<string, unknown> = colostragem || {};
+    setFormColostro({
+      tomou_colostro: c.tomou_colostro == null ? "" : String(c.tomou_colostro),
+      litros_colostro: c.litros_colostro != null ? String(c.litros_colostro) : "",
+      brix_colostro: c.brix_colostro != null ? String(c.brix_colostro) : "",
+      data_colostro: c.data_colostro != null ? String(c.data_colostro) : "",
+      brix_soro: c.brix_soro != null ? String(c.brix_soro) : "",
+      data_teste_sangue: c.data_teste_sangue != null ? String(c.data_teste_sangue) : "",
+      observacao: c.observacao != null ? String(c.observacao) : "",
+    });
+    setEditColostro(true); setAviso(null);
+  }
+
+  // Chegou da Agenda com uma pendência de colostro/IgG: assim que a ficha
+  // carrega, abre direto o formulário de colostragem.
+  useEffect(() => {
+    if (ficha && abrirEdicaoAoCarregar) {
+      abrirEditColostro();
+      setAbrirEdicaoAoCarregar(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ficha]);
+
+  async function salvarColostro() {
+    setSalvando(true); setAviso(null);
+    try {
+      const f = formColostro;
+      await registrarColostragem({
+        numero_animal: numero,
+        tomou_colostro: f.tomou_colostro === "" ? undefined : f.tomou_colostro === "true",
+        litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
+        brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
+        data_colostro: f.data_colostro || undefined,
+        brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
+        data_teste_sangue: f.data_teste_sangue || undefined,
+        observacao: f.observacao || undefined,
+      });
+      setEditColostro(false); setAviso("Colostragem/IgG salvos.");
+      setDestacar(null);
+      const { dados } = await fetchComCache<Ficha>(`ficha_${numero}`, () => fetchFichaAnimal(numero));
+      if (dados) setFicha(dados);
+    } catch (e) {
+      setAviso(e instanceof Error ? e.message : "Erro ao salvar.");
+    } finally {
+      setSalvando(false);
+    }
+  }
 
   // Alternância de cor dos cartões ABAIXO do primeiro (identificação) — mesmo
   // esquema da Agenda (claro: branco/paleta; escuro: preto contornado de
@@ -156,17 +212,66 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
             </Grade>
           </MobCard>
 
-          {colostragem && (
-            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Colostragem / IgG</div>
-              <Grade>
-                <ParDado label="Tomou colostro?" valor={mostrarValor(colostragem.tomou_colostro)} />
-                <ParDado label="Litros" valor={mostrarValor(colostragem.litros_colostro)} />
-                <ParDado label="Brix colostro" valor={mostrarValor(colostragem.brix_colostro)} />
-                <ParDado label="Brix soro" valor={mostrarValor(colostragem.brix_soro)} />
-              </Grade>
+          <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem", borderColor: destacar ? "var(--mob-vermelho)" : undefined }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
+                <div style={{ fontWeight: 700 }}>Colostragem / IgG</div>
+                {!editColostro && <button type="button" className="mob-btn mob-btn-sec" style={{ width: "auto", padding: "0.35rem 0.9rem" }} onClick={abrirEditColostro}>Editar</button>}
+              </div>
+
+              {destacar && !editColostro && (
+                <p style={{ fontSize: "0.82rem", color: "var(--mob-vermelho)", fontWeight: 700, marginBottom: "0.6rem" }}>
+                  Pendente da Agenda — preencha {destacar === "colostragem" ? "os litros e o Brix do colostro" : "o Brix do soro (IgG)"} abaixo.
+                </p>
+              )}
+
+              {aviso && <MobAviso tipo={aviso.includes("Erro") || aviso.includes("erro") ? "erro" : "ok"}>{aviso}</MobAviso>}
+
+              {!editColostro ? (
+                <Grade>
+                  <ParDado label="Tomou colostro?" valor={mostrarValor(colostragem?.tomou_colostro)} />
+                  <ParDado label="Litros" valor={mostrarValor(colostragem?.litros_colostro)} />
+                  <ParDado label="Brix colostro" valor={mostrarValor(colostragem?.brix_colostro)} />
+                  <ParDado label="Brix soro" valor={mostrarValor(colostragem?.brix_soro)} />
+                </Grade>
+              ) : (
+                <div style={{ marginTop: "0.3rem" }}>
+                  <MobCampo label="Tomou colostro?">
+                    <select className="mob-input" value={formColostro.tomou_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, tomou_colostro: e.target.value }))}>
+                      <option value="">—</option>
+                      <option value="true">Sim</option>
+                      <option value="false">Não</option>
+                    </select>
+                  </MobCampo>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0 0.8rem" }}>
+                    <MobCampo label={destacar === "colostragem" ? "Litros (pendente)" : "Litros"}>
+                      <input type="number" inputMode="decimal" className="mob-input" style={destacar === "colostragem" ? { borderColor: "var(--mob-vermelho)" } : undefined}
+                        value={formColostro.litros_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, litros_colostro: e.target.value }))} />
+                    </MobCampo>
+                    <MobCampo label={destacar === "colostragem" ? "Brix colostro (pendente)" : "Brix colostro"}>
+                      <input type="number" inputMode="decimal" className="mob-input" style={destacar === "colostragem" ? { borderColor: "var(--mob-vermelho)" } : undefined}
+                        value={formColostro.brix_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, brix_colostro: e.target.value }))} />
+                    </MobCampo>
+                  </div>
+                  <MobCampo label="Data do colostro">
+                    <input type="date" className="mob-input" value={formColostro.data_colostro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, data_colostro: e.target.value }))} />
+                  </MobCampo>
+                  <MobCampo label={destacar === "igg" ? "Brix do soro / IgG (pendente)" : "Brix do soro / IgG"}>
+                    <input type="number" inputMode="decimal" className="mob-input" style={destacar === "igg" ? { borderColor: "var(--mob-vermelho)" } : undefined}
+                      value={formColostro.brix_soro || ""} onChange={(e) => setFormColostro((p) => ({ ...p, brix_soro: e.target.value }))} />
+                  </MobCampo>
+                  <MobCampo label="Data do teste de sangue">
+                    <input type="date" className="mob-input" value={formColostro.data_teste_sangue || ""} onChange={(e) => setFormColostro((p) => ({ ...p, data_teste_sangue: e.target.value }))} />
+                  </MobCampo>
+                  <MobCampo label="Observação">
+                    <input className="mob-input" value={formColostro.observacao || ""} onChange={(e) => setFormColostro((p) => ({ ...p, observacao: e.target.value }))} />
+                  </MobCampo>
+                  <div style={{ display: "flex", gap: "0.6rem", marginTop: "0.4rem" }}>
+                    <button type="button" className="mob-btn" style={{ flex: 1 }} disabled={salvando} onClick={salvarColostro}>{salvando ? "Salvando…" : "Salvar"}</button>
+                    <button type="button" className="mob-btn mob-btn-sec" style={{ flex: 1 }} onClick={() => setEditColostro(false)}>Cancelar</button>
+                  </div>
+                </div>
+              )}
             </MobCard>
-          )}
 
           {compra && (
             <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
@@ -208,13 +313,15 @@ function FichaDetalhe({ numero, onVoltar }: { numero: string; onVoltar: () => vo
   );
 }
 
-export default function Ficha() {
-  const [aberto, setAberto] = useState<string | null>(null);
+export default function Ficha({ numeroInicial, destacarInicial }: { numeroInicial?: string | null; destacarInicial?: string | null } = {}) {
+  const [aberto, setAberto] = useState<string | null>(numeroInicial ?? null);
   const [recentes, setRecentes] = useState<Recente[]>([]);
 
   useEffect(() => { setRecentes(lerRecentes()); }, [aberto]);
 
-  if (aberto) return <FichaDetalhe numero={aberto} onVoltar={() => setAberto(null)} />;
+  const destacar = destacarInicial === "colostragem" || destacarInicial === "igg" ? destacarInicial : null;
+
+  if (aberto) return <FichaDetalhe numero={aberto} onVoltar={() => setAberto(null)} destacarInicial={aberto === numeroInicial ? destacar : null} />;
 
   return (
     <div>

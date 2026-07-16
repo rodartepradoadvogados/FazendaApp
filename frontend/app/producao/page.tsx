@@ -707,7 +707,7 @@ function RelatoriosBstView() {
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Próxima aplicação BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{agenda?.proxima_visita_bst ? new Date(agenda.proxima_visita_bst + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Aplicações no filtro</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{filtrado.length}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Vacas distintas aplicadas</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{vacasDistintas}</div></div>
-        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Nunca aplicadas / reanálise</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
+        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Incluir no próximo BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
       </div>
 
       <PainelLancarBst agenda={agenda} onAtualizado={carregar} />

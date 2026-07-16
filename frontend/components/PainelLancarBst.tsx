@@ -6,10 +6,16 @@ import { Modal } from "@/components/Modal";
 
 /**
  * Painel de lançamento de BST — seleção de animais direto nas 3 tabelas
- * (Aptas / Nunca aplicadas / Inaptas), com ação "aplicar" (data-aware:
+ * (Aptas / Incluir no próximo BST / Inaptas), com ação "aplicar" (data-aware:
  * pergunta agendar vs. aplicar+baixa) e ação distinta "marcar como inapta"
  * (não pode ser combinada com aplicar no mesmo lançamento). Usado tanto em
  * Produção › Relatórios de BST quanto em Lançamentos › Produção › BST.
+ *
+ * "Incluir no próximo BST" reúne: (1) nunca aplicadas que estarão aptas na
+ * data da próxima aplicação, e (2) animais retirados do BST (`excluir_bst`)
+ * — estes últimos vêm com `requer_reanalise: true` e ganham a bolinha
+ * amarela na tabela, sinalizando que precisam ser reavaliados antes de
+ * entrar de novo no lançamento.
  */
 export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtualizado: () => void }) {
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
@@ -37,14 +43,21 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
       {!lista.length ? <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Nenhum animal nesta condição.</p> : (
         <div style={{ overflowX: "auto", maxHeight: "280px" }}>
           <table style={{ borderCollapse: "collapse", width: "100%" }}>
-            <thead><tr><th style={th}></th><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th><th style={th}>Obs.</th></tr></thead>
+            <thead><tr><th style={th}></th><th style={th}></th><th style={th}>Nº</th><th style={th}>Lote</th><th style={{ ...th, textAlign: "right" }}>DEL</th><th style={th}>Obs.</th></tr></thead>
             <tbody>{lista.map((b: any) => (
               <tr key={b.numero_matriz}>
                 <td style={td}><input type="checkbox" checked={selecionados.has(b.numero_matriz)} onChange={() => toggle(b.numero_matriz)} /></td>
+                <td style={td}>
+                  {b.requer_reanalise && (
+                    <span title="Retirada do BST — revisar antes de incluir de novo" style={{ display: "inline-block", width: 9, height: 9, borderRadius: "50%", background: "var(--amber)" }} />
+                  )}
+                </td>
                 <td style={{ ...td, fontWeight: 700 }}>{b.numero_matriz}</td>
                 <td style={td}>{b.grupo || "—"}</td>
                 <td style={{ ...td, textAlign: "right" }}>{b.del_dias ?? "—"}</td>
-                <td style={{ ...td, color: "var(--text-muted)", fontSize: "0.75rem" }}>{b.motivo_exclusao || (lista === nuncaAplicadas ? "Nunca aplicada" : "—")}</td>
+                <td style={{ ...td, color: "var(--text-muted)", fontSize: "0.75rem" }}>
+                  {b.requer_reanalise ? (b.motivo_exclusao || "Retirada do BST — revisar") : lista === nuncaAplicadas ? "Nunca aplicada — apta na próxima" : "—"}
+                </td>
               </tr>
             ))}</tbody>
           </table>
@@ -92,8 +105,8 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Tabela titulo="BST — Aptas" lista={aptas} cor="var(--green-light)" />
-        <Tabela titulo="BST — Nunca aplicadas" lista={nuncaAplicadas} cor="var(--amber)" />
-        <Tabela titulo="BST — Inaptas p/ próxima aplicação / retiradas voluntariamente" lista={inaptas} cor="var(--red)" />
+        <Tabela titulo="BST — Incluir no próximo BST" lista={nuncaAplicadas} cor="var(--amber)" />
+        <Tabela titulo="BST — Inaptas p/ próxima aplicação" lista={inaptas} cor="var(--red)" />
       </div>
 
       <div className="card">

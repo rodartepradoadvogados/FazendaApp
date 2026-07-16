@@ -7,6 +7,7 @@
 // do cache e o "realizado" entra na fila de envio.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { ChevronRight } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, today, type ApresentacaoDieta } from "@/lib/api";
@@ -477,6 +478,40 @@ export default function AgendaMovel() {
             </div>
           )}
         </MobCard>
+      );
+    }
+
+    // Pendência de colostragem/IgG: não pode ser dispensada pelo check genérico
+    // (marcaria "feito" sem preencher o dado). O toque abre a ficha do animal
+    // direto no campo que falta, tanto no site quanto no app.
+    if (e.tipo === "colostragem_pendente" || e.tipo === "igg_pendente") {
+      const destacar = e.tipo === "colostragem_pendente" ? "colostragem" : "igg";
+      return (
+        <Link key={e.id} href={`/app/rebanho?numero=${encodeURIComponent(e.numero_animal || "")}&destacar=${destacar}`} style={{ textDecoration: "none", color: "inherit" }}>
+          <MobCard alt={alt} style={{ marginBottom: "0.6rem" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
+                  {rotulo}
+                </div>
+                <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>
+                  {e.descricao}
+                </div>
+                {e.observacao && (
+                  <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
+                    {e.observacao}
+                  </div>
+                )}
+                {atrasada && (
+                  <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--mob-vermelho)", marginTop: "0.25rem" }}>
+                    Atrasada · {fmtData(e.data, { day: "2-digit", month: "2-digit" })}
+                  </div>
+                )}
+              </div>
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
+            </div>
+          </MobCard>
+        </Link>
       );
     }
 

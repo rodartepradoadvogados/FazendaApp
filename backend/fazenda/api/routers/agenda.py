@@ -1009,6 +1009,8 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
     if dados.evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
+    if dados.evento_id.startswith("colostragem_pendente_") or dados.evento_id.startswith("igg_pendente_"):
+        raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — preencha o dado que falta na ficha do animal.")
     if dados.evento_id.startswith("protocolo_iatf_"):
         _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
         return {"marcado": True}

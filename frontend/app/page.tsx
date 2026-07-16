@@ -8,7 +8,10 @@ import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAx
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Gauge } from "@/components/Gauge";
 
-const SIT_CORES: Record<string, string> = { Prenhes: "var(--green-light)", Vazias: "var(--red)", Inseminadas: "var(--dourado-light)" };
+const SIT_CORES: Record<string, string> = {
+  Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
+  PEV: "var(--amber)", "A inseminar": "var(--blue)", Vazias: "var(--red)",
+};
 
 const LACTACAO = ["01", "02", "03"];
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
@@ -84,7 +87,9 @@ export default function Home() {
   const repCats: any = d.ind?.reproducao_categorias || { todas: rep };
   const repSel: any = repCats[catRep] || rep;
   const donutRep = repSel ? [
-    { nome: "Prenhes", v: repSel.prenhes }, { nome: "Vazias", v: repSel.vazias }, { nome: "Inseminadas", v: repSel.inseminadas },
+    { nome: "Prenhes", v: repSel.prenhes }, { nome: "Inseminadas", v: repSel.inseminadas },
+    { nome: "PEV", v: repSel.pev }, { nome: "A inseminar", v: repSel.a_inseminar },
+    { nome: "Vazias", v: repSel.nao_classificadas },
   ].filter((x) => x.v > 0) : [];
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
@@ -254,9 +259,13 @@ export default function Home() {
                     const porCategoria = (a: AnimalRow) => catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto;
                     const f = nome === "Prenhes"
                       ? (a: AnimalRow) => a.sit_rep === "Ges." && porCategoria(a)
-                      : nome === "Vazias"
-                      ? (a: AnimalRow) => (a.sit_rep || "").startsWith("Vaz.") && porCategoria(a)
-                      : (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a);
+                      : nome === "Inseminadas"
+                      ? (a: AnimalRow) => a.sit_rep === "Ins." && porCategoria(a)
+                      : nome === "PEV"
+                      ? (a: AnimalRow) => a.sit_rep === "Vaz. pev" && porCategoria(a)
+                      : nome === "A inseminar"
+                      ? (a: AnimalRow) => (a.sit_rep === "Vaz. apt." || a.sit_rep === "Vaz. atr.") && porCategoria(a)
+                      : (a: AnimalRow) => !["Ges.", "Ins.", "Vaz. pev", "Vaz. apt.", "Vaz. atr."].includes((a.sit_rep || "")) && porCategoria(a);
                     abrir(nome, f);
                   }}>
                   {donutRep.map((s: any, i: number) => <Cell key={i} fill={SIT_CORES[s.nome]} />)}
