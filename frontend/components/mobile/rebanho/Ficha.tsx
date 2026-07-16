@@ -80,7 +80,10 @@ function Secao({ titulo, linhas, campos, altInicio }: { titulo: string; linhas: 
   );
 }
 
-function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: string; onVoltar: () => void; destacarInicial?: "colostragem" | "igg" | null }) {
+// Exportado para telas fora de Rebanho (ex.: Menu › Agenda do Veterinário)
+// abrirem a ficha do animal com seu próprio "voltar" local, sem navegar para
+// a aba Rebanho.
+export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: string; onVoltar: () => void; destacarInicial?: "colostragem" | "igg" | null }) {
   const [ficha, setFicha] = useState<Ficha | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);

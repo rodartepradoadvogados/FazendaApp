@@ -1576,6 +1576,31 @@ class TabelaNutricionalValor(SQLModel, table=True):
     valor: str = ""
 
 
+class AnaliseBromatologica(SQLModel, table=True):
+    """Laudo de análise bromatológica de um lote/silo de alimento — resultado
+    de laboratório (não confundir com a Tabela Nutricional, que é referência
+    padrão, ou Matéria seca, que é só o %MS por ingrediente genérico). Cada
+    registro é um laudo pontual de um alimento específico da fazenda."""
+
+    __tablename__ = "analise_bromatologica"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    data: date
+    alimento: str = Field(index=True)
+    ms_pct: Optional[float] = None  # matéria seca (%)
+    pb_pct: Optional[float] = None  # proteína bruta (%)
+    fdn_pct: Optional[float] = None  # fibra em detergente neutro (%)
+    fda_pct: Optional[float] = None  # fibra em detergente ácido (%)
+    ndt_pct: Optional[float] = None  # nutrientes digestíveis totais (%)
+    ee_pct: Optional[float] = None  # extrato etéreo / gordura (%)
+    cinzas_pct: Optional[float] = None
+    ca_pct: Optional[float] = None  # cálcio (%)
+    p_pct: Optional[float] = None  # fósforo (%)
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
 class DietaRegistroReal(SQLModel, table=True):
     """O que foi realmente oferecido, por data — comparado ao programado."""
 

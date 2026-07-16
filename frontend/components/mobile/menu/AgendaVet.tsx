@@ -1,10 +1,15 @@
 "use client";
 // Sub-tela: Agenda do Veterinário (só leitura, dentro do app).
 // Abre APENAS as listas da classificação do rebanho fêmea — cada lista é uma
-// seção recolhível (<details>) com nome amigável + contagem; dentro, os animais.
+// seção recolhível (<details>) com nome amigável + contagem; dentro, os
+// animais, clicáveis — abrem a ficha do animal aqui mesmo (estado local),
+// com seta de voltar para esta mesma tela.
+import { useState } from "react";
+import { ChevronRight } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
 import { fetchAgendaVeterinario, formatDate } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, NumAnimal } from "@/components/mobile/menu/comum";
+import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 
 type Animal = {
   numero_matriz: string;
@@ -47,8 +52,11 @@ function detalhe(chave: string, a: Animal): string {
 
 export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
   const { dados, doCache, carregando } = useCarregar<Resposta>("menu_agenda_vet", fetchAgendaVeterinario);
+  const [fichaAberta, setFichaAberta] = useState<string | null>(null);
 
   const total = dados ? Object.values(dados.totais || {}).reduce((s, n) => s + n, 0) : 0;
+
+  if (fichaAberta) return <FichaDetalhe numero={fichaAberta} onVoltar={() => setFichaAberta(null)} />;
 
   return (
     <div>
@@ -66,7 +74,7 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
           const animais = dados.listas[chave] || [];
           if (!animais.length) return null;
           return (
-            <details key={chave} className="mob-card" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
+            <details key={chave} className="mob-card mob-card-vet" style={{ padding: "0.4rem 0.9rem", marginBottom: "0.6rem" }}>
               <summary style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", cursor: "pointer", padding: "0.55rem 0", fontWeight: 700, fontSize: "0.95rem", listStyle: "none" }}>
                 <span style={{ flex: 1, minWidth: 0 }}>{rotulo}</span>
                 <span style={{ fontSize: "0.78rem", fontWeight: 800, padding: "0.2rem 0.6rem", borderRadius: 999, background: "var(--mob-surface-2)", border: "1px solid var(--mob-border)", color: "var(--mob-muted)", flexShrink: 0 }}>
@@ -75,10 +83,14 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
               </summary>
               <div style={{ borderTop: "1px solid var(--mob-border)", paddingTop: "0.4rem" }}>
                 {animais.map((a) => (
-                  <div key={a.numero_matriz} style={{ padding: "0.5rem 0", borderBottom: "1px solid var(--mob-border)" }}>
-                    <NumAnimal>Nº {a.numero_matriz}</NumAnimal>
-                    <div style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{detalhe(chave, a)}</div>
-                  </div>
+                  <button key={a.numero_matriz} onClick={() => setFichaAberta(a.numero_matriz)}
+                    style={{ display: "flex", alignItems: "center", gap: "0.5rem", width: "100%", background: "none", border: "none", padding: "0.5rem 0", borderBottom: "1px solid var(--mob-border)", cursor: "pointer", color: "inherit", textAlign: "left", font: "inherit" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <NumAnimal>Nº {a.numero_matriz}</NumAnimal>
+                      <div style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{detalhe(chave, a)}</div>
+                    </div>
+                    <ChevronRight size={18} style={{ color: "var(--mob-muted)", flexShrink: 0 }} />
+                  </button>
                 ))}
               </div>
             </details>

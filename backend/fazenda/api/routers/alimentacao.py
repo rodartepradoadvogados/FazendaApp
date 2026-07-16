@@ -429,6 +429,53 @@ async def importar_tabela_nutricional(file: UploadFile, session: Session = Depen
     return {"produtos": len(produto_por_coluna), "nutrientes": nutrientes_importados}
 
 
+# ─────────────────────────── Análise bromatológica ───────────────────────────
+# Laudo de laboratório de um lote/silo de alimento da própria fazenda — não
+# confundir com Tabela Nutricional (referência padrão) ou Matéria seca (só o
+# %MS por ingrediente genérico). Registro pontual, sem edição/exclusão (mesmo
+# padrão de Qualidade do leite).
+class AnaliseBromatologicaIn(BaseModel):
+    data: date
+    alimento: str
+    ms_pct: float | None = None
+    pb_pct: float | None = None
+    fdn_pct: float | None = None
+    fda_pct: float | None = None
+    ndt_pct: float | None = None
+    ee_pct: float | None = None
+    cinzas_pct: float | None = None
+    ca_pct: float | None = None
+    p_pct: float | None = None
+    observacao: str | None = None
+
+
+@router.get("/analise-bromatologica")
+def listar_analise_bromatologica(session: Session = Depends(get_session)) -> dict:
+    from fazenda.models import AnaliseBromatologica
+    registros = session.exec(select(AnaliseBromatologica).order_by(AnaliseBromatologica.data.desc())).all()
+    nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
+    linhas = []
+    for r in registros:
+        linha = r.model_dump()
+        linha["usuario_nome"] = nomes.get(linha.pop("usuario_id"))
+        linhas.append(linha)
+    return {"registros": linhas, "total": len(registros)}
+
+
+@router.post("/analise-bromatologica", status_code=201)
+def criar_analise_bromatologica(
+    dados: AnaliseBromatologicaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    from fazenda.models import AnaliseBromatologica
+    if not dados.alimento.strip():
+        raise HTTPException(status_code=400, detail="Alimento é obrigatório")
+    registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id)
+    session.add(registro)
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
 class ItemProgramadoIn(BaseModel):
     alimento: str
     quantidade: float

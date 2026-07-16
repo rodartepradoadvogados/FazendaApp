@@ -1,7 +1,7 @@
 "use client";
 // Configurações > Cadastro > Alimentação — dados mestres de alimentação
 // (o lançamento de nova dieta em si vive em Lançamentos > Alimentação, via o
-// mesmo CadastrarNovaDieta exportado deste arquivo). Três abas:
+// mesmo CadastrarNovaDieta exportado deste arquivo). Quatro abas:
 //   • "Visualizar dietas": lista as dietas lançadas e abre a apresentação como
 //     o funcionário a vê (produtos, por cabeça, total/dia, total/trato e kg no
 //     vagão).
@@ -9,11 +9,16 @@
 //     entre matéria natural e matéria seca nas dietas.
 //   • "Tabela Nutricional": cadastro da grade nutriente × produto (mesmos
 //     dados que o botão "Tabela nutricional" exibe em modo consulta).
+//   • "Análise bromatológica": laudos de laboratório de lotes/silos reais da
+//     fazenda (MS, PB, FDN, FDA, NDT, EE, cinzas, Ca, P) — diferente da
+//     Tabela Nutricional (referência padrão) e da Matéria seca (só %MS).
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2 } from "lucide-react";
+import { Plus, Trash2, ClipboardList, ChevronDown, ChevronRight, Percent, Table2, FlaskConical } from "lucide-react";
 import {
   fetchLotes, fetchContextoDieta, fetchDietas, fetchApresentacaoDieta, fetchEstoque,
-  criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin, type ContextoDieta, type ApresentacaoDieta,
+  criarDieta, fetchMateriaSeca, salvarMateriaSeca, ehAdmin,
+  fetchAnaliseBromatologica, criarAnaliseBromatologica, type AnaliseBromatologica,
+  type ContextoDieta, type ApresentacaoDieta,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
@@ -54,12 +59,12 @@ const input: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
 
 export default function CadastroAlimentacao() {
-  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional">("ver");
+  const [aba, setAba] = useState<"ver" | "ms" | "tabela-nutricional" | "bromatologica">("ver");
   return (
     <div>
       <div className="flex items-center justify-between mb-3" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
-          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent], ["tabela-nutricional", "Tabela Nutricional", Table2]] as const).map(([id, label, Icon]) => (
+          {([["ver", "Visualizar dietas", ClipboardList], ["ms", "Matéria seca", Percent], ["tabela-nutricional", "Tabela Nutricional", Table2], ["bromatologica", "Análise bromatológica", FlaskConical]] as const).map(([id, label, Icon]) => (
             <button key={id} onClick={() => setAba(id)}
               style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", padding: "0.35rem 0.85rem", borderRadius: 999, cursor: "pointer",
                 border: "1px solid " + (aba === id ? "var(--dourado)" : "var(--border)"),
@@ -71,7 +76,7 @@ export default function CadastroAlimentacao() {
         </div>
         <TabelaNutricionalBotao />
       </div>
-      {aba === "ver" ? <VisualizarDietas /> : aba === "ms" ? <MateriaSeca /> : <TabelaNutricionalCadastroInline />}
+      {aba === "ver" ? <VisualizarDietas /> : aba === "ms" ? <MateriaSeca /> : aba === "tabela-nutricional" ? <TabelaNutricionalCadastroInline /> : <AnaliseBromatologicaTab />}
     </div>
   );
 }
@@ -108,6 +113,118 @@ function MateriaSeca() {
         {!itens.length && <p style={{ padding: "0.8rem", color: "var(--text-muted)", fontSize: "0.85rem" }}>Carregando ingredientes…</p>}
       </div>
       {aviso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{aviso}</p>}
+    </div>
+  );
+}
+
+// ─────────────────────────── Análise bromatológica ───────────────────────────
+// Laudo de laboratório de um lote/silo real da fazenda — não confundir com
+// Tabela Nutricional (referência padrão) ou Matéria seca (só %MS genérico).
+// Registro pontual (sem edição/exclusão), listado do mais recente ao mais antigo.
+const CAMPOS_BROMATOLOGICA: [keyof AnaliseBromatologica, string][] = [
+  ["ms_pct", "MS (%)"], ["pb_pct", "PB (%)"], ["fdn_pct", "FDN (%)"], ["fda_pct", "FDA (%)"],
+  ["ndt_pct", "NDT (%)"], ["ee_pct", "EE (%)"], ["cinzas_pct", "Cinzas (%)"], ["ca_pct", "Ca (%)"], ["p_pct", "P (%)"],
+];
+function formBromatologicaVazio(): Record<string, string> {
+  return { data: hoje(), alimento: "", observacao: "", ms_pct: "", pb_pct: "", fdn_pct: "", fda_pct: "", ndt_pct: "", ee_pct: "", cinzas_pct: "", ca_pct: "", p_pct: "" };
+}
+function AnaliseBromatologicaTab() {
+  const [estoqueItens, setEstoqueItens] = useState<EstoqueItemPicker[]>([]);
+  const [registros, setRegistros] = useState<AnaliseBromatologica[] | null>(null);
+  const [form, setForm] = useState<Record<string, string>>(formBromatologicaVazio());
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+
+  const carregar = () => fetchAnaliseBromatologica().then((d) => setRegistros(d.registros)).catch((e: any) => setErro(e.message));
+  useEffect(() => {
+    fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => {});
+    carregar();
+  }, []);
+
+  async function salvar() {
+    setErro(null); setSucesso(null);
+    if (!form.data || !form.alimento) { setErro("Informe a data e o alimento/silo."); return; }
+    setSalvando(true);
+    try {
+      const num = (v: string) => (v === "" ? undefined : Number(v));
+      await criarAnaliseBromatologica({
+        data: form.data, alimento: form.alimento, observacao: form.observacao || undefined,
+        ms_pct: num(form.ms_pct), pb_pct: num(form.pb_pct), fdn_pct: num(form.fdn_pct), fda_pct: num(form.fda_pct),
+        ndt_pct: num(form.ndt_pct), ee_pct: num(form.ee_pct), cinzas_pct: num(form.cinzas_pct), ca_pct: num(form.ca_pct), p_pct: num(form.p_pct),
+      });
+      setSucesso("Laudo de análise bromatológica salvo.");
+      setForm(formBromatologicaVazio());
+      await carregar();
+    } catch (e: any) {
+      setErro(e.message || "Erro ao salvar análise bromatológica");
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  return (
+    <div>
+      <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>
+        Laudo de laboratório de um lote/silo real da fazenda — diferente da Tabela Nutricional (referência padrão) e da Matéria seca (só o %MS).
+      </p>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+        <div>
+          <label style={lbl}>Data do laudo</label>
+          <input type="date" style={input} value={form.data} onChange={(e) => setForm((f) => ({ ...f, data: e.target.value }))} />
+        </div>
+        <div style={{ gridColumn: "span 2" }}>
+          <label style={lbl}>Alimento / silo</label>
+          <EstoquePicker itens={estoqueItens} value={form.alimento} onChange={(v) => setForm((f) => ({ ...f, alimento: v }))}
+            finalidades={["Ração/Alimento"]} placeholder="Selecionar silagem/alimento…" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-3">
+        {CAMPOS_BROMATOLOGICA.map(([campo, label]) => (
+          <div key={campo}>
+            <label style={lbl}>{label}</label>
+            <input type="number" inputMode="decimal" step="0.01" style={input} value={form[campo] || ""} onChange={(e) => setForm((f) => ({ ...f, [campo]: e.target.value }))} />
+          </div>
+        ))}
+      </div>
+
+      <div className="mb-3">
+        <label style={lbl}>Observação</label>
+        <input style={input} value={form.observacao} onChange={(e) => setForm((f) => ({ ...f, observacao: e.target.value }))} />
+      </div>
+
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{erro}</p>}
+      {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{sucesso}</p>}
+      <button className="btn-primary" style={{ fontSize: "0.8rem", marginBottom: "1.2rem" }} disabled={salvando} onClick={salvar}>
+        {salvando ? "Salvando…" : "Salvar laudo"}
+      </button>
+
+      <div className="overflow-x-auto">
+        <table className="fazenda-table">
+          <thead><tr>
+            <th>Data</th><th>Alimento</th>
+            {CAMPOS_BROMATOLOGICA.map(([campo, label]) => <th key={campo} style={{ textAlign: "right" }}>{label}</th>)}
+            <th>Obs.</th>
+          </tr></thead>
+          <tbody>
+            {(registros || []).map((r) => (
+              <tr key={r.id}>
+                <td style={{ fontSize: "0.78rem" }}>{formatDate(r.data)}</td>
+                <td style={{ fontWeight: 700 }}>{r.alimento}</td>
+                {CAMPOS_BROMATOLOGICA.map(([campo]) => (
+                  <td key={campo} style={{ textAlign: "right", fontSize: "0.78rem" }}>{r[campo] != null ? String(r[campo]) : "—"}</td>
+                ))}
+                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{r.observacao || "—"}</td>
+              </tr>
+            ))}
+            {registros && !registros.length && (
+              <tr><td colSpan={CAMPOS_BROMATOLOGICA.length + 3} style={{ color: "var(--text-muted)", textAlign: "center", padding: "1rem" }}>Nenhum laudo lançado ainda.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
