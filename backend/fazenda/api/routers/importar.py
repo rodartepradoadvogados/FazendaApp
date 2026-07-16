@@ -18,17 +18,22 @@ from datetime import date
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
+from fazenda.api.routers.agenda import _baixar_aplicacao_agendada
 from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
+from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
+from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque, EventoSanitario,
-    Fornecedor, LancamentoItem, Parto, Sanidade,
+    Animal, AplicacaoAgendada, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque,
+    EventoRealizado, EventoSanitario, Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
 )
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
+from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.eventos_sanitarios import _datas_gatilho
 
 router = APIRouter(prefix="/importar", tags=["importar"])
 
@@ -116,6 +121,21 @@ CATEGORIAS_NOVAS = {
         ],
         "exemplo": ["Brucelose B19", "vacina", "Bezerras (3 a 8 meses)", "Brucelose", "Vacina B19", "2 mL",
                     "1", "anos", "10/03/2026"],
+    },
+    "baixas_pendencias_agenda": {
+        "label": "Baixa em massa de pendências antigas da Agenda (sanitário)",
+        "colunas": [
+            "tipo (evento_sanitario/calendario_sanitario/aplicacao_agendada)", "nome_evento (só p/ evento_sanitario e calendario_sanitario)",
+            "numero_animal", "data_pendencia (DD/MM/AAAA, a data original da pendência)",
+            "produto_aplicado (opcional — vazio usa o produto padrão do evento)", "dose (opcional)",
+            "unidade (opcional)", "via (opcional)", "responsavel (opcional)", "observacao (opcional)",
+        ],
+        "colunas_csv": [
+            "tipo", "nome_evento", "numero_animal", "data_pendencia", "produto_aplicado", "dose", "unidade", "via",
+            "responsavel", "observacao",
+        ],
+        "exemplo": ["evento_sanitario", "Brucelose B19", "464", "10/04/2026", "Vacina B19", "2", "ml", "Subcutânea", "Carlos", ""],
+        "precisa_data_corte": True,
     },
     "touros_naab": {
         "label": "Touros — catálogo NAAB/provas do fornecedor (Excel ou CSV)",
@@ -666,6 +686,194 @@ async def importar_calendario_sanitario(file: UploadFile, session: Session = Dep
 
     session.commit()
     return {"categoria": "calendario_sanitario", "criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+def _ocorrencia_valida(base: date | None, valor: int | None, unidade: str | None, alvo: date) -> bool:
+    """True quando `alvo` cai exatamente numa ocorrência da recorrência que
+    começa em `base` — usado para validar uma data de pendência antiga sem
+    limitar a busca a nenhuma janela de tempo (ao contrário de
+    `_ocorrencias_recorrentes`, feita para a Agenda ao vivo)."""
+    if not (base and valor and unidade) or valor <= 0 or alvo < base:
+        return False
+    d = base
+    guarda = 0
+    while d < alvo and guarda < 3000:
+        d = proxima_ocorrencia(d, valor, unidade)
+        guarda += 1
+    return d == alvo
+
+
+@router.post("/baixas_pendencias_agenda")
+async def importar_baixas_pendencias_agenda(
+    file: UploadFile, data_corte: str = Form(""), session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+) -> dict:
+    """
+    Baixa em massa de pendências antigas da Agenda (sanitário) — uma linha por
+    pendência. Resolve exatamente como o usuário resolveria uma a uma na tela
+    (mesma função `registrar_aplicacao`/`_baixar_aplicacao_agendada` de sempre):
+    grava a aplicação de verdade em Sanidade (com baixa de estoque quando a
+    unidade bate) e dispensa a pendência da Agenda (EventoRealizado). Não cria
+    nenhuma regra nova de calendário — só fecha o que já estava pendente.
+    Linhas com data_pendencia >= data_corte são ignoradas (mantidas na Agenda).
+    """
+    content = await file.read()
+    corte = parse_date(data_corte) if data_corte else None
+    criados, dispensados, erros = 0, 0, []
+
+    def _ja_realizado(eid: str) -> bool:
+        return session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first() is not None
+
+    def _dispensar(eid: str) -> bool:
+        """Marca o evento como realizado; False se já estava (evita duplicar Sanidade)."""
+        if _ja_realizado(eid):
+            return False
+        session.add(EventoRealizado(evento_id=eid))
+        session.flush()
+        return True
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        tipo = (row.get("tipo", "") or "").strip().lower()
+        nome_evento = (row.get("nome_evento", "") or "").strip()
+        numeros = [n.strip() for n in (row.get("numero_animal", "") or "").replace(";", ",").split(",") if n.strip()]
+        data_pendencia = parse_date(row.get("data_pendencia", ""))
+        produto = (row.get("produto_aplicado", "") or "").strip() or None
+        dose = parse_float(row.get("dose", ""))
+        unidade = (row.get("unidade", "") or "").strip() or None
+        via = (row.get("via", "") or "").strip() or None
+        responsavel = (row.get("responsavel", "") or "").strip() or None
+        observacao = (row.get("observacao", "") or "").strip() or None
+
+        if not data_pendencia:
+            erros.append(f"Linha {i}: data_pendencia é obrigatória (DD/MM/AAAA)")
+            continue
+        if corte and data_pendencia >= corte:
+            erros.append(f"Linha {i}: data_pendencia {data_pendencia.isoformat()} não é anterior à data de corte — ignorada (mantida na Agenda)")
+            continue
+
+        try:
+            if tipo == "evento_sanitario":
+                if not nome_evento:
+                    raise ValueError("nome_evento é obrigatório para tipo evento_sanitario")
+                ev = session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome_evento)).first()
+                if not ev:
+                    raise ValueError(f'evento sanitário "{nome_evento}" não encontrado')
+
+                if ev.tipo_agendamento == "evento":
+                    if len(numeros) != 1:
+                        raise ValueError("este evento é por gatilho (por animal) — informe exatamente 1 numero_animal")
+                    numero = numeros[0]
+                    candidatos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, ev.offset_dias or 0)
+                    if not any(n == numero and d == data_pendencia for n, d in candidatos):
+                        raise ValueError(f"nenhuma ocorrência do gatilho deste evento para a matriz {numero} em {data_pendencia.isoformat()}")
+                    eid = f"evento_sanitario_{ev.id}__{numero}__{data_pendencia.isoformat()}"
+                    alvo_animais = [numero]
+                elif ev.tipo_agendamento == "epoca":
+                    if not _ocorrencia_valida(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, data_pendencia):
+                        raise ValueError("data_pendencia não corresponde a nenhuma ocorrência da recorrência por época deste evento")
+                    eid = f"evento_sanitario_{ev.id}__rebanho__{data_pendencia.isoformat()}"
+                    if not numeros:
+                        raise ValueError("informe ao menos 1 numero_animal — quem de fato recebeu a aplicação")
+                    alvo_animais = numeros
+                else:
+                    raise ValueError("evento sanitário não está configurado com agendamento por época ou por gatilho")
+
+                eh_exame = ev.categoria_preventiva == "exame"
+                if not eh_exame:
+                    produto_final = produto or ev.produto_padrao
+                    dose_final = dose if dose is not None else ev.dose_padrao
+                    unidade_final = unidade or ev.unidade_padrao
+                    via_final = via or ev.via_padrao
+                    if not (produto_final and dose_final is not None and unidade_final):
+                        raise ValueError("produto_aplicado/dose/unidade são obrigatórios (ou cadastre o padrão no evento sanitário)")
+
+                # Validado — só agora dispensa a pendência (nunca antes de garantir
+                # que a aplicação de verdade também vai ser gravada com sucesso).
+                novo = _dispensar(eid)
+                if novo:
+                    if not eh_exame:
+                        registrar_aplicacao(
+                            AplicacaoIn(
+                                data_aplicacao=data_pendencia, animais=alvo_animais,
+                                itens=[ItemAplicacaoIn(produto=produto_final, via=via_final, quantidade=dose_final, unidade=unidade_final)],
+                                responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {ev.nome}",
+                                aplicado=True, natureza="preventivo",
+                            ),
+                            session, user,
+                        )
+                        criados += len(alvo_animais)
+                    dispensados += 1
+
+            elif tipo == "calendario_sanitario":
+                if not nome_evento:
+                    raise ValueError("nome_evento é obrigatório para tipo calendario_sanitario")
+                regras = session.exec(
+                    select(CalendarioSanitario)
+                    .join(EventoSanitario, CalendarioSanitario.evento_sanitario_id == EventoSanitario.id)
+                    .where(EventoSanitario.nome == nome_evento, CalendarioSanitario.ativo == True)  # noqa: E712
+                ).all()
+                validas = [c for c in regras if _ocorrencia_valida(c.data_evento, c.frequencia_valor, c.frequencia_unidade, data_pendencia)]
+                if not validas:
+                    raise ValueError(f'nenhuma regra do calendário sanitário "{nome_evento}" tem ocorrência em {data_pendencia.isoformat()}')
+                if not numeros:
+                    raise ValueError("informe ao menos 1 numero_animal — quem de fato recebeu a aplicação")
+
+                ev = session.get(EventoSanitario, validas[0].evento_sanitario_id)
+                eh_exame = (ev.categoria_preventiva if ev else None) == "exame"
+                for c in validas:
+                    eid = f"calendario_sanitario_{c.id}__{data_pendencia.isoformat()}"
+                    if not eh_exame:
+                        produto_final = produto or c.produto
+                        dose_final = dose if dose is not None else parse_float(c.dosagem or "")
+                        unidade_final = unidade or c.unidade
+                        if not (produto_final and dose_final is not None and unidade_final):
+                            raise ValueError("produto_aplicado/dose/unidade são obrigatórios (ou cadastre o padrão na regra do calendário)")
+
+                    novo = _dispensar(eid)
+                    if novo:
+                        if not eh_exame:
+                            registrar_aplicacao(
+                                AplicacaoIn(
+                                    data_aplicacao=data_pendencia, animais=numeros,
+                                    itens=[ItemAplicacaoIn(produto=produto_final, via=via, quantidade=dose_final, unidade=unidade_final)],
+                                    responsavel=responsavel, observacao=observacao or f"Baixa retroativa: {nome_evento}",
+                                    aplicado=True, natureza="preventivo",
+                                ),
+                                session, user,
+                            )
+                            criados += len(numeros)
+                        dispensados += 1
+
+            elif tipo == "aplicacao_agendada":
+                if len(numeros) != 1:
+                    raise ValueError("informe exatamente 1 numero_animal para tipo aplicacao_agendada")
+                numero = numeros[0]
+                ag = session.exec(
+                    select(AplicacaoAgendada).where(
+                        AplicacaoAgendada.numero_matriz == numero,
+                        AplicacaoAgendada.data == data_pendencia,
+                        AplicacaoAgendada.aplicado == False,  # noqa: E712
+                    )
+                ).first()
+                if not ag:
+                    raise ValueError(f"nenhuma aplicação agendada pendente para a matriz {numero} em {data_pendencia.isoformat()}")
+                eid = f"aplic_agendada_{ag.id}"
+                novo = _dispensar(eid)
+                if novo:
+                    _baixar_aplicacao_agendada(session, eid, produto, dose, unidade, via)
+                    criados += 1
+                    dispensados += 1
+
+            else:
+                raise ValueError('tipo deve ser "evento_sanitario", "calendario_sanitario" ou "aplicacao_agendada"')
+
+        except HTTPException as exc:
+            erros.append(f"Linha {i}: {exc.detail}")
+        except ValueError as exc:
+            erros.append(f"Linha {i}: {exc}")
+
+    session.commit()
+    return {"categoria": "baixas_pendencias_agenda", "criados": criados, "dispensados": dispensados, "erros": erros}
 
 
 @router.post("/touros_naab")

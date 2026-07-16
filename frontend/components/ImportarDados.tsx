@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Upload as UploadIcon, Download, CheckCircle, XCircle, FileText, Loader2, FileSpreadsheet, Wand2 } from "lucide-react";
 import { fetchModelosImportar, importarCSV, uploadCSV, backfillFornecedoresEstoque } from "@/lib/api";
 
-type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string; precisa_data_controle?: boolean; aceita_excel?: boolean };
+type Modelo = { label: string; colunas?: string[]; colunas_csv?: string[]; exemplo?: string[]; tipo_upload?: string; precisa_data_controle?: boolean; precisa_data_corte?: boolean; aceita_excel?: boolean };
 type Status = "idle" | "uploading" | "ok" | "error";
 type Estado = { status: Status; msg: string };
 
@@ -33,6 +33,7 @@ export default function ImportarDados() {
   const [estados, setEstados] = useState<Record<string, Estado>>({});
   const [dragging, setDragging] = useState<string | null>(null);
   const [datasControle, setDatasControle] = useState<Record<string, string>>({});
+  const [datasCorte, setDatasCorte] = useState<Record<string, string>>({});
   // Campos extras por modalidade (ex.: fonte/rodada do catálogo de touros).
   const [extras, setExtras] = useState<Record<string, Record<string, string>>>({});
   const [backfill, setBackfill] = useState<{ status: "idle" | "rodando" | "ok" | "error"; msg: string; detalhe?: { fornecedores: string[]; estoque: string[] } }>({ status: "idle", msg: "" });
@@ -53,24 +54,33 @@ export default function ImportarDados() {
     }
   }, []);
 
-  const handleNova = useCallback(async (categoria: string, file: File, precisaData?: boolean) => {
+  const handleNova = useCallback(async (categoria: string, file: File, precisaData?: boolean, precisaCorte?: boolean) => {
     if (precisaData && !datasControle[categoria]) {
       setEstados((p) => ({ ...p, [categoria]: { status: "error", msg: "Escolha a data do controle antes de enviar o arquivo." } }));
       return;
     }
+    if (precisaCorte && !datasCorte[categoria]) {
+      setEstados((p) => ({ ...p, [categoria]: { status: "error", msg: "Escolha a data de corte antes de enviar o arquivo." } }));
+      return;
+    }
     setEstados((p) => ({ ...p, [categoria]: { status: "uploading", msg: "Enviando…" } }));
     try {
-      const extra = precisaData ? { data_controle: datasControle[categoria] } : (extras[categoria] || undefined);
+      const extra = precisaData
+        ? { data_controle: datasControle[categoria] }
+        : precisaCorte
+          ? { data_corte: datasCorte[categoria] }
+          : (extras[categoria] || undefined);
       const res = await importarCSV(categoria, file, extra);
       const partes: string[] = [];
       if (res.criados !== undefined) partes.push(`${res.criados} criados`);
+      if (res.dispensados !== undefined) partes.push(`${res.dispensados} pendência(s) dispensada(s)`);
       if (res.atualizados !== undefined) partes.push(`${res.atualizados} atualizados`);
       if (res.erros?.length) partes.push(`${res.erros.length} linha(s) com erro`);
       setEstados((p) => ({ ...p, [categoria]: { status: res.erros?.length ? "error" : "ok", msg: partes.join(" · ") || "Importado com sucesso" } }));
     } catch (e: any) {
       setEstados((p) => ({ ...p, [categoria]: { status: "error", msg: e.message } }));
     }
-  }, [datasControle]);
+  }, [datasControle, datasCorte, extras]);
 
   const handleExistente = useCallback(async (categoria: string, tipoUpload: string, file: File) => {
     setEstados((p) => ({ ...p, [categoria]: { status: "uploading", msg: "Enviando…" } }));
@@ -200,6 +210,15 @@ export default function ImportarDados() {
                       style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
                   </div>
                 )}
+                {m.precisa_data_corte && (
+                  <div className="mb-2">
+                    <label style={{ fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" }}>
+                      Data de corte (linhas com data_pendencia igual ou depois dela são ignoradas)
+                    </label>
+                    <input type="date" value={datasCorte[id] || ""} onChange={(e) => setDatasCorte((p) => ({ ...p, [id]: e.target.value }))}
+                      style={{ width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" }} />
+                  </div>
+                )}
                 {m.aceita_excel && (
                   <div className="grid grid-cols-2 gap-2 mb-2">
                     <div>
@@ -216,7 +235,7 @@ export default function ImportarDados() {
                     </div>
                   </div>
                 )}
-                <Dropzone id={id} accept={m.aceita_excel ? ".csv,.xlsx,.xlsm" : ".csv"} onFile={(f) => handleNova(id, f, m.precisa_data_controle)} />
+                <Dropzone id={id} accept={m.aceita_excel ? ".csv,.xlsx,.xlsm" : ".csv"} onFile={(f) => handleNova(id, f, m.precisa_data_controle, m.precisa_data_corte)} />
               </div>
             ))}
           </div>
