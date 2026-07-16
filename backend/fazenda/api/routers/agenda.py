@@ -476,37 +476,18 @@ def calcular_agenda(
                             "link": f"/rebanho?aba=ficha&numero={cria.numero}&destacar=igg",
                         })
 
-    # Confirmação de cura — 1 dia após uma aplicação curativa avulsa, ou 1 dia
-    # após o último dia de um protocolo sanitário, pergunta "curado? sim/não".
-    # Diferente das pendências "realizado" comuns: a resposta é PERSISTIDA
-    # (Sanidade.curada / ProtocoloSanitarioLancamento.curada) e alimenta o
+    # Confirmação de cura — SÓ para aplicação de PROTOCOLO SANITÁRIO
+    # pré-cadastrado em Sanidade Curativa (nunca para lançamento avulso, nem
+    # para preventivo — esses nunca passam por ProtocoloSanitarioLancamento).
+    # Pergunta "curado? sim/não" no dia seguinte a TODOS os medicamentos do
+    # ÚLTIMO DIA do protocolo terem sido efetivamente lançados (não basta a
+    # data ter passado — se faltar aplicar algum medicamento do último dia,
+    # o evento não aparece). Diferente das pendências "realizado" comuns: a
+    # resposta é PERSISTIDA (ProtocoloSanitarioLancamento.curada) e alimenta o
     # relatório Taxa de cura — marcar "realizado" sozinho não basta, por isso
     # o frontend chama primeiro POST .../cura e só depois marca o evento.
     eventos_cura = []
     limite_cura = data - timedelta(days=60)
-    aplicacoes_curativas = session.exec(
-        select(Sanidade).where(
-            Sanidade.data_aplicacao >= limite_cura, Sanidade.data_aplicacao <= data,
-            Sanidade.curada == None,  # noqa: E711
-        )
-    ).all()
-    for s in aplicacoes_curativas:
-        if (s.natureza or "curativo") != "curativo":
-            continue
-        dia_seguinte = s.data_aplicacao + timedelta(days=1)
-        if dia_seguinte > data:
-            continue
-        chave = f"cura_aplicacao_{s.id}"
-        if chave in realizados:
-            continue
-        eventos_cura.append({
-            "id": chave, "data": dia_seguinte.isoformat(), "categoria": "sanidade",
-            "descricao": f"Confirmar cura — matriz {s.numero_matriz} ({s.produto})",
-            "numero_animal": s.numero_matriz, "observacao": None,
-            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "confirmar_cura",
-            "cura_origem": "aplicacao", "cura_id": s.id,
-        })
-
     lancamentos_protocolo_abertos = session.exec(
         select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.curada == None)  # noqa: E711
     ).all()
@@ -516,7 +497,12 @@ def calcular_agenda(
             aplicacoes_por_lancamento.setdefault(a.lancamento_id, []).append(a)
         for lanc in lancamentos_protocolo_abertos:
             aps = aplicacoes_por_lancamento.get(lanc.id, [])
-            ultimo_dia = max((a.data_prevista for a in aps), default=lanc.data_inicio)
+            if not aps:
+                continue
+            ultimo_dia = max(a.data_prevista for a in aps)
+            aps_ultimo_dia = [a for a in aps if a.data_prevista == ultimo_dia]
+            if not all(a.realizada for a in aps_ultimo_dia):
+                continue  # falta aplicar algum medicamento do último dia — ainda não pergunta
             dia_seguinte = ultimo_dia + timedelta(days=1)
             if dia_seguinte > data or dia_seguinte < limite_cura:
                 continue

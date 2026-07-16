@@ -364,6 +364,77 @@ class TestAgrupamentoLote:
         assert len({e["id"] for e in san}) == 3
 
 
+class TestConfirmacaoCura:
+    """#400 — "confirmar cura" só pode aparecer quando (1) a aplicação veio de
+    um PROTOCOLO SANITÁRIO pré-cadastrado em Sanidade Curativa (nunca para
+    lançamento avulso nem preventivo) e (2) TODOS os medicamentos do ÚLTIMO
+    DIA do protocolo já foram lançados — não basta a data ter passado."""
+
+    def _protocolo_2_dias(self, c):
+        return c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Mastite 2 dias", "eh_mastite": True,
+            "etapas": [_etapa(1), _etapa(2)],
+        }).json()["id"]
+
+    def test_nao_pergunta_cura_com_ultimo_dia_incompleto(self, client):
+        c, engine = client
+        pid = self._protocolo_2_dias(c)
+        c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
+            "classificacao_mastite": "clinica", "tetos_afetados": ["AE"],
+        })
+        eventos = c.get("/agenda/", params={"data": "2026-03-01", "dias": 60}).json()["eventos"]
+        dia1 = next(e for e in eventos if e.get("tipo") == "protocolo_sanitario" and e["data"] == "2026-03-01")
+        r = c.post("/agenda/realizados", json={"evento_id": dia1["id"]})
+        assert r.status_code == 200
+
+        # Só o D1 foi lançado — o D2 (último dia) ainda está pendente → sem "confirmar cura".
+        eventos2 = c.get("/agenda/", params={"data": "2026-03-03", "dias": 60}).json()["eventos"]
+        assert not any(e.get("tipo") == "confirmar_cura" for e in eventos2)
+
+    def test_pergunta_cura_no_dia_seguinte_ao_ultimo_dia_totalmente_lancado(self, client):
+        c, engine = client
+        pid = self._protocolo_2_dias(c)
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": pid, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
+            "classificacao_mastite": "clinica", "tetos_afetados": ["AE"],
+        })
+        lancamento_id = r.json()["lancamentos"][0]["id"]
+
+        eventos = c.get("/agenda/", params={"data": "2026-03-01", "dias": 60}).json()["eventos"]
+        for e in [x for x in eventos if x.get("tipo") == "protocolo_sanitario"]:
+            assert c.post("/agenda/realizados", json={"evento_id": e["id"]}).status_code == 200
+
+        # D1 e D2 (último dia) completos → confirma cura no dia seguinte ao D2 (2026-03-03).
+        eventos2 = c.get("/agenda/", params={"data": "2026-03-03", "dias": 60}).json()["eventos"]
+        cura = next(e for e in eventos2 if e.get("tipo") == "confirmar_cura")
+        assert cura["cura_origem"] == "protocolo"
+        assert cura["cura_id"] == lancamento_id
+        assert cura["numero_animal"] == "700"
+
+    def test_aplicacao_avulsa_nunca_pergunta_cura(self, client):
+        c, engine = client
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-03-01", "animais": ["700"],
+            "itens": [{"produto": "Antibiótico avulso", "quantidade": 10.0, "unidade": "ml"}],
+            "natureza": "curativo",
+        })
+        assert r.status_code == 200, r.text
+        eventos = c.get("/agenda/", params={"data": "2026-03-05", "dias": 60}).json()["eventos"]
+        assert not any(e.get("tipo") == "confirmar_cura" for e in eventos)
+
+    def test_aplicacao_preventiva_nunca_pergunta_cura(self, client):
+        c, engine = client
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-03-01", "animais": ["700"],
+            "itens": [{"produto": "Vacina X", "quantidade": 2.0, "unidade": "ml"}],
+            "natureza": "preventivo",
+        })
+        assert r.status_code == 200, r.text
+        eventos = c.get("/agenda/", params={"data": "2026-03-05", "dias": 60}).json()["eventos"]
+        assert not any(e.get("tipo") == "confirmar_cura" for e in eventos)
+
+
 class TestCadastroPorCriterio:
     """Cadastro por princípio ativo/classificação → escolher o medicamento no
     lançamento → baixa usa o medicamento escolhido."""

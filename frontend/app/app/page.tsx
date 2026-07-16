@@ -8,10 +8,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Check } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
-import { fetchAgenda, fetchApresentacaoDieta, today, type ApresentacaoDieta } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
+import { VIAS_APLICACAO } from "@/lib/constants";
+
+const UNIDADES_APLICACAO = ["ml", "kg", "L", "unidade", "dose", "saca 30kg", "saca 60kg"];
 
 /** Soma `n` dias a uma data ISO ("YYYY-MM-DD") e devolve outra ISO. */
 function maisDias(iso: string, n: number): string {
@@ -40,6 +43,13 @@ type Evento = {
   grupo?: string | null;
   grupo_titulo?: string | null;
   ref?: string | null;
+  // Pendência de "dar baixa" (evento_sanitario/calendario_sanitario) — dados
+  // padrão do cadastro, pré-preenchidos e editáveis no painel inline.
+  categoria_alvo?: string | null;
+  categoria_preventiva?: string | null;
+  principio_ativo_id?: number | null;
+  veterinario?: string | null;
+  evento_sanitario_id?: number | null;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -147,6 +157,72 @@ export default function AgendaMovel() {
     }
   }
 
+  // "Dar baixa" de um evento sanitário/calendário sanitário de UM animal —
+  // painel inline (abaixo do cartão) com os campos do cadastro pré-preenchidos
+  // e editáveis, igual ao site (nunca mais silencioso/direto no toque do check
+  // — evita lançamento errado que desalinha estoque/financeiro/relatórios).
+  const [principiosAtivos, setPrincipiosAtivos] = useState<{ id: number; nome: string }[]>([]);
+  const [eventosSanitarios, setEventosSanitarios] = useState<any[]>([]);
+  useEffect(() => {
+    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosAtivos(d.filter((p) => p.ativo !== false))).catch(() => {});
+    fetchEventosSanitarios().then(setEventosSanitarios).catch(() => {});
+  }, []);
+  function ehExameSanitario(e: Evento): boolean {
+    if (e.categoria_preventiva != null) return e.categoria_preventiva === "exame";
+    return eventosSanitarios.find((x: any) => x.id === e.evento_sanitario_id)?.categoria_preventiva === "exame";
+  }
+  function elegivelBaixaInline(e: Evento): boolean {
+    return (e.tipo === "evento_sanitario" || e.tipo === "calendario_sanitario") && !!e.numero_animal;
+  }
+  type CampoBaixa = { produto: string; dose: string; unidade: string; via: string; principioAtivoId: string; veterinario: string; freqValor: string; freqUnidade: string };
+  const camposIniciaisBaixa = (e: Evento): CampoBaixa => ({
+    produto: e.produto || "", dose: e.dose != null ? String(e.dose) : "", unidade: e.unidade || "",
+    via: e.via || "", principioAtivoId: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
+    veterinario: e.veterinario || "", freqValor: "1", freqUnidade: "meses",
+  });
+  const [baixaAberta, setBaixaAberta] = useState<Set<string>>(new Set());
+  const [camposBaixa, setCamposBaixa] = useState<Record<string, CampoBaixa>>({});
+  const [resolvendoBaixa, setResolvendoBaixa] = useState<Set<string>>(new Set());
+  const abrirBaixa = (e: Evento) => {
+    setBaixaAberta((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; });
+    setCamposBaixa((p) => (p[e.id] ? p : { ...p, [e.id]: camposIniciaisBaixa(e) }));
+  };
+  const atualizarCampoBaixa = (id: string, campo: keyof CampoBaixa, valor: string) =>
+    setCamposBaixa((p) => ({ ...p, [id]: { ...(p[id] || camposIniciaisBaixa({} as Evento)), [campo]: valor } }));
+
+  async function confirmarBaixaInline(e: Evento) {
+    const c = camposBaixa[e.id] || camposIniciaisBaixa(e);
+    const exame = ehExameSanitario(e);
+    const freq = c.freqValor.trim() === "" ? 1 : Number(c.freqValor);
+    setAviso(null);
+    setResolvendoBaixa((p) => new Set(p).add(e.id));
+    try {
+      await enviarOuEnfileirar("/sanidade/calendario/cadastrar-preventivo", {
+        evento_sanitario_id: e.evento_sanitario_id,
+        categoria_alvo: e.categoria_alvo || undefined,
+        data_evento: e.data,
+        frequencia_valor: Number.isFinite(freq) && freq >= 0 ? freq : 1,
+        frequencia_unidade: c.freqUnidade,
+        animais: e.numero_animal ? [e.numero_animal] : [],
+        aplicar: !exame,
+        veterinario: exame ? (c.veterinario || undefined) : undefined,
+        produto: exame ? undefined : (c.produto || undefined),
+        dose: exame || !c.dose ? undefined : Number(c.dose),
+        unidade: exame ? undefined : (c.unidade || undefined),
+        via: exame ? undefined : (c.via || undefined),
+        principio_ativo_id: exame || !c.principioAtivoId ? undefined : Number(c.principioAtivoId),
+      }, `Dar baixa: ${e.descricao}`, "POST");
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
+      setFeitos((p) => new Set(p).add(e.id));
+      setBaixaAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso(r.enviado ? { tipo: "ok", msg: "Baixa registrada." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível salvar." });
+    } finally {
+      setResolvendoBaixa((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+
   const abrirSan = (grupo: string) => setSanAberto((p) => { const n = new Set(p); n.has(grupo) ? n.delete(grupo) : n.add(grupo); return n; });
 
   // Confirma um item (uma matriz) do grupo — usa o id próprio do evento, então
@@ -230,23 +306,11 @@ export default function AgendaMovel() {
       jaFeito ? n.delete(e.id) : n.add(e.id);
       return n;
     });
-    // Dar baixa num evento sanitário de um animal COM medicamento padrão:
-    // gera a aplicação (que dá a saída de estoque) em vez de só marcar feito.
-    const darBaixaSanidade = !jaFeito && e.tipo === "evento_sanitario" && e.numero_animal && e.produto && e.dose != null && e.unidade;
     try {
-      let r;
-      if (darBaixaSanidade) {
-        r = await enviarOuEnfileirar("/sanidade/aplicacoes", {
-          data_aplicacao: hoje, animais: [e.numero_animal],
-          itens: [{ produto: e.produto, quantidade: e.dose, unidade: e.unidade, via: e.via || undefined }],
-        }, `Aplicação ${e.produto} — animal ${e.numero_animal}`, "POST");
-      } else if (jaFeito) {
-        r = await enviarOuEnfileirar(`/agenda/realizados/${encodeURIComponent(e.id)}`, {}, `Desfazer: ${resumo(e)}`, "DELETE");
-      } else {
-        r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
-      }
+      const r = jaFeito
+        ? await enviarOuEnfileirar(`/agenda/realizados/${encodeURIComponent(e.id)}`, {}, `Desfazer: ${resumo(e)}`, "DELETE")
+        : await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Concluir: ${resumo(e)}`, "POST");
       if (!r.enviado) setAviso({ tipo: "offline", msg: "Guardado — será enviado quando conectar." });
-      else if (darBaixaSanidade) setAviso({ tipo: "ok", msg: "Aplicação lançada e estoque baixado." });
     } catch (err) {
       // Servidor recusou (ex.: 403 sem permissão) — desfaz o otimista.
       setFeitos((p) => {
@@ -512,6 +576,99 @@ export default function AgendaMovel() {
             </div>
           </MobCard>
         </Link>
+      );
+    }
+
+    // Dar baixa em medicamento/vacina agendado (evento sanitário ou calendário
+    // sanitário) de UM animal: o toque abre, ABAIXO do cartão, os campos de
+    // lançamento pré-preenchidos do cadastro (editáveis) — nunca aplica direto
+    // com o check, pra não desalinhar estoque/financeiro/relatórios.
+    if (elegivelBaixaInline(e)) {
+      const aberto = baixaAberta.has(e.id);
+      const campos = camposBaixa[e.id] || camposIniciaisBaixa(e);
+      const exame = ehExameSanitario(e);
+      const set = (campo: keyof CampoBaixa, valor: string) => atualizarCampoBaixa(e.id, campo, valor);
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirBaixa(e)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                Nº {e.numero_animal}
+              </div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.descricao}</div>
+              {atrasada && (
+                <div style={{ fontSize: "0.72rem", fontWeight: 700, color: "var(--mob-vermelho)", marginTop: "0.25rem" }}>
+                  Atrasada · {fmtData(e.data, { day: "2-digit", month: "2-digit" })}
+                </div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              {exame ? (
+                <div style={{ marginBottom: "0.6rem" }}>
+                  <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Veterinário</label>
+                  <input className="mob-input" value={campos.veterinario} onChange={(ev) => set("veterinario", ev.target.value)} placeholder="ex.: Dr. Carlos" />
+                </div>
+              ) : (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.5rem", marginBottom: "0.6rem" }}>
+                  <div style={{ gridColumn: "1 / -1" }}>
+                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Medicamento</label>
+                    <input className="mob-input" value={campos.produto} onChange={(ev) => set("produto", ev.target.value)} placeholder="ex.: VACINA RB 51" />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Princípio ativo</label>
+                    <select className="mob-input" value={campos.principioAtivoId} onChange={(ev) => set("principioAtivoId", ev.target.value)}>
+                      <option value="">—</option>
+                      {principiosAtivos.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Dosagem</label>
+                    <input type="number" inputMode="decimal" className="mob-input" value={campos.dose} onChange={(ev) => set("dose", ev.target.value)} />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Unidade</label>
+                    <select className="mob-input" value={campos.unidade} onChange={(ev) => set("unidade", ev.target.value)}>
+                      <option value="">—</option>
+                      {UNIDADES_APLICACAO.map((u) => <option key={u} value={u}>{u}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Via</label>
+                    <select className="mob-input" value={campos.via} onChange={(ev) => set("via", ev.target.value)}>
+                      <option value="">—</option>
+                      {VIAS_APLICACAO.map((v) => <option key={v} value={v}>{v}</option>)}
+                    </select>
+                  </div>
+                </div>
+              )}
+              <div style={{ marginBottom: "0.7rem" }}>
+                <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Repetir a cada</label>
+                <div style={{ display: "flex", gap: "0.4rem" }}>
+                  <input type="number" min={0} inputMode="numeric" className="mob-input" style={{ width: 70 }} value={campos.freqValor} onChange={(ev) => set("freqValor", ev.target.value)} title="0 = não repetir (só esta aplicação, sem agendamento futuro)" />
+                  <select className="mob-input" value={campos.freqUnidade} onChange={(ev) => set("freqUnidade", ev.target.value)}>
+                    <option value="dias">dia(s)</option>
+                    <option value="meses">mês(es)</option>
+                    <option value="anos">ano(s)</option>
+                  </select>
+                </div>
+                {Number(campos.freqValor) === 0 && (
+                  <p style={{ fontSize: "0.7rem", color: "var(--mob-ambar)", marginTop: "0.25rem" }}>0 = não repete: sem agendamento futuro, só esta aplicação.</p>
+                )}
+              </div>
+              <button type="button" className="mob-btn" disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaInline(e)}>
+                <Check size={14} style={{ marginRight: 6 }} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
+              </button>
+            </div>
+          )}
+        </MobCard>
       );
     }
 
