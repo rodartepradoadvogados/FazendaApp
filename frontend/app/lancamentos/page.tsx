@@ -10,6 +10,7 @@ import {
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
+  atualizarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -2080,8 +2081,37 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
+  // Frequência periódica (regra recorrente do calendário) OU por evento de
+  // vida (desmama, aptidão, secagem…) — nesse 2º modo não cria regra nenhuma:
+  // configura o EVENTO SANITÁRIO selecionado para agendar por animal (mesmo
+  // mecanismo que já gera a Agenda por evento — ver eventos_sanitarios.py).
+  const [modoFreq, setModoFreq] = useState<"periodica" | "evento_vida">("periodica");
+  const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
+  const [gatilho, setGatilho] = useState("nascimento");
+  const [gatilhoLote, setGatilhoLote] = useState("");
+  const [gatilhoIdadeMeses, setGatilhoIdadeMeses] = useState("");
+  const [offsetDias, setOffsetDias] = useState("0");
+
+  useEffect(() => { fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {}); }, []);
+
   const eventoSel = eventos.find((e) => String(e.id) === eventoId) as any;
   const ehExame = eventoSel?.categoria_preventiva === "exame";
+
+  // Ao escolher um evento já cadastrado como "por evento" (tipo_agendamento
+  // == evento), o modo já vem pré-selecionado e os campos de gatilho preenchidos.
+  useEffect(() => {
+    if (!eventoSel) return;
+    if (eventoSel.tipo_agendamento === "evento" && eventoSel.gatilho) {
+      setModoFreq("evento_vida");
+      setGatilho(eventoSel.gatilho);
+      setGatilhoLote(eventoSel.gatilho_lote || "");
+      setGatilhoIdadeMeses(eventoSel.gatilho_idade_meses ? String(eventoSel.gatilho_idade_meses) : "");
+      setOffsetDias(eventoSel.offset_dias != null ? String(eventoSel.offset_dias) : "0");
+    } else {
+      setModoFreq("periodica");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId]);
 
   const carregarRegras = () => fetchCalendarioSanitario().then(setRegras).catch((e) => setErro(e.message));
   const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
@@ -2098,6 +2128,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setOutraCategoria(""); setDoencaId(""); setProduto("");
     setPrincipioId(""); setDosagem(""); setUnidade(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
     setDataEvento(""); setObservacao(""); setRealizado(false);
+    setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
   };
 
   const abrirEdicao = (r: RegraCalendario) => {
@@ -2120,9 +2151,28 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
 
   async function salvar() {
     setErro(null); setSucesso(null);
-    if (!eventoId || !dataEvento || !freqValor) { setErro("Selecione o evento sanitário, a frequência e a data do evento."); return; }
+    if (!eventoId) { setErro("Selecione o evento sanitário."); return; }
+    if (modoFreq === "periodica" && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
+    if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return; }
+    if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return; }
     setSalvando(true);
     try {
+      if (modoFreq === "evento_vida") {
+        // Não cria regra recorrente — configura o EVENTO SANITÁRIO selecionado
+        // para agendar por evento de vida (por animal), preservando os demais
+        // campos já cadastrados nele (produto padrão, dose, doença...).
+        await atualizarEventoSanitario(Number(eventoId), {
+          ...eventoSel, tipo_agendamento: "evento", gatilho,
+          gatilho_lote: gatilho === "entrada_lote" ? gatilhoLote.trim() : null,
+          gatilho_idade_meses: gatilho === "novilha_apta" ? Number(gatilhoIdadeMeses) : null,
+          offset_dias: offsetDias ? Number(offsetDias) : 0,
+        });
+        setSucesso("Evento sanitário configurado para agendar por evento de vida.");
+        limpar();
+        carregarEventos();
+        setSalvando(false);
+        return;
+      }
       const dados = {
         evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
         doenca_id: doencaId ? Number(doencaId) : undefined,
@@ -2216,15 +2266,50 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             </Campo>
           </>
         )}
-        <Campo label="Frequência">
-          <div className="flex items-center gap-2">
-            <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-            <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-              {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-            </select>
+        <Campo label="Repetir por" full>
+          <div className="flex items-center gap-4" style={{ fontSize: "0.85rem" }}>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoFreq === "periodica"} onChange={() => setModoFreq("periodica")} /> Frequência periódica
+            </label>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoFreq === "evento_vida"} onChange={() => setModoFreq("evento_vida")} /> Evento de vida do animal
+            </label>
           </div>
         </Campo>
-        <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
+        {modoFreq === "periodica" ? (
+          <>
+            <Campo label="Frequência">
+              <div className="flex items-center gap-2">
+                <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+                <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+                  {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+                </select>
+              </div>
+            </Campo>
+            <Campo label="Data do evento (referência)"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
+          </>
+        ) : (
+          <>
+            <Campo label="Evento de vida">
+              <select style={inputStyle} value={gatilho} onChange={(e) => setGatilho(e.target.value)}>
+                {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
+              </select>
+            </Campo>
+            {gatilho === "entrada_lote" && (
+              <Campo label="Lote do gatilho"><input style={inputStyle} value={gatilhoLote} onChange={(e) => setGatilhoLote(e.target.value)} placeholder="ex.: PRE_PARTO" /></Campo>
+            )}
+            {gatilho === "novilha_apta" && (
+              <Campo label="Idade-alvo (meses)"><input type="number" min={1} style={inputStyle} value={gatilhoIdadeMeses} onChange={(e) => setGatilhoIdadeMeses(e.target.value)} placeholder="ex.: 13" /></Campo>
+            )}
+            <Campo label="Dias após o gatilho"><input type="number" style={inputStyle} value={offsetDias} onChange={(e) => setOffsetDias(e.target.value)} /></Campo>
+            <div style={{ gridColumn: "1 / -1" }}>
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>
+                Este modo não cria uma regra de frequência — ele configura o evento sanitário selecionado para entrar na Agenda
+                automaticamente quando cada animal atingir esse evento de vida (por animal, não por rebanho todo).
+              </p>
+            </div>
+          </>
+        )}
         <Campo label="Observação" full><input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
 
@@ -2233,9 +2318,11 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
           Exame — sem baixa de estoque, só o agendamento. Use o botão "Lançar financeiro" na aba Sanidade &gt; Preventivo para registrar o custo do exame.
         </p>
       )}
-      <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
-        <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
-      </label>
+      {modoFreq === "periodica" && (
+        <label className="flex items-center gap-2 mt-2" style={{ fontSize: "0.8rem" }}>
+          <input type="checkbox" checked={realizado} onChange={(e) => setRealizado(e.target.checked)} /> Já foi realizado (não entra como pendência na Agenda)
+        </label>
+      )}
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}

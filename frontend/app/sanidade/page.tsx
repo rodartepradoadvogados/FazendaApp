@@ -1,12 +1,15 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent } from "lucide-react";
-import { fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura } from "@/lib/api";
+import {
+  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
+  fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
+} from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro } from "@/components/ui";
+import { MultiFiltro, TabBar } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const COLUNAS_SANIDADE = [
@@ -43,7 +46,114 @@ function servicoDoExame(nome: string): string {
   return "Outros exames";
 }
 
+type LinhaEventoVida = {
+  numero_matriz: string; nome: string | null; grupo_primario: string | null; categoria: string | null;
+  data_evento: string; dias_restantes: number;
+};
+
+/**
+ * Relatório de mudança de categoria/eventos de vida — "quais animais entrarão
+ * em determinado calendário sanitário" na próxima aplicação, escolhendo um
+ * evento sanitário já cadastrado por evento (herda o gatilho) ou um evento de
+ * vida avulso (exploração livre, sem precisar cadastrar antes).
+ */
+function RelatorioEventosVidaView() {
+  const [eventos, setEventos] = useState<EventoPrev[]>([]);
+  const [gatilhosVida, setGatilhosVida] = useState<{ gatilho: string; rotulo: string }[]>([]);
+  const [eventoSanitarioId, setEventoSanitarioId] = useState("");
+  const [gatilho, setGatilho] = useState("");
+  const [ini, setIni] = useState("");
+  const [fim, setFim] = useState("");
+  const [resultado, setResultado] = useState<{ rotulo: string; evento_sanitario_nome: string | null; animais: LinhaEventoVida[] } | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(false);
+
+  useEffect(() => {
+    fetchEventosSanitarios().then((d: any[]) => setEventos(d.filter((e) => e.tipo_agendamento === "evento" && e.gatilho))).catch(() => {});
+    fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {});
+  }, []);
+
+  const buscar = async () => {
+    if (!eventoSanitarioId && !gatilho) { setErro("Escolha um evento sanitário cadastrado ou um evento de vida."); return; }
+    setErro(null); setCarregando(true);
+    try {
+      const r = await fetchRelatorioEventosVida({
+        eventoSanitarioId: eventoSanitarioId ? Number(eventoSanitarioId) : undefined,
+        gatilho: eventoSanitarioId ? undefined : gatilho,
+        dataInicio: ini || undefined, dataFim: fim || undefined,
+      });
+      setResultado(r);
+    } catch (e: any) {
+      setErro(e.message); setResultado(null);
+    } finally {
+      setCarregando(false);
+    }
+  };
+
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+
+  return (
+    <>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+        Identifica quais animais entrarão em determinado calendário sanitário na próxima aplicação, com base no evento de
+        vida (mudança de categoria) escolhido — desmama, aptidão, inseminação, secagem, parto etc.
+      </p>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Evento sanitário cadastrado (por evento)</label>
+            <select style={selStyle} value={eventoSanitarioId} onChange={(e) => { setEventoSanitarioId(e.target.value); if (e.target.value) setGatilho(""); }}>
+              <option value="">— escolher pelo evento de vida abaixo —</option>
+              {eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Ou evento de vida diretamente</label>
+            <select style={selStyle} value={gatilho} disabled={!!eventoSanitarioId} onChange={(e) => setGatilho(e.target.value)}>
+              <option value="">Selecione…</option>
+              {gatilhosVida.map((g) => <option key={g.gatilho} value={g.gatilho}>{g.rotulo}</option>)}
+            </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data do evento — de</label>
+            <input type="date" style={selStyle} value={ini} onChange={(e) => setIni(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Data do evento — até</label>
+            <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+        </div>
+        <button className="btn-primary mt-3" onClick={buscar} disabled={carregando}>{carregando ? "Buscando…" : "Buscar"}</button>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>{erro}</span></div>}
+
+      {resultado && (
+        <div className="card">
+          <div className="card-header mb-3">
+            {resultado.evento_sanitario_nome || resultado.rotulo} — {resultado.animais.length} animal(is)
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
+            <table className="fazenda-table">
+              <thead><tr><th>Nº</th><th>Nome</th><th>Lote</th><th>Categoria</th><th>Data do evento</th><th style={{ textAlign: "right" }}>Dias restantes</th></tr></thead>
+              <tbody>
+                {resultado.animais.map((a) => (
+                  <tr key={a.numero_matriz}>
+                    <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{a.nome || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{a.grupo_primario || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{a.categoria || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{formatDate(a.data_evento)}</td>
+                    <td style={{ fontSize: "0.78rem", textAlign: "right", fontWeight: 600, color: a.dias_restantes < 0 ? "var(--red)" : "var(--dourado-light)" }}>
+                      {a.dias_restantes < 0 ? `${Math.abs(a.dias_restantes)}d atrás` : `em ${a.dias_restantes}d`}
+                    </td>
+                  </tr>
+                ))}
+                {!resultado.animais.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum animal encontrado.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function CalendarioSanitarioView() {
+  const [modo, setModo] = useState<"regras" | "relatorio">("regras");
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
@@ -84,6 +194,17 @@ function CalendarioSanitarioView() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Regras e próximas ocorrências de manejo preventivo (vacinas, exames e tratamentos). Para lançar um preventivo, use Lançamentos › Sanitário › Preventiva.</p>
       </div>
 
+      <TabBar
+        abas={[
+          { id: "regras", label: "Regras cadastradas", title: "Regras recorrentes já cadastradas" },
+          { id: "relatorio", label: "Relatório de eventos de vida", title: "Quais animais entrarão em cada calendário na próxima aplicação" },
+        ] as const}
+        ativa={modo}
+        onChange={setModo}
+      />
+
+      {modo === "relatorio" ? <RelatorioEventosVidaView /> : (
+      <>
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -148,6 +269,8 @@ function CalendarioSanitarioView() {
             </table>
           </div>
         </div>
+      )}
+      </>
       )}
     </>
   );

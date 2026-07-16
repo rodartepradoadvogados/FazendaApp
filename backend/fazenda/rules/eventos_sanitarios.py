@@ -19,9 +19,29 @@ from datetime import date, timedelta
 
 from sqlmodel import Session, select
 
-from fazenda.models import Animal, CalendarioSanitario, Estoque, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem
+from fazenda.models import (
+    Animal, CalendarioSanitario, CategoriaManejo, Estoque, EventoSanitario, MovimentoLote, Parto, Sanidade, Secagem, Servico,
+)
 from fazenda.rules.calendario_sanitario import _somar_meses, proxima_ocorrencia
-from fazenda.rules.parametros import janela_eventos_sanitarios_futuro, janela_eventos_sanitarios_passado
+from fazenda.rules.gestation import calcular_parto_provavel
+from fazenda.rules.parametros import janela_eventos_sanitarios_futuro, janela_eventos_sanitarios_passado, pre_parto_max
+
+# Eventos de vida (gatilhos) que o calendário sanitário e o cadastro de evento
+# sanitário podem usar em vez de uma frequência periódica — cada um corresponde
+# a uma mudança de categoria/fase do animal. Mantido em sincronia com
+# GATILHOS_EVENTO (fazenda.api.routers.cadastro).
+ROTULOS_GATILHO = {
+    "nascimento": "Nascimento",
+    "desmama": "Desmama",
+    "mudanca_recria": "Mudança para recria",
+    "novilha_apta": "Aptidão (novilha apta)",
+    "inseminacao": "Inseminação",
+    "gestacao_confirmada": "Gestação confirmada",
+    "secagem": "Secagem",
+    "parto": "Parto",
+    "mudanca_pre_parto": "Mudança para pré-parto",
+    "entrada_lote": "Entrada em lote",
+}
 
 
 def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None, hoje: date) -> list[date]:
@@ -44,6 +64,76 @@ def _ocorrencias_recorrentes(base: date, valor: int | None, unidade: str | None,
 
 def _ocorrencias_epoca(ev: EventoSanitario, hoje: date) -> list[date]:
     return _ocorrencias_recorrentes(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade, hoje)
+
+
+def _limiares_categoria(session: Session) -> tuple[int, int]:
+    """Dia de desmama (fim da 1ª categoria cadastrada) e dia de entrada em
+    recria (início da 2ª) — lidos do cadastro de Categorias (Configurações >
+    Cadastro > Categorias), na ordem cadastrada (`CategoriaManejo.ordem`).
+    Sem cadastro suficiente, cai no padrão histórico de 90/91 dias (mesmo
+    usado no aviso fixo de desmama da Agenda)."""
+    cats = session.exec(
+        select(CategoriaManejo).where(CategoriaManejo.ativo == True).order_by(CategoriaManejo.ordem)  # noqa: E712
+    ).all()
+    if len(cats) >= 2 and cats[1].dia_min is not None:
+        dia_desmama = cats[0].dia_max if cats[0].dia_max is not None else 90
+        return dia_desmama, cats[1].dia_min
+    return 90, 91
+
+
+def _datas_gatilho(
+    session: Session, gatilho: str, gatilho_lote: str | None = None, gatilho_idade_meses: int | None = None,
+    offset_dias: int = 0,
+) -> list[tuple[str, date]]:
+    """Datas (por animal) em que um gatilho de evento de vida ocorre ou vai
+    ocorrer — usado tanto para gerar a pendência na Agenda (`eventos_agenda`)
+    quanto para o relatório de "quais animais entrarão em determinado
+    calendário" (rota /sanidade/calendario/relatorio-eventos-vida)."""
+    offset = timedelta(days=offset_dias or 0)
+    saida: list[tuple[str, date]] = []
+
+    if gatilho == "nascimento":
+        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+            saida.append((a.numero, a.data_nasc + offset))
+    elif gatilho == "secagem":
+        for s in session.exec(select(Secagem)).all():
+            saida.append((s.numero_matriz, s.data_secagem + offset))
+    elif gatilho == "parto":
+        for p in session.exec(select(Parto).where(Parto.data_parto != None)).all():  # noqa: E711
+            saida.append((p.numero_matriz, p.data_parto + offset))
+    elif gatilho == "entrada_lote" and gatilho_lote:
+        for m in session.exec(select(MovimentoLote).where(MovimentoLote.lote_destino == gatilho_lote)).all():
+            saida.append((m.numero_matriz, m.data_movimento + offset))
+    elif gatilho == "novilha_apta" and gatilho_idade_meses:
+        for a in session.exec(
+            select(Animal).where(Animal.sexo == "F", Animal.ativo == True, Animal.data_nasc != None)  # noqa: E711,E712
+        ).all():
+            saida.append((a.numero, _somar_meses(a.data_nasc, gatilho_idade_meses) + offset))
+    elif gatilho == "desmama":
+        dia_desmama, _ = _limiares_categoria(session)
+        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+            saida.append((a.numero, a.data_nasc + timedelta(days=dia_desmama) + offset))
+    elif gatilho == "mudanca_recria":
+        _, dia_recria = _limiares_categoria(session)
+        for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
+            saida.append((a.numero, a.data_nasc + timedelta(days=dia_recria) + offset))
+    elif gatilho == "inseminacao":
+        for s in session.exec(select(Servico).where(Servico.data_servico != None)).all():  # noqa: E711
+            saida.append((s.numero_matriz, s.data_servico + offset))
+    elif gatilho == "gestacao_confirmada":
+        for s in session.exec(select(Servico).where(Servico.diagnostico == "POSITIVO")).all():
+            base = s.data_diagnostico or s.data_servico
+            if base:
+                saida.append((s.numero_matriz, base + offset))
+    elif gatilho == "mudanca_pre_parto":
+        limite = pre_parto_max()
+        for s in session.exec(
+            select(Servico).where(Servico.diagnostico == "POSITIVO", Servico.data_servico != None)  # noqa: E711
+        ).all():
+            prevista = calcular_parto_provavel(s.data_servico, s.raca_matriz).data_parto_provavel
+            saida.append((s.numero_matriz, prevista - timedelta(days=limite) + offset))
+
+    return saida
 
 
 def _eventos_calendario_agenda(session: Session, hoje: date, realizados: set[str]) -> list[dict]:
@@ -207,27 +297,7 @@ def eventos_agenda(session: Session, hoje: date, realizados: set[str]) -> list[d
 
         minimo = hoje - timedelta(days=janela_eventos_sanitarios_passado())
         limite = hoje + timedelta(days=janela_eventos_sanitarios_futuro())
-        # Lista de (numero, data_gatilho).
-        gatilhos: list[tuple[str, date]] = []
-
-        if ev.gatilho == "nascimento":
-            for a in session.exec(select(Animal).where(Animal.data_nasc != None)).all():  # noqa: E711
-                gatilhos.append((a.numero, a.data_nasc + timedelta(days=offset)))
-        elif ev.gatilho == "secagem":
-            for s in session.exec(select(Secagem)).all():
-                gatilhos.append((s.numero_matriz, s.data_secagem + timedelta(days=offset)))
-        elif ev.gatilho == "parto":
-            for p in session.exec(select(Parto).where(Parto.data_parto != None)).all():  # noqa: E711
-                gatilhos.append((p.numero_matriz, p.data_parto + timedelta(days=offset)))
-        elif ev.gatilho == "entrada_lote" and ev.gatilho_lote:
-            for m in session.exec(select(MovimentoLote).where(MovimentoLote.lote_destino == ev.gatilho_lote)).all():
-                gatilhos.append((m.numero_matriz, m.data_movimento + timedelta(days=offset)))
-        elif ev.gatilho == "novilha_apta" and ev.gatilho_idade_meses:
-            for a in session.exec(
-                select(Animal).where(Animal.sexo == "F", Animal.ativo == True, Animal.data_nasc != None)  # noqa: E711,E712
-            ).all():
-                apta = _somar_meses(a.data_nasc, ev.gatilho_idade_meses) + timedelta(days=offset)
-                gatilhos.append((a.numero, apta))
+        gatilhos = _datas_gatilho(session, ev.gatilho, ev.gatilho_lote, ev.gatilho_idade_meses, offset)
 
         vistos: set[str] = set()
         for numero, quando in gatilhos:

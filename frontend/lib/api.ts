@@ -1172,6 +1172,28 @@ export async function excluirCalendarioSanitario(id: number) {
   return res.json();
 }
 
+// ── Relatório de eventos de vida (mudança de categoria) ──
+export async function fetchEventosVidaVocabulario(): Promise<{ gatilho: string; rotulo: string }[]> {
+  const res = await authFetch(`${API}/sanidade/calendario/eventos-vida`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Eventos de vida error: ${res.status}`);
+  return res.json();
+}
+export async function fetchRelatorioEventosVida(filtros: {
+  gatilho?: string; eventoSanitarioId?: number; gatilhoLote?: string; gatilhoIdadeMeses?: number;
+  dataInicio?: string; dataFim?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filtros.gatilho) params.set("gatilho", filtros.gatilho);
+  if (filtros.eventoSanitarioId) params.set("evento_sanitario_id", String(filtros.eventoSanitarioId));
+  if (filtros.gatilhoLote) params.set("gatilho_lote", filtros.gatilhoLote);
+  if (filtros.gatilhoIdadeMeses) params.set("gatilho_idade_meses", String(filtros.gatilhoIdadeMeses));
+  if (filtros.dataInicio) params.set("data_inicio", filtros.dataInicio);
+  if (filtros.dataFim) params.set("data_fim", filtros.dataFim);
+  const res = await authFetch(`${API}/sanidade/calendario/relatorio-eventos-vida?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Relatório de eventos de vida error: ${res.status}`); }
+  return res.json();
+}
+
 export type CadastrarPreventivoPayload = {
   evento_sanitario_id: number; categoria_alvo?: string | null; data_evento: string;
   frequencia_valor: number; frequencia_unidade: string; animais: string[]; aplicar?: boolean;
