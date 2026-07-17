@@ -33,6 +33,9 @@ export function LancarTela() {
   const animais = useCache<Animal[]>("animais", () => fetchAnimais() as Promise<Animal[]>, []);
   const [tela, setTela] = useState<Tela | null>(null);
   const [fixado, setFixado] = useState<Animal | null>(null);
+  // Ao "gerar movimentação financeira" no Balanço de estoque, guarda qual
+  // pílula (despesa/receita) o Financeiro deve abrir já selecionada.
+  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita">("despesa");
   // Só sabemos a permissão real depois de montar (localStorage não existe no
   // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
   const [montado, setMontado] = useState(false);
@@ -49,8 +52,13 @@ export function LancarTela() {
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "movimentar" && <Movimentar />}
         {tela === "baixar" && <Baixar />}
-        {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} />}
-        {tela === "estoque" && <BalancoEstoque onVoltar={() => setTela(null)} />}
+        {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} tipoInicial={tipoFinanceiroInicial} />}
+        {tela === "estoque" && (
+          <BalancoEstoque
+            onVoltar={() => setTela(null)}
+            onIrParaFinanceiro={(t) => { setTipoFinanceiroInicial(t); setTela("financeiro"); }}
+          />
+        )}
       </div>
     );
   }

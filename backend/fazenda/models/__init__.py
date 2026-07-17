@@ -828,6 +828,13 @@ class Estoque(SQLModel, table=True):
     # diferentes, cada um seu próprio item de estoque). Usado para resolver
     # a "necessidade mensal" por vínculo real em vez de casar nomes.
     alimento_id: Optional[int] = Field(default=None, foreign_key="alimento.id")
+    # Vínculo com o Estoque de Sêmen (Configurações > Cadastro > Central de
+    # Sêmen) — quando um item de estoque genérico representa doses de um touro
+    # (comprado por nota fiscal e cadastrado aqui, e não direto em
+    # EstoqueSemen), ligar os dois faz toda entrada/saída deste item também
+    # atualizar `EstoqueSemen.doses` (ver `_criar_movimento_estoque`), casado
+    # automaticamente por nome do touro/NAAB quando possível.
+    estoque_semen_id: Optional[int] = Field(default=None, foreign_key="estoque_semen.id")
 
 
 # ---------------------------------------------------------------------------

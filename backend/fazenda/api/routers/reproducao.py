@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, ControleLeiteiro, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     SeedFlag, Secagem, Servico, Usuario,
 )
 from fazenda.ordenacao import chave_numero
@@ -727,6 +727,24 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             incompativeis.append(numero)
         else:
             criados += 1
+
+    # Desconta 1 dose por inseminação realizada (IA — cio natural ou IATF; não
+    # se aplica à monta natural, que não usa sêmen estocado) do touro
+    # informado, casando por nome, NAAB ou código — mantém o Estoque de Sêmen
+    # em dia com o uso real sem exigir baixa manual a cada inseminação.
+    if criados and dados.tipo != "monta_natural" and dados.reprodutor:
+        alvo = dados.reprodutor.strip().lower()
+        touro = next(
+            (t for t in session.exec(select(EstoqueSemen)).all()
+             if (t.touro_nome or "").strip().lower() == alvo
+             or (t.naab or "").strip().lower() == alvo
+             or (t.codigo or "").strip().lower() == alvo),
+            None,
+        )
+        if touro:
+            touro.doses = touro.doses - criados
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}

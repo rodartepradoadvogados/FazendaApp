@@ -18,9 +18,10 @@ import {
   fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
   baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
   fetchPedidos, fetchPedido,
-  fetchCategoriasManejo,
+  fetchCategoriasManejo, fetchPlanoContas,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
+import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -50,6 +51,7 @@ import { CadastrarNovaDieta } from "@/components/CadastroAlimentacao";
 type EstoqueItem = {
   nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;
   estoque_minimo?: number | null; classificacao_medicamento?: string | null; principio_ativo?: string | null;
+  finalidade?: string | null; conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
 };
 
 /**
@@ -3660,7 +3662,7 @@ function FormEntregaLeite() {
 const MOVIMENTOS_SAIDA = MOVIMENTOS_ESTOQUE.filter((m) => MOV_BAIXA.has(m));
 const MOVIMENTOS_ENTRADA = MOVIMENTOS_ESTOQUE.filter((m) => !MOV_BAIXA.has(m));
 
-function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
+function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; onIrParaFinanceiro?: (leaf: "financeiro_despesa" | "financeiro_receita") => void }) {
   const [produto, setProduto] = useState("");
   const [tipo, setTipo] = useState<"entrada" | "saida" | "">("");
   const [mov, setMov] = useState("");
@@ -3671,6 +3673,33 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+
+  // Filtros para achar o produto certo mais rápido, restritos a itens
+  // estocáveis (itens não estocáveis existem só para lançamento financeiro,
+  // sem controle de quantidade).
+  const [busca, setBusca] = useState("");
+  const [fCategoria, setFCategoria] = useState("");
+  const [fFinalidade, setFFinalidade] = useState("");
+  const [fPrincipioAtivo, setFPrincipioAtivo] = useState("");
+  const [fContaGerencial, setFContaGerencial] = useState("");
+  const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string }[]>([]);
+  useEffect(() => { fetchPlanoContas().then(setPlanoContas).catch(() => {}); }, []);
+
+  const estocaveis = useMemo(() => estoque.filter((e) => e.estocavel !== false), [estoque]);
+  const listaOpcoes = (campo: keyof EstoqueItem) => Array.from(new Set(estocaveis.map((e) => e[campo]).filter(Boolean))).sort() as string[];
+  const categorias = useMemo(() => listaOpcoes("categoria"), [estocaveis]);
+  const finalidades = useMemo(() => listaOpcoes("finalidade"), [estocaveis]);
+  const principiosAtivos = useMemo(() => listaOpcoes("principio_ativo"), [estocaveis]);
+  const contasUsadas = useMemo(() => listaOpcoes("conta_gerencial_despesa_padrao"), [estocaveis]);
+  const nomeConta = (codigo: string) => planoContas.find((c) => c.codigo === codigo)?.nome || codigo;
+
+  const itensFiltrados = useMemo(() => estocaveis.filter((e) =>
+    (!fCategoria || e.categoria === fCategoria) &&
+    (!fFinalidade || e.finalidade === fFinalidade) &&
+    (!fPrincipioAtivo || e.principio_ativo === fPrincipioAtivo) &&
+    (!fContaGerencial || e.conta_gerencial_despesa_padrao === fContaGerencial) &&
+    (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase()))
+  ), [estocaveis, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
 
   // Vínculo opcional a um item de Pedido de compra — só entrada de estoque faz
   // sentido vincular (uma saída não "atende" um pedido de compra). É só a
@@ -3691,10 +3720,16 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
     fetchPedido(Number(pedidoId)).then((p: any) => setItensPedido(p.itens || [])).catch(() => {});
   }, [pedidoId]);
 
+  // Valor do movimento (opcional) e gerar lançamento financeiro a partir dele.
+  const [lancarValor, setLancarValor] = useState(false);
+  const [valorUnitario, setValorUnitario] = useState("");
+  const [gerarFinanceiro, setGerarFinanceiro] = useState(false);
+
   const item = estoque.find((e) => e.nome === produto);
   const q = Number(qtd) || 0;
   const baixa = MOV_BAIXA.has(mov);
   const restante = item ? (item.quantidade ?? 0) + (baixa ? -q : q) : null;
+  const valorTotalCalc = lancarValor && valorUnitario ? q * Number(valorUnitario) : null;
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -3707,7 +3742,22 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
         pedido_item_id: tipo === "entrada" && pedidoItemId ? Number(pedidoItemId) : null,
       });
       setSucesso(`Estoque de ${produto} atualizado: ${r.quantidade} ${r.unidade || ""}.`);
+      if (gerarFinanceiro) {
+        pedirLancamentoFinanceiro({
+          tipo: tipo === "entrada" ? "despesa" : "receita",
+          produto,
+          quantidade: q,
+          unidade: unidade || item?.unidade || null,
+          valor_unitario: lancarValor && valorUnitario ? Number(valorUnitario) : null,
+          valor_total: valorTotalCalc,
+          codigo_conta_gerencial: (tipo === "entrada" ? item?.conta_gerencial_despesa_padrao : item?.conta_gerencial_receita_padrao) || null,
+          data_emissao: dataMov,
+          observacao: observacao || undefined,
+        });
+        onIrParaFinanceiro?.(tipo === "entrada" ? "financeiro_despesa" : "financeiro_receita");
+      }
       setMov(""); setQtd(""); setObservacao(""); setPedidoId(""); setPedidoItemId("");
+      setLancarValor(false); setValorUnitario(""); setGerarFinanceiro(false);
     } catch (e: any) {
       setErro(e.message || "Erro ao lançar movimento de estoque");
     } finally {
@@ -3717,12 +3767,43 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
 
   return (
     <>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+        <Campo label="Buscar item"><input style={inputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do item…" /></Campo>
+        <Campo label="Categoria">
+          <select style={inputStyle} value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Medicamento / finalidade">
+          <select style={inputStyle} value={fFinalidade} onChange={(e) => setFFinalidade(e.target.value)}>
+            <option value="">Todas</option>
+            {finalidades.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Princípio ativo">
+          <select style={inputStyle} value={fPrincipioAtivo} onChange={(e) => setFPrincipioAtivo(e.target.value)}>
+            <option value="">Todos</option>
+            {principiosAtivos.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </Campo>
+        <Campo label="Conta gerencial" full>
+          <select style={inputStyle} value={fContaGerencial} onChange={(e) => setFContaGerencial(e.target.value)}>
+            <option value="">Todas</option>
+            {contasUsadas.map((c) => <option key={c} value={c}>{nomeConta(c)}</option>)}
+          </select>
+        </Campo>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Campo label="Produto / medicamento">
           <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
             <option value="" disabled>Selecione…</option>
-            {estoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
+            {itensFiltrados.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
           </select>
+          {itensFiltrados.length !== estocaveis.length && (
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{itensFiltrados.length} de {estocaveis.length} itens no filtro atual</span>
+          )}
         </Campo>
         <Campo label="Tipo de movimento">
           <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setMov(""); }}>
@@ -3767,6 +3848,22 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
             )}
           </>
         )}
+        <Campo label="Lançar valor deste movimento?">
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
+            <input type="checkbox" checked={lancarValor} onChange={(e) => setLancarValor(e.target.checked)} /> Informar valor unitário
+          </label>
+        </Campo>
+        {lancarValor && (
+          <Campo label="Valor unitário (R$)">
+            <input type="number" inputMode="decimal" style={inputStyle} value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} />
+          </Campo>
+        )}
+        <Campo label="Gerar movimentação financeira?" full>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
+            <input type="checkbox" checked={gerarFinanceiro} onChange={(e) => setGerarFinanceiro(e.target.checked)} />
+            Ao salvar, abrir um lançamento de {tipo === "saida" ? "receita (Contas a receber)" : "despesa (Contas a pagar)"} já com produto, quantidade e valor deste balanço
+          </label>
+        </Campo>
         <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
       {item && mov && (
@@ -3774,6 +3871,7 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
           {baixa ? "Baixa" : "Entrada"} · Estoque atual: <strong>{item.quantidade ?? 0} {item.unidade || ""}</strong> → depois:{" "}
           <strong style={{ color: (restante ?? 0) < 0 ? "var(--red)" : "var(--green-light)" }}>{restante} {item.unidade || ""}</strong>
           {(restante ?? 0) < 0 && <span style={{ color: "var(--red)" }}> (insuficiente!)</span>}
+          {valorTotalCalc != null && <> · Valor do movimento: <strong>{valorTotalCalc.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></>}
         </p>
       )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
@@ -3897,6 +3995,13 @@ export default function LancamentosPage() {
     setSujo(false);
     setSel(novoId);
   }, [sel, sujo]);
+  // Redirecionamento pós-salvamento (ex.: Balanço de estoque → Financeiro com
+  // "gerar movimentação financeira"): o balanço já foi salvo com sucesso, então
+  // não é "sair com dados não salvos" — troca direto, sem o confirm de saída.
+  const irParaFinanceiroAposEstoque = useCallback((leaf: "financeiro_despesa" | "financeiro_receita") => {
+    setSujo(false);
+    setSel(leaf);
+  }, []);
   // Avisa também ao fechar a aba/recarregar/sair do site com dados não salvos.
   useEffect(() => {
     const handler = (e: BeforeUnloadEvent) => { if (sujo) { e.preventDefault(); e.returnValue = ""; } };
@@ -4022,7 +4127,7 @@ export default function LancamentosPage() {
         {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
         {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
         {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
-        {sel === "estoque" && <FormEstoque estoque={estoque} />}
+        {sel === "estoque" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}
         {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
         {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}

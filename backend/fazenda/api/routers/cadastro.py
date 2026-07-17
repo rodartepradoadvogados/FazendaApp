@@ -790,6 +790,8 @@ class EstoqueMetaIn(BaseModel):
     principio_ativo: str | None = None
     principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
+    # Vínculo com um touro do Estoque de Sêmen — ver `Estoque.estoque_semen_id`.
+    estoque_semen_id: int | None = None
 
 
 @router.get("/estoque-itens")
@@ -817,6 +819,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.principio_ativo = dados.principio_ativo
     item.principio_ativo_id = dados.principio_ativo_id
     item.classificacao_medicamento = dados.classificacao_medicamento
+    item.estoque_semen_id = dados.estoque_semen_id
     session.add(item)
     session.commit()
     session.refresh(item)

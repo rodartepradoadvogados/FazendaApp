@@ -12,6 +12,7 @@ import NovoServicoRapido from "@/components/NovoServicoRapido";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -120,6 +121,26 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     const servico = new URLSearchParams(window.location.search).get("servico");
     if (servico) setItens([{ ...itemVazio(), tipo_item: "servico", produto: servico }]);
   }, []);
+  // Pré-preenchimento vindo do Balanço de estoque ("gerar movimentação
+  // financeira" ao lançar entrada/saída) — puxa produto, conta gerencial,
+  // quantidade e valor do movimento; falta só o que é exclusivo do
+  // financeiro (pagamento, parcelamento, acréscimo/desconto).
+  useEffect(() => onPedidoLancamentoFinanceiro((dados) => {
+    if (dados.tipo !== tipo) return;
+    const conta = dados.codigo_conta_gerencial ? contaGerencialPadrao(dados.codigo_conta_gerencial) : null;
+    setItens([{
+      ...itemVazio(),
+      tipo_item: "produto",
+      produto: dados.produto,
+      codigo_conta_gerencial: conta?.codigo || "",
+      nome_conta_gerencial: conta?.nome || "",
+      quantidade: String(dados.quantidade),
+      valor_unitario: dados.valor_unitario != null ? String(dados.valor_unitario) : "",
+      valor_total: dados.valor_total != null ? String(dados.valor_total) : "",
+      modoValor: dados.valor_total != null && dados.valor_unitario == null ? "total" : "unitario",
+    }]);
+    if (dados.data_emissao) setDataEmissao(dados.data_emissao);
+  }), [tipo, planoContas]);
   const [centroCusto, setCentroCusto] = useState("");
   const [fornecedor, setFornecedor] = useState("");
   const [responsavel, setResponsavel] = useState("");
@@ -515,7 +536,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       {/* Produtos / serviços da nota */}
       <div className="mt-3 space-y-3">
         {itens.map((it, idx) => (
-          <div key={idx} className="card" style={{ background: "var(--surface-2)", position: "relative" }}>
+          <div key={idx} className="card" style={{ background: "var(--fin-produtos-bg)", position: "relative" }}>
             {itens.length > 1 && (
               <button type="button" title="Remover este produto/serviço" onClick={() => removerItem(idx)} className="btn-ghost" style={{ position: "absolute", top: "0.5rem", right: "0.5rem", fontSize: "0.7rem", color: "var(--red)" }}>
                 <Trash2 size={13} />
@@ -610,7 +631,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       </div>
 
       {/* Dados da nota (uma vez por lançamento) */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mt-4">
+      <div className="card mt-4" style={{ background: "var(--fin-nota-bg)" }}>
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
         <Campo label={tipo === "receita" ? "Cliente" : "Fornecedor"}>
           <div className="flex items-center gap-2">
             <select style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
@@ -686,9 +708,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
           {Number(acrescimo) > 0 && <> · acréscimo de {formatBRL(Number(acrescimo))}</>}
         </p>
       )}
+      </div>
 
       {/* Parcelamento */}
-      <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+      <div className="card mt-3" style={{ background: "var(--fin-parcelamento-bg)" }}>
         <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: 600 }}>
           <input type="checkbox" checked={parcelado} onChange={(e) => setParcelado(e.target.checked)} /> Lançamento parcelado
         </label>
@@ -726,7 +749,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
       {/* Pagamento imediato (só para lançamento não parcelado) */}
       {!parcelado && (
-        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+        <div className="card mt-3" style={{ background: "var(--fin-pagamento-bg)" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", fontWeight: 600 }}>
             <input type="checkbox" checked={jaPago} onChange={(e) => setJaPago(e.target.checked)} /> Já foi {tipo === "despesa" ? "pago" : "recebido"}
           </label>
