@@ -8,6 +8,7 @@ site — não há tabela paralela/inerte.
 """
 from __future__ import annotations
 
+import calendar
 import io
 import json
 import logging
@@ -24,10 +25,11 @@ from sqlalchemy import func
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
+    AgendaManual, AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaPagamento, Doenca,
+    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
     GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
     ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro,
-    TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
+    TipoPessoa, TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -46,7 +48,15 @@ router = APIRouter(prefix="/cadastro", tags=["cadastro"])
 # e essa consulta específica precisa aceitar qualquer um dos dois módulos.
 router_touros_leitura = APIRouter(prefix="/cadastro", tags=["cadastro"])
 
+# Lista original — mantida só como referência do vocabulário inicial. A
+# validação de tipos passou a consultar a tabela TipoPessoa (ver
+# seed_tipos_pessoa/_validar_tipos), que é editável em tempo de execução pelo
+# botão "+" do Cadastro de Pessoas.
 TIPOS_PESSOA = ["Funcionário", "Veterinário", "Zootecnista", "Vet/Zootec.", "Diarista", "Prestador de serviços", "Inseminador"]
+
+# "Empreiteiro" já nasce cadastrado — usado pelo módulo de Empreita (Financeiro
+# > Ações > Folha de Pagamento).
+SEED_TIPOS_PESSOA = TIPOS_PESSOA + ["Empreiteiro"]
 
 # Seed inicial — funcionários já conhecidos da fazenda (ver seed_pessoas,
 # chamada uma vez no startup, mesmo padrão de seed_motivos_movimentacao).
@@ -65,6 +75,16 @@ def seed_pessoas(session: Session) -> None:
         return
     for dados in SEED_PESSOAS:
         session.add(Pessoa(**dados))
+    session.commit()
+
+
+def seed_tipos_pessoa(session: Session) -> None:
+    """Cria os tipos de pessoa padrão se a tabela ainda estiver vazia
+    (idempotente) — nunca sobrescreve tipos adicionados depois pelo usuário."""
+    if session.exec(select(TipoPessoa)).first():
+        return
+    for nome in SEED_TIPOS_PESSOA:
+        session.add(TipoPessoa(nome=nome))
     session.commit()
 
 
@@ -130,19 +150,69 @@ class PessoaIn(BaseModel):
     observacoes: str | None = None
     ativo: bool = True
     salario_base: float | None = None
+    data_admissao: date | None = None
 
 
 def _serializar_pessoa(p: Pessoa) -> dict:
     return {**p.model_dump(exclude={"tipo"}), "tipos": [t for t in (p.tipo or "").split(",") if t]}
 
 
-def _validar_tipos(tipos: list[str]) -> str:
+def _validar_tipos(session: Session, tipos: list[str]) -> str:
     """Valida e serializa a lista de tipos de uma pessoa como CSV (mesmo
     padrão de Usuario.permissoes) — permite marcar mais de um tipo (ex.:
-    Funcionário + Inseminador)."""
-    if not tipos or any(t not in TIPOS_PESSOA for t in tipos):
+    Funcionário + Inseminador). Os tipos válidos vêm da tabela TipoPessoa
+    (cadastrável via botão "+" no Cadastro de Pessoas), não mais de uma
+    lista fixa. Autossemeia se a tabela ainda estiver vazia (ex.: banco de
+    teste isolado que não passou pelo seed do lifespan)."""
+    seed_tipos_pessoa(session)
+    validos = {t.nome for t in session.exec(select(TipoPessoa).where(TipoPessoa.ativo == True)).all()}  # noqa: E712
+    if not tipos or any(t not in validos for t in tipos):
         raise HTTPException(status_code=400, detail="Tipo inválido")
     return ",".join(dict.fromkeys(tipos))  # remove duplicatas mantendo a ordem
+
+
+class TipoPessoaIn(BaseModel):
+    nome: str
+    ativo: bool = True
+
+
+@router.get("/pessoas/tipos")
+def listar_tipos_pessoa(session: Session = Depends(get_session)) -> list[dict]:
+    seed_tipos_pessoa(session)
+    return [t.model_dump() for t in session.exec(select(TipoPessoa).order_by(TipoPessoa.id)).all()]
+
+
+@router.post("/pessoas/tipos")
+def criar_tipo_pessoa(dados: TipoPessoaIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(TipoPessoa).where(TipoPessoa.nome == nome)).first():
+        raise HTTPException(status_code=409, detail="Tipo já cadastrado")
+    obj = TipoPessoa(nome=nome, ativo=dados.ativo)
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
+
+
+@router.put("/pessoas/tipos/{tipo_id}")
+def atualizar_tipo_pessoa(tipo_id: int, dados: TipoPessoaIn, session: Session = Depends(get_session)) -> dict:
+    obj = session.get(TipoPessoa, tipo_id)
+    if not obj:
+        raise HTTPException(status_code=404, detail="Tipo não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    duplicado = session.exec(select(TipoPessoa).where(TipoPessoa.nome == nome, TipoPessoa.id != tipo_id)).first()
+    if duplicado:
+        raise HTTPException(status_code=409, detail="Tipo já cadastrado")
+    obj.nome = nome
+    obj.ativo = dados.ativo
+    session.add(obj)
+    session.commit()
+    session.refresh(obj)
+    return obj.model_dump()
 
 
 @router.get("/pessoas")
@@ -152,7 +222,7 @@ def listar_pessoas(session: Session = Depends(get_session)) -> list[dict]:
 
 @router.post("/pessoas")
 def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
-    tipo_csv = _validar_tipos(dados.tipos)
+    tipo_csv = _validar_tipos(session, dados.tipos)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     campos = dados.model_dump(exclude={"tipos"})
@@ -165,7 +235,7 @@ def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> di
 
 @router.put("/pessoas/{pessoa_id}")
 def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
-    tipo_csv = _validar_tipos(dados.tipos)
+    tipo_csv = _validar_tipos(session, dados.tipos)
     p = session.get(Pessoa, pessoa_id)
     if not p:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -210,6 +280,37 @@ def _competencia_seguinte(competencia: str) -> str:
     ano, mes = (int(x) for x in competencia.split("-"))
     ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
     return f"{ano:04d}-{mes:02d}"
+
+
+def _proporcional_admissao(pessoa: Pessoa, competencia: str) -> Optional[dict]:
+    """
+    Quando a competência lançada é o mês de admissão da pessoa, calcula a
+    fração de dias efetivamente trabalhados no mês (da data de admissão até o
+    último dia do mês) — usada para SUGERIR o valor proporcional da folha do
+    1º mês (sempre editável no lançamento, nunca imposto).
+    """
+    if not pessoa.data_admissao or pessoa.data_admissao.strftime("%Y-%m") != competencia:
+        return None
+    dias_mes = calendar.monthrange(pessoa.data_admissao.year, pessoa.data_admissao.month)[1]
+    dias_trabalhados = dias_mes - pessoa.data_admissao.day + 1
+    return {
+        "dias_trabalhados": dias_trabalhados,
+        "dias_mes": dias_mes,
+        "fracao": round(dias_trabalhados / dias_mes, 6),
+    }
+
+
+@router.get("/folha-pagamento/proporcional-admissao")
+def proporcional_admissao(pessoa_id: int, competencia: str, session: Session = Depends(get_session)) -> dict | None:
+    """
+    Usado pelo lançamento de folha do funcionário para sugerir o valor
+    proporcional quando a competência informada é o mês de admissão da
+    pessoa — retorna None fora desse caso (folha integral normal).
+    """
+    pessoa = session.get(Pessoa, pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    return _proporcional_admissao(pessoa, competencia)
 
 
 def _valor_vale(session: Session, pessoa_id: int, competencia: str) -> float:
@@ -635,6 +736,387 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
     return {**vale.model_dump(), "parcelas_detalhe": [
         {"competencia": c, "valor": v} for c, v in zip(competencias, valores_parcela)
     ]}
+
+
+# ---------------------------------------------------------------------------
+# Empreitada — trabalho contratado com um empreiteiro (Financeiro > Ações >
+# Folha de Pagamento > Empreita). Paga por frequência fixa (parcelas editáveis,
+# mesmo padrão do parcelamento do lançamento financeiro) ou por etapa
+# concluída (cada etapa gera a conta a pagar no dia 1º do mês seguinte).
+# ---------------------------------------------------------------------------
+FORMAS_PAGAMENTO_FREQUENCIA = ["mensal", "semanal", "quinzenal"]
+TIPOS_PAGAMENTO_EMPREITADA = FORMAS_PAGAMENTO_FREQUENCIA + ["por_etapa"]
+
+
+class EmpreitadaParcelaIn(BaseModel):
+    data_vencimento: date
+    valor: float
+
+
+class EmpreitadaEtapaIn(BaseModel):
+    nome: str
+    valor: float
+
+
+class EmpreitadaIn(BaseModel):
+    pessoa_id: int
+    descricao: str
+    valor_total: float
+    tipo_pagamento: str  # mensal | semanal | quinzenal | por_etapa
+    observacao: str | None = None
+    # Preenchido quando tipo_pagamento é mensal/semanal/quinzenal — já calculado
+    # e editável no frontend (mesmo padrão do parcelamento do Financeiro).
+    parcelas: list[EmpreitadaParcelaIn] = []
+    # Preenchido quando tipo_pagamento == "por_etapa" — nome + valor de cada
+    # etapa (dividido proporcionalmente ou lançado específico, editável).
+    etapas: list[EmpreitadaEtapaIn] = []
+
+
+def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
+    parcelas = session.exec(
+        select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == e.id).order_by(EmpreitadaParcela.data_vencimento)
+    ).all()
+    etapas = session.exec(
+        select(EmpreitadaEtapa).where(EmpreitadaEtapa.empreitada_id == e.id).order_by(EmpreitadaEtapa.ordem, EmpreitadaEtapa.id)
+    ).all()
+    numeros = [n for n in [p.numero_lancamento_gerado for p in parcelas] + [et.numero_lancamento_gerado for et in etapas] if n]
+    pagos = set()
+    if numeros:
+        contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+        pagos = {c.numero_lancamento for c in contas if c.valor_pago is not None}
+    return {
+        **e.model_dump(),
+        "parcelas": [
+            {**p.model_dump(), "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente"} for p in parcelas
+        ],
+        "etapas": [
+            {**et.model_dump(), "status_pagamento": "pago" if et.numero_lancamento_gerado in pagos else "pendente"}
+            for et in etapas
+        ],
+    }
+
+
+@router.get("/empreitadas")
+def listar_empreitadas(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    empreitadas = session.exec(select(Empreitada).order_by(Empreitada.criado_em.desc())).all()
+    return [{**_serializar_empreitada(session, e), "pessoa_nome": pessoas.get(e.pessoa_id, "—")} for e in empreitadas]
+
+
+@router.post("/empreitadas")
+def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.tipo_pagamento not in TIPOS_PAGAMENTO_EMPREITADA:
+        raise HTTPException(status_code=400, detail="Tipo de pagamento inválido")
+    if dados.tipo_pagamento in FORMAS_PAGAMENTO_FREQUENCIA and not dados.parcelas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma parcela para o pagamento por frequência")
+    if dados.tipo_pagamento == "por_etapa" and not dados.etapas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma etapa")
+
+    empreitada = Empreitada(
+        pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
+        tipo_pagamento=dados.tipo_pagamento, observacao=dados.observacao, usuario_id=user.id,
+    )
+    session.add(empreitada)
+    session.commit()
+    session.refresh(empreitada)
+
+    if dados.tipo_pagamento in FORMAS_PAGAMENTO_FREQUENCIA:
+        for parcela in dados.parcelas:
+            numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
+            session.add(EmpreitadaParcela(
+                empreitada_id=empreitada.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
+                numero_lancamento_gerado=numero_lancamento,
+            ))
+            session.add(ContaGerencial(
+                numero_lancamento=numero_lancamento,
+                descricao=f"Empreita — {pessoa.nome} ({dados.descricao})",
+                data_vencimento=parcela.data_vencimento,
+                data_competencia=parcela.data_vencimento.replace(day=1),
+                fornecedor_cliente=pessoa.nome,
+                tipo_documento="Empreitada",
+                valor_total=parcela.valor,
+                parcela_num=1, parcela_total=1,
+                tipo="despesa", origem="auto",
+            ))
+    else:
+        for i, etapa in enumerate(dados.etapas):
+            session.add(EmpreitadaEtapa(empreitada_id=empreitada.id, nome=etapa.nome, valor=etapa.valor, ordem=i))
+    session.commit()
+    return _serializar_empreitada(session, empreitada)
+
+
+@router.put("/empreitadas/{empreitada_id}/etapas/{etapa_id}/concluir")
+def concluir_etapa_empreitada(
+    empreitada_id: int, etapa_id: int, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+) -> dict:
+    """
+    Marca uma etapa como concluída e lança a conta a pagar correspondente no
+    dia 1º do mês seguinte — cai automaticamente na Agenda (Gestão/Financeiro,
+    a partir da própria data_vencimento da conta) e em Contas a Pagar, para
+    análise/pagamento.
+    """
+    etapa = session.get(EmpreitadaEtapa, etapa_id)
+    if not etapa or etapa.empreitada_id != empreitada_id:
+        raise HTTPException(status_code=404, detail="Etapa não encontrada")
+    if etapa.concluida:
+        raise HTTPException(status_code=400, detail="Etapa já concluída")
+    empreitada = session.get(Empreitada, empreitada_id)
+    pessoa = session.get(Pessoa, empreitada.pessoa_id)
+
+    hoje = date.today()
+    proximo = _competencia_seguinte(hoje.strftime("%Y-%m"))
+    ano, mes = (int(x) for x in proximo.split("-"))
+    data_analise = date(ano, mes, 1)
+    numero_lancamento = _proximo_numero_lancamento(session, ano)
+
+    etapa.concluida = True
+    etapa.data_conclusao = hoje
+    etapa.numero_lancamento_gerado = numero_lancamento
+    session.add(etapa)
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Empreita — {pessoa.nome} ({empreitada.descricao}) — etapa: {etapa.nome}",
+        data_vencimento=data_analise,
+        data_competencia=data_analise,
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Empreitada",
+        valor_total=etapa.valor,
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+    ))
+    # Autoflush reflete etapa.concluida=True antes desta consulta — se não
+    # sobrar nenhuma etapa pendente, a empreitada como um todo está concluída.
+    etapas_pendentes = session.exec(
+        select(EmpreitadaEtapa).where(EmpreitadaEtapa.empreitada_id == empreitada_id, EmpreitadaEtapa.concluida == False)  # noqa: E712
+    ).all()
+    if not etapas_pendentes:
+        empreitada.status = "concluida"
+        session.add(empreitada)
+    session.commit()
+    return _serializar_empreitada(session, empreitada)
+
+
+# ---------------------------------------------------------------------------
+# Contrato — valor total pago por frequência fixa (parcelas editáveis, mesmo
+# padrão do Financeiro) ou, sem frequência definida, com lembrete mensal na
+# Agenda (todo dia 1º) para pagar ou definir uma nova data.
+# ---------------------------------------------------------------------------
+FORMAS_PAGAMENTO_CONTRATO = ["mensal", "quinzenal", "semanal"]
+
+
+class ContratoParcelaIn(BaseModel):
+    data_vencimento: date
+    valor: float
+
+
+class ContratoIn(BaseModel):
+    pessoa_id: int
+    descricao: str
+    valor_total: float
+    forma_pagamento: str | None = None  # None => sem frequência definida
+    observacao: str | None = None
+    # Preenchido quando forma_pagamento está definida — já calculado (a partir
+    # de data de término estimada, número de parcelas ou lançamento livre) e
+    # editável no frontend, mesmo padrão do parcelamento do Financeiro.
+    parcelas: list[ContratoParcelaIn] = []
+
+
+def _serializar_contrato(session: Session, c: Contrato) -> dict:
+    parcelas = session.exec(
+        select(ContratoParcela).where(ContratoParcela.contrato_id == c.id).order_by(ContratoParcela.data_vencimento)
+    ).all()
+    numeros = [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado]
+    pagos = set()
+    if numeros:
+        contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+        pagos = {conta.numero_lancamento for conta in contas if conta.valor_pago is not None}
+    return {
+        **c.model_dump(),
+        "parcelas": [
+            {**p.model_dump(), "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente"} for p in parcelas
+        ],
+    }
+
+
+@router.get("/contratos")
+def listar_contratos(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    contratos = session.exec(select(Contrato).order_by(Contrato.criado_em.desc())).all()
+    return [{**_serializar_contrato(session, c), "pessoa_nome": pessoas.get(c.pessoa_id, "—")} for c in contratos]
+
+
+@router.post("/contratos")
+def criar_contrato(dados: ContratoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.forma_pagamento is not None and dados.forma_pagamento not in FORMAS_PAGAMENTO_CONTRATO:
+        raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
+    if dados.forma_pagamento and not dados.parcelas:
+        raise HTTPException(status_code=400, detail="Informe ao menos uma parcela para a frequência escolhida")
+
+    contrato = Contrato(
+        pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
+        forma_pagamento=dados.forma_pagamento, observacao=dados.observacao, usuario_id=user.id,
+    )
+    session.add(contrato)
+    session.commit()
+    session.refresh(contrato)
+
+    if dados.forma_pagamento:
+        for parcela in dados.parcelas:
+            numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
+            session.add(ContratoParcela(
+                contrato_id=contrato.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
+                numero_lancamento_gerado=numero_lancamento,
+            ))
+            session.add(ContaGerencial(
+                numero_lancamento=numero_lancamento,
+                descricao=f"Contrato — {pessoa.nome} ({dados.descricao})",
+                data_vencimento=parcela.data_vencimento,
+                data_competencia=parcela.data_vencimento.replace(day=1),
+                fornecedor_cliente=pessoa.nome,
+                tipo_documento="Contrato",
+                valor_total=parcela.valor,
+                parcela_num=1, parcela_total=1,
+                tipo="despesa", origem="auto",
+            ))
+    else:
+        # Sem frequência definida: lembrete mensal na Agenda (todo dia 1º) para
+        # pagar ou definir uma nova data — reaproveita o motor de recorrência
+        # já existente da Agenda (_gerar_agenda_recorrente, chamado a cada GET
+        # /agenda/), sem precisar de nenhuma lógica de recorrência nova aqui.
+        proximo = _competencia_seguinte(date.today().strftime("%Y-%m"))
+        ano, mes = (int(x) for x in proximo.split("-"))
+        lembrete = AgendaManual(
+            data_evento=date(ano, mes, 1),
+            descricao=f"Contrato sem frequência definida — {pessoa.nome} ({dados.descricao}): pagar ou definir nova data",
+            categoria="Gestão/Financeiro",
+            tipo_evento="Outro",
+            recorrente=True,
+            intervalo_meses=1,
+            usuario_id=user.id,
+        )
+        session.add(lembrete)
+        session.commit()
+        session.refresh(lembrete)
+        contrato.origem_lembrete_agenda_id = lembrete.id
+        session.add(contrato)
+    session.commit()
+    return _serializar_contrato(session, contrato)
+
+
+@router.put("/contratos/{contrato_id}/encerrar")
+def encerrar_contrato(contrato_id: int, session: Session = Depends(get_session)) -> dict:
+    contrato = session.get(Contrato, contrato_id)
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    contrato.status = "encerrado"
+    session.add(contrato)
+    if contrato.origem_lembrete_agenda_id:
+        modelo = session.get(AgendaManual, contrato.origem_lembrete_agenda_id)
+        if modelo:
+            modelo.recorrente = False
+            session.add(modelo)
+    session.commit()
+    return _serializar_contrato(session, contrato)
+
+
+# ---------------------------------------------------------------------------
+# Diária — valor da diária + data de início; o sistema conta diariamente até
+# hoje e mantém o saldo devedor a partir dos pagamentos registrados.
+# ---------------------------------------------------------------------------
+class DiariaIn(BaseModel):
+    pessoa_id: int
+    valor_diaria: float
+    data_inicio: date
+    observacao: str | None = None
+
+
+class DiariaPagamentoIn(BaseModel):
+    data_pagamento: date
+    valor: float
+    observacao: str | None = None
+
+
+def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
+    hoje = date.today()
+    numero_diarias = max((hoje - d.data_inicio).days + 1, 0)
+    total_ate_hoje = round(numero_diarias * d.valor_diaria, 2)
+    pagamentos = sorted(
+        session.exec(select(DiariaPagamento).where(DiariaPagamento.diaria_id == d.id)).all(),
+        key=lambda p: p.data_pagamento,
+    )
+    valor_pago = round(sum(p.valor for p in pagamentos), 2)
+    return {
+        **d.model_dump(),
+        "pessoa_nome": pessoa_nome,
+        "numero_diarias": numero_diarias,
+        "total_ate_hoje": total_ate_hoje,
+        "valor_pago": valor_pago,
+        "saldo_devedor": round(total_ate_hoje - valor_pago, 2),
+        "pagamentos": [p.model_dump() for p in pagamentos],
+    }
+
+
+@router.get("/diarias")
+def listar_diarias(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    diarias = session.exec(select(Diaria).order_by(Diaria.criado_em.desc())).all()
+    return [_resumo_diaria(session, d, pessoas.get(d.pessoa_id, "—")) for d in diarias]
+
+
+@router.post("/diarias")
+def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.valor_diaria <= 0:
+        raise HTTPException(status_code=400, detail="Valor da diária deve ser positivo")
+    diaria = Diaria(
+        pessoa_id=dados.pessoa_id, valor_diaria=dados.valor_diaria, data_inicio=dados.data_inicio,
+        observacao=dados.observacao, usuario_id=user.id,
+    )
+    session.add(diaria)
+    session.commit()
+    session.refresh(diaria)
+    return _resumo_diaria(session, diaria, pessoa.nome)
+
+
+@router.post("/diarias/{diaria_id}/pagamentos")
+def registrar_pagamento_diaria(
+    diaria_id: int, dados: DiariaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+) -> dict:
+    diaria = session.get(Diaria, diaria_id)
+    if not diaria:
+        raise HTTPException(status_code=404, detail="Diária não encontrada")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
+    numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
+    session.add(DiariaPagamento(
+        diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
+        observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento,
+    ))
+    # Pagamento de diária já nasce quitado — reflete direto em Contas Pagas/relatórios.
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Diária — {pessoa.nome}",
+        data_vencimento=dados.data_pagamento,
+        data_competencia=dados.data_pagamento.replace(day=1),
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Diária",
+        valor_total=dados.valor,
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento,
+        valor_pago=dados.valor,
+    ))
+    session.commit()
+    return _resumo_diaria(session, diaria, pessoa.nome)
 
 
 # ---------------------------------------------------------------------------
