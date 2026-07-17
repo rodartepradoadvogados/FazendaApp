@@ -15,7 +15,10 @@ export function NewsButton() {
       title="News — notícias de pecuária leiteira"
       aria-label="Abrir News — notícias de pecuária leiteira"
       style={{
-        position: "fixed", top: "1rem", right: "9.5rem", zIndex: 60,
+        // O ThemeSwitcher (right: 4.75rem) tem largura variável — o rótulo mais
+        // longo ("misto (barra vinho)") mede ~157px, então o News precisa de
+        // folga extra à direita dele para não sobrepor (medido via Playwright).
+        position: "fixed", top: "1rem", right: "16rem", zIndex: 60,
         display: "inline-flex", alignItems: "center", gap: "0.35rem",
         padding: "0.4rem 0.8rem", borderRadius: "999px",
         background: "var(--vinho)", border: "1px solid var(--vinho-light)",
