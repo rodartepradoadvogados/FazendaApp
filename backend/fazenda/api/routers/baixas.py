@@ -172,6 +172,8 @@ def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session), use
                 forma=dados.forma_comissao,
                 data_transacao=dados.data_baixa,
                 descricao_origem=f"venda de {quantidade} animal(is) para {dados.cliente}",
+                origem_paga=True,
+                origem_data_pagamento=dados.data_baixa,
             )
 
     baixados = []

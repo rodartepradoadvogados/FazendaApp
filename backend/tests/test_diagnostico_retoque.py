@@ -103,8 +103,8 @@ class TestRetoqueNaAgenda:
         eventos = r.json()["eventos"]
         retoques = [e for e in eventos if e["numero_animal"] == "401" and "Retoque" in e["descricao"]]
         assert len(retoques) == 1
-        # data_diagnostico (01/07) + 15 dias = 16/07
-        assert retoques[0]["data"] == "2026-07-16"
+        # data_diagnostico (01/07) + dias_reinseminacao_referencia (22, media de 18-25) = 23/07
+        assert retoques[0]["data"] == "2026-07-23"
 
     def test_sem_retoque_nao_aparece(self, client):
         client.post("/reproducao/diagnostico", json={
