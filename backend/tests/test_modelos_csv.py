@@ -73,6 +73,20 @@ class TestModelosCategoriasNovas:
                 s.add(Estoque(nome=cfg["exemplo"][0], categoria="alimento", quantidade=1000))
                 s.commit()
 
+        if categoria == "baixas_pendencias_agenda":
+            # A linha de exemplo é do tipo evento_sanitario/gatilho=nascimento — a
+            # matriz 464 precisa existir e ter nascido em 10/04/2026 (mesma data
+            # da pendência) para o evento cadastrado abaixo "casar" com a linha.
+            from datetime import date
+            from fazenda.models import EventoSanitario
+            with Session(engine) as s:
+                s.add(Animal(numero="464", data_nasc=date(2026, 4, 10), sexo="F"))
+                s.add(EventoSanitario(
+                    nome="Brucelose B19", tipo_agendamento="evento", gatilho="nascimento",
+                    produto_padrao="Vacina B19", dose_padrao=2, unidade_padrao="ml", via_padrao="Subcutânea",
+                ))
+                s.commit()
+
         content = _csv_de_modelo(cfg["colunas_csv"], cfg["exemplo"])
         extra = {"data_controle": "2026-07-08"} if cfg.get("precisa_data_controle") else {}
         r = c.post(f"/importar/{categoria}", files={"file": ("modelo.csv", content, "text/csv")}, data=extra)

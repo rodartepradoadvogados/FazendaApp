@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet, Palette } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet, Palette, Newspaper } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
@@ -10,10 +10,11 @@ import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components
 import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
+import NewsFontesAdmin from "@/components/NewsFontesAdmin";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios" | "aparencia";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios" | "news" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -41,6 +42,7 @@ export default function ConfiguracoesPage() {
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
+    if (ehAdmin()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
     setAbasVisiveis(abas);
@@ -112,6 +114,7 @@ export default function ConfiguracoesPage() {
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "usuarios" && <UsuariosPage />}
+        {aba === "news" && <NewsFontesAdmin />}
       </div>
     </div>
   );

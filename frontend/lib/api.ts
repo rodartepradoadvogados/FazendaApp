@@ -2471,6 +2471,18 @@ export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
 export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
 
+// ── News (blog de pecuária leiteira) ──
+export type FonteNews = { id: number; nome: string; url: string; ativo: boolean; ultimo_erro?: string | null; ultima_busca_em?: string | null; ultima_busca_ok_em?: string | null };
+export type FonteNewsIn = { nome: string; url: string; ativo: boolean };
+export type NoticiaNews = { id: number; fonte_id: number; manchete: string; resumo?: string | null; link: string; data_publicacao?: string | null; capturado_em: string };
+export type NewsFeed = { janela_dias: number; fontes: { fonte: { id: number; nome: string; url: string; erro?: string | null }; noticias: NoticiaNews[] }[] };
+
+export const fetchNoticias = (verTudo = false): Promise<NewsFeed> => _rGet(`/news/${verTudo ? "?ver_tudo=true" : ""}`);
+export const fetchFontesNews = (): Promise<FonteNews[]> => _rGet(`/news/fontes`);
+export const criarFonteNews = (d: FonteNewsIn): Promise<FonteNews> => _rSend(`/news/fontes`, "POST", d);
+export const atualizarFonteNews = (id: number, d: FonteNewsIn): Promise<FonteNews> => _rSend(`/news/fontes/${id}`, "PUT", d);
+export const excluirFonteNews = (id: number) => _rSend(`/news/fontes/${id}`, "DELETE");
+
 // ── Assistente Claude (protótipo, admin-only) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };
 export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {

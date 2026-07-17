@@ -2133,3 +2133,39 @@ class CategoriaManejo(SQLModel, table=True):
     ordem: int = 0
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# News — blog de importação de notícias de pecuária leiteira (botão "News").
+# ---------------------------------------------------------------------------
+class FonteNews(SQLModel, table=True):
+    """Um site cadastrado para o agregador de notícias (Configurações > News,
+    só administrador). Guarda o último erro de busca — quando um site muda de
+    layout ou sai do ar, aparece aqui para o admin substituir/corrigir a URL,
+    em vez de quebrar a página de notícias para todo mundo."""
+
+    __tablename__ = "fonte_news"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    url: str  # home do site ou feed RSS/Atom direto
+    ativo: bool = True
+    ultimo_erro: Optional[str] = None
+    ultima_busca_em: Optional[datetime] = None
+    ultima_busca_ok_em: Optional[datetime] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class NoticiaNews(SQLModel, table=True):
+    """Uma matéria já importada de uma fonte (manchete + resumo + link) — cache
+    local para não depender de buscar no site a cada carregamento da página."""
+
+    __tablename__ = "noticia_news"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fonte_id: int = Field(foreign_key="fonte_news.id", index=True)
+    manchete: str
+    resumo: Optional[str] = None
+    link: str = Field(unique=True)
+    data_publicacao: Optional[datetime] = None  # data/hora informada pelo site (quando disponível)
+    capturado_em: datetime = Field(default_factory=datetime.utcnow, index=True)

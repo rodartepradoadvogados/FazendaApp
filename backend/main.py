@@ -28,6 +28,7 @@ from fazenda.api.routers import (
     indicadores,
     lotes,
     movimentacoes,
+    news,
     notificacoes,
     parametros,
     pedidos,
@@ -57,6 +58,7 @@ from fazenda.api.routers.cadastro import (
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
+from fazenda.api.routers.news import seed_fontes_news
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -115,6 +117,9 @@ async def lifespan(app: FastAPI):
         # Alimento — vinculado automaticamente a itens de Estoque de mesmo
         # nome, quando existirem.
         seed_alimentos(session)
+        # News: 3 fontes nacionais + 2 internacionais de jornalismo sobre
+        # pecuária leiteira — editável depois em Configurações > News (admin).
+        seed_fontes_news(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield
@@ -199,6 +204,9 @@ app.include_router(notificacoes.router, dependencies=_protegido)
 app.include_router(telegram.router)
 # Aprovações: cada rota já exige admin (exigir_admin) internamente.
 app.include_router(aprovacoes.router)
+# News: leitura aberta a qualquer usuário logado; cadastro de fontes (POST/PUT/
+# DELETE /news/fontes) já exige admin internamente (exigir_admin).
+app.include_router(news.router, dependencies=_protegido)
 # Assistente Claude (protótipo): aberto a qualquer usuário logado — cada
 # ferramenta interna é oferecida só conforme os módulos liberados dele.
 app.include_router(assistente.router, dependencies=_protegido)
