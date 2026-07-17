@@ -122,7 +122,15 @@ export default function NewsFontesAdmin() {
               {fontes.map((f) => (
                 <React.Fragment key={f.id}>
                   <tr style={{ borderTop: "1px solid var(--border)" }}>
-                    <td style={{ padding: "0.6rem 0.9rem", fontWeight: 600 }}>{f.nome}</td>
+                    <td style={{ padding: "0.6rem 0.9rem", fontWeight: 600 }}>
+                      {f.nome}
+                      {f.manual && (
+                        <span style={{ marginLeft: "0.4rem", fontSize: "0.68rem", fontWeight: 500, color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "999px", padding: "0.05rem 0.45rem" }}
+                          title="Alimentada por importação manual (ex.: robô agendado), não busca RSS sozinha">
+                          Manual
+                        </span>
+                      )}
+                    </td>
                     <td style={{ padding: "0.6rem 0.9rem", color: "var(--text-muted)", maxWidth: "18rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.url}</td>
                     <td style={{ padding: "0.6rem 0.9rem" }}>
                       {f.ultimo_erro ? (

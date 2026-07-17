@@ -11,6 +11,7 @@ fica visível para o administrador substituir/corrigir a URL.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -20,6 +21,8 @@ from fazenda.auth import exigir_admin, get_current_user
 from fazenda.database import get_session
 from fazenda.models import FonteNews, NoticiaNews, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
+
+RESUMO_MAX = 500
 
 router = APIRouter(prefix="/news", tags=["news"])
 
@@ -31,6 +34,18 @@ class FonteIn(BaseModel):
     nome: str
     url: str
     ativo: bool = True
+
+
+class NoticiaManualIn(BaseModel):
+    fonte_nome: str
+    manchete: str
+    resumo: str | None = None
+    link: str
+    data_publicacao: str | None = None  # "AAAA-MM-DD"
+
+
+class NoticiasManualIn(BaseModel):
+    itens: list[NoticiaManualIn]
 
 
 FONTES_PADRAO = [
@@ -141,6 +156,8 @@ def _atualizar_fonte(session: Session, fonte: FonteNews) -> int:
 
 
 def _atualizar_fonte_se_necessario(session: Session, fonte: FonteNews) -> None:
+    if fonte.manual:
+        return  # alimentada via POST /news/manual — nunca busca RSS sozinha
     agora = datetime.utcnow()
     if fonte.ultima_busca_em and (agora - fonte.ultima_busca_em) < timedelta(hours=INTERVALO_MIN_BUSCA_HORAS):
         return
@@ -158,11 +175,60 @@ def testar_fonte(fonte_id: int, session: Session = Depends(get_session), user: U
     fonte = session.get(FonteNews, fonte_id)
     if not fonte:
         raise HTTPException(status_code=404, detail="Fonte não encontrada")
+    if fonte.manual:
+        return {"ok": True, "materias_novas": 0, "erro": None, "manual": True}
     try:
         novas = _atualizar_fonte(session, fonte)
         return {"ok": True, "materias_novas": novas, "erro": None}
     except Exception as exc:
         return {"ok": False, "materias_novas": 0, "erro": str(exc)[:500]}
+
+
+@router.post("/manual")
+def importar_noticias_manual(
+    dados: NoticiasManualIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Recebe matérias já apuradas por fora (ex.: robô agendado /milknews) e
+    grava direto, sem depender do fetch de RSS. Cria a fonte automaticamente
+    na primeira vez (marcada como manual, para nunca tentar buscar RSS
+    sozinha) e ignora itens duplicados (mesmo link já gravado)."""
+    novas = 0
+    duplicadas = 0
+    invalidas = 0
+    for item in dados.itens:
+        nome = item.fonte_nome.strip()
+        link = item.link.strip()
+        manchete = item.manchete.strip()
+        if not nome or not link or not manchete:
+            invalidas += 1
+            continue
+        if session.exec(select(NoticiaNews).where(NoticiaNews.link == link)).first():
+            duplicadas += 1
+            continue
+
+        fonte = session.exec(select(FonteNews).where(FonteNews.nome == nome)).first()
+        if not fonte:
+            dominio = urlparse(link).netloc or link
+            fonte = FonteNews(nome=nome, url=f"https://{dominio}/", manual=True)
+            session.add(fonte)
+            session.commit()
+            session.refresh(fonte)
+
+        data_publicacao = None
+        if item.data_publicacao:
+            try:
+                data_publicacao = datetime.strptime(item.data_publicacao.strip(), "%Y-%m-%d")
+            except ValueError:
+                pass
+
+        resumo = (item.resumo or "").strip() or None
+        if resumo and len(resumo) > RESUMO_MAX:
+            resumo = resumo[: RESUMO_MAX - 1].rstrip() + "…"
+
+        session.add(NoticiaNews(fonte_id=fonte.id, manchete=manchete, resumo=resumo, link=link, data_publicacao=data_publicacao))
+        novas += 1
+    session.commit()
+    return {"recebidas": len(dados.itens), "novas": novas, "duplicadas": duplicadas, "invalidas": invalidas}
 
 
 @router.get("/")

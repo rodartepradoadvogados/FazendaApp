@@ -283,3 +283,75 @@ class TestTestarFonteAgora:
         c, _ = client
         r = c.post("/news/fontes/999/testar")
         assert r.status_code == 404
+
+
+class TestImportarNoticiasManual:
+    """POST /news/manual — recebe matérias já apuradas por fora (ex.: robô
+    agendado) e grava direto, sem depender do fetch de RSS."""
+
+    def test_cria_fonte_automaticamente_e_grava(self, client):
+        c, engine = client
+        r = c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Preço do leite sobe", "resumo": "Pecuária leiteira em alta",
+             "link": "https://milknews.example.com/1", "data_publicacao": "2026-07-15"},
+        ]})
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["novas"] == 1
+        assert dados["duplicadas"] == 0
+        assert dados["invalidas"] == 0
+
+        with Session(engine) as s:
+            fonte = s.exec(select(FonteNews).where(FonteNews.nome == "MilkNews Diário")).first()
+            assert fonte is not None
+            assert fonte.manual is True
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/1")).first()
+            assert noticia.manchete == "Preço do leite sobe"
+            assert noticia.data_publicacao == datetime(2026, 7, 15)
+
+    def test_ignora_link_duplicado_e_item_invalido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            fonte = FonteNews(nome="MilkNews Diário", url="https://milknews.example.com/", manual=True)
+            s.add(fonte)
+            s.commit()
+            s.refresh(fonte)
+            s.add(NoticiaNews(fonte_id=fonte.id, manchete="Já existe", link="https://milknews.example.com/1"))
+            s.commit()
+
+        r = c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Já existe (de novo)", "link": "https://milknews.example.com/1"},
+            {"fonte_nome": "MilkNews Diário", "manchete": "", "link": "https://milknews.example.com/2"},
+            {"fonte_nome": "MilkNews Diário", "manchete": "Nova matéria", "link": "https://milknews.example.com/3"},
+        ]})
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["novas"] == 1
+        assert dados["duplicadas"] == 1
+        assert dados["invalidas"] == 1
+
+    def test_fonte_manual_nunca_tenta_rss(self, client, monkeypatch):
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Matéria única", "link": "https://milknews.example.com/1"},
+        ]})
+
+        chamado = {"n": False}
+
+        def fake_buscar(url):
+            chamado["n"] = True
+            raise RuntimeError("nunca deveria ser chamado para fonte manual")
+
+        monkeypatch.setattr("fazenda.api.routers.news.buscar_noticias_fonte", fake_buscar)
+
+        r = c.get("/news/")
+        assert r.status_code == 200, r.text
+        assert chamado["n"] is False
+        fonte = r.json()["fontes"][0]
+        assert fonte["fonte"]["erro"] is None
+        assert len(fonte["noticias"]) == 1
+
+    def test_operador_nao_pode_importar_manual(self, client_operador):
+        c, _ = client_operador
+        r = c.post("/news/manual", json={"itens": []})
+        assert r.status_code == 403
