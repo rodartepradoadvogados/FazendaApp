@@ -6,6 +6,7 @@ import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
+import { NewsButton } from "@/components/NewsButton";
 import { SubNavProvider } from "@/components/SubNavContext";
 import AssistenteClaude from "@/components/AssistenteClaude";
 
@@ -62,6 +63,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
           <ThemeSwitcher />
         </div>
+        <NewsButton />
         <NotificationBell />
         <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
