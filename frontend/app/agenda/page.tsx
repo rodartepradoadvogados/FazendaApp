@@ -96,7 +96,10 @@ export default function AgendaPage() {
   // navegar livremente sem afetar o resto dos cálculos da agenda.
   const [visualizacao, setVisualizacao] = useState<"linha_do_tempo" | "calendario">("linha_do_tempo");
   const [mesCalendario, setMesCalendario] = useState(() => { const d = new Date(); return { ano: d.getFullYear(), mes: d.getMonth() }; });
-  const [diaSelecionado, setDiaSelecionado] = useState<string | null>(null);
+  // Começa com hoje já selecionado para que a lista de compromissos apareça
+  // ao lado do calendário assim que a visão é aberta, sem precisar clicar
+  // num dia primeiro.
+  const [diaSelecionado, setDiaSelecionado] = useState<string | null>(() => today());
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", observacao: "",
@@ -971,18 +974,24 @@ export default function AgendaPage() {
   };
 
   // ── Visão de calendário (opção 2 do mockup) — grade do mês com um ponto por
-  // categoria presente em cada dia; clicar num dia abre o painel lateral com
-  // os eventos daquele dia, reaproveitando renderEventos (mesma interação de
-  // dar baixa/marcar realizado da linha do tempo, sem duplicar lógica).
+  // categoria presente em cada dia + painel lateral com a lista de
+  // compromissos, sempre visível (hoje pré-selecionado, ou o dia 1º do mês
+  // exibido quando "hoje" cai fora dele), reaproveitando renderEventos
+  // (mesma interação de dar baixa/marcar realizado da linha do tempo, sem
+  // duplicar lógica).
+  const selecionarPrimeiroDiaDoMes = (ano: number, mes: number) => {
+    const dentroDoMesAtual = hoje.slice(0, 4) === String(ano) && Number(hoje.slice(5, 7)) - 1 === mes;
+    setDiaSelecionado(dentroDoMesAtual ? hoje : isoLocal(ano, mes, 1));
+  };
   const mudarMes = (delta: number) => {
-    setDiaSelecionado(null);
     setMesCalendario((p) => {
       let mes = p.mes + delta, ano = p.ano;
       if (mes < 0) { mes = 11; ano -= 1; } else if (mes > 11) { mes = 0; ano += 1; }
+      selecionarPrimeiroDiaDoMes(ano, mes);
       return { ano, mes };
     });
   };
-  const irParaMesAtual = () => { const d = new Date(); setMesCalendario({ ano: d.getFullYear(), mes: d.getMonth() }); setDiaSelecionado(null); };
+  const irParaMesAtual = () => { const d = new Date(); setMesCalendario({ ano: d.getFullYear(), mes: d.getMonth() }); setDiaSelecionado(hoje); };
   const abrirDiaCalendario = (iso: string) => {
     setDiaSelecionado((prev) => (prev === iso ? null : iso));
     setDatasAbertas((p) => { const n = new Set(p); n.add(iso); return n; });
