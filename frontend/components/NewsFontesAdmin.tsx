@@ -1,7 +1,7 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Newspaper, AlertTriangle, Plus, Pencil, Trash2, X, Check, CircleAlert } from "lucide-react";
-import { fetchFontesNews, criarFonteNews, atualizarFonteNews, excluirFonteNews, type FonteNews } from "@/lib/api";
+import React, { useEffect, useState } from "react";
+import { Newspaper, AlertTriangle, Plus, Pencil, Trash2, X, Check, CircleAlert, RefreshCw } from "lucide-react";
+import { fetchFontesNews, criarFonteNews, atualizarFonteNews, excluirFonteNews, testarFonteNews, type FonteNews } from "@/lib/api";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -15,9 +15,30 @@ export default function NewsFontesAdmin() {
   const [nome, setNome] = useState("");
   const [url, setUrl] = useState("");
   const [editando, setEditando] = useState<FonteNews | null>(null);
+  const [testando, setTestando] = useState<number | null>(null);
+  const [resultadoTeste, setResultadoTeste] = useState<Record<number, { ok: boolean; texto: string }>>({});
 
   const carregar = () => fetchFontesNews().then(setFontes).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+
+  const testar = async (f: FonteNews) => {
+    setTestando(f.id);
+    setResultadoTeste((r) => { const { [f.id]: _omit, ...resto } = r; return resto; });
+    try {
+      const res = await testarFonteNews(f.id);
+      setResultadoTeste((r) => ({
+        ...r,
+        [f.id]: res.ok
+          ? { ok: true, texto: res.materias_novas > 0 ? `OK — ${res.materias_novas} matéria(s) nova(s) agora.` : "OK — buscou certo, mas nenhuma matéria nova/relevante desta vez." }
+          : { ok: false, texto: res.erro || "Falhou, sem detalhe do erro." },
+      }));
+      carregar();
+    } catch (e: any) {
+      setResultadoTeste((r) => ({ ...r, [f.id]: { ok: false, texto: e.message } }));
+    } finally {
+      setTestando(null);
+    }
+  };
 
   const limpar = () => { setNome(""); setUrl(""); setEditando(null); };
 
@@ -99,31 +120,44 @@ export default function NewsFontesAdmin() {
             </thead>
             <tbody>
               {fontes.map((f) => (
-                <tr key={f.id} style={{ borderTop: "1px solid var(--border)" }}>
-                  <td style={{ padding: "0.6rem 0.9rem", fontWeight: 600 }}>{f.nome}</td>
-                  <td style={{ padding: "0.6rem 0.9rem", color: "var(--text-muted)", maxWidth: "18rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.url}</td>
-                  <td style={{ padding: "0.6rem 0.9rem" }}>
-                    {f.ultimo_erro ? (
-                      <span className="flex items-center gap-1" style={{ color: "var(--red)", fontSize: "0.78rem" }} title={f.ultimo_erro}>
-                        <CircleAlert size={14} /> Com erro
-                      </span>
-                    ) : (
-                      <span style={{ color: "var(--green-light)", fontSize: "0.78rem" }}>OK</span>
-                    )}
-                  </td>
-                  <td style={{ padding: "0.6rem 0.9rem" }}>
-                    <button onClick={() => toggleAtivo(f)} title={f.ativo ? "Desativar" : "Ativar"}
-                      style={{ background: "none", border: "none", cursor: "pointer", color: f.ativo ? "var(--green-light)" : "var(--text-muted)" }}>
-                      <Check size={16} style={{ opacity: f.ativo ? 1 : 0.3 }} />
-                    </button>
-                  </td>
-                  <td style={{ padding: "0.6rem 0.9rem" }}>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => editar(f)} title="Editar" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--dourado-light)" }}><Pencil size={15} /></button>
-                      <button onClick={() => excluir(f)} title="Excluir" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={15} /></button>
-                    </div>
-                  </td>
-                </tr>
+                <React.Fragment key={f.id}>
+                  <tr style={{ borderTop: "1px solid var(--border)" }}>
+                    <td style={{ padding: "0.6rem 0.9rem", fontWeight: 600 }}>{f.nome}</td>
+                    <td style={{ padding: "0.6rem 0.9rem", color: "var(--text-muted)", maxWidth: "18rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{f.url}</td>
+                    <td style={{ padding: "0.6rem 0.9rem" }}>
+                      {f.ultimo_erro ? (
+                        <span className="flex items-center gap-1" style={{ color: "var(--red)", fontSize: "0.78rem" }} title={f.ultimo_erro}>
+                          <CircleAlert size={14} /> Com erro
+                        </span>
+                      ) : (
+                        <span style={{ color: "var(--green-light)", fontSize: "0.78rem" }}>OK</span>
+                      )}
+                    </td>
+                    <td style={{ padding: "0.6rem 0.9rem" }}>
+                      <button onClick={() => toggleAtivo(f)} title={f.ativo ? "Desativar" : "Ativar"}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: f.ativo ? "var(--green-light)" : "var(--text-muted)" }}>
+                        <Check size={16} style={{ opacity: f.ativo ? 1 : 0.3 }} />
+                      </button>
+                    </td>
+                    <td style={{ padding: "0.6rem 0.9rem" }}>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => testar(f)} title="Testar agora — busca na hora, ignora a espera de 1h" disabled={testando === f.id}
+                          style={{ background: "none", border: "none", cursor: testando === f.id ? "default" : "pointer", color: "var(--dourado-light)", display: "flex", alignItems: "center" }}>
+                          <RefreshCw size={15} className={testando === f.id ? "animate-spin" : ""} />
+                        </button>
+                        <button onClick={() => editar(f)} title="Editar" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--dourado-light)" }}><Pencil size={15} /></button>
+                        <button onClick={() => excluir(f)} title="Excluir" style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}><Trash2 size={15} /></button>
+                      </div>
+                    </td>
+                  </tr>
+                  {resultadoTeste[f.id] && (
+                    <tr>
+                      <td colSpan={5} style={{ padding: "0 0.9rem 0.6rem", fontSize: "0.78rem", color: resultadoTeste[f.id].ok ? "var(--green-light)" : "var(--red)" }}>
+                        Teste agora: {resultadoTeste[f.id].texto}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
               {fontes.length === 0 && (
                 <tr><td colSpan={5} style={{ padding: "1.5rem", textAlign: "center", color: "var(--text-muted)" }}>Nenhuma fonte cadastrada.</td></tr>

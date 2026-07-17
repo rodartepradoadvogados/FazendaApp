@@ -1343,11 +1343,14 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
   const [dataVencimento, setDataVencimento] = useState((lanc.data_vencimento || "").slice(0, 10));
   const [dataCompetencia, setDataCompetencia] = useState((lanc.data_competencia || "").slice(0, 10));
   const [numeroNota, setNumeroNota] = useState(lanc.numero_documento || "");
+  const [numeroPagamento, setNumeroPagamento] = useState(lanc.numero_documento_pagamento || "");
   const [tipoDocumento, setTipoDocumento] = useState(lanc.tipo_documento || "");
+  const [tiposDocumento, setTiposDocumento] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
   const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
+  useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
 
   const salvar = async () => {
     setSalvando(true); setErro("");
@@ -1357,7 +1360,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
         codigo_conta: codigoConta || null, valor_total: parseFloat(valor.replace(",", ".")) || 0,
         data_emissao: dataEmissao || null, data_vencimento: dataVencimento || null,
         data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
-        tipo_documento: tipoDocumento || null,
+        numero_documento_pagamento: numeroPagamento || null, tipo_documento: tipoDocumento || null,
       });
       onSalvo();
     } catch (e: any) { setErro(e.message); setSalvando(false); }
@@ -1396,9 +1399,15 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
         <div><label style={labelStyleLote}>Competência</label>
           <input type="date" style={selStyleLote} value={dataCompetencia} onChange={(e) => setDataCompetencia(e.target.value)} /></div>
         <div><label style={labelStyleLote}>Tipo de documento</label>
-          <input style={selStyleLote} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)} placeholder="ex.: Nota fiscal, Recibo" /></div>
+          <select style={selStyleLote} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
+            <option value="">—</option>
+            {tipoDocumento && !tiposDocumento.includes(tipoDocumento) && <option value={tipoDocumento}>{tipoDocumento}</option>}
+            {(tiposDocumento.length ? tiposDocumento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
+          </select></div>
         <div><label style={labelStyleLote}>Nº do documento</label>
           <input style={selStyleLote} value={numeroNota} onChange={(e) => setNumeroNota(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Número do pagamento</label>
+          <input style={selStyleLote} value={numeroPagamento} onChange={(e) => setNumeroPagamento(e.target.value)} placeholder="ex.: comprovante, nº do PIX…" /></div>
       </div>
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}
       <div className="flex gap-2 justify-end">

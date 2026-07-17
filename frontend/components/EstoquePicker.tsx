@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 
-export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null };
+export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null };
 
 /**
  * Seletor de produto do estoque: mesma tabela estilizada (vermelha) usada
@@ -12,15 +12,22 @@ export type EstoqueItemPicker = { nome: string; categoria?: string | null; quant
  * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
  * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
-export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"] }:
-  { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[] }) {
+export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false }:
+  { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[];
+    // Restringe aos itens vinculados a um Alimento cadastrado (Configurações >
+    // Cadastro > Alimentação > Alimentos) — ou seja, só volumosos, concentrados
+    // (proteicos/energéticos), minerais e quaisquer outras categorias que o
+    // administrador tenha cadastrado ali, nunca um item de estoque avulso só
+    // com finalidade "Ração/Alimento" e sem categorização nutricional.
+    somenteVinculadosAlimento?: boolean;
+  }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
     () => itens
-      .filter((i) => i.estocavel !== false && (i.finalidade == null || finalidades.includes(i.finalidade)))
+      .filter((i) => i.estocavel !== false && (i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-    [itens, finalidades]
+    [itens, finalidades, somenteVinculadosAlimento]
   );
   const sel = disponiveis.find((i) => i.nome === value);
 

@@ -955,6 +955,7 @@ class LancamentoEditIn(BaseModel):
     centro_custo: Optional[str] = None
     fornecedor_cliente: Optional[str] = None
     numero_nota: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None
     tipo_documento: Optional[str] = None
     data_emissao: Optional[date] = None
     data_vencimento: Optional[date] = None

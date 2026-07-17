@@ -253,7 +253,12 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
 
   const nomeCategoria = (id: number | null) => categorias.find((c) => c.id === id)?.nome || "—";
   const termoEstoque = buscaEstoque.trim().toLowerCase();
-  const estoqueFiltrado = estoqueItens.filter((e) => !termoEstoque || e.nome.toLowerCase().includes(termoEstoque));
+  // Só alimentos de verdade (rações, silagens...) — finalidade "Ração/Alimento",
+  // nunca medicamento/material/equipamento. Item sem finalidade definida (legado)
+  // ainda aparece, mesma regra tolerante do EstoquePicker.
+  const estoqueFiltrado = estoqueItens.filter((e) =>
+    (e.finalidade == null || e.finalidade === "Ração/Alimento") && (!termoEstoque || e.nome.toLowerCase().includes(termoEstoque))
+  );
 
   return (
     <div className="card">
@@ -302,6 +307,10 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
             })}
             {!estoqueFiltrado.length && <p style={{ padding: "0.6rem", color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhum item de estoque encontrado.</p>}
           </div>
+          <button className="btn-ghost" style={{ fontSize: "0.76rem", display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.9rem" }}
+            onClick={() => pedirCadastroDeEstoque({ nome: nome.trim(), finalidade: "Ração/Alimento", alimentoId: typeof editando === "number" ? editando : undefined })}>
+            <Plus size={13} /> Cadastrar novo item de estoque vinculado
+          </button>
 
           <div className="flex items-center gap-2">
             <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
@@ -694,6 +703,7 @@ export function CadastrarNovaDieta({ onSalvo }: { onSalvo?: () => void } = {}) {
                                 value={it.alimento}
                                 onChange={(v) => patchItem(ln, idx, { alimento: v, ms_pct: msPorAlimento[v] ?? null })}
                                 finalidades={["Ração/Alimento"]}
+                                somenteVinculadosAlimento
                                 placeholder="Selecionar silagem/alimento…"
                               />
                             </div>

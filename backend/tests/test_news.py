@@ -216,3 +216,70 @@ class TestListagemNoticias:
         r = c.get("/news/")
         assert r.status_code == 200
         assert r.json()["fontes"] == []
+
+
+class TestTestarFonteAgora:
+    """POST /news/fontes/{id}/testar — busca na hora, ignora o intervalo
+    mínimo de 1h, para o admin conseguir testar uma correção sem esperar."""
+
+    def test_testar_ignora_intervalo_minimo_e_retorna_sucesso(self, client, monkeypatch):
+        c, engine = client
+        with Session(engine) as s:
+            fonte = FonteNews(nome="Fonte D", url="https://konted.com/feed", ultima_busca_em=datetime.utcnow())
+            s.add(fonte)
+            s.commit()
+            s.refresh(fonte)
+            fid = fonte.id
+
+        monkeypatch.setattr(
+            "fazenda.api.routers.news.buscar_noticias_fonte",
+            lambda url: [{"manchete": "Preço do leite sobe", "resumo": "leite", "link": "https://konted.com/1", "data": datetime.utcnow()}],
+        )
+
+        r = c.post(f"/news/fontes/{fid}/testar")
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["ok"] is True
+        assert dados["materias_novas"] == 1
+        assert dados["erro"] is None
+
+        with Session(engine) as s:
+            fonte = s.get(FonteNews, fid)
+            assert fonte.ultimo_erro is None
+            assert fonte.ultima_busca_ok_em is not None
+
+    def test_testar_retorna_erro_real_sem_derrubar_a_fonte(self, client, monkeypatch):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(FonteNews(nome="Fonte E", url="https://quebrada2.com"))
+            s.commit()
+        fid = c.get("/news/fontes").json()[0]["id"]
+
+        def fake_buscar(url):
+            raise RuntimeError("HTTP 403 ao acessar o site")
+
+        monkeypatch.setattr("fazenda.api.routers.news.buscar_noticias_fonte", fake_buscar)
+
+        r = c.post(f"/news/fontes/{fid}/testar")
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["ok"] is False
+        assert "403" in dados["erro"]
+
+        with Session(engine) as s:
+            fonte = s.get(FonteNews, fid)
+            assert fonte.ultimo_erro and "403" in fonte.ultimo_erro
+
+    def test_operador_nao_pode_testar_fonte(self, client_operador):
+        c, engine = client_operador
+        with Session(engine) as s:
+            s.add(FonteNews(nome="Fonte F", url="https://f.com"))
+            s.commit()
+            fid = s.exec(select(FonteNews)).first().id
+        r = c.post(f"/news/fontes/{fid}/testar")
+        assert r.status_code == 403
+
+    def test_testar_fonte_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/news/fontes/999/testar")
+        assert r.status_code == 404
