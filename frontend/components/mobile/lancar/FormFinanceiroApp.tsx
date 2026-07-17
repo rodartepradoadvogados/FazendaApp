@@ -11,8 +11,8 @@ import { LinhaPills, MobPill } from "@/components/mobile/lancar/comum";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { RESPONSAVEIS } from "@/lib/constants";
 
-export default function FormFinanceiroApp({ onVoltar }: { onVoltar: () => void }) {
-  const [tipo, setTipo] = useState<"despesa" | "receita">("despesa");
+export default function FormFinanceiroApp({ onVoltar, tipoInicial }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita" }) {
+  const [tipo, setTipo] = useState<"despesa" | "receita">(tipoInicial || "despesa");
 
   return (
     <div>

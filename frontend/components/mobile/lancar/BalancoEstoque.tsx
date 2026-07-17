@@ -1,12 +1,14 @@
 "use client";
-// Sub-tela LANÇAR ▸ Balanço de estoque — só leitura, espelha a página
-// Estoque do site (frontend/app/estoque/page.tsx): KPIs (valor total, abaixo
-// do mínimo, categorias) clicáveis + lista filtrável de itens.
+// Sub-tela LANÇAR ▸ Balanço de estoque — duas abas: Consultar (espelha a
+// página Estoque do site: KPIs clicáveis + lista filtrável) e Lançar (entrada
+// ou saída de um item, com valor opcional e "gerar lançamento financeiro").
 import { useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
 import { fetchEstoque } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
+import { LinhaPills, MobPill } from "./comum";
+import { FormEstoque } from "./FormEstoque";
 
 type Item = {
   categoria: string | null; nome: string; quantidade: number | null;
@@ -17,7 +19,8 @@ type Item = {
 
 type Drill = "abaixo" | "categorias" | null;
 
-export default function BalancoEstoque({ onVoltar }: { onVoltar: () => void }) {
+export default function BalancoEstoque({ onVoltar, onIrParaFinanceiro }: { onVoltar: () => void; onIrParaFinanceiro?: (tipo: "despesa" | "receita") => void }) {
+  const [aba, setAba] = useState<"consultar" | "lancar">("consultar");
   const { dados, doCache, carregando } = useCarregar<{ itens: Item[] }>("lancar_balanco_estoque", fetchEstoque);
   const [fCat, setFCat] = useState("");
   const [busca, setBusca] = useState("");
@@ -46,6 +49,19 @@ export default function BalancoEstoque({ onVoltar }: { onVoltar: () => void }) {
     filtrados.forEach((i) => { const c = i.categoria || "(sem categoria)"; by.set(c, (by.get(c) ?? 0) + 1); });
     return Array.from(by.entries()).sort(([a], [b]) => a.localeCompare(b));
   }, [filtrados]);
+
+  if (aba === "lancar") {
+    return (
+      <div>
+        <MobVoltar titulo="Balanço de estoque" onVoltar={onVoltar} />
+        <LinhaPills>
+          <MobPill ativa={false} onClick={() => setAba("consultar")}>Consultar</MobPill>
+          <MobPill ativa={true} onClick={() => setAba("lancar")}>Lançar</MobPill>
+        </LinhaPills>
+        <FormEstoque onIrParaFinanceiro={onIrParaFinanceiro} />
+      </div>
+    );
+  }
 
   // ── Drill-down: abaixo do mínimo ou categorias ──────────────────────────
   if (drill === "abaixo") {
@@ -86,6 +102,10 @@ export default function BalancoEstoque({ onVoltar }: { onVoltar: () => void }) {
   return (
     <div>
       <MobVoltar titulo="Balanço de estoque" onVoltar={onVoltar} />
+      <LinhaPills>
+        <MobPill ativa={true} onClick={() => setAba("consultar")}>Consultar</MobPill>
+        <MobPill ativa={false} onClick={() => setAba("lancar")}>Lançar</MobPill>
+      </LinhaPills>
       <AvisoCopia chave="lancar_balanco_estoque" mostrar={doCache} />
 
       <div style={{ position: "relative", marginBottom: "0.7rem" }}>

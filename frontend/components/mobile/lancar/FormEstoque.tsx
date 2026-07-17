@@ -1,42 +1,96 @@
 "use client";
 // Sub-tela ESTOQUE: movimento de entrada ou saída de um item.
 // Endpoint do desktop: POST /estoque/movimentar (usa os movimentos genéricos
-// "Entrada de ajuste" / "Saída de ajuste").
+// "Entrada de ajuste" / "Saída de ajuste"). Versão simples do formulário do
+// site — busca + categoria para achar o item, entrada/saída, quantidade,
+// valor opcional e "gerar lançamento financeiro" (abre a tela Financeiro já
+// preenchida, faltando só pagamento/parcelamento).
 import { useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { fetchEstoque } from "@/lib/api";
+import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { type EstoqueItem, useCache, useEnvio, hoje, MobPill, LinhaPills } from "./comum";
 
-export function FormEstoque() {
+const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"];
+const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
+const MOV_BAIXA = new Set(["Aplicação", "Saída de ajuste", "Doação"]);
+const SOMENTE_ESTOCAVEL = new Set(["Doação", "Entrada de cortesia"]);
+
+export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo: "despesa" | "receita") => void }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
 
+  const [busca, setBusca] = useState("");
+  const [fCategoria, setFCategoria] = useState("");
   const [tipo, setTipo] = useState<"entrada" | "saida">("entrada");
+  const [mov, setMov] = useState("");
   const [nome, setNome] = useState("");
   const [quantidade, setQuantidade] = useState("");
   const [data, setData] = useState(hoje());
+  const [lancarValor, setLancarValor] = useState(false);
+  const [valorUnitario, setValorUnitario] = useState("");
+  const [gerarFinanceiro, setGerarFinanceiro] = useState(false);
 
-  const itens = useMemo(() => [...estoque.dados].sort((a, b) => a.nome.localeCompare(b.nome)), [estoque.dados]);
+  const estocaveis = useMemo(() => estoque.dados.filter((e) => e.estocavel !== false), [estoque.dados]);
+  const categorias = useMemo(() => Array.from(new Set(estocaveis.map((e) => e.categoria).filter(Boolean))).sort() as string[], [estocaveis]);
+  const itens = useMemo(() => estocaveis
+    .filter((e) => (!fCategoria || e.categoria === fCategoria) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase())))
+    .sort((a, b) => a.nome.localeCompare(b.nome)), [estocaveis, fCategoria, busca]);
+
   const item = estoque.dados.find((e) => e.nome === nome);
   const unidade = item?.unidade || "";
+  const q = Number(quantidade) || 0;
+  const baixa = MOV_BAIXA.has(mov);
+  const restante = item ? (item.quantidade ?? 0) + (baixa ? -q : q) : null;
+  const valorTotal = lancarValor && valorUnitario ? q * Number(valorUnitario) : null;
+
+  const movimentosDisponiveis = (tipo === "entrada" ? MOVIMENTOS_ENTRADA : MOVIMENTOS_SAIDA)
+    .filter((m) => item?.estocavel !== false || !SOMENTE_ESTOCAVEL.has(m));
 
   function salvar() {
     if (!nome) return erroValidacao("Selecione o item.");
-    if (!(Number(quantidade) > 0)) return erroValidacao("Informe a quantidade.");
-    const movimento = tipo === "entrada" ? "Entrada de ajuste" : "Saída de ajuste";
+    if (!mov) return erroValidacao("Selecione o movimento.");
+    if (!(q > 0)) return erroValidacao("Informe a quantidade.");
     enviar(
       "/estoque/movimentar",
-      { nome, movimento, quantidade: Number(quantidade), unidade: unidade || undefined, data_movimento: data },
+      { nome, movimento: mov, quantidade: q, unidade: unidade || undefined, data_movimento: data },
       `Estoque ${tipo === "entrada" ? "entrada" : "saída"} — ${quantidade} ${unidade} de ${nome}`,
-      () => setQuantidade(""),
+      () => {
+        if (gerarFinanceiro) {
+          pedirLancamentoFinanceiro({
+            tipo: tipo === "entrada" ? "despesa" : "receita",
+            produto: nome,
+            quantidade: q,
+            unidade: unidade || null,
+            valor_unitario: lancarValor && valorUnitario ? Number(valorUnitario) : null,
+            valor_total: valorTotal,
+            codigo_conta_gerencial: (tipo === "entrada" ? item?.conta_gerencial_despesa_padrao : item?.conta_gerencial_receita_padrao) || null,
+            data_emissao: data,
+          });
+          onIrParaFinanceiro?.(tipo === "entrada" ? "despesa" : "receita");
+        }
+        setQuantidade(""); setValorUnitario(""); setLancarValor(false); setGerarFinanceiro(false);
+      },
     );
   }
 
   return (
     <>
+      <MobCampo label="Buscar item">
+        <input className="mob-input" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do item…" />
+      </MobCampo>
+      {categorias.length > 0 && (
+        <MobCampo label="Categoria">
+          <select className="mob-input" value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}>
+            <option value="">Todas</option>
+            {categorias.map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </MobCampo>
+      )}
+
       <LinhaPills>
-        <MobPill ativa={tipo === "entrada"} onClick={() => setTipo("entrada")}>Entrada</MobPill>
-        <MobPill ativa={tipo === "saida"} onClick={() => setTipo("saida")}>Saída</MobPill>
+        <MobPill ativa={tipo === "entrada"} onClick={() => { setTipo("entrada"); setMov(""); }}>Entrada</MobPill>
+        <MobPill ativa={tipo === "saida"} onClick={() => { setTipo("saida"); setMov(""); }}>Saída</MobPill>
       </LinhaPills>
 
       <MobCampo label="Item do estoque">
@@ -45,12 +99,44 @@ export function FormEstoque() {
           {itens.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
         </select>
       </MobCampo>
+      <MobCampo label="Movimento">
+        <select className="mob-input" value={mov} onChange={(e) => setMov(e.target.value)}>
+          <option value="">Selecione…</option>
+          {movimentosDisponiveis.map((m) => <option key={m}>{m}</option>)}
+        </select>
+      </MobCampo>
       <MobCampo label={`Quantidade${unidade ? ` (${unidade})` : ""}`}>
         <input type="number" inputMode="decimal" className="mob-input" value={quantidade} onChange={(e) => setQuantidade(e.target.value)} placeholder="0" />
       </MobCampo>
       <MobCampo label="Data">
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
       </MobCampo>
+
+      {item && mov && (
+        <p style={{ fontSize: "0.82rem", margin: "0.3rem 0 0.8rem" }}>
+          Saldo atual: <strong>{item.quantidade ?? 0} {unidade}</strong> → depois:{" "}
+          <strong style={{ color: (restante ?? 0) < 0 ? "var(--mob-vermelho)" : "var(--mob-verde)" }}>{restante} {unidade}</strong>
+          {(restante ?? 0) < 0 && <span style={{ color: "var(--mob-vermelho)" }}> (insuficiente!)</span>}
+        </p>
+      )}
+
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem", marginBottom: "0.7rem" }}>
+        <input type="checkbox" checked={lancarValor} onChange={(e) => setLancarValor(e.target.checked)} style={{ width: 18, height: 18 }} />
+        Informar valor deste movimento
+      </label>
+      {lancarValor && (
+        <MobCampo label="Valor unitário (R$)">
+          <input type="number" inputMode="decimal" className="mob-input" value={valorUnitario} onChange={(e) => setValorUnitario(e.target.value)} />
+        </MobCampo>
+      )}
+      {valorTotal != null && (
+        <p style={{ fontSize: "0.82rem", marginBottom: "0.5rem" }}>Valor do movimento: <strong>{valorTotal.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></p>
+      )}
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem", marginBottom: "0.9rem" }}>
+        <input type="checkbox" checked={gerarFinanceiro} onChange={(e) => setGerarFinanceiro(e.target.checked)} style={{ width: 18, height: 18 }} />
+        Gerar {tipo === "saida" ? "receita" : "despesa"} no Financeiro com estes dados
+      </label>
+
       <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
     </>

@@ -114,6 +114,35 @@ class TestServicoLote:
         assert dias == [0, 7, 9]  # D0/D7/D9 vencidos aparecem; D11 já foi resolvido
 
 
+class TestDescontoDoseSemen:
+    def test_ia_cio_natural_desconta_uma_dose_por_animal(self, client):
+        c, engine = client
+        r = c.post("/reproducao/servico-lote", json={
+            "animais": ["700", "701"], "data_servico": "2026-07-08", "tipo": "cio_natural", "reprodutor": "Coors",
+        })
+        assert r.json()["criados"] == 2
+        with Session(engine) as s:
+            coors = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first()
+            assert coors.doses == 28  # 30 - 2
+
+    def test_monta_natural_nao_desconta_dose(self, client):
+        c, engine = client
+        c.post("/reproducao/servico-lote", json={
+            "animais": ["700"], "data_servico": "2026-07-08", "tipo": "monta_natural", "reprodutor": "Frederico",
+        })
+        with Session(engine) as s:
+            frederico = s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Frederico")).first()
+            assert frederico.doses == 0
+
+    def test_reprodutor_sem_touro_cadastrado_nao_quebra(self, client):
+        c, engine = client
+        r = c.post("/reproducao/servico-lote", json={
+            "animais": ["700"], "data_servico": "2026-07-08", "tipo": "cio_natural", "reprodutor": "Touro Fantasma",
+        })
+        assert r.status_code == 200
+        assert r.json()["criados"] == 1
+
+
 class TestSemenDisponivel:
     def test_categorias_e_minimo(self, client):
         c, engine = client

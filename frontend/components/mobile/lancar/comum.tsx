@@ -17,7 +17,10 @@ export type Animal = {
   del_dias?: number | null;
   sexo?: string | null;
 };
-export type EstoqueItem = { nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null };
+export type EstoqueItem = {
+  nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;
+  conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
+};
 export type Semen = { touro_nome: string; codigo?: string | null; tipo?: string | null; doses?: number | null };
 export type DietaItem = { alimento: string; quantidade: number; unidade: string };
 export type Dieta = { id: number; lote: number; ativa: boolean; itens_programados: DietaItem[] };

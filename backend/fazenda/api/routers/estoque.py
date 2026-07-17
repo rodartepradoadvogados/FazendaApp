@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import Estoque, Fornecedor, MovimentoEstoque, Usuario
+from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
 from fazenda.rules.auditoria import mapa_usuarios
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
@@ -28,6 +28,45 @@ def _sem_acento(s: str) -> str:
 # Só itens estocáveis podem ser doados ou recebidos de cortesia — itens não
 # estocáveis existem só para lançamento financeiro, sem controle de quantidade.
 MOVIMENTOS_SOMENTE_ESTOCAVEL = {"Doação", "Entrada de cortesia"}
+
+
+def _casar_estoque_semen(nome_item: str, session: Session) -> EstoqueSemen | None:
+    """Casa um item de Estoque genérico com um touro do Estoque de Sêmen pelo
+    nome (igual, sem acento/caixa) ou por conter o NAAB/código do touro no
+    nome — usado para vincular automaticamente `Estoque.estoque_semen_id`
+    sem exigir escolha manual quando o nome já deixa claro de qual touro se
+    trata (ex.: item "Sêmen ABS 7HO12345" casa pelo NAAB)."""
+    alvo = _sem_acento(nome_item).strip().lower()
+    if not alvo:
+        return None
+    for touro in session.exec(select(EstoqueSemen)).all():
+        nome_touro = _sem_acento(touro.touro_nome or "").strip().lower()
+        if nome_touro and nome_touro == alvo:
+            return touro
+    for touro in session.exec(select(EstoqueSemen)).all():
+        naab = _sem_acento(touro.naab or "").strip().lower()
+        codigo = _sem_acento(touro.codigo or "").strip().lower()
+        if (naab and naab in alvo) or (codigo and codigo in alvo):
+            return touro
+    return None
+
+
+def sindicar_estoque_semen(session: Session) -> None:
+    """Vincula cada item de Estoque genérico sem `estoque_semen_id` ao touro
+    correspondente do Estoque de Sêmen (por nome ou NAAB/código — ver
+    `_casar_estoque_semen`), para que entrada/saída deste item também
+    atualize `EstoqueSemen.doses` (ver `_criar_movimento_estoque`). Nunca
+    sobrescreve um vínculo já existente. Roda uma única vez."""
+    chave = "estoque_vinculo_semen_202607"
+    if session.get(SeedFlag, chave):
+        return
+    for item in session.exec(select(Estoque).where(Estoque.estoque_semen_id.is_(None))).all():  # type: ignore[union-attr]
+        touro = _casar_estoque_semen(item.nome, session)
+        if touro:
+            item.estoque_semen_id = touro.id
+            session.add(item)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"]
 MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
@@ -72,6 +111,7 @@ class EstoqueIn(BaseModel):
     principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
     alimento_id: int | None = None
+    estoque_semen_id: int | None = None
 
 
 def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
@@ -120,6 +160,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         principio_ativo_id=dados.principio_ativo_id,
         classificacao_medicamento=dados.classificacao_medicamento,
         alimento_id=dados.alimento_id,
+        estoque_semen_id=dados.estoque_semen_id or (t.id if (t := _casar_estoque_semen(dados.nome, session)) else None),
     )
     session.add(item)
     session.commit()
@@ -288,6 +329,17 @@ def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: i
         item.abaixo_minimo = item.quantidade < item.estoque_minimo
     item.atualizado_em = datetime.utcnow()
     session.add(item)
+
+    # Item vinculado a um touro do Estoque de Sêmen (ver `estoque_semen_id`) —
+    # toda entrada/saída física deste item também atualiza as doses do touro,
+    # para que o Estoque de Sêmen nunca fique desatualizado em relação às
+    # compras/baixas lançadas por aqui.
+    if item.estoque_semen_id:
+        touro = session.get(EstoqueSemen, item.estoque_semen_id)
+        if touro:
+            touro.doses = touro.doses + (-round(dados.quantidade) if baixa else round(dados.quantidade))
+            touro.atualizado_em = datetime.utcnow()
+            session.add(touro)
 
     session.add(MovimentoEstoque(
         nome_item=dados.nome,
