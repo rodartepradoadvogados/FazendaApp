@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
@@ -31,6 +31,14 @@ function addDias(iso: string, n: number): string {
 function diasEntre(aIso: string, bIso: string): number {
   return Math.round((new Date(bIso + "T00:00:00").getTime() - new Date(aIso + "T00:00:00").getTime()) / 86400000);
 }
+// Monta "aaaa-mm-dd" a partir de componentes locais (sem passar por Date →
+// toISOString, que converte para UTC e pode voltar um dia — mesmo cuidado do
+// resto do arquivo, que sempre ancora Date com "T00:00:00" para evitar isso).
+function isoLocal(ano: number, mes: number, dia: number): string {
+  return `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+}
+const NOMES_MES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const DIAS_SEMANA_ABREV = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
 
 const CATEGORIAS = ["Reprodutivo", "Sanidade", "Produção", "Gestão/Financeiro", "Atividades"];
 const TIPOS_EVENTO = ["Compra", "Venda", "Serviço", "Outro"];
@@ -82,6 +90,13 @@ export default function AgendaPage() {
   const [fCat, setFCat] = useState("");
   const [de, setDe] = useState("");
   const [ate, setAte] = useState("");
+  // Segunda visualização da agenda (opção 2 do mockup aprovado): calendário
+  // mensal com painel lateral — alternativa à linha do tempo (opção 1, já
+  // era a única implementada). Mês próprio (não usa "data"/referência) para
+  // navegar livremente sem afetar o resto dos cálculos da agenda.
+  const [visualizacao, setVisualizacao] = useState<"linha_do_tempo" | "calendario">("linha_do_tempo");
+  const [mesCalendario, setMesCalendario] = useState(() => { const d = new Date(); return { ano: d.getFullYear(), mes: d.getMonth() }; });
+  const [diaSelecionado, setDiaSelecionado] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
     data_evento: today(), descricao: "", categoria: "Gestão/Financeiro", observacao: "",
@@ -145,8 +160,16 @@ export default function AgendaPage() {
   const cancelarConfirmacao = (chave: string) => setConfirmando((p) => { const n = new Set(p); n.delete(chave); return n; });
 
   // Janela de contas a pagar/receber que o backend calcula: 10 dias por padrão,
-  // ou até a data "Até" escolhida (se o usuário ampliar o período).
-  const diasJanela = ate ? Math.max(DIAS_PADRAO_FUTURO, diasEntre(data, ate)) : DIAS_PADRAO_FUTURO;
+  // ou até a data "Até" escolhida (se o usuário ampliar o período). Na visão
+  // de calendário, amplia também até o fim do mês exibido (senão eventos
+  // financeiros de um mês futuro não chegariam a tempo de aparecer nele).
+  const ultimoDiaDoMesCalendario = new Date(mesCalendario.ano, mesCalendario.mes + 1, 0).getDate();
+  const ultimoDiaMesCalendarioIso = isoLocal(mesCalendario.ano, mesCalendario.mes, ultimoDiaDoMesCalendario);
+  const diasParaCalendario = visualizacao === "calendario" ? Math.max(0, diasEntre(data, ultimoDiaMesCalendarioIso)) : 0;
+  const diasJanela = Math.max(
+    ate ? Math.max(DIAS_PADRAO_FUTURO, diasEntre(data, ate)) : DIAS_PADRAO_FUTURO,
+    diasParaCalendario,
+  );
 
   const carregar = useCallback(async () => {
     setLoading(true);
@@ -947,6 +970,107 @@ export default function AgendaPage() {
     });
   };
 
+  // ── Visão de calendário (opção 2 do mockup) — grade do mês com um ponto por
+  // categoria presente em cada dia; clicar num dia abre o painel lateral com
+  // os eventos daquele dia, reaproveitando renderEventos (mesma interação de
+  // dar baixa/marcar realizado da linha do tempo, sem duplicar lógica).
+  const mudarMes = (delta: number) => {
+    setDiaSelecionado(null);
+    setMesCalendario((p) => {
+      let mes = p.mes + delta, ano = p.ano;
+      if (mes < 0) { mes = 11; ano -= 1; } else if (mes > 11) { mes = 0; ano += 1; }
+      return { ano, mes };
+    });
+  };
+  const irParaMesAtual = () => { const d = new Date(); setMesCalendario({ ano: d.getFullYear(), mes: d.getMonth() }); setDiaSelecionado(null); };
+  const abrirDiaCalendario = (iso: string) => {
+    setDiaSelecionado((prev) => (prev === iso ? null : iso));
+    setDatasAbertas((p) => { const n = new Set(p); n.add(iso); return n; });
+  };
+
+  const renderCalendario = () => {
+    const primeiroDiaIso = isoLocal(mesCalendario.ano, mesCalendario.mes, 1);
+    const diasNoMes = new Date(mesCalendario.ano, mesCalendario.mes + 1, 0).getDate();
+    const ultimoDiaIso = isoLocal(mesCalendario.ano, mesCalendario.mes, diasNoMes);
+    const primeiroDiaSemana = new Date(mesCalendario.ano, mesCalendario.mes, 1).getDay();
+
+    const eventosDoMes = eventosBase.filter((e: any) => e.data >= primeiroDiaIso && e.data <= ultimoDiaIso);
+    const eventosPorDiaCal = new Map<string, any[]>();
+    eventosDoMes.forEach((e: any) => { (eventosPorDiaCal.get(e.data) ?? eventosPorDiaCal.set(e.data, []).get(e.data)!).push(e); });
+
+    const celulas: (string | null)[] = [];
+    for (let i = 0; i < primeiroDiaSemana; i++) celulas.push(null);
+    for (let dia = 1; dia <= diasNoMes; dia++) celulas.push(isoLocal(mesCalendario.ano, mesCalendario.mes, dia));
+
+    const eventosDoDiaSelecionado = diaSelecionado ? (eventosPorDiaCal.get(diaSelecionado) || []) : [];
+
+    return (
+      <div style={{ display: "grid", gridTemplateColumns: diaSelecionado ? "1fr 320px" : "1fr", gap: "1.25rem", alignItems: "start" }}>
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <button className="btn-ghost" onClick={() => mudarMes(-1)} title="Mês anterior"><ChevronLeft size={16} /></button>
+            <button className="btn-ghost" onClick={irParaMesAtual} style={{ fontWeight: 700, fontSize: "0.9rem" }}>
+              {NOMES_MES[mesCalendario.mes]} de {mesCalendario.ano}
+            </button>
+            <button className="btn-ghost" onClick={() => mudarMes(1)} title="Próximo mês"><ChevronRight size={16} /></button>
+          </div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "4px" }}>
+            {DIAS_SEMANA_ABREV.map((d) => (
+              <div key={d} style={{ textAlign: "center", fontSize: "0.68rem", fontWeight: 700, color: "var(--text-muted)", padding: "0.2rem 0" }}>{d}</div>
+            ))}
+            {celulas.map((iso, i) => {
+              if (!iso) return <div key={`vazio-${i}`} />;
+              const evs = eventosPorDiaCal.get(iso) || [];
+              const categoriasUnicas = Array.from(new Set(evs.map((e: any) => e.categoria)));
+              const atrasado = iso < hoje && evs.length > 0;
+              const ehHoje = iso === hoje;
+              const ehSelecionado = iso === diaSelecionado;
+              return (
+                <button key={iso} type="button" onClick={() => abrirDiaCalendario(iso)}
+                  title={evs.length ? `${evs.length} evento${evs.length !== 1 ? "s" : ""}` : undefined}
+                  style={{
+                    minHeight: "4.4rem", padding: "0.3rem 0.35rem", borderRadius: "8px", textAlign: "left", cursor: "pointer",
+                    display: "flex", flexDirection: "column", gap: "0.25rem",
+                    border: "1px solid " + (ehSelecionado ? "var(--dourado)" : ehHoje ? "var(--dourado-light)" : "var(--border)"),
+                    background: ehSelecionado ? "rgba(184,134,11,0.18)" : ehHoje ? "rgba(184,134,11,0.08)" : "var(--surface-2)",
+                  }}>
+                  <span style={{ fontSize: "0.78rem", fontWeight: ehHoje ? 800 : 600, color: atrasado ? "var(--red)" : "var(--text)" }}>
+                    {Number(iso.slice(8, 10))}
+                  </span>
+                  {evs.length > 0 && (
+                    <>
+                      <div className="flex items-center gap-1" style={{ flexWrap: "wrap" }}>
+                        {categoriasUnicas.slice(0, 4).map((c: any) => (
+                          <span key={c} style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: corCategoria(c) }} />
+                        ))}
+                      </div>
+                      <span style={{ fontSize: "0.62rem", color: "var(--text-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+                    </>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+        {diaSelecionado && (
+          <div className="card" style={{ background: "var(--surface-2)" }}>
+            <div className="card-header mb-2 flex items-center justify-between" style={{ gap: "0.5rem" }}>
+              <span style={{ fontSize: "0.85rem", textTransform: "capitalize" }}>
+                {new Date(diaSelecionado + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
+              </span>
+              <button className="btn-ghost" onClick={() => setDiaSelecionado(null)} title="Fechar"><X size={14} /></button>
+            </div>
+            {eventosDoDiaSelecionado.length > 0 ? (
+              <div className="space-y-2">{renderEventos(eventosDoDiaSelecionado, diaSelecionado < hoje)}</div>
+            ) : (
+              <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", padding: "0.5rem 0" }}>Nenhum evento nesse dia.</p>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const candidatas = agenda?.candidatas_iatf || [];
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
@@ -1344,17 +1468,34 @@ export default function AgendaPage() {
       )}
 
       {/* Linha do tempo unificada — Atrasados (antes de hoje) seguido de Hoje/
-          próximos, em vez de dois cards separados (KPI+lista fragmentados). */}
+          próximos — ou, na visão de calendário, a grade do mês. Duas formas
+          de ver os MESMOS eventos (a mesma renderEventos por trás de ambas). */}
       <div className="card">
         <div className="card-header mb-1 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
           <span>Agenda ({eventosPendentes.length + eventosFuturos.length})</span>
-          <div className="flex items-center gap-2">
-            {!ate && <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>}
+          <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+            {(["linha_do_tempo", "calendario"] as const).map((v) => (
+              <button key={v} type="button" onClick={() => setVisualizacao(v)}
+                title={v === "linha_do_tempo" ? "Lista única em ordem cronológica" : "Grade do mês — clique num dia para ver os eventos"}
+                style={{
+                  fontSize: "0.75rem", padding: "0.3rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+                  border: "1px solid " + (visualizacao === v ? "var(--dourado)" : "var(--border)"),
+                  background: visualizacao === v ? "var(--dourado)" : "transparent",
+                  color: visualizacao === v ? "#1a1a1a" : "var(--text-muted)", fontWeight: visualizacao === v ? 700 : 400,
+                }}>
+                {v === "linha_do_tempo" ? "Linha do tempo" : "Calendário"}
+              </button>
+            ))}
+            {visualizacao === "linha_do_tempo" && !ate && (
+              <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>
+            )}
             <ExportarBotoes titulo="Agenda" nomeArquivoBase="agenda" colunas={COLUNAS_AGENDA} linhas={[...eventosPendentes, ...eventosFuturos]} />
           </div>
         </div>
         {loading ? (
           <p style={{ color: "var(--text-muted)", padding: "2rem", textAlign: "center" }}>Carregando agenda...</p>
+        ) : visualizacao === "calendario" ? (
+          <div style={{ marginTop: "0.75rem" }}>{renderCalendario()}</div>
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
             {eventosPendentes.length > 0 && (
