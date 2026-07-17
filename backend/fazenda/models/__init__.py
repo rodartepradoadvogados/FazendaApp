@@ -2154,6 +2154,9 @@ class FonteNews(SQLModel, table=True):
     ultima_busca_em: Optional[datetime] = None
     ultima_busca_ok_em: Optional[datetime] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Fonte alimentada via POST /news/manual (ex.: robô agendado) em vez de
+    # RSS — nunca busca sozinha, então nunca aparece com erro de fetch.
+    manual: bool = False
 
 
 class NoticiaNews(SQLModel, table=True):

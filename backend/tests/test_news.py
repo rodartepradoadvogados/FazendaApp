@@ -7,6 +7,7 @@ fetch (`buscar_noticias_fonte`) é substituído por um dublê.
 """
 from __future__ import annotations
 
+import json
 from datetime import datetime, timedelta
 
 import pytest
@@ -15,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import FonteNews, NoticiaNews
+from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews
 
 
 @pytest.fixture
@@ -283,3 +284,138 @@ class TestTestarFonteAgora:
         c, _ = client
         r = c.post("/news/fontes/999/testar")
         assert r.status_code == 404
+
+
+class TestImportarNoticiasManual:
+    """POST /news/manual — recebe matérias já apuradas por fora (ex.: robô
+    agendado /milknews). Nunca publica direto: cada item vira um
+    LancamentoPendente(tipo="noticia_manual") na mesma fila de aprovação do
+    Telegram — só vira NoticiaNews de verdade quando o administrador aprova
+    em /aprovacoes."""
+
+    def test_cria_pendente_em_vez_de_publicar_direto(self, client):
+        c, engine = client
+        r = c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Preço do leite sobe", "resumo": "Pecuária leiteira em alta",
+             "link": "https://milknews.example.com/1", "data_publicacao": "2026-07-15"},
+        ]})
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["pendentes_criados"] == 1
+        assert dados["duplicadas"] == 0
+        assert dados["invalidas"] == 0
+
+        with Session(engine) as s:
+            # Nada publicado ainda — nem NoticiaNews, nem FonteNews criada.
+            assert s.exec(select(NoticiaNews)).first() is None
+            pend = s.exec(select(LancamentoPendente).where(LancamentoPendente.tipo == "noticia_manual")).first()
+            assert pend is not None
+            assert pend.status == "pendente"
+            payload = json.loads(pend.payload)
+            assert payload["manchete"] == "Preço do leite sobe"
+            assert payload["link"] == "https://milknews.example.com/1"
+            assert "Preço do leite sobe" in pend.resumo
+
+    def test_ignora_item_invalido(self, client):
+        c, _ = client
+        r = c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "", "link": "https://milknews.example.com/2"},
+            {"fonte_nome": "MilkNews Diário", "manchete": "Nova matéria", "link": "https://milknews.example.com/3"},
+        ]})
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["pendentes_criados"] == 1
+        assert dados["invalidas"] == 1
+
+    def test_ignora_link_ja_publicado(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            fonte = FonteNews(nome="MilkNews Diário", url="https://milknews.example.com/", manual=True)
+            s.add(fonte)
+            s.commit()
+            s.refresh(fonte)
+            s.add(NoticiaNews(fonte_id=fonte.id, manchete="Já existe", link="https://milknews.example.com/1"))
+            s.commit()
+
+        r = c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Já existe (de novo)", "link": "https://milknews.example.com/1"},
+        ]})
+        assert r.status_code == 200, r.text
+        assert r.json()["duplicadas"] == 1
+
+    def test_nao_duplica_pendente_entre_execucoes_do_robo(self, client):
+        c, _ = client
+        item = {"fonte_nome": "MilkNews Diário", "manchete": "Matéria repetida", "link": "https://milknews.example.com/x"}
+        r1 = c.post("/news/manual", json={"itens": [item]})
+        assert r1.json()["pendentes_criados"] == 1
+        r2 = c.post("/news/manual", json={"itens": [item]})
+        assert r2.json()["pendentes_criados"] == 0
+        assert r2.json()["duplicadas"] == 1
+
+    def test_operador_nao_pode_importar_manual(self, client_operador):
+        c, _ = client_operador
+        r = c.post("/news/manual", json={"itens": []})
+        assert r.status_code == 403
+
+
+class TestAprovarNoticiaManual:
+    """Aprovar um LancamentoPendente(tipo="noticia_manual") em /aprovacoes
+    materializa a NoticiaNews de verdade; rejeitar não cria nada."""
+
+    def test_aprovar_publica_a_noticia(self, client):
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Preço do leite sobe", "resumo": "leite em alta",
+             "link": "https://milknews.example.com/1", "data_publicacao": "2026-07-15"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+
+        r = c.post(f"/aprovacoes/{pend_id}/aprovar")
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            fonte = s.exec(select(FonteNews).where(FonteNews.nome == "MilkNews Diário")).first()
+            assert fonte is not None and fonte.manual is True
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/1")).first()
+            assert noticia is not None
+            assert noticia.manchete == "Preço do leite sobe"
+            assert noticia.data_publicacao == datetime(2026, 7, 15)
+            pend = s.get(LancamentoPendente, pend_id)
+            assert pend.status == "aprovado"
+
+    def test_rejeitar_nao_publica_nada(self, client):
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Matéria descartada", "link": "https://milknews.example.com/2"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+
+        r = c.post(f"/aprovacoes/{pend_id}/rejeitar")
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            assert s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/2")).first() is None
+            assert s.get(LancamentoPendente, pend_id).status == "rejeitado"
+
+    def test_fonte_manual_nunca_tenta_rss(self, client, monkeypatch):
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Matéria única", "link": "https://milknews.example.com/1"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+        c.post(f"/aprovacoes/{pend_id}/aprovar")
+
+        chamado = {"n": False}
+
+        def fake_buscar(url):
+            chamado["n"] = True
+            raise RuntimeError("nunca deveria ser chamado para fonte manual")
+
+        monkeypatch.setattr("fazenda.api.routers.news.buscar_noticias_fonte", fake_buscar)
+
+        r = c.get("/news/")
+        assert r.status_code == 200, r.text
+        assert chamado["n"] is False
+        fonte = r.json()["fontes"][0]
+        assert fonte["fonte"]["erro"] is None
+        assert len(fonte["noticias"]) == 1
