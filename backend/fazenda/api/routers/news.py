@@ -36,8 +36,10 @@ class FonteIn(BaseModel):
 FONTES_PADRAO = [
     ("MilkPoint", "https://www.milkpoint.com.br/"),
     ("Notícias Agrícolas", "https://www.noticiasagricolas.com.br/cotacoes/leite"),
-    ("Canal Rural", "https://www.canalrural.com.br/pecuaria/"),
-    ("DairyReporter", "https://www.dairyreporter.com/"),
+    # Feed RSS direto (confirmado), não a home — evita a proteção anti-bot que
+    # bloqueia a página HTML.
+    ("Canal Rural", "https://www.canalrural.com.br/feed/"),
+    ("DairyReporter", "https://www.dairyreporter.com/Info/DairyReporter-RSS"),
     ("DairyNews.today", "https://dairynews.today/"),
 ]
 
@@ -108,13 +110,16 @@ def excluir_fonte(fonte_id: int, session: Session = Depends(get_session), user: 
     return {"excluido": True, "id": fonte_id}
 
 
-def _atualizar_fonte_se_necessario(session: Session, fonte: FonteNews) -> None:
+def _atualizar_fonte(session: Session, fonte: FonteNews) -> int:
+    """Busca a fonte agora mesmo (sem checar o intervalo mínimo) e grava o
+    resultado. Retorna a quantidade de matérias novas gravadas; levanta a
+    exceção original em vez de engoli-la, para o chamador decidir o que fazer
+    com a mensagem de erro (gravar em ultimo_erro e/ou devolver pro admin)."""
     agora = datetime.utcnow()
-    if fonte.ultima_busca_em and (agora - fonte.ultima_busca_em) < timedelta(hours=INTERVALO_MIN_BUSCA_HORAS):
-        return
     fonte.ultima_busca_em = agora
     try:
         itens = filtrar_relevantes(buscar_noticias_fonte(fonte.url))
+        novas = 0
         for item in itens:
             if session.exec(select(NoticiaNews).where(NoticiaNews.link == item["link"])).first():
                 continue
@@ -122,12 +127,42 @@ def _atualizar_fonte_se_necessario(session: Session, fonte: FonteNews) -> None:
                 fonte_id=fonte.id, manchete=item["manchete"], resumo=item.get("resumo"),
                 link=item["link"], data_publicacao=item.get("data"),
             ))
+            novas += 1
         fonte.ultimo_erro = None
         fonte.ultima_busca_ok_em = agora
+        session.add(fonte)
+        session.commit()
+        return novas
     except Exception as exc:  # nunca deixa uma fonte com defeito derrubar as outras
         fonte.ultimo_erro = str(exc)[:500]
-    session.add(fonte)
-    session.commit()
+        session.add(fonte)
+        session.commit()
+        raise
+
+
+def _atualizar_fonte_se_necessario(session: Session, fonte: FonteNews) -> None:
+    agora = datetime.utcnow()
+    if fonte.ultima_busca_em and (agora - fonte.ultima_busca_em) < timedelta(hours=INTERVALO_MIN_BUSCA_HORAS):
+        return
+    try:
+        _atualizar_fonte(session, fonte)
+    except Exception:
+        pass  # o erro já ficou gravado em fonte.ultimo_erro
+
+
+@router.post("/fontes/{fonte_id}/testar")
+def testar_fonte(fonte_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+    """Força uma busca imediata desta fonte, ignorando o intervalo mínimo de
+    1h — para o administrador testar depois de corrigir a URL ou de uma
+    correção no fetch, sem precisar esperar."""
+    fonte = session.get(FonteNews, fonte_id)
+    if not fonte:
+        raise HTTPException(status_code=404, detail="Fonte não encontrada")
+    try:
+        novas = _atualizar_fonte(session, fonte)
+        return {"ok": True, "materias_novas": novas, "erro": None}
+    except Exception as exc:
+        return {"ok": False, "materias_novas": 0, "erro": str(exc)[:500]}
 
 
 @router.get("/")

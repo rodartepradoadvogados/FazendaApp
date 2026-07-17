@@ -2482,6 +2482,8 @@ export const fetchFontesNews = (): Promise<FonteNews[]> => _rGet(`/news/fontes`)
 export const criarFonteNews = (d: FonteNewsIn): Promise<FonteNews> => _rSend(`/news/fontes`, "POST", d);
 export const atualizarFonteNews = (id: number, d: FonteNewsIn): Promise<FonteNews> => _rSend(`/news/fontes/${id}`, "PUT", d);
 export const excluirFonteNews = (id: number) => _rSend(`/news/fontes/${id}`, "DELETE");
+export const testarFonteNews = (id: number): Promise<{ ok: boolean; materias_novas: number; erro: string | null }> =>
+  _rSend(`/news/fontes/${id}/testar`, "POST");
 
 // ── Assistente Claude (protótipo, admin-only) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };
