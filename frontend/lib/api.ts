@@ -1941,7 +1941,7 @@ export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
 
 export async function atualizarLancamentoFinanceiro(id: number, dados: {
   descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
-  fornecedor_cliente?: string | null; numero_nota?: string | null; tipo_documento?: string | null;
+  fornecedor_cliente?: string | null; numero_nota?: string | null; numero_documento_pagamento?: string | null; tipo_documento?: string | null;
   data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
   data_prevista_entrada?: string | null; data_pedido?: string | null;
   quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;

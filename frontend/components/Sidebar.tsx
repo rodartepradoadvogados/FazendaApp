@@ -147,7 +147,7 @@ export function Sidebar() {
           principal junto. */}
       <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
         {subNav && (
-          <div className="p-3" style={{ maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "4px double var(--sidebar-border)" }}>
+          <div className="p-3" style={{ background: "var(--sidebar-subnav-bg)", maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "4px double var(--sidebar-border)" }}>
             <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
           </div>
         )}

@@ -180,6 +180,9 @@ function RebanhoVisaoGeral() {
   const total = filtrados.length;
   const gestantes = filtrados.filter((a) => a.sit_rep === "Ges.").length;
   const vazias = filtrados.filter((a) => (a.sit_rep || "").startsWith("Vaz.")).length;
+  const inseminadas = filtrados.filter((a) => a.sit_rep === "Ins.").length;
+  const vacasPev = filtrados.filter((a) => a.sit_rep === "Vaz. pev").length;
+  const aDescartar = filtrados.filter((a) => a.a_descartar).length;
   const delLact = filtrados.filter((a) => LACTACAO.includes(cod(a.grupo_primario) || "") && a.del_dias).map((a) => a.del_dias!);
   const delMedio = delLact.length ? Math.round(delLact.reduce((x, y) => x + y, 0) / delLact.length) : null;
 
@@ -231,10 +234,13 @@ function RebanhoVisaoGeral() {
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-4">
             <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">Fêmeas (filtro)</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{gestantes}</p><p className="kpi-label">Gestantes</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{vazias}</p><p className="kpi-label">Vazias</p></div>
+            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--dourado-light)" }}>{inseminadas}</p><p className="kpi-label">Inseminadas</p></div>
+            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{vacasPev}</p><p className="kpi-label">Vacas no PEV</p></div>
+            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--red)" }}>{aDescartar}</p><p className="kpi-label">A descartar</p></div>
             <div className="kpi-card"><p className="kpi-value">{delMedio ?? "—"}</p><p className="kpi-label">DEL médio (lactação)</p></div>
           </div>
 

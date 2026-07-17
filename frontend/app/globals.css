@@ -50,6 +50,9 @@
   /* Contorno do grupo de sub-abas aberto na Sidebar — ouro escuro no escuro/misto. */
   --sidebar-subnav-outline: var(--dourado);
   --sidebar-subnav-outline-bg: rgba(184, 134, 11, 0.1);
+  /* Fundo da faixa de sub-abas (abaixo da aba selecionada) — grafite no
+     tema escuro, para diferenciar visualmente do resto da barra lateral. */
+  --sidebar-subnav-bg: #34343A;
   /* Pílula de aba ativa (TabBar) e ícones de seção recolhível. No escuro o
      fundo translúcido sobre a tela escura já contrasta bem. */
   --pill-active-bg: rgba(94, 26, 46, 0.4);
@@ -87,6 +90,9 @@
   /* Contorno do grupo de sub-abas aberto — vinho no claro (fundo branco). */
   --sidebar-subnav-outline: var(--vinho);
   --sidebar-subnav-outline-bg: rgba(94, 26, 46, 0.06);
+  /* Fundo da faixa de sub-abas — palha na paleta vinho (padrão); a paleta
+     verde troca para cinza claro (ver bloco data-paleta="verde" abaixo). */
+  --sidebar-subnav-bg: #F1E8CE;
   /* No claro, a aba ativa vira vinho sólido com texto dourado-claro (alto
      contraste); os ícones de seção usam o vinho para se lerem sobre o branco. */
   --pill-active-bg: var(--vinho);
@@ -127,6 +133,9 @@
   --sidebar-logo-sub: rgba(245, 238, 241, 0.7);
   /* --sidebar-subnav-outline não é redefinido aqui: herda ouro escuro do :root
      base (a barra do misto é vinho sólido, então ouro escuro contrasta bem). */
+  /* Fundo da faixa de sub-abas — palha (paleta vinho, padrão) sobre a barra
+     lateral vinho sólida do misto; a paleta verde troca para cinza claro. */
+  --sidebar-subnav-bg: #F1E8CE;
   /* Conteúdo do misto é claro (cards brancos): mesma regra do tema claro. */
   --pill-active-bg: var(--vinho);
   --pill-active-fg: var(--dourado-light);
@@ -159,6 +168,7 @@
   --dourado-light: #4ADE80;
   --sidebar-active-bg: rgba(31, 92, 61, 0.08);
   --sidebar-subnav-outline-bg: rgba(31, 92, 61, 0.06);
+  --sidebar-subnav-bg: #E4E7EB;
 }
 :root[data-theme="misto"][data-paleta="verde"] {
   --vinho:       #1F5C3D;
@@ -166,6 +176,7 @@
   --vinho-dark:  #16402B;
   --dourado:     #2E7D52;
   --dourado-light: #4ADE80;
+  --sidebar-subnav-bg: #E4E7EB;
 }
 
 /* ── Tailwind custom colors via CSS vars ── */

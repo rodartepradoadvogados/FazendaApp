@@ -3787,15 +3787,32 @@ function FormEstoque({ estoque }: { estoque: EstoqueItem[] }) {
 
 // Tipos de lançamento, agrupados: alguns grupos (Reprodutivo, Produção) têm uma
 // camada inferior de sub-tipos, para economizar abas no menu.
+// Ordem alfabética pelo label (ignorando acento), com "Excluir lançamento"
+// sempre por último — não é alfabético de propósito (é a ação mais perigosa).
 const TIPOS_GRUPOS = [
+  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
   {
-    id: "reprodutivo", label: "Reprodutivo", icon: Heart,
-    desc: "Serviço/IA, diagnóstico de gestação ou parto/nascimento.",
+    id: "animais", label: "Animais", icon: ArrowRightLeft,
+    desc: "Movimentar animais entre lotes, comprar/vender ou dar baixa (morte/descarte).",
     subs: [
-      { id: "protocolo_iatf", label: "Protocolo IATF", icon: Heart, desc: "Agendar só o protocolo hormonal (D0/D7/D9/D11) na agenda — individual ou em lote." },
-      { id: "inseminacao", label: "Inseminação", icon: Heart, desc: "Registrar a inseminação/cobertura em si — cio natural ou de um protocolo já agendado." },
-      { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
-      { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
+      { id: "mover_animais", label: "Movimentar animais", icon: ArrowRightLeft, desc: "Transferir um ou vários animais de lote." },
+      {
+        id: "compra_venda", label: "Compra / Venda", icon: ShoppingCart, desc: "Registrar a compra ou a venda de animal(is).",
+        subs: [
+          { id: "comprar_animal", label: "Comprar animal", icon: ShoppingCart, desc: "Registrar a compra de animal(is) — vendedor via fornecedor, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
+          { id: "vender_animal", label: "Vender animal", icon: ShoppingCart, desc: "Registrar a venda de animal(is) — comprador via cadastro, motivo/categoria(s) da venda, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
+        ],
+      },
+      { id: "baixar_animal", label: "Baixa", icon: Skull, desc: "Registrar saída do rebanho: venda, morte, descarte ou marcar 'A descartar'." },
+    ],
+  },
+  { id: "estoque", label: "Balanço de estoque", icon: Package, desc: "Entrada ou saída de item do estoque (balanço do saldo).", leaf: "estoque" },
+  {
+    id: "financeiro", label: "Financeiro", icon: Wallet,
+    desc: "Lançamento de receita ou despesa.",
+    subs: [
+      { id: "financeiro_despesa", label: "Contas a pagar (despesa)", icon: Wallet, desc: "Lançamento de despesa/conta a pagar." },
+      { id: "financeiro_receita", label: "Contas a receber (receita)", icon: Wallet, desc: "Lançamento de receita/conta a receber." },
     ],
   },
   {
@@ -3809,6 +3826,16 @@ const TIPOS_GRUPOS = [
       { id: "qualidade_leite", label: "Qualidade do leite", icon: Milk, desc: "CCS, CBT, gordura, proteína, sólidos totais e ESD — por vaca ou do tanque (rebanho em lactação)." },
       { id: "entrega_leite", label: "Venda mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
       { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
+    ],
+  },
+  {
+    id: "reprodutivo", label: "Reprodutivo", icon: Heart,
+    desc: "Serviço/IA, diagnóstico de gestação ou parto/nascimento.",
+    subs: [
+      { id: "protocolo_iatf", label: "Protocolo IATF", icon: Heart, desc: "Agendar só o protocolo hormonal (D0/D7/D9/D11) na agenda — individual ou em lote." },
+      { id: "inseminacao", label: "Inseminação", icon: Heart, desc: "Registrar a inseminação/cobertura em si — cio natural ou de um protocolo já agendado." },
+      { id: "diagnostico", label: "Diagnóstico de gestação", icon: Stethoscope, desc: "Resultado do toque / diagnóstico de prenhez." },
+      { id: "parto", label: "Parto / nascimento", icon: Baby, desc: "Registro de parto, da cria e do manejo de colostro." },
     ],
   },
   {
@@ -3833,31 +3860,6 @@ const TIPOS_GRUPOS = [
       },
     ],
   },
-  {
-    id: "financeiro", label: "Financeiro", icon: Wallet,
-    desc: "Lançamento de receita ou despesa.",
-    subs: [
-      { id: "financeiro_despesa", label: "Contas a pagar (despesa)", icon: Wallet, desc: "Lançamento de despesa/conta a pagar." },
-      { id: "financeiro_receita", label: "Contas a receber (receita)", icon: Wallet, desc: "Lançamento de receita/conta a receber." },
-    ],
-  },
-  {
-    id: "animais", label: "Animais", icon: ArrowRightLeft,
-    desc: "Movimentar animais entre lotes, comprar/vender ou dar baixa (morte/descarte).",
-    subs: [
-      { id: "mover_animais", label: "Movimentar animais", icon: ArrowRightLeft, desc: "Transferir um ou vários animais de lote." },
-      {
-        id: "compra_venda", label: "Compra / Venda", icon: ShoppingCart, desc: "Registrar a compra ou a venda de animal(is).",
-        subs: [
-          { id: "comprar_animal", label: "Comprar animal", icon: ShoppingCart, desc: "Registrar a compra de animal(is) — vendedor via fornecedor, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
-          { id: "vender_animal", label: "Vender animal", icon: ShoppingCart, desc: "Registrar a venda de animal(is) — comprador via cadastro, motivo/categoria(s) da venda, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
-        ],
-      },
-      { id: "baixar_animal", label: "Baixa", icon: Skull, desc: "Registrar saída do rebanho: venda, morte, descarte ou marcar 'A descartar'." },
-    ],
-  },
-  { id: "alimentacao_dieta", label: "Alimentação", icon: Wheat, desc: "Dieta por lote: plano programado, real oferecido e histórico de abertura/encerramento.", leaf: "alimentacao_dieta" },
-  { id: "estoque", label: "Balanço de estoque", icon: Package, desc: "Entrada ou saída de item do estoque (balanço do saldo).", leaf: "estoque" },
   { id: "exclusao", label: "Excluir lançamento", icon: Trash2, desc: "Apagar um lançamento já salvo, com filtros e prévia de impacto.", leaf: "exclusao" },
 ];
 
