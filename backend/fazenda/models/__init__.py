@@ -54,6 +54,19 @@ class Animal(SQLModel, table=True):
     sisbov: Optional[str] = None
     mae_numero: Optional[str] = None
     mae_nome: Optional[str] = None
+    # Pai cadastrado manualmente (touro da fazenda, sêmen em estoque ou catálogo
+    # NAAB) — usado quando não é possível derivar o pai automaticamente a partir
+    # do serviço/parto da mãe (animal comprado, ou anterior ao uso do sistema).
+    # Tem prioridade sobre a derivação automática em ficha_animal().
+    pai_nome: Optional[str] = None
+    pai_naab: Optional[str] = None
+    # Genealogia paterna — preenchida automaticamente quando o pai (ou o avô)
+    # também está cadastrado como Animal com sua própria genealogia; senão fica
+    # disponível para seleção manual no cadastro.
+    avo_paterno_nome: Optional[str] = None
+    avo_paterno_naab: Optional[str] = None
+    bisavo_paterno_nome: Optional[str] = None
+    bisavo_paterno_naab: Optional[str] = None
     proprietario: Optional[str] = None
     valor: Optional[float] = None
     data_entrada: Optional[date] = None
@@ -798,9 +811,11 @@ class Estoque(SQLModel, table=True):
     # por aplicação/consumo e pode ser doado/recebido de cortesia). False = item
     # cadastrado só para lançamento financeiro (produto de nota), sem controle de quantidade.
     estocavel: Optional[bool] = None
-    # None/True = entra no custo físico do RMCA (ver GET /financeiro/rmca) quando
-    # há baixa de "Saída de ajuste" no período. False = excluído do cálculo mesmo
-    # tendo baixa (ex.: item que não é ração/alimento, mas usa o mesmo tipo de baixa).
+    # Campo legado — a elegibilidade do custo físico do RMCA (ver GET
+    # /financeiro/rmca) hoje é decidida por `conta_gerencial_despesa_padrao`
+    # (conta "3.01.01" — Alimentação do rebanho — ou qualquer conta dentro
+    # dela), não mais por esta flag. Mantido só para não perder dados antigos;
+    # não é mais lido nem editável via Configurações > Cadastro > Itens de estoque.
     considerar_rmca: Optional[bool] = None
     # A partir desta data o item passa a ter controle de estoque; movimentos e
     # lançamentos ANTERIORES a ela não repercutem no saldo/custo (só faz sentido

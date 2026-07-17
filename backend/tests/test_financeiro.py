@@ -511,7 +511,8 @@ class TestRmca:
         c, engine = client
         with Session(engine) as s:
             self._marcar_contas(s)
-            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5))
+            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5,
+                           conta_gerencial_despesa_padrao="3.01.01"))
             s.commit()
 
         c.post("/financeiro/lancamentos", json={
@@ -539,12 +540,14 @@ class TestRmca:
         assert fisico["rmca"] == 9000.0
         assert fisico["itens"][0]["ingrediente"] == "Ração concentrada"
 
-    def test_versao_fisica_exclui_item_marcado_como_nao_considerar_rmca(self, client):
+    def test_versao_fisica_exclui_item_fora_da_conta_gerencial_alimentacao(self, client):
         c, engine = client
         with Session(engine) as s:
             self._marcar_contas(s)
-            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5))
-            s.add(Estoque(nome="Medicamento X", quantidade=100, unidade="un", valor_unitario=10.0, considerar_rmca=False))
+            s.add(Estoque(nome="Ração concentrada", quantidade=1000, unidade="kg", valor_unitario=2.5,
+                           conta_gerencial_despesa_padrao="3.01.01"))
+            s.add(Estoque(nome="Medicamento X", quantidade=100, unidade="un", valor_unitario=10.0,
+                           conta_gerencial_despesa_padrao="3.02.01"))
             s.commit()
 
         with Session(engine) as s:
@@ -552,8 +555,8 @@ class TestRmca:
                 nome_item="Ração concentrada", movimento="Saída de ajuste", quantidade=400,
                 unidade="kg", data_movimento=date(2026, 1, 20),
             ))
-            # Item explicitamente excluído do RMCA — não deve entrar no custo físico
-            # mesmo tendo baixa de "Saída de ajuste" no período.
+            # Item de conta gerencial diferente de "3.01.01" — não deve entrar no
+            # custo físico mesmo tendo baixa de "Saída de ajuste" no período.
             s.add(MovimentoEstoque(
                 nome_item="Medicamento X", movimento="Saída de ajuste", quantidade=5,
                 unidade="un", data_movimento=date(2026, 1, 22),

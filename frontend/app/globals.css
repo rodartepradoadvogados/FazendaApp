@@ -14,6 +14,9 @@
   --vinho-dark:  #3D1120;
   --dourado:     #B8860B;
   --dourado-light: #D4A017;
+  /* Ouro fixo — não acompanha a paleta (o D do logo CWD milk fica sempre
+     dourado, mesmo na paleta verde, ao contrário de --dourado/--dourado-light). */
+  --dourado-fixo: #D4A017;
   --bg:          #0F0A0C;
   --surface:     #1C1218;
   --surface-2:   #261820;

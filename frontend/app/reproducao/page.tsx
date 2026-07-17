@@ -31,7 +31,7 @@ function ReproducaoVisaoGeral() {
   const [ordemParto, setOrdemParto] = useState<string[]>([]);
   const [ordemTentativa, setOrdemTentativa] = useState<string[]>([]);
   const [metodo, setMetodo] = useState<string[]>([]);
-  const [diag, setDiag] = useState("");
+  const [diag, setDiag] = useState<string[]>([]);
   // Filtro por DATA (de/até) OU por CICLO reprodutivo (janelas de 21 dias).
   const [modo, setModo] = useState<"data" | "ciclo">("data");
   const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
@@ -81,7 +81,7 @@ function ReproducaoVisaoGeral() {
       (!ordemParto.length || ordemParto.includes(String(s.ordem_parto))) &&
       (!ordemTentativa.length || ordemTentativa.includes(String(s.ordem_tentativa))) &&
       (!metodo.length || metodo.includes(s.metodo_ia || "")) &&
-      (!diag || (s.diagnostico || "ABERTO") === diag)
+      (!diag.length || diag.includes(s.diagnostico || "ABERTO"))
     ).sort((a, b) => ((a.data || "") < (b.data || "") ? 1 : -1));
   }, [regs, animal, ini, fim, ordemParto, ordemTentativa, metodo, diag, modo, janelas]);
 
@@ -142,8 +142,7 @@ function ReproducaoVisaoGeral() {
             <MultiFiltro label="Ordem de parto" opcoes={opc((s) => s.ordem_parto === null ? null : String(s.ordem_parto))} selecionados={ordemParto} onChange={setOrdemParto} />
             <MultiFiltro label="Ordem de tentativa" opcoes={opc((s) => s.ordem_tentativa === null ? null : String(s.ordem_tentativa))} selecionados={ordemTentativa} onChange={setOrdemTentativa} />
             <MultiFiltro label="Método" opcoes={opc((s) => s.metodo_ia || null)} selecionados={metodo} onChange={setMetodo} />
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Diagnóstico</label>
-              <select style={selStyle} value={diag} onChange={(e) => setDiag(e.target.value)}><option value="">Todos</option>{["POSITIVO", "NEGATIVO", "ABERTO"].map((o) => <option key={o}>{o}</option>)}</select></div>
+            <MultiFiltro label="Diagnóstico" opcoes={["POSITIVO", "NEGATIVO", "ABERTO"]} selecionados={diag} onChange={setDiag} />
           </div>
         </div>
 

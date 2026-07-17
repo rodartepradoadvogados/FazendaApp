@@ -14,7 +14,7 @@ const CAMPO_VAZIO: TouroIn = {
   fonte: "", rodada_prova: "", observacao: "", dados_extra: [],
 };
 
-const CAMPOS_NUMERICOS: { chave: keyof TouroIn; label: string }[] = [
+export const CAMPOS_NUMERICOS: { chave: keyof TouroIn; label: string }[] = [
   { chave: "leite_kg", label: "Leite (kg)" },
   { chave: "gordura_kg", label: "Gordura (kg)" },
   { chave: "gordura_pct", label: "Gordura (%)" },
@@ -30,7 +30,7 @@ const CAMPOS_NUMERICOS: { chave: keyof TouroIn; label: string }[] = [
   { chave: "facilidade_parto", label: "Facilidade de parto" },
 ];
 
-function parseDadosExtra(json?: string | null): [string, string][] {
+export function parseDadosExtra(json?: string | null): [string, string][] {
   if (!json) return [];
   try {
     const v = JSON.parse(json);

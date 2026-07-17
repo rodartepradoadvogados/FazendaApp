@@ -76,6 +76,9 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("proprietario", "VARCHAR"), ("valor", "FLOAT"), ("data_entrada", "DATE"),
         ("motivo_baixa", "VARCHAR"), ("data_baixa", "DATE"), ("observacoes", "VARCHAR"),
         ("a_descartar", "BOOLEAN DEFAULT false"), ("excluir_bst", "BOOLEAN DEFAULT false"),
+        ("pai_nome", "VARCHAR"), ("pai_naab", "VARCHAR"),
+        ("avo_paterno_nome", "VARCHAR"), ("avo_paterno_naab", "VARCHAR"),
+        ("bisavo_paterno_nome", "VARCHAR"), ("bisavo_paterno_naab", "VARCHAR"),
     ],
     "estoque": [
         ("finalidade", "VARCHAR"),
@@ -186,6 +189,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("numero_lancamento_gerado", "VARCHAR"),
         ("venda_recria", "BOOLEAN"),
         ("usuario_id", "INTEGER"),
+        ("motivo_outro", "VARCHAR"),
     ],
     "fonte_news": [("manual", "BOOLEAN DEFAULT false")],
     "agenda_manual": [

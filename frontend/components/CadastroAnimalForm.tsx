@@ -1,9 +1,15 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Beef, Check, Search } from "lucide-react";
-import { fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue } from "@/lib/api";
+import { useEffect, useMemo, useState } from "react";
+import { Beef, Check, Eye } from "lucide-react";
+import {
+  fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue,
+  fetchEstoqueSemen, fetchTouros, type Touro,
+} from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
+import { TouroPicker, type TouroPickerItem } from "./TouroPicker";
+import { TouroDetalheModal } from "./TouroDetalheModal";
+import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
 
 const CATEGORIAS_ANIMAL = ["Bezerra", "Novilha", "Vaca", "Touro", "Bezerro"];
 // Fallback caso o cadastro (Configurações > Cadastro > Raças e grau de
@@ -30,11 +36,15 @@ type Ficha = {
   numero: string; nome: string; sisbov: string; sexo: string; raca: string; grau_sangue: string; categoria_abrev: string;
   grupo_primario: string; data_nasc: string; data_entrada: string; proprietario: string; valor: string;
   motivo_baixa: string; data_baixa: string; mae_numero: string; mae_nome: string; observacoes: string;
+  pai_nome: string; pai_naab: string;
+  avo_paterno_nome: string; avo_paterno_naab: string;
+  bisavo_paterno_nome: string; bisavo_paterno_naab: string;
 };
 const fichaVazia: Ficha = {
   numero: "", nome: "", sisbov: "", sexo: "", raca: "Girolando", grau_sangue: "", categoria_abrev: "",
   grupo_primario: "", data_nasc: "", data_entrada: "", proprietario: "Jairo Nasser Quintiliano da Silva", valor: "",
   motivo_baixa: "", data_baixa: "", mae_numero: "", mae_nome: "", observacoes: "",
+  pai_nome: "", pai_naab: "", avo_paterno_nome: "", avo_paterno_naab: "", bisavo_paterno_nome: "", bisavo_paterno_naab: "",
 };
 
 function paraPayload(f: Ficha) {
@@ -47,8 +57,14 @@ function paraPayload(f: Ficha) {
     valor: f.valor.trim() === "" ? null : Number(f.valor),
     motivo_baixa: s(f.motivo_baixa), data_baixa: s(f.data_baixa),
     mae_numero: s(f.mae_numero), mae_nome: s(f.mae_nome), observacoes: s(f.observacoes),
+    pai_nome: s(f.pai_nome), pai_naab: s(f.pai_naab),
+    avo_paterno_nome: s(f.avo_paterno_nome), avo_paterno_naab: s(f.avo_paterno_naab),
+    bisavo_paterno_nome: s(f.bisavo_paterno_nome), bisavo_paterno_naab: s(f.bisavo_paterno_naab),
   };
 }
+
+const fmt = (v?: number | null, dec = 0) =>
+  v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
 export default function CadastroAnimalForm() {
   const [modo, setModo] = useState<"novo" | "editar">("novo");
@@ -61,9 +77,12 @@ export default function CadastroAnimalForm() {
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [racas, setRacas] = useState<string[]>(RACAS_FALLBACK);
   const [grausSangue, setGrausSangue] = useState<string[]>(GRAUS_SANGUE_FALLBACK);
+  const [naab, setNaab] = useState<Touro[]>([]);
+  const [estoqueSemen, setEstoqueSemen] = useState<TouroPickerItem[]>([]);
+  const [detalheTouro, setDetalheTouro] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
 
   useEffect(() => {
-    fetchAnimais({}).then((d) => {
+    fetchAnimais({ incluirMachos: true }).then((d) => {
       setAnimais(d);
       const grupos = Array.from(new Set(d.map((a: AnimalRow) => a.grupo_primario).filter(Boolean))) as string[];
       setLotes(grupos.sort());
@@ -76,7 +95,47 @@ export default function CadastroAnimalForm() {
       const ativos = d.filter((g: any) => g.ativo).map((g: any) => g.nome as string);
       if (ativos.length) setGrausSangue(ativos);
     }).catch(() => {});
+    fetchTouros().then(setNaab).catch(() => {});
+    fetchEstoqueSemen().then((d) => setEstoqueSemen(
+      d.map((e: any): TouroPickerItem => ({ naab: e.naab, nome: e.touro_nome, central: e.central, doses: e.doses }))
+    )).catch(() => {});
   }, []);
+
+  // Touros da fazenda (monta natural) + sêmen em estoque + catálogo NAAB, numa
+  // única lista de busca — a genealogia (pai/avô/bisavô) pode vir de qualquer
+  // uma dessas três fontes, buscável pelo nome de guerra ou código NAAB.
+  const itensTouros: TouroPickerItem[] = useMemo(() => {
+    const fazenda = (animais as any[])
+      .filter((a) => a.sexo === "M" && a.nome)
+      .map((a): TouroPickerItem => ({ nome: a.nome, naab: null }));
+    const semen = estoqueSemen;
+    const naabItens = naab.map((t): TouroPickerItem => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
+    const vistos = new Set<string>();
+    return [...fazenda, ...semen, ...naabItens].filter((t) => {
+      const chave = `${t.naab || ""}|${t.nome.toLowerCase()}`;
+      if (vistos.has(chave)) return false;
+      vistos.add(chave);
+      return true;
+    });
+  }, [animais, estoqueSemen, naab]);
+
+  function abrirFichaTouro(nome: string, naabCodigo: string) {
+    const touro = naab.find((t) => (t.naab || "").trim().toUpperCase() === naabCodigo.trim().toUpperCase())
+      || naab.find((t) => (t.nome || "").trim().toLowerCase() === nome.trim().toLowerCase());
+    if (!touro) {
+      setDetalheTouro({ titulo: nome, campos: [["NAAB", naabCodigo || "—"]] });
+      return;
+    }
+    const fixos: [string, string][] = [
+      ["NAAB", touro.naab], ["Nome completo", touro.nome_completo || "—"],
+      ["Central", touro.central || "—"], ["Raça", touro.raca || "—"],
+      ...CAMPOS_NUMERICOS.map(({ chave, label }): [string, string] => [label, fmt(touro[chave] as number | null)]),
+      ["Fonte", touro.fonte || "—"], ["Rodada da prova", touro.rodada_prova || "—"],
+    ];
+    const rotulosFixos = new Set(fixos.map(([r]) => r.trim().toLowerCase()));
+    const extras = parseDadosExtra(touro.dados_extra).filter(([r]) => !rotulosFixos.has(r.trim().toLowerCase()));
+    setDetalheTouro({ titulo: touro.nome || touro.naab, campos: [...fixos, ...extras] });
+  }
 
   const escolherParaEditar = (numero: string) => {
     setNumeroEdicao(numero);
@@ -89,6 +148,9 @@ export default function CadastroAnimalForm() {
       data_nasc: a.data_nasc || "", data_entrada: a.data_entrada || "", proprietario: a.proprietario || "",
       valor: a.valor?.toString() ?? "", motivo_baixa: a.motivo_baixa || "", data_baixa: a.data_baixa || "",
       mae_numero: a.mae_numero || "", mae_nome: a.mae_nome || "", observacoes: a.observacoes || "",
+      pai_nome: a.pai_nome || "", pai_naab: a.pai_naab || "",
+      avo_paterno_nome: a.avo_paterno_nome || "", avo_paterno_naab: a.avo_paterno_naab || "",
+      bisavo_paterno_nome: a.bisavo_paterno_nome || "", bisavo_paterno_naab: a.bisavo_paterno_naab || "",
     });
   };
 
@@ -204,14 +266,52 @@ export default function CadastroAnimalForm() {
 
           <Secao>Genealogia</Secao>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Campo label="Número da mãe"><input style={inputStyle} value={form.mae_numero} onChange={(e) => setForm({ ...form, mae_numero: e.target.value })} /></Campo>
+            <Campo label="Nome/Número da mãe"><input style={inputStyle} value={form.mae_numero} onChange={(e) => setForm({ ...form, mae_numero: e.target.value })} /></Campo>
             <Campo label="Nome da mãe"><input style={inputStyle} value={form.mae_nome} onChange={(e) => setForm({ ...form, mae_nome: e.target.value })} /></Campo>
           </div>
-          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }} className="flex items-center gap-1">
-            <Search size={12} /> Busca do touro/pai: <a href="https://absbullsearch.absglobal.com/?lang=bra-pt" target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>ABS</a>
-            {" "}·{" "}
-            <a href="https://touros.altagenetics.com.br/" target="_blank" rel="noreferrer" style={{ color: "var(--dourado-light)" }}>Alta</a>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.75rem" }}>
+            <Campo label="Nome/Número do pai">
+              <div className="flex items-center gap-2">
+                <div style={{ flex: 1 }}>
+                  <TouroPicker
+                    style={inputStyle} itens={itensTouros} value={form.pai_nome}
+                    placeholder="Buscar touro da fazenda, sêmen em estoque ou NAAB…"
+                    onChangeTexto={(v) => setForm({ ...form, pai_nome: v, pai_naab: "" })}
+                    onSelecionar={(t) => setForm({ ...form, pai_nome: t.nome, pai_naab: t.naab || "" })}
+                  />
+                </div>
+                {form.pai_nome && (
+                  <button type="button" className="btn-ghost" title="Ver ficha completa do pai"
+                    onClick={() => abrirFichaTouro(form.pai_nome, form.pai_naab)}
+                    style={{ padding: "0.4rem", flexShrink: 0 }}>
+                    <Eye size={16} />
+                  </button>
+                )}
+              </div>
+            </Campo>
+          </div>
+          <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+            Genealogia paterna (avô e bisavô): preenchida automaticamente quando o pai também está cadastrado
+            com sua própria genealogia; senão, selecione manualmente abaixo.
           </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3" style={{ marginTop: "0.4rem" }}>
+            <Campo label="Avô paterno">
+              <TouroPicker
+                style={inputStyle} itens={itensTouros} value={form.avo_paterno_nome}
+                placeholder="Selecionar (opcional)…"
+                onChangeTexto={(v) => setForm({ ...form, avo_paterno_nome: v, avo_paterno_naab: "" })}
+                onSelecionar={(t) => setForm({ ...form, avo_paterno_nome: t.nome, avo_paterno_naab: t.naab || "" })}
+              />
+            </Campo>
+            <Campo label="Bisavô paterno">
+              <TouroPicker
+                style={inputStyle} itens={itensTouros} value={form.bisavo_paterno_nome}
+                placeholder="Selecionar (opcional)…"
+                onChangeTexto={(v) => setForm({ ...form, bisavo_paterno_nome: v, bisavo_paterno_naab: "" })}
+                onSelecionar={(t) => setForm({ ...form, bisavo_paterno_nome: t.nome, bisavo_paterno_naab: t.naab || "" })}
+              />
+            </Campo>
+          </div>
 
           <Secao>Outros</Secao>
           <div className="grid grid-cols-1 gap-3">
@@ -226,6 +326,10 @@ export default function CadastroAnimalForm() {
             </button>
           </div>
         </>
+      )}
+
+      {detalheTouro && (
+        <TouroDetalheModal titulo={detalheTouro.titulo} campos={detalheTouro.campos} onFechar={() => setDetalheTouro(null)} />
       )}
     </div>
   );

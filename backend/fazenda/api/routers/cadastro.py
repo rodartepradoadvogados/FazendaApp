@@ -19,14 +19,15 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
+from sqlalchemy import func
 
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Doenca, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
-    GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
-    ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro, TipoServicoReprodutivo, Touro, Usuario,
-    ValeFuncionario, ValeParcela,
+    GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
+    ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro,
+    TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -656,8 +657,37 @@ class AnimalFichaIn(BaseModel):
     data_baixa: date | None = None
     mae_numero: str | None = None
     mae_nome: str | None = None
+    pai_nome: str | None = None
+    pai_naab: str | None = None
+    avo_paterno_nome: str | None = None
+    avo_paterno_naab: str | None = None
+    bisavo_paterno_nome: str | None = None
+    bisavo_paterno_naab: str | None = None
     observacoes: str | None = None
     excluir_bst: bool = False
+
+
+def _completar_genealogia_paterna(session: Session, animal: Animal) -> None:
+    """Se o pai foi informado mas a genealogia paterna (avô/bisavô) não foi
+    preenchida manualmente, tenta buscá-la no cadastro do animal — o pai pode
+    também estar cadastrado como Animal (touro da fazenda) com sua própria
+    genealogia já registrada; o avô, idem, uma geração acima. Sem essa cadeia
+    cadastrada não há como derivar automaticamente — quem chama decide se
+    deixa em aberto para seleção manual."""
+    if animal.pai_nome and not animal.avo_paterno_nome:
+        pai_animal = session.exec(
+            select(Animal).where(func.lower(Animal.nome) == animal.pai_nome.strip().lower())
+        ).first()
+        if pai_animal and pai_animal.pai_nome:
+            animal.avo_paterno_nome = pai_animal.pai_nome
+            animal.avo_paterno_naab = pai_animal.pai_naab
+    if animal.avo_paterno_nome and not animal.bisavo_paterno_nome:
+        avo_animal = session.exec(
+            select(Animal).where(func.lower(Animal.nome) == animal.avo_paterno_nome.strip().lower())
+        ).first()
+        if avo_animal and avo_animal.pai_nome:
+            animal.bisavo_paterno_nome = avo_animal.pai_nome
+            animal.bisavo_paterno_naab = avo_animal.pai_naab
 
 
 @router.post("/animais")
@@ -672,6 +702,7 @@ def criar_animal(dados: AnimalFichaIn, session: Session = Depends(get_session)) 
     animal = Animal(numero=numero, ativo=dados.data_baixa is None)
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
         setattr(animal, campo, valor)
+    _completar_genealogia_paterna(session, animal)
     session.add(animal)
     session.commit()
     session.refresh(animal)
@@ -687,11 +718,61 @@ def atualizar_ficha_animal(numero: str, dados: AnimalFichaIn, session: Session =
         setattr(animal, campo, valor)
     if dados.data_baixa is not None:
         animal.ativo = False
+    _completar_genealogia_paterna(session, animal)
     animal.atualizado_em = datetime.utcnow()
     session.add(animal)
     session.commit()
     session.refresh(animal)
     return animal.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Sindicância automática: vincula cada item de estoque à sua conta gerencial
+# padrão de despesa, a partir da finalidade do item — roda uma única vez
+# (SeedFlag), sem nunca sobrescrever um vínculo já feito manualmente.
+# ---------------------------------------------------------------------------
+_PALAVRAS_CHAVE_FINALIDADE = {
+    "Ração/Alimento": ["aliment"],
+    "Medicamento": ["sanidade", "medicamento", "veterinar"],
+    "Material/Insumo": ["insumo", "material"],
+    "Equipamento": ["equipamento"],
+}
+
+
+def _sem_acento(texto: str) -> str:
+    return unicodedata.normalize("NFKD", texto).encode("ascii", "ignore").decode().lower()
+
+
+def sindicar_conta_gerencial_estoque(session: Session) -> None:
+    """Para cada item de estoque sem `conta_gerencial_despesa_padrao`, tenta
+    achar a conta gerencial correspondente a partir da `finalidade` do item
+    (ver rules.categorias.FINALIDADES_ESTOQUE): "Ração/Alimento" vai para a
+    conta "3.01.01" (Alimentação do rebanho) quando ela existir; as demais
+    finalidades (e o fallback de Ração/Alimento, se "3.01.01" não existir
+    ainda) são casadas por palavra-chave no nome da conta. "Outro" e itens
+    sem finalidade definida ficam de fora — precisam de escolha manual.
+    Nunca sobrescreve um vínculo já existente. Roda uma única vez; depois
+    disso o cadastro/edição do item escolhe a conta gerencial no formulário."""
+    chave = "estoque_conta_gerencial_padrao_202607"
+    if session.get(SeedFlag, chave):
+        return
+    contas = session.exec(select(PlanoContaGerencial)).all()
+    itens = session.exec(select(Estoque).where(Estoque.conta_gerencial_despesa_padrao.is_(None))).all()
+    for item in itens:
+        finalidade = item.finalidade
+        if not finalidade or finalidade == "Outro":
+            continue
+        conta = None
+        if finalidade == "Ração/Alimento":
+            conta = next((c for c in contas if c.codigo == "3.01.01"), None)
+        if conta is None:
+            palavras = _PALAVRAS_CHAVE_FINALIDADE.get(finalidade, [])
+            conta = next((c for c in contas if any(p in _sem_acento(c.nome) for p in palavras)), None)
+        if conta:
+            item.conta_gerencial_despesa_padrao = conta.codigo
+            session.add(item)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -706,7 +787,6 @@ class EstoqueMetaIn(BaseModel):
     quantidade_embalagem: float | None = None
     fornecedor_id: int | None = None
     estocavel: bool | None = None
-    considerar_rmca: bool | None = None
     principio_ativo: str | None = None
     principio_ativo_id: int | None = None
     classificacao_medicamento: str | None = None
@@ -734,7 +814,6 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.quantidade_embalagem = dados.quantidade_embalagem
     item.fornecedor_id = dados.fornecedor_id
     item.estocavel = dados.estocavel
-    item.considerar_rmca = dados.considerar_rmca
     item.principio_ativo = dados.principio_ativo
     item.principio_ativo_id = dados.principio_ativo_id
     item.classificacao_medicamento = dados.classificacao_medicamento

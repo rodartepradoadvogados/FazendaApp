@@ -199,15 +199,30 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         d["touro_nm"] = touro.nm_dolar if touro else None
         servicos_dump.append(d)
 
-    # Pai deste animal (nome de guerra + NAAB): não existe FK direta — o
-    # animal é a cria de um Parto da mãe, e o pai é o reprodutor do serviço
-    # da mãe que mais provavelmente gerou essa gestação (o mais próximo antes
-    # do parto, dentro da janela de gestação bovina — ~260 a 295 dias).
+    # Pai deste animal (nome de guerra + NAAB). Prioridade 1: cadastrado
+    # manualmente na ficha (Configurações > Cadastro > Animal) — necessário
+    # para animais comprados ou anteriores ao uso do sistema, sem serviço/
+    # parto da mãe registrados aqui. Prioridade 2 (fallback): não existe FK
+    # direta — o animal é a cria de um Parto da mãe, e o pai é o reprodutor
+    # do serviço da mãe que mais provavelmente gerou essa gestação (o mais
+    # próximo antes do parto, dentro da janela de gestação bovina — ~260 a
+    # 295 dias).
     pai = None
+    if animal.pai_nome:
+        naab = animal.pai_naab or naab_por_touro.get(animal.pai_nome.strip().lower())
+        touro_pai = (touro_por_naab.get((naab or "").strip().upper())
+                     or touro_por_nome.get(animal.pai_nome.strip().lower()))
+        pai = {
+            "nome": animal.pai_nome,
+            "naab": naab or (touro_pai.naab if touro_pai else None),
+            "central": touro_pai.central if touro_pai else None,
+            "tpi": touro_pai.tpi if touro_pai else None,
+            "nm_dolar": touro_pai.nm_dolar if touro_pai else None,
+        }
     parto_como_cria = session.exec(
         select(Parto).where((Parto.numero_cria_1 == numero) | (Parto.numero_cria_2 == numero))
     ).first()
-    if parto_como_cria and parto_como_cria.data_parto:
+    if pai is None and parto_como_cria and parto_como_cria.data_parto:
         servicos_mae = session.exec(
             select(Servico).where(Servico.numero_matriz == parto_como_cria.numero_matriz).order_by(Servico.data_servico)
         ).all()

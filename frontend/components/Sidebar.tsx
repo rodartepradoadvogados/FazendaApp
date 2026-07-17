@@ -25,6 +25,7 @@ import {
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { CwdMilkMark } from "@/components/CwdMilkMark";
 import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
 
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
@@ -131,6 +132,7 @@ export function Sidebar() {
         style={{ borderColor: "var(--sidebar-border)" }}
       >
         <div className="flex flex-col gap-1 px-2 py-2">
+          <CwdMilkMark size={118} />
           <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
           <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
             Jairo Nasser

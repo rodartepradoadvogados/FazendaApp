@@ -1,8 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Dna, Search, Warehouse, FlaskConical, Database, X } from "lucide-react";
+import { Dna, Search, Warehouse, FlaskConical, Database } from "lucide-react";
 import { fetchEstoqueSemen, fetchTouros, fetchAnimais, type Touro } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
+import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
+import { TouroDetalheModal } from "./TouroDetalheModal";
 
 type EstoqueSemenItem = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null;
@@ -81,24 +83,22 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   };
 
   const abrirDetalheNaab = (t: Touro) => {
-    setDetalhe({
-      titulo: t.nome || t.naab,
-      campos: [
-        ["NAAB", t.naab],
-        ["Central", t.central || "—"],
-        ["Raça", t.raca || "—"],
-        ["TPI", fmt(t.tpi)],
-        ["Leite (kg)", fmt(t.leite_kg)],
-        ["Gordura (kg)", fmt(t.gordura_kg)],
-        ["Proteína (kg)", fmt(t.proteina_kg)],
-        ["NM$", fmt(t.nm_dolar)],
-        ["Facilidade de parto", fmt(t.facilidade_parto)],
-        ["Fertilidade das filhas (DPR)", fmt(t.fertilidade_filhas)],
-        ["CCS (score)", fmt(t.ccs_score)],
-        ["Fonte", t.fonte || "—"],
-        ["Rodada da prova", t.rodada_prova || "—"],
-      ],
-    });
+    const fixos: [string, string][] = [
+      ["NAAB", t.naab],
+      ["Nome completo", t.nome_completo || "—"],
+      ["Central", t.central || "—"],
+      ["Raça", t.raca || "—"],
+      ...CAMPOS_NUMERICOS.map(({ chave, label }): [string, string] => [label, fmt(t[chave] as number | null)]),
+      ["Fonte", t.fonte || "—"],
+      ["Rodada da prova", t.rodada_prova || "—"],
+      ["Observação", t.observacao || "—"],
+    ];
+    // A planilha do fornecedor (dados_extra) às vezes repete rótulos já
+    // modelados acima (ex.: "TPI", "Raça") — evita duplicar a mesma
+    // informação (e as chaves React repetidas que isso causaria).
+    const rotulosFixos = new Set(fixos.map(([rotulo]) => rotulo.trim().toLowerCase()));
+    const extras = parseDadosExtra(t.dados_extra).filter(([rotulo]) => !rotulosFixos.has(rotulo.trim().toLowerCase()));
+    setDetalhe({ titulo: t.nome || t.naab, campos: [...fixos, ...extras] });
   };
 
   useEffect(() => {
@@ -263,35 +263,14 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
         </div>
       )}
 
-      {detalhe && <DetalheTouroModal titulo={detalhe.titulo} campos={detalhe.campos} onFechar={() => setDetalhe(null)} />}
-    </div>
-  );
-}
-
-/** Modal simples de detalhes do touro — usado quando ele não tem ficha de Animal
- * própria (sêmen em estoque, catálogo NAAB, ou touro da fazenda sem cadastro). */
-function DetalheTouroModal({ titulo, campos, onFechar }: { titulo: string; campos: [string, string][]; onFechar: () => void }) {
-  return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 1000 }} onClick={onFechar}>
-      <div className="card" style={{ maxWidth: 420, width: "90%", maxHeight: "80vh", overflowY: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <div className="card-header mb-3 flex items-center justify-between">
-          <span className="flex items-center gap-2"><Dna size={16} /> {titulo}</span>
-          <button className="btn-ghost" onClick={onFechar}><X size={16} /></button>
-        </div>
-        <table className="fazenda-table" style={{ margin: 0 }}>
-          <tbody>
-            {campos.map(([label, valor]) => (
-              <tr key={label}>
-                <td style={{ fontSize: "0.78rem", color: "var(--text-muted)", whiteSpace: "nowrap" }}>{label}</td>
-                <td style={{ fontSize: "0.85rem", fontWeight: 600 }}>{valor}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-        <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.75rem" }}>
-          Este touro não tem ficha de animal cadastrada no rebanho — os dados acima são os únicos registrados sobre ele.
-        </p>
-      </div>
+      {detalhe && (
+        <TouroDetalheModal
+          titulo={detalhe.titulo}
+          campos={detalhe.campos}
+          onFechar={() => setDetalhe(null)}
+          nota="Este touro não tem ficha de animal cadastrada no rebanho — os dados acima são os únicos registrados sobre ele."
+        />
+      )}
     </div>
   );
 }

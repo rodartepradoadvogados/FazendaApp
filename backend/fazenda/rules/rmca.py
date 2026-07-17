@@ -17,13 +17,16 @@ def calcular_rmca_gerencial(itens: list[dict], codigos_receita: set[str], codigo
 def calcular_custo_fisico(movimentos: list[dict], estoque_por_nome: dict[str, dict]) -> dict:
     """Soma o consumo real (MovimentoEstoque da baixa automática da Alimentação),
     por ingrediente, multiplicado pelo valor unitário do item no Estoque.
-    Itens marcados com considerar_rmca=False (Configurações > Cadastro > Itens de
-    estoque) ficam de fora mesmo tendo baixa de "Saída de ajuste" no período —
-    sem marcação nenhuma (None/True), o item entra normalmente."""
+    Entram no custo os itens cuja conta gerencial padrão de despesa (Configurações
+    > Cadastro > Itens de estoque) é a "3.01.01 Alimentação do rebanho" ou
+    qualquer conta registrada dentro dela (código começando com "3.01.01") —
+    os demais itens (mesmo com baixa de "Saída de ajuste" no período) ficam
+    de fora do físico."""
     itens: dict[str, dict] = {}
     for m in movimentos:
         estoque = estoque_por_nome.get(m["nome_item"])
-        if estoque is not None and estoque.get("considerar_rmca") is False:
+        conta = (estoque or {}).get("conta_gerencial_despesa_padrao") or ""
+        if not conta.startswith("3.01.01"):
             continue
         # Não conta movimentos anteriores ao início do controle de estoque do item
         # (o item passou a ser controlado só a partir dessa data).
