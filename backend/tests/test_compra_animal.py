@@ -42,7 +42,7 @@ class TestRegistrarCompra:
     def test_compra_por_animal_gera_conta_gerencial_despesa(self, client):
         r = client.post("/compras-animais/", json={
             "animais": ["950", "951"], "vendedor": "Fazenda Y", "valor": 4000.0,
-            "tipo_valor": "por_animal", "data_compra": "2026-07-08",
+            "tipo_valor": "por_animal", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
         })
         assert r.status_code == 200
         corpo = r.json()
@@ -63,7 +63,7 @@ class TestRegistrarCompra:
     def test_compra_valor_total_divide_entre_animais(self, client):
         client.post("/compras-animais/", json={
             "animais": ["950", "951"], "vendedor": "Fazenda Y", "valor": 9000.0,
-            "tipo_valor": "total", "data_compra": "2026-07-08",
+            "tipo_valor": "total", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
         })
         with Session(client.engine) as s:
             conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Compra de animal")).first()
@@ -73,21 +73,22 @@ class TestRegistrarCompra:
     def test_compra_exige_vendedor_e_valor(self, client):
         r = client.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "", "valor": 4000.0,
-            "tipo_valor": "por_animal", "data_compra": "2026-07-08",
+            "tipo_valor": "por_animal", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
         })
         assert r.status_code == 400
 
     def test_compra_exige_tipo_valor_valido(self, client):
         r = client.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "Fazenda Y", "valor": 4000.0,
-            "tipo_valor": "invalido", "data_compra": "2026-07-08",
+            "tipo_valor": "invalido", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
         })
         assert r.status_code == 400
 
     def test_compra_com_comissao_redirecionada_ja_marca_como_paga(self, client):
         client.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "Fazenda Y", "valor": 4000.0,
-            "tipo_valor": "por_animal", "data_compra": "2026-07-08",
+            "tipo_valor": "por_animal", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
+            "data_pagamento": "2026-07-08", "valor_pago": 4000.0,
             "pagar_comissao": True, "corretor_nome": "Maria Corretora", "valor_comissao": 200.0,
             "forma_comissao": "redirecionado",
         })
@@ -106,7 +107,7 @@ class TestRegistrarCompra:
     def test_compra_com_comissao_separada_fica_em_aberto(self, client):
         client.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "Fazenda Y", "valor": 4000.0,
-            "tipo_valor": "por_animal", "data_compra": "2026-07-08",
+            "tipo_valor": "por_animal", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
             "pagar_comissao": True, "corretor_nome": "Maria Corretora", "valor_comissao": 200.0,
             "forma_comissao": "separado",
         })
@@ -119,7 +120,7 @@ class TestRegistrarCompra:
     def test_lista_compras_registradas(self, client):
         client.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "Fazenda Y", "valor": 4000.0,
-            "tipo_valor": "por_animal", "data_compra": "2026-07-08",
+            "tipo_valor": "por_animal", "data_compra": "2026-07-08", "codigo_conta_gerencial": "3.10.06",
         })
         r = client.get("/compras-animais/")
         assert r.status_code == 200

@@ -23,9 +23,17 @@ HOJE = date(2026, 7, 8)
 def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
+    # SQLite (StaticPool) expõe uma única conexão física real — diferente do
+    # Postgres em produção, onde cada requisição tem sua própria conexão do
+    # pool. Sem essa trava, threads concorrentes nos testes disputam a MESMA
+    # conexão e corrompem o estado de transação uma da outra (falso positivo
+    # de "race condition" que não existe em produção). A trava serializa só o
+    # acesso à conexão compartilhada; a corrida entre requisições no endpoint
+    # continua sendo exercida normalmente pelas 5 threads concorrentes.
+    lock_conexao = threading.Lock()
 
     def _get_session_override():
-        with Session(engine) as session:
+        with lock_conexao, Session(engine) as session:
             yield session
 
     import main

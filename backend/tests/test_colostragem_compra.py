@@ -94,6 +94,7 @@ class TestCompraVinculaValor:
         r = c.post("/compras-animais/", json={
             "animais": ["950"], "vendedor": "Fazenda Boa Vista", "valor": 3500,
             "tipo_valor": "por_animal", "data_compra": "2026-07-10",
+            "codigo_conta_gerencial": "3.10.06",
         })
         assert r.status_code == 200
         with Session(engine) as s:
