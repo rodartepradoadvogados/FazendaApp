@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque
+from fazenda.models import Estoque, PlanoContaGerencial, SeedFlag
 
 
 @pytest.fixture
@@ -145,15 +145,82 @@ class TestMetaEstoque:
         r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"fornecedor_id": 999})
         assert r.status_code == 400
 
-    def test_atualizar_considerar_rmca(self, client):
+    def test_considerar_rmca_nao_e_mais_editavel_pela_api(self, client):
+        # A elegibilidade do RMCA físico passou a ser automática, a partir da
+        # conta gerencial padrão do item — este campo legado não é mais aceito
+        # pela API (extra ignorado), então o valor do item não muda.
         c, engine = client
         with Session(engine) as s:
-            s.add(Estoque(nome="Medicamento X", categoria="sanidade", quantidade=10))
+            s.add(Estoque(nome="Medicamento X", categoria="sanidade", quantidade=10, considerar_rmca=True))
             s.commit()
         item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
         r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"considerar_rmca": False})
         assert r.status_code == 200
-        assert r.json()["considerar_rmca"] is False
+        assert r.json()["considerar_rmca"] is True
+
+
+class TestSindicanciaContaGerencialEstoque:
+    """Sindicância automática: item de estoque -> conta gerencial padrão."""
+
+    _CHAVE = "estoque_conta_gerencial_padrao_202607"
+
+    def _limpar_marca(self, session):
+        # A lifespan da app já roda a sindicância (SeedFlag) com o banco vazio
+        # ao subir o TestClient — remove a marca para poder testar de novo com
+        # os itens inseridos pelo teste.
+        flag = session.get(SeedFlag, self._CHAVE)
+        if flag:
+            session.delete(flag)
+            session.commit()
+
+    def test_vincula_por_finalidade_e_nunca_sobrescreve_manual(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import sindicar_conta_gerencial_estoque
+
+        with Session(engine) as s:
+            self._limpar_marca(s)
+            s.add(PlanoContaGerencial(codigo="3.01.01", nome="Alimentação do rebanho", ativa=True))
+            s.add(PlanoContaGerencial(codigo="3.02.01", nome="Sanidade animal", ativa=True))
+            s.add(Estoque(nome="Ração concentrada", finalidade="Ração/Alimento", quantidade=10))
+            s.add(Estoque(nome="Vacina X", finalidade="Medicamento", quantidade=5))
+            s.add(Estoque(nome="Já vinculado", finalidade="Ração/Alimento", quantidade=5, conta_gerencial_despesa_padrao="9.99.99"))
+            s.add(Estoque(nome="Sem finalidade", quantidade=5))
+            s.commit()
+
+        with Session(engine) as s:
+            sindicar_conta_gerencial_estoque(s)
+
+        with Session(engine) as s:
+            por_nome = {e.nome: e for e in s.exec(select(Estoque)).all()}
+            assert por_nome["Ração concentrada"].conta_gerencial_despesa_padrao == "3.01.01"
+            assert por_nome["Vacina X"].conta_gerencial_despesa_padrao == "3.02.01"
+            assert por_nome["Já vinculado"].conta_gerencial_despesa_padrao == "9.99.99"  # não sobrescreve
+            assert por_nome["Sem finalidade"].conta_gerencial_despesa_padrao is None
+
+    def test_roda_uma_unica_vez(self, client):
+        c, engine = client
+        from fazenda.api.routers.cadastro import sindicar_conta_gerencial_estoque
+
+        with Session(engine) as s:
+            self._limpar_marca(s)
+            s.add(PlanoContaGerencial(codigo="3.01.01", nome="Alimentação do rebanho", ativa=True))
+            s.add(Estoque(nome="Ração", finalidade="Ração/Alimento", quantidade=10))
+            s.commit()
+
+        with Session(engine) as s:
+            sindicar_conta_gerencial_estoque(s)
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração")).first()
+            item.conta_gerencial_despesa_padrao = None  # simula um ajuste manual, "desvinculando"
+            s.add(item)
+            s.commit()
+
+        with Session(engine) as s:
+            sindicar_conta_gerencial_estoque(s)  # já rodou uma vez — não deve rodar de novo
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Ração")).first()
+            assert item.conta_gerencial_despesa_padrao is None
 
 
 class TestPessoas:

@@ -54,6 +54,7 @@ from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
+    sindicar_conta_gerencial_estoque,
 )
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
@@ -124,6 +125,10 @@ async def lifespan(app: FastAPI):
         # que já tinha sido importado — a aba News passa a ser alimentada só
         # pelo robô agendado /milknews, sob aprovação do administrador.
         desligar_fontes_rss_e_apagar_noticias_202607(session)
+        # Compatibiliza cada item de estoque sem conta gerencial padrão com a
+        # conta correspondente (a partir da finalidade) — só preenche o que
+        # está vazio, nunca sobrescreve um vínculo já feito manualmente.
+        sindicar_conta_gerencial_estoque(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield

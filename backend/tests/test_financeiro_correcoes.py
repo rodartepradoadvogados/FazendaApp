@@ -74,7 +74,8 @@ def test_centro_custo_sigla_vira_nome_canonico(client):
 
 def test_estoque_data_inicio_controle_recorta_custo_fisico():
     # Movimento antes do início do controle não conta no custo físico do RMCA.
-    estoque = {"Milho": {"nome": "Milho", "valor_unitario": 2.0, "data_inicio_controle": date(2026, 6, 1)}}
+    estoque = {"Milho": {"nome": "Milho", "valor_unitario": 2.0, "conta_gerencial_despesa_padrao": "3.01.01",
+                          "data_inicio_controle": date(2026, 6, 1)}}
     movimentos = [
         {"nome_item": "Milho", "quantidade": 100, "data_movimento": date(2026, 5, 20)},  # antes → ignora
         {"nome_item": "Milho", "quantidade": 30, "data_movimento": date(2026, 6, 10)},   # depois → conta
