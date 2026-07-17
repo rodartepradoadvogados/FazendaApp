@@ -381,7 +381,10 @@ export async function fetchPessoas() {
   if (!res.ok) throw new Error(`Pessoas error: ${res.status}`);
   return res.json();
 }
-type PessoaDados = { nome: string; tipos: string[]; telefone?: string; email?: string; observacoes?: string; ativo?: boolean; salario_base?: number };
+type PessoaDados = {
+  nome: string; tipos: string[]; telefone?: string; email?: string; observacoes?: string; ativo?: boolean;
+  salario_base?: number; data_admissao?: string;
+};
 export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -399,6 +402,33 @@ export async function atualizarPessoa(id: number, dados: PessoaDados) {
 export async function fetchInseminadores(): Promise<string[]> {
   const res = await authFetch(`${API}/cadastro/pessoas/inseminadores`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Inseminadores error: ${res.status}`);
+  return res.json();
+}
+
+// ── Tipos de pessoa (Configurações > Cadastro > Pessoas, botão "+") ──
+export async function fetchTiposPessoa(): Promise<{ id: number; nome: string; ativo: boolean }[]> {
+  const res = await authFetch(`${API}/cadastro/pessoas/tipos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Tipos de pessoa error: ${res.status}`);
+  return res.json();
+}
+export async function criarTipoPessoa(nome: string) {
+  const res = await authFetch(`${API}/cadastro/pessoas/tipos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ nome }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar tipo de pessoa"); }
+  return res.json();
+}
+
+// Sugestão de valor proporcional da folha no mês de admissão da pessoa (ou
+// null fora desse mês) — usada em Financeiro > Ações > Folha de Pagamento.
+export async function fetchProporcionalAdmissao(pessoaId: number, competencia: string): Promise<
+  { dias_trabalhados: number; dias_mes: number; fracao: number } | null
+> {
+  const res = await authFetch(
+    `${API}/cadastro/folha-pagamento/proporcional-admissao?pessoa_id=${pessoaId}&competencia=${competencia}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) throw new Error(`Proporcional admissão error: ${res.status}`);
   return res.json();
 }
 
@@ -448,6 +478,72 @@ export async function criarVale(dados: {
     err.status = res.status;
     throw err;
   }
+  return res.json();
+}
+
+// ── Empreitada (Financeiro > Ações > Folha de Pagamento) ──
+export async function fetchEmpreitadas() {
+  const res = await authFetch(`${API}/cadastro/empreitadas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Empreitadas error: ${res.status}`);
+  return res.json();
+}
+export async function criarEmpreitada(dados: {
+  pessoa_id: number; descricao: string; valor_total: number; tipo_pagamento: string; observacao?: string;
+  parcelas?: { data_vencimento: string; valor: number }[];
+  etapas?: { nome: string; valor: number }[];
+}) {
+  const res = await authFetch(`${API}/cadastro/empreitadas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar empreitada"); }
+  return res.json();
+}
+export async function concluirEtapaEmpreitada(empreitadaId: number, etapaId: number) {
+  const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/etapas/${etapaId}/concluir`, { method: "PUT" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao concluir etapa"); }
+  return res.json();
+}
+
+// ── Contrato (Financeiro > Ações > Folha de Pagamento) ──
+export async function fetchContratos() {
+  const res = await authFetch(`${API}/cadastro/contratos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Contratos error: ${res.status}`);
+  return res.json();
+}
+export async function criarContrato(dados: {
+  pessoa_id: number; descricao: string; valor_total: number; forma_pagamento?: string | null; observacao?: string;
+  parcelas?: { data_vencimento: string; valor: number }[];
+}) {
+  const res = await authFetch(`${API}/cadastro/contratos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar contrato"); }
+  return res.json();
+}
+export async function encerrarContrato(id: number) {
+  const res = await authFetch(`${API}/cadastro/contratos/${id}/encerrar`, { method: "PUT" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao encerrar contrato"); }
+  return res.json();
+}
+
+// ── Diária (Financeiro > Ações > Folha de Pagamento) ──
+export async function fetchDiarias() {
+  const res = await authFetch(`${API}/cadastro/diarias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Diárias error: ${res.status}`);
+  return res.json();
+}
+export async function criarDiaria(dados: { pessoa_id: number; valor_diaria: number; data_inicio: string; observacao?: string }) {
+  const res = await authFetch(`${API}/cadastro/diarias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar diária"); }
+  return res.json();
+}
+export async function registrarPagamentoDiaria(diariaId: number, dados: { data_pagamento: string; valor: number; observacao?: string }) {
+  const res = await authFetch(`${API}/cadastro/diarias/${diariaId}/pagamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar pagamento"); }
   return res.json();
 }
 

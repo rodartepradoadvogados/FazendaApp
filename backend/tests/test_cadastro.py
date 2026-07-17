@@ -4,7 +4,7 @@ itens de estoque (Configurações > Cadastro).
 """
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 from fastapi.testclient import TestClient
@@ -272,6 +272,71 @@ class TestPessoas:
         r = c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Diarista X", "tipos": ["Diarista"], "ativo": False})
         assert r.status_code == 200
         assert r.json()["ativo"] is False
+
+
+class TestTipoPessoa:
+    def test_lista_tipos_seedados(self, client):
+        c, engine = client
+        nomes = {t["nome"] for t in c.get("/cadastro/pessoas/tipos").json()}
+        assert "Funcionário" in nomes
+        assert "Empreiteiro" in nomes
+
+    def test_cria_novo_tipo_e_usa_na_pessoa(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas/tipos", json={"nome": "Consultor"})
+        assert r.status_code == 200
+        r = c.post("/cadastro/pessoas", json={"nome": "Fulano Consultor", "tipos": ["Consultor"]})
+        assert r.status_code == 200
+        assert r.json()["tipos"] == ["Consultor"]
+
+    def test_nao_permite_tipo_duplicado(self, client):
+        c, engine = client
+        c.get("/cadastro/pessoas/tipos")  # garante seed
+        r = c.post("/cadastro/pessoas/tipos", json={"nome": "Funcionário"})
+        assert r.status_code == 409
+
+    def test_atualiza_tipo(self, client):
+        c, engine = client
+        tipo_id = c.post("/cadastro/pessoas/tipos", json={"nome": "Estagiário"}).json()["id"]
+        r = c.put(f"/cadastro/pessoas/tipos/{tipo_id}", json={"nome": "Estagiário", "ativo": False})
+        assert r.status_code == 200
+        assert r.json()["ativo"] is False
+
+
+class TestProporcionalAdmissao:
+    def _pessoa(self, c, data_admissao=None):
+        return c.post("/cadastro/pessoas", json={
+            "nome": "Funcionário Novo", "tipos": ["Funcionário"], "data_admissao": data_admissao,
+        }).json()["id"]
+
+    def test_sem_data_admissao_retorna_none(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.get("/cadastro/folha-pagamento/proporcional-admissao", params={"pessoa_id": pessoa_id, "competencia": "2026-07"})
+        assert r.status_code == 200
+        assert r.json() is None
+
+    def test_fora_do_mes_de_admissao_retorna_none(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, "2026-06-15")
+        r = c.get("/cadastro/folha-pagamento/proporcional-admissao", params={"pessoa_id": pessoa_id, "competencia": "2026-07"})
+        assert r.status_code == 200
+        assert r.json() is None
+
+    def test_calcula_fracao_do_mes_de_admissao(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, "2026-07-16")
+        r = c.get("/cadastro/folha-pagamento/proporcional-admissao", params={"pessoa_id": pessoa_id, "competencia": "2026-07"})
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["dias_mes"] == 31
+        assert dados["dias_trabalhados"] == 16
+        assert dados["fracao"] == round(16 / 31, 6)
+
+    def test_pessoa_inexistente_404(self, client):
+        c, engine = client
+        r = c.get("/cadastro/folha-pagamento/proporcional-admissao", params={"pessoa_id": 999999, "competencia": "2026-07"})
+        assert r.status_code == 404
 
 
 class TestFolhaPagamento:
@@ -715,3 +780,189 @@ class TestServicoCadastro:
         c.post("/cadastro/servicos", json={"nome": "Roçagem"})
         r = c.post("/cadastro/servicos", json={"nome": "Roçagem"})
         assert r.status_code == 409
+
+
+class TestEmpreitada:
+    def _empreiteiro(self, c):
+        return c.post("/cadastro/pessoas", json={"nome": "João Empreiteiro", "tipos": ["Empreiteiro"]}).json()["id"]
+
+    def test_global_por_frequencia_gera_parcelas_e_contas_a_pagar(self, client):
+        c, engine = client
+        pessoa_id = self._empreiteiro(c)
+        r = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem geral", "valor_total": 3000.0,
+            "tipo_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-05", "valor": 1500.0},
+                {"data_vencimento": "2026-09-05", "valor": 1500.0},
+            ],
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert len(dados["parcelas"]) == 2
+        assert all(p["status"] == "pendente" for p in dados["parcelas"])
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Empreitada")).all()
+            assert len(contas) == 2
+            assert {c.valor_total for c in contas} == {1500.0}
+
+    def test_por_etapa_cria_etapas_editaveis(self, client):
+        c, engine = client
+        pessoa_id = self._empreiteiro(c)
+        r = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Construção de cerca", "valor_total": 4000.0,
+            "tipo_pagamento": "por_etapa",
+            "etapas": [
+                {"nome": "Etapa 1 - mourões", "valor": 2000.0},
+                {"nome": "Etapa 2 - arame", "valor": 2000.0},
+            ],
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert len(dados["etapas"]) == 2
+        assert all(not et["concluida"] for et in dados["etapas"])
+
+    def test_concluir_etapa_gera_conta_no_dia_1_do_mes_seguinte(self, client):
+        c, engine = client
+        pessoa_id = self._empreiteiro(c)
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Cerca", "valor_total": 1000.0,
+            "tipo_pagamento": "por_etapa",
+            "etapas": [{"nome": "Única etapa", "valor": 1000.0}],
+        }).json()
+        etapa_id = empreitada["etapas"][0]["id"]
+        r = c.put(f"/cadastro/empreitadas/{empreitada['id']}/etapas/{etapa_id}/concluir")
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["etapas"][0]["concluida"] is True
+        assert dados["status"] == "concluida"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == dados["etapas"][0]["numero_lancamento_gerado"]
+            )).first()
+            assert conta is not None
+            assert conta.data_vencimento.day == 1
+            assert conta.valor_total == 1000.0
+
+    def test_rejeita_pessoa_inexistente(self, client):
+        c, engine = client
+        r = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": 999999, "descricao": "X", "valor_total": 100.0, "tipo_pagamento": "mensal",
+            "parcelas": [{"data_vencimento": "2026-08-05", "valor": 100.0}],
+        })
+        assert r.status_code == 404
+
+    def test_rejeita_tipo_pagamento_invalido(self, client):
+        c, engine = client
+        pessoa_id = self._empreiteiro(c)
+        r = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "X", "valor_total": 100.0, "tipo_pagamento": "anual",
+        })
+        assert r.status_code == 400
+
+
+class TestContrato:
+    def _pessoa(self, c):
+        return c.post("/cadastro/pessoas", json={"nome": "Prestador X", "tipos": ["Prestador de serviços"]}).json()["id"]
+
+    def test_com_frequencia_gera_parcelas(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "Consultoria mensal", "valor_total": 6000.0,
+            "forma_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-10", "valor": 2000.0},
+                {"data_vencimento": "2026-09-10", "valor": 2000.0},
+                {"data_vencimento": "2026-10-10", "valor": 2000.0},
+            ],
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert len(dados["parcelas"]) == 3
+        assert dados["status"] == "ativo"
+
+    def test_sem_frequencia_cria_lembrete_recorrente_na_agenda(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "Parceria sem data fixa", "valor_total": 5000.0,
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["parcelas"] == []
+        assert dados["origem_lembrete_agenda_id"] is not None
+        with Session(engine) as s:
+            from fazenda.models import AgendaManual
+            lembrete = s.get(AgendaManual, dados["origem_lembrete_agenda_id"])
+            assert lembrete is not None
+            assert lembrete.recorrente is True
+            assert lembrete.intervalo_meses == 1
+            assert lembrete.data_evento.day == 1
+
+    def test_encerrar_contrato_desativa_lembrete(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        contrato = c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "Parceria", "valor_total": 1000.0,
+        }).json()
+        r = c.put(f"/cadastro/contratos/{contrato['id']}/encerrar")
+        assert r.status_code == 200
+        assert r.json()["status"] == "encerrado"
+        with Session(engine) as s:
+            from fazenda.models import AgendaManual
+            lembrete = s.get(AgendaManual, contrato["origem_lembrete_agenda_id"])
+            assert lembrete.recorrente is False
+
+    def test_rejeita_forma_pagamento_invalida(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "X", "valor_total": 100.0, "forma_pagamento": "anual",
+        })
+        assert r.status_code == 400
+
+
+class TestDiaria:
+    def _diarista(self, c):
+        return c.post("/cadastro/pessoas", json={"nome": "Maria Diarista", "tipos": ["Diarista"]}).json()["id"]
+
+    def test_calcula_dias_e_saldo_devedor(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        inicio = date.today() - timedelta(days=4)  # hoje + 4 dias atrás = 5 diárias
+        r = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(),
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["numero_diarias"] == 5
+        assert dados["total_ate_hoje"] == 500.0
+        assert dados["valor_pago"] == 0.0
+        assert dados["saldo_devedor"] == 500.0
+
+    def test_registrar_pagamento_abate_saldo(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        inicio = date.today() - timedelta(days=1)  # 2 diárias
+        diaria_id = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(),
+        }).json()["id"]
+        r = c.post(f"/cadastro/diarias/{diaria_id}/pagamentos", json={
+            "data_pagamento": date.today().isoformat(), "valor": 150.0,
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["valor_pago"] == 150.0
+        assert dados["saldo_devedor"] == 50.0
+        assert len(dados["pagamentos"]) == 1
+
+    def test_rejeita_valor_diaria_invalido(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        r = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 0, "data_inicio": date.today().isoformat(),
+        })
+        assert r.status_code == 400

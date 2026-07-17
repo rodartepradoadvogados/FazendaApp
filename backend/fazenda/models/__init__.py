@@ -862,6 +862,23 @@ class Fornecedor(SQLModel, table=True):
 # diarista, prestador de serviços. Distinto de Fornecedor: pessoa entra em
 # folha de pagamento, não em nota de compra.
 # ---------------------------------------------------------------------------
+class TipoPessoa(SQLModel, table=True):
+    """
+    Tipo de pessoa cadastrável (Funcionário, Veterinário, Empreiteiro...) —
+    usado no seletor "Tipo(s)" do Cadastro de Pessoas. Substitui a lista fixa
+    TIPOS_PESSOA por uma tabela editável em tempo de execução (botão "+" no
+    Cadastro de Pessoas), para que novos tipos apareçam em todos os relatórios
+    sem precisar de deploy.
+    """
+
+    __tablename__ = "tipo_pessoa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class Pessoa(SQLModel, table=True):
     """Cadastro de pessoas — funcionários e prestadores ligados à fazenda."""
 
@@ -869,7 +886,7 @@ class Pessoa(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços
+    tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
     telefone: Optional[str] = None
     email: Optional[str] = None
     observacoes: Optional[str] = None
@@ -878,6 +895,10 @@ class Pessoa(SQLModel, table=True):
 
     # Referência para o limite de 40% de desconto de vale (ver ValeFuncionario).
     salario_base: Optional[float] = None
+
+    # Data de admissão — usada para calcular a folha proporcional do 1º mês
+    # (dias trabalhados / dias do mês) no lançamento de Folha de Pagamento.
+    data_admissao: Optional[date] = None
 
 
 # ---------------------------------------------------------------------------
@@ -953,6 +974,131 @@ class ValeParcela(SQLModel, table=True):
     competencia: str = Field(index=True)  # "AAAA-MM"
     valor: float
     aplicada: bool = False  # já foi somada aos descontos de algum lançamento de folha?
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Empreitada — trabalho contratado com um empreiteiro (Pessoa do tipo
+# "Empreiteiro"), pago por frequência fixa (mensal/semanal/quinzenal, parcelas
+# editáveis como no lançamento financeiro) ou por etapa concluída (cada etapa
+# gera uma conta a pagar — e portanto uma pendência de Agenda — no dia 1º do
+# mês seguinte à conclusão).
+# ---------------------------------------------------------------------------
+class Empreitada(SQLModel, table=True):
+    """Empreita lançada para um empreiteiro — valor total e forma de pagamento."""
+
+    __tablename__ = "empreitada"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    descricao: str
+    valor_total: float
+    tipo_pagamento: str  # mensal | semanal | quinzenal | por_etapa
+    status: str = "em_andamento"  # em_andamento | concluida
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+class EmpreitadaParcela(SQLModel, table=True):
+    """Parcela de pagamento de uma empreitada com frequência fixa — mesmo
+    padrão de parcelamento editável do lançamento financeiro."""
+
+    __tablename__ = "empreitada_parcela"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    empreitada_id: int = Field(foreign_key="empreitada.id")
+    data_vencimento: date
+    valor: float
+    numero_lancamento_gerado: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class EmpreitadaEtapa(SQLModel, table=True):
+    """Etapa de uma empreitada paga por etapa — ao marcar concluída, lança a
+    conta a pagar (e portanto a pendência de Agenda) no dia 1º do mês
+    seguinte, para análise/pagamento."""
+
+    __tablename__ = "empreitada_etapa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    empreitada_id: int = Field(foreign_key="empreitada.id")
+    nome: str
+    valor: float
+    ordem: int = 0
+    concluida: bool = False
+    data_conclusao: Optional[date] = None
+    numero_lancamento_gerado: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Contrato — valor total pago por frequência fixa (parcelas editáveis, mesmo
+# padrão do Financeiro) ou, sem frequência definida, com lembrete mensal na
+# Agenda (todo dia 1º) para pagar ou definir uma nova data.
+# ---------------------------------------------------------------------------
+class Contrato(SQLModel, table=True):
+    """Contrato de prestação de serviço/parceria lançado para uma pessoa."""
+
+    __tablename__ = "contrato"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    descricao: str
+    valor_total: float
+    forma_pagamento: Optional[str] = None  # mensal | quinzenal | semanal | None (sem frequência definida)
+    status: str = "ativo"  # ativo | encerrado
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Linha-modelo do lembrete mensal na Agenda, criada só quando forma_pagamento é None.
+    origem_lembrete_agenda_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+class ContratoParcela(SQLModel, table=True):
+    """Parcela de pagamento de um contrato com frequência fixa — mesmo padrão
+    de parcelamento editável do lançamento financeiro."""
+
+    __tablename__ = "contrato_parcela"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    contrato_id: int = Field(foreign_key="contrato.id")
+    data_vencimento: date
+    valor: float
+    numero_lancamento_gerado: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Diária — valor da diária + data de início; o sistema conta diariamente até
+# hoje e mantém o saldo devedor a partir dos pagamentos registrados.
+# ---------------------------------------------------------------------------
+class Diaria(SQLModel, table=True):
+    """Diarista lançada — valor da diária e data de início da contagem."""
+
+    __tablename__ = "diaria"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    valor_diaria: float
+    data_inicio: date
+    status: str = "ativo"  # ativo | encerrado
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+class DiariaPagamento(SQLModel, table=True):
+    """Pagamento registrado para uma diarista — abate o saldo devedor acumulado."""
+
+    __tablename__ = "diaria_pagamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    diaria_id: int = Field(foreign_key="diaria.id")
+    data_pagamento: date
+    valor: float
+    observacao: Optional[str] = None
+    numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
