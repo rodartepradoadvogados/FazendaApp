@@ -194,6 +194,19 @@ FLUXOS: dict[str, dict] = {
             C("forma_pagamento", "Forma de pagamento", "texto", obrigatorio=False),
         ],
     },
+    # Matéria trazida pelo robô agendado externo (/milknews) via POST
+    # /news/manual — não é conversa (o motor de conversa do Telegram nunca
+    # abre este fluxo); os "campos" só alimentam o resumo da tela de aprovação.
+    "noticia_manual": {
+        "rotulo": "📰 Notícia (importação automática)",
+        "campos": [
+            C("fonte_nome", "Fonte", "texto", obrigatorio=False),
+            C("manchete", "Manchete", "texto", obrigatorio=False),
+            C("resumo", "Resumo", "texto", obrigatorio=False),
+            C("link", "Link", "texto", obrigatorio=False),
+            C("data_publicacao", "Data de publicação", "texto", obrigatorio=False),
+        ],
+    },
 }
 
 
@@ -317,6 +330,10 @@ def criar_registro(tipo: str, dados: dict, session: Session) -> dict:
 
     if tipo in ("despesa", "receita"):
         return _criar_lancamento_financeiro(tipo, dados, session)
+
+    if tipo == "noticia_manual":
+        from fazenda.api.routers.news import criar_noticia_a_partir_de_pendente
+        return criar_noticia_a_partir_de_pendente(dados, session)
 
     raise ValueError(f"Tipo de lançamento desconhecido: {tipo}")
 

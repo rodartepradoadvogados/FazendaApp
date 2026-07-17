@@ -58,7 +58,7 @@ from fazenda.api.routers.cadastro import (
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
-from fazenda.api.routers.news import seed_fontes_news
+from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_202607, seed_fontes_news
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -120,6 +120,10 @@ async def lifespan(app: FastAPI):
         # News: 3 fontes nacionais + 2 internacionais de jornalismo sobre
         # pecuária leiteira — editável depois em Configurações > News (admin).
         seed_fontes_news(session)
+        # Decisão do usuário (jul/2026): desliga essas 5 fontes RSS e apaga o
+        # que já tinha sido importado — a aba News passa a ser alimentada só
+        # pelo robô agendado /milknews, sob aprovação do administrador.
+        desligar_fontes_rss_e_apagar_noticias_202607(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield
