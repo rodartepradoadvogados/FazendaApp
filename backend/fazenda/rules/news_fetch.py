@@ -1,15 +1,22 @@
 """
 Busca de notícias para o agregador "News" (blog de pecuária leiteira).
 
-Cada fonte cadastrada (Configurações > News, só administrador) é buscada como
-feed RSS/Atom — direto na URL cadastrada, ou descoberto a partir do
-<link rel="alternate" type="application/rss+xml"> da página, quando a URL
-cadastrada é a home do site em vez do feed em si. Nunca baixa o texto
-integral da matéria: só manchete, resumo (description/summary do próprio
-feed) e o link para a fonte original, respeitando direito autoral.
+Cada fonte cadastrada (Configurações > News, só administrador) é buscada em
+duas tentativas:
+  1. Direto na URL cadastrada — como feed RSS/Atom, ou descoberto a partir do
+     <link rel="alternate" type="application/rss+xml"> da página, quando a
+     URL cadastrada é a home do site em vez do feed em si.
+  2. Se a primeira falhar (muitos desses sites bloqueiam requisição de
+     servidor por trás de proteção anti-bot — Cloudflare e afins — mesmo com
+     cabeçalhos de navegador), cai no feed RSS público do Google Notícias
+     filtrado por `site:<domínio>`, que não depende do site original liberar
+     acesso automatizado. Mesmo formato RSS 2.0, reaproveita o mesmo parser.
+Nunca baixa o texto integral da matéria: só manchete, resumo (description/
+summary do próprio feed) e o link para a fonte original, respeitando direito
+autoral.
 
-Uma fonte que falhar (rede, HTTP, layout sem feed) levanta RuntimeError com
-uma mensagem curta — o chamador (fazenda.api.routers.news) grava isso em
+Uma fonte que falhar nas duas tentativas levanta RuntimeError com uma
+mensagem curta — o chamador (fazenda.api.routers.news) grava isso em
 FonteNews.ultimo_erro para o administrador ver e substituir/corrigir a URL,
 sem derrubar as outras fontes nem a página toda.
 """
@@ -20,13 +27,40 @@ import re
 import unicodedata
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin, urlparse
 from xml.etree import ElementTree as ET
 
 import httpx
 
 TIMEOUT = httpx.Timeout(15.0)
-HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; FazendaAppNewsBot/1.0; +https://fazenda-app-jfye.vercel.app/)"}
+# Cabeçalhos de navegador de verdade — várias dessas fontes usam proteção
+# anti-bot (Cloudflare e afins) que bloqueia um User-Agent que se identifica
+# como bot, mesmo sem nenhum comportamento abusivo por trás.
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
+}
+
+# Fallback via Google Notícias (RSS público, sem chave de API) — usado quando
+# a fonte cadastrada bloqueia acesso automatizado direto. `when:Nd` já limita
+# a busca aos últimos N dias na origem, além do filtro de janela feito depois
+# em fazenda.api.routers.news.
+GOOGLE_NEWS_JANELA_DIAS = 7
+
+
+def _locale_por_dominio(dominio: str) -> tuple[str, str, str]:
+    """(hl, gl, ceid) do Google Notícias — português/Brasil para domínios
+    .br, inglês/EUA para o resto (as duas fontes internacionais cadastradas)."""
+    if dominio.endswith(".br"):
+        return "pt-BR", "BR", "BR:pt-419"
+    return "en-US", "US", "US:en"
+
+
+def _url_google_news(dominio: str) -> str:
+    hl, gl, ceid = _locale_por_dominio(dominio)
+    query = quote(f"site:{dominio} when:{GOOGLE_NEWS_JANELA_DIAS}d")
+    return f"https://news.google.com/rss/search?q={query}&hl={hl}&gl={gl}&ceid={ceid}"
 
 # Palavras-chave do setor (normalizadas: minúsculas, sem acento) — uma matéria
 # só entra se manchete+resumo citarem pelo menos uma delas.
@@ -148,28 +182,59 @@ def _descobrir_feed(html_texto: str, base_url: str) -> str | None:
     return None
 
 
-def buscar_noticias_fonte(url: str) -> list[dict]:
-    """Busca uma fonte e retorna os itens (manchete/resumo/link/data), sem
-    filtrar por relevância ainda. Levanta RuntimeError com mensagem curta em
-    qualquer falha (rede, HTTP, ou site sem feed localizável)."""
-    with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
-        try:
-            resp = client.get(url)
-        except httpx.HTTPError as exc:
-            raise RuntimeError(f"Falha ao conectar: {exc}") from exc
-        if resp.status_code >= 400:
-            raise RuntimeError(f"HTTP {resp.status_code} ao acessar o site")
+def _tentar_direto(client: httpx.Client, url: str) -> tuple[list[dict] | None, str | None]:
+    """1ª tentativa: a URL cadastrada, como feed direto ou com autodescoberta
+    de feed na página. Retorna (itens, None) OU (None, motivo_da_falha) —
+    nunca levanta, para o chamador poder cair no fallback do Google Notícias."""
+    try:
+        resp = client.get(url)
+    except httpx.HTTPError as exc:
+        return None, f"Falha ao conectar: {exc}"
+    if resp.status_code >= 400:
+        return None, f"HTTP {resp.status_code} ao acessar o site"
 
-        itens = _extrair_itens_xml(resp.content)
-        if itens is None:
-            feed_url = _descobrir_feed(resp.text, str(resp.url))
-            if feed_url and feed_url != url:
-                try:
-                    resp2 = client.get(feed_url)
-                except httpx.HTTPError as exc:
-                    raise RuntimeError(f"Falha ao conectar ao feed: {exc}") from exc
+    itens = _extrair_itens_xml(resp.content)
+    if itens is None:
+        feed_url = _descobrir_feed(resp.text, str(resp.url))
+        if feed_url and feed_url != url:
+            try:
+                resp2 = client.get(feed_url)
+            except httpx.HTTPError:
+                feed_url = None
+            else:
                 if resp2.status_code < 400:
                     itens = _extrair_itens_xml(resp2.content)
         if itens is None:
-            raise RuntimeError("Não foi possível localizar um feed RSS/Atom válido neste site — cadastre a URL do feed diretamente")
-    return itens
+            return None, "Não foi possível localizar um feed RSS/Atom válido nesta URL"
+    return itens, None
+
+
+def _tentar_google_news(client: httpx.Client, url: str) -> list[dict] | None:
+    """2ª tentativa: feed RSS público do Google Notícias filtrado por
+    site:<domínio> — funciona mesmo quando o site original bloqueia acesso
+    automatizado (proteção anti-bot), já que quem responde é o Google."""
+    dominio = urlparse(url).netloc.removeprefix("www.")
+    if not dominio:
+        return None
+    try:
+        resp = client.get(_url_google_news(dominio))
+    except httpx.HTTPError:
+        return None
+    if resp.status_code >= 400:
+        return None
+    return _extrair_itens_xml(resp.content)
+
+
+def buscar_noticias_fonte(url: str) -> list[dict]:
+    """Busca uma fonte e retorna os itens (manchete/resumo/link/data), sem
+    filtrar por relevância ainda. Tenta a URL cadastrada primeiro; se falhar,
+    cai no Google Notícias filtrado por esse domínio. Levanta RuntimeError com
+    mensagem curta só se as duas tentativas falharem."""
+    with httpx.Client(timeout=TIMEOUT, headers=HEADERS, follow_redirects=True) as client:
+        itens, motivo = _tentar_direto(client, url)
+        if itens:
+            return itens
+        itens_google = _tentar_google_news(client, url)
+        if itens_google:
+            return itens_google
+        raise RuntimeError(motivo or "Não foi possível buscar notícias desta fonte (direto ou via Google Notícias)")

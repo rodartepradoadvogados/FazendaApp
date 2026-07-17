@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Newspaper,
+  Wallet, FileText, BarChart3, Receipt, Palette,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -94,6 +94,15 @@ export default function Pagina() {
 
   useEffect(() => { setMontado(true); }, []);
 
+  // Atalho do ícone "News" no cabeçalho do app (/app/menu#news) — abre a
+  // sub-tela direto, sem passar pela grade de sessões.
+  useEffect(() => {
+    const verificarHash = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
+    verificarHash();
+    window.addEventListener("hashchange", verificarHash);
+    return () => window.removeEventListener("hashchange", verificarHash);
+  }, []);
+
   async function enviarAgora() {
     setSincronizando(true);
     try { await sincronizar(); } finally { setSincronizando(false); }
@@ -113,9 +122,18 @@ export default function Pagina() {
     ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
 
-  // News é uma tela única (sem 2º nível de itens), igual "Aparência".
+  // News é uma tela única (sem 2º nível de itens), igual "Aparência". Limpa o
+  // hash ao voltar, senão um 2º clique no ícone do cabeçalho (mesmo href) não
+  // dispara "hashchange" e a sub-tela não reabre.
   if (secaoAberta === "news") {
-    return <News onVoltar={() => setSecaoAberta(null)} />;
+    return (
+      <News
+        onVoltar={() => {
+          if (window.location.hash === "#news") history.replaceState(null, "", "/app/menu");
+          setSecaoAberta(null);
+        }}
+      />
+    );
   }
 
   // 2º nível: itens da sessão escolhida, em quadrados.
@@ -143,7 +161,6 @@ export default function Pagina() {
   // 1º nível: sessões, em quadrados coloridos.
   const secoesOpcoes: OpcaoAcao[] = [
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
-    { id: "news", label: "News", icone: <Newspaper size={26} />, cor: "var(--mob-amarelo)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
