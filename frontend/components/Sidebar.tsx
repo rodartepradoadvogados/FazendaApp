@@ -269,7 +269,7 @@ function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
                 padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
                 border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
                 background: ativo ? "var(--sidebar-active-bg)" : "transparent",
-                color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+                color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
                 fontSize: "10px", fontWeight: ativo ? 700 : 500,
               }}>
               <Icon size={depth ? 13 : 16} /> {n.label}

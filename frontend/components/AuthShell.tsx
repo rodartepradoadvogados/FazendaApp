@@ -9,6 +9,7 @@ import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NewsButton } from "@/components/NewsButton";
 import { SubNavProvider } from "@/components/SubNavContext";
 import AssistenteClaude from "@/components/AssistenteClaude";
+import { SectionBackground } from "@/components/SectionBackground";
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -66,7 +67,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <NewsButton />
         <NotificationBell />
         <AssistenteClaude />
-        <main className="flex-1 md:overflow-y-auto app-main">{children}</main>
+        <main className="flex-1 md:overflow-y-auto app-main">
+          <SectionBackground />
+          <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
+        </main>
       </div>
     </SubNavProvider>
   );
