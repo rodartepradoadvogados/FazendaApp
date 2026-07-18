@@ -1,10 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Dna, Search, Warehouse, FlaskConical, Database } from "lucide-react";
-import { fetchEstoqueSemen, fetchTouros, fetchAnimais, type Touro } from "@/lib/api";
+import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, X } from "lucide-react";
+import { fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, type Touro, type TouroIn } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
-import { CAMPOS_NUMERICOS, parseDadosExtra } from "./CadastroTouros";
+import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
 import { TouroDetalheModal } from "./TouroDetalheModal";
+import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 
 type EstoqueSemenItem = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null;
@@ -26,6 +27,64 @@ const cardBtn = (ativo: boolean): React.CSSProperties => ({
   color: ativo ? "var(--dourado-light)" : "var(--text)", cursor: "pointer", fontSize: "0.85rem", fontWeight: ativo ? 700 : 400,
 });
 
+const inputStyle: React.CSSProperties = { width: "100%", padding: "0.45rem 0.6rem", borderRadius: "8px", border: "1px solid var(--border)", background: "var(--surface)", color: "var(--text)", fontSize: "0.85rem" };
+const labelStyle: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.2rem", display: "block" };
+
+/** Editar um touro do estoque de sêmen direto em Rebanho > Touros (mesmos
+ * campos do cadastro em Configurações > Cadastro > Estoque de sêmen). */
+function FormEstoqueSemenEdit({ inicial, onSalvar, onCancelar }: { inicial: EstoqueSemenItem; onSalvar: (d: EstoqueSemenItem) => Promise<void>; onCancelar: () => void }) {
+  const [dados, setDados] = useState(inicial);
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState("");
+  const set = (chave: keyof EstoqueSemenItem, valor: any) => setDados((d) => ({ ...d, [chave]: valor }));
+
+  async function salvar() {
+    if (!dados.touro_nome.trim()) { setErro("Nome do touro é obrigatório."); return; }
+    setErro(""); setSalvando(true);
+    try { await onSalvar(dados); } catch (e: any) { setErro(e.message || "Falha ao salvar"); } finally { setSalvando(false); }
+  }
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", display: "flex", alignItems: "flex-start", justifyContent: "center", zIndex: 200, overflowY: "auto", padding: "2rem 1rem" }}>
+      <div style={{ background: "var(--bg)", borderRadius: "12px", padding: "1.5rem", width: "100%", maxWidth: "32rem", border: "1px solid var(--border)" }}>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-lg font-bold flex items-center gap-2"><FlaskConical size={18} style={{ color: "var(--dourado)" }} /> Editar touro em estoque</h3>
+          <button onClick={onCancelar} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)" }}><X size={18} /></button>
+        </div>
+        {erro && <p style={{ color: "var(--vermelho, #d33)", fontSize: "0.85rem", marginBottom: "0.6rem" }}>{erro}</p>}
+        <div className="grid grid-cols-2 gap-3 mb-3">
+          <div><label style={labelStyle}>Touro</label><input style={inputStyle} value={dados.touro_nome} onChange={(e) => set("touro_nome", e.target.value)} /></div>
+          <div><label style={labelStyle}>Código</label><input style={inputStyle} value={dados.codigo || ""} onChange={(e) => set("codigo", e.target.value)} /></div>
+          <div><label style={labelStyle}>NAAB</label><input style={inputStyle} value={dados.naab || ""} onChange={(e) => set("naab", e.target.value)} /></div>
+          <div><label style={labelStyle}>Central</label><input style={inputStyle} value={dados.central || ""} onChange={(e) => set("central", e.target.value)} /></div>
+          <div>
+            <label style={labelStyle}>Tipo</label>
+            <select style={inputStyle} value={dados.tipo} onChange={(e) => set("tipo", e.target.value)}>
+              <option value="convencional">Convencional</option>
+              <option value="sexado">Sexado</option>
+              <option value="fazenda">Touro da fazenda (monta natural)</option>
+            </select>
+          </div>
+          <div><label style={labelStyle}>Doses</label><input type="number" min={0} style={inputStyle} value={dados.doses} onChange={(e) => set("doses", Number(e.target.value) || 0)} /></div>
+          <div><label style={labelStyle}>Valor/dose</label><input type="number" step="any" min={0} style={inputStyle} value={dados.valor_unitario ?? ""} onChange={(e) => set("valor_unitario", e.target.value === "" ? null : Number(e.target.value))} /></div>
+          <div><label style={labelStyle}>Local de armazenamento</label><input style={inputStyle} value={dados.local_armazenamento || ""} onChange={(e) => set("local_armazenamento", e.target.value)} /></div>
+        </div>
+        <div style={{ marginBottom: "0.8rem" }}>
+          <label style={labelStyle}>Observação</label>
+          <textarea style={{ ...inputStyle, minHeight: "3rem" }} value={dados.observacao || ""} onChange={(e) => set("observacao", e.target.value)} />
+        </div>
+        <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", marginBottom: "1rem", cursor: "pointer" }}>
+          <input type="checkbox" checked={dados.ativo} onChange={(e) => set("ativo", e.target.checked)} /> Ativo
+        </label>
+        <div className="flex items-center justify-end gap-2">
+          <button onClick={onCancelar} className="btn-secondary">Cancelar</button>
+          <button onClick={salvar} disabled={salvando} className="btn-primary">{salvando ? "Salvando..." : "Salvar"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /**
  * Rebanho > Touros — filtro em cascata para consultar os touros disponíveis:
  * 1) fonte (touros da fazenda × sêmen); 2) se fazenda, qual touro (Frederico/
@@ -46,6 +105,8 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const [tourosFazenda, setTourosFazenda] = useState<string[]>([]);
   const [machos, setMachos] = useState<MachoAnimal[]>([]);
   const [detalhe, setDetalhe] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
+  const [editEstoque, setEditEstoque] = useState<EstoqueSemenItem | null>(null);
+  const [editNaab, setEditNaab] = useState<Touro | null>(null);
 
   useEffect(() => {
     fetchEstoqueSemen().then(setEstoque).catch(() => setEstoque([]));
@@ -138,6 +199,26 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
     return base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q));
   }, [naab, busca]);
 
+  const ordEstoque = useOrdenacao(estoqueFiltrado);
+  const ordNaab = useOrdenacao(naabFiltrado);
+
+  const salvarEdicaoEstoque = async (d: EstoqueSemenItem) => {
+    const atualizado = await atualizarEstoqueSemen(d.id, {
+      touro_nome: d.touro_nome.trim(), codigo: d.codigo || undefined, naab: d.naab || undefined,
+      central: d.central || undefined, tipo: d.tipo, doses: d.doses, valor_unitario: d.valor_unitario ?? undefined,
+      local_armazenamento: d.local_armazenamento || undefined, observacao: d.observacao || undefined, ativo: d.ativo,
+    });
+    setEstoque((prev) => (prev ?? []).map((e) => (e.id === atualizado.id ? atualizado : e)));
+    setEditEstoque(null);
+  };
+
+  const salvarEdicaoNaab = async (d: TouroIn) => {
+    if (!editNaab?.id) return;
+    const atualizado = await atualizarTouro(editNaab.id, d);
+    setNaab((prev) => (prev ?? []).map((t) => (t.id === atualizado.id ? atualizado : t)));
+    setEditNaab(null);
+  };
+
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
   return (
@@ -214,9 +295,20 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
           {origemSemen === "estoque" && (
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th style={{ textAlign: "right" }}>Doses</th><th style={{ textAlign: "right" }}>Valor/dose</th></tr></thead>
+                <thead>
+                  <tr>
+                    <ThOrdenavel label="Touro" campo="touro_nome" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                    <ThOrdenavel label="Código" campo="codigo" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                    <ThOrdenavel label="NAAB" campo="naab" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                    <ThOrdenavel label="Central" campo="central" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                    <ThOrdenavel label="Tipo" campo="tipo" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} />
+                    <ThOrdenavel label="Doses" campo="doses" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} alinhar="right" />
+                    <ThOrdenavel label="Valor/dose" campo="valor_unitario" coluna={ordEstoque.coluna} dir={ordEstoque.dir} ordenar={ordEstoque.ordenar} alinhar="right" />
+                    <th></th>
+                  </tr>
+                </thead>
                 <tbody>
-                  {estoqueFiltrado.map((e) => (
+                  {ordEstoque.linhasOrdenadas.map((e) => (
                     <tr key={e.id} style={{ cursor: "pointer" }} onClick={() => abrirDetalheEstoque(e)} title="Ver detalhes do touro">
                       <td style={{ fontWeight: 700 }}>{e.touro_nome}</td>
                       <td style={{ fontSize: "0.8rem" }}>{e.codigo || "—"}</td>
@@ -225,9 +317,15 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                       <td style={{ fontSize: "0.8rem", textTransform: "capitalize" }}>{e.tipo}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{e.doses}</td>
                       <td style={{ textAlign: "right" }}>{e.valor_unitario ? `R$ ${fmt(e.valor_unitario, 2)}` : "—"}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <button onClick={(ev) => { ev.stopPropagation(); setEditEstoque(e); }} title="Editar touro"
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                          <Pencil size={14} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
-                  {!estoqueFiltrado.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro em estoque encontrado.</td></tr>}
+                  {!estoqueFiltrado.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro em estoque encontrado.</td></tr>}
                 </tbody>
               </table>
             </div>
@@ -239,9 +337,19 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
               {!naab && !erroNaab && <p style={{ color: "var(--text-muted)" }}>Carregando catálogo NAAB…</p>}
               {naab && (
                 <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th>NAAB</th><th>Touro</th><th>Central</th><th>Raça</th><th style={{ textAlign: "right" }}>TPI</th><th style={{ textAlign: "right" }}>Leite (kg)</th></tr></thead>
+                  <thead>
+                    <tr>
+                      <ThOrdenavel label="NAAB" campo="naab" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
+                      <ThOrdenavel label="Touro" campo="nome" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
+                      <ThOrdenavel label="Central" campo="central" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
+                      <ThOrdenavel label="Raça" campo="raca" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} />
+                      <ThOrdenavel label="TPI" campo="tpi" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
+                      <ThOrdenavel label="Leite (kg)" campo="leite_kg" coluna={ordNaab.coluna} dir={ordNaab.dir} ordenar={ordNaab.ordenar} alinhar="right" />
+                      <th></th>
+                    </tr>
+                  </thead>
                   <tbody>
-                    {naabFiltrado.slice(0, 200).map((t) => (
+                    {ordNaab.linhasOrdenadas.slice(0, 200).map((t) => (
                       <tr key={t.id ?? t.naab} style={{ cursor: "pointer" }} onClick={() => abrirDetalheNaab(t)} title="Ver detalhes do touro">
                         <td style={{ fontWeight: 700 }}>{t.naab}</td>
                         <td style={{ fontSize: "0.8rem" }}>{t.nome || "—"}</td>
@@ -249,9 +357,15 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                         <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.raca || "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{fmt(t.tpi)}</td>
                         <td style={{ textAlign: "right" }}>{fmt(t.leite_kg)}</td>
+                        <td style={{ textAlign: "right" }}>
+                          <button onClick={(ev) => { ev.stopPropagation(); setEditNaab(t); }} title="Editar touro"
+                            style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                            <Pencil size={14} />
+                          </button>
+                        </td>
                       </tr>
                     ))}
-                    {!naabFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
+                    {!naabFiltrado.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
                   </tbody>
                 </table>
               )}
@@ -269,6 +383,18 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
           campos={detalhe.campos}
           onFechar={() => setDetalhe(null)}
           nota="Este touro não tem ficha de animal cadastrada no rebanho — os dados acima são os únicos registrados sobre ele."
+        />
+      )}
+
+      {editEstoque && (
+        <FormEstoqueSemenEdit inicial={editEstoque} onSalvar={salvarEdicaoEstoque} onCancelar={() => setEditEstoque(null)} />
+      )}
+
+      {editNaab && (
+        <FormTouro
+          inicial={{ ...CAMPO_VAZIO, ...editNaab, nome: editNaab.nome || "", dados_extra: parseDadosExtra(editNaab.dados_extra) }}
+          onSalvar={salvarEdicaoNaab}
+          onCancelar={() => setEditNaab(null)}
         />
       )}
     </div>

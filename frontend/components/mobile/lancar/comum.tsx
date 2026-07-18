@@ -20,6 +20,7 @@ export type Animal = {
 export type EstoqueItem = {
   nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;
   conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
+  finalidade?: string | null; principio_ativo?: string | null; estoque_semen_id?: number | null; tipo_semen?: string | null;
 };
 export type Semen = { touro_nome: string; codigo?: string | null; tipo?: string | null; doses?: number | null };
 export type DietaItem = { alimento: string; quantidade: number; unidade: string };

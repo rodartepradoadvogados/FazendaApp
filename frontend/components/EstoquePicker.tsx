@@ -2,7 +2,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 
-export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null };
+export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null; estoque_semen_id?: number | null };
 
 /**
  * Seletor de produto do estoque: mesma tabela estilizada (vermelha) usada
@@ -12,7 +12,7 @@ export type EstoqueItemPicker = { nome: string; categoria?: string | null; quant
  * não lançamento) — por isso restringe a itens com finalidade "Medicamento"
  * (ração/material/equipamento não fazem sentido aqui), sem exigir saldo.
  */
-export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false }:
+export function EstoquePicker({ itens, value, onChange, placeholder = "Selecionar produto…", finalidades = ["Medicamento"], somenteVinculadosAlimento = false, incluirNaoEstocaveis = false }:
   { itens: EstoqueItemPicker[]; value: string; onChange: (v: string) => void; placeholder?: string; finalidades?: string[];
     // Restringe aos itens vinculados a um Alimento cadastrado (Configurações >
     // Cadastro > Alimentação > Alimentos) — ou seja, só volumosos, concentrados
@@ -20,14 +20,19 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
     // administrador tenha cadastrado ali, nunca um item de estoque avulso só
     // com finalidade "Ração/Alimento" e sem categorização nutricional.
     somenteVinculadosAlimento?: boolean;
+    // Por padrão só mostra itens estocáveis (o caso comum: escolher um
+    // medicamento/alimento para aplicar/consumir). O Balanço de estoque (site)
+    // usa true para deixar visível também o item cadastrado só para
+    // lançamento financeiro, quando o usuário desmarcar "somente itens em estoque".
+    incluirNaoEstocaveis?: boolean;
   }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const disponiveis = useMemo(
     () => itens
-      .filter((i) => i.estocavel !== false && (i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
+      .filter((i) => (incluirNaoEstocaveis || i.estocavel !== false) && (i.finalidade == null || finalidades.includes(i.finalidade)) && (!somenteVinculadosAlimento || i.alimento_id != null))
       .sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR")),
-    [itens, finalidades, somenteVinculadosAlimento]
+    [itens, finalidades, somenteVinculadosAlimento, incluirNaoEstocaveis]
   );
   const sel = disponiveis.find((i) => i.nome === value);
 

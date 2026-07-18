@@ -105,6 +105,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("estoque_inicializado", "BOOLEAN"),
         ("alimento_id", "INTEGER"),
         ("estoque_semen_id", "INTEGER"),
+        ("tipo_semen", "VARCHAR"),
     ],
     "tabela_nutricional_produto": [("alimento_id", "INTEGER")],
     "analise_bromatologica": [("alimento_id", "INTEGER")],

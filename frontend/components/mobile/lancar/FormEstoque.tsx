@@ -5,9 +5,10 @@
 // site — busca + categoria para achar o item, entrada/saída, quantidade,
 // valor opcional e "gerar lançamento financeiro" (abre a tela Financeiro já
 // preenchida, faltando só pagamento/parcelamento).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { Dna } from "lucide-react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { fetchEstoque } from "@/lib/api";
+import { fetchEstoque, fetchPlanoContas } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { type EstoqueItem, useCache, useEnvio, hoje, MobPill, LinhaPills } from "./comum";
 
@@ -21,7 +22,14 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
   const estoque = useCache<EstoqueItem[]>("estoque_itens", () => fetchEstoque().then((d) => d.itens as EstoqueItem[]), []);
 
   const [busca, setBusca] = useState("");
+  const [somenteEstocaveis, setSomenteEstocaveis] = useState(true);
   const [fCategoria, setFCategoria] = useState("");
+  const [fFinalidade, setFFinalidade] = useState("");
+  const [fPrincipioAtivo, setFPrincipioAtivo] = useState("");
+  const [fContaGerencial, setFContaGerencial] = useState("");
+  const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string }[]>([]);
+  useEffect(() => { fetchPlanoContas().then(setPlanoContas).catch(() => {}); }, []);
+  const nomeConta = (codigo: string) => planoContas.find((c) => c.codigo === codigo)?.nome || codigo;
   const [tipo, setTipo] = useState<"entrada" | "saida">("entrada");
   const [mov, setMov] = useState("");
   const [nome, setNome] = useState("");
@@ -31,11 +39,26 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
   const [valorUnitario, setValorUnitario] = useState("");
   const [gerarFinanceiro, setGerarFinanceiro] = useState(false);
 
-  const estocaveis = useMemo(() => estoque.dados.filter((e) => e.estocavel !== false), [estoque.dados]);
-  const categorias = useMemo(() => Array.from(new Set(estocaveis.map((e) => e.categoria).filter(Boolean))).sort() as string[], [estocaveis]);
-  const itens = useMemo(() => estocaveis
-    .filter((e) => (!fCategoria || e.categoria === fCategoria) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase())))
-    .sort((a, b) => a.nome.localeCompare(b.nome)), [estocaveis, fCategoria, busca]);
+  const itensBase = useMemo(() => somenteEstocaveis ? estoque.dados.filter((e) => e.estocavel !== false) : estoque.dados, [estoque.dados, somenteEstocaveis]);
+
+  // Cada filtro se aplica sobre os outros (nunca sobre si mesmo) — as opções
+  // de cada seletor também se restringem conforme os demais já escolhidos.
+  const passaFiltros = (e: EstoqueItem, exceto?: keyof EstoqueItem) =>
+    (exceto === "categoria" || !fCategoria || e.categoria === fCategoria) &&
+    (exceto === "finalidade" || !fFinalidade || e.finalidade === fFinalidade) &&
+    (exceto === "principio_ativo" || !fPrincipioAtivo || e.principio_ativo === fPrincipioAtivo) &&
+    (exceto === "conta_gerencial_despesa_padrao" || !fContaGerencial || e.conta_gerencial_despesa_padrao === fContaGerencial);
+  const opcoesPara = (campo: keyof EstoqueItem) =>
+    Array.from(new Set(itensBase.filter((e) => passaFiltros(e, campo)).map((e) => e[campo]).filter(Boolean))).sort() as string[];
+
+  const categorias = useMemo(() => opcoesPara("categoria"), [itensBase, fFinalidade, fPrincipioAtivo, fContaGerencial]);
+  const finalidades = useMemo(() => opcoesPara("finalidade"), [itensBase, fCategoria, fPrincipioAtivo, fContaGerencial]);
+  const principiosAtivos = useMemo(() => opcoesPara("principio_ativo"), [itensBase, fCategoria, fFinalidade, fContaGerencial]);
+  const contasUsadas = useMemo(() => opcoesPara("conta_gerencial_despesa_padrao"), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo]);
+
+  const itens = useMemo(() => itensBase
+    .filter((e) => passaFiltros(e) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase())))
+    .sort((a, b) => a.nome.localeCompare(b.nome)), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
 
   const item = estoque.dados.find((e) => e.nome === nome);
   const unidade = item?.unidade || "";
@@ -87,6 +110,34 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
           </select>
         </MobCampo>
       )}
+      {finalidades.length > 0 && (
+        <MobCampo label="Medicamento / finalidade">
+          <select className="mob-input" value={fFinalidade} onChange={(e) => setFFinalidade(e.target.value)}>
+            <option value="">Todas</option>
+            {finalidades.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+        </MobCampo>
+      )}
+      {principiosAtivos.length > 0 && (
+        <MobCampo label="Princípio ativo">
+          <select className="mob-input" value={fPrincipioAtivo} onChange={(e) => setFPrincipioAtivo(e.target.value)}>
+            <option value="">Todos</option>
+            {principiosAtivos.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        </MobCampo>
+      )}
+      {contasUsadas.length > 0 && (
+        <MobCampo label="Conta gerencial">
+          <select className="mob-input" value={fContaGerencial} onChange={(e) => setFContaGerencial(e.target.value)}>
+            <option value="">Todas</option>
+            {contasUsadas.map((c) => <option key={c} value={c}>{nomeConta(c)}</option>)}
+          </select>
+        </MobCampo>
+      )}
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem", marginBottom: "0.7rem" }}>
+        <input type="checkbox" checked={somenteEstocaveis} onChange={(e) => setSomenteEstocaveis(e.target.checked)} style={{ width: 18, height: 18 }} />
+        Somente itens em estoque
+      </label>
 
       <LinhaPills>
         <MobPill ativa={tipo === "entrada"} onClick={() => { setTipo("entrada"); setMov(""); }}>Entrada</MobPill>
@@ -98,6 +149,11 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
           <option value="">Selecione o item…</option>
           {itens.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
         </select>
+        {item?.estoque_semen_id != null && (
+          <span style={{ fontSize: "0.72rem", color: "var(--mob-dourado-2)", display: "flex", alignItems: "center", gap: "0.25rem", marginTop: "0.3rem" }}>
+            <Dna size={12} /> Vinculado ao Estoque de sêmen — este movimento também ajusta as doses do touro.
+          </span>
+        )}
       </MobCampo>
       <MobCampo label="Movimento">
         <select className="mob-input" value={mov} onChange={(e) => setMov(e.target.value)}>

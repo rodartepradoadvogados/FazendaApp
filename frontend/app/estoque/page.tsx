@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Package, AlertTriangle, Filter, Search } from "lucide-react";
+import { Package, AlertTriangle, Filter, Search, Pencil } from "lucide-react";
 import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, formatDate, type MovimentoEstoqueRow } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -21,11 +22,11 @@ const COLUNAS_MOVIMENTOS = [
 ];
 
 type Item = {
-  categoria: string | null; nome: string; quantidade: number | null;
+  id: number; categoria: string | null; nome: string; quantidade: number | null;
   estoque_minimo: number | null; unidade: string | null;
   valor_unitario: number | null; valor_total: number | null; abaixo_minimo: boolean | null;
   principio_ativo: string | null; finalidade: string | null;
-};
+} & Record<string, any>;
 
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)"];
@@ -40,10 +41,13 @@ export default function EstoquePage() {
   const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
   const [modalAbaixo, setModalAbaixo] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
+  const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
   const admin = ehAdmin();
 
+  const carregar = () => fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
+
   useEffect(() => {
-    fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
+    carregar();
     fetchAgenda().then((a) => setHorm(a.hormonios_check || [])).catch(() => {});
     fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch(() => {});
   }, []);
@@ -177,6 +181,7 @@ export default function EstoquePage() {
                   <ThOrdenavel label="Mín." campo="estoque_minimo" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} alinhar="right" />
                   <ThOrdenavel label="Valor" campo="valor_total" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} alinhar="right" />
                   <ThOrdenavel label="Status" campo="abaixo_minimo" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} />
+                  <th></th>
                 </tr></thead>
                 <tbody>
                   {ordItens.linhasOrdenadas.slice(0, 200).map((i, idx) => (
@@ -187,6 +192,12 @@ export default function EstoquePage() {
                       <td style={{ textAlign: "right", color: "var(--text-muted)" }}>{i.estoque_minimo ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{i.valor_total != null ? formatBRL(i.valor_total) : "—"}</td>
                       <td>{i.abaixo_minimo === true ? <span style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.75rem" }}>ABAIXO</span> : <span style={{ color: "var(--green-light)", fontSize: "0.75rem" }}>OK</span>}</td>
+                      <td style={{ textAlign: "right" }}>
+                        <button onClick={() => setEditando(i)} title="Editar cadastro do produto"
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
+                          <Pencil size={14} />
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -270,6 +281,16 @@ export default function EstoquePage() {
               </tbody>
             </table>
           </div>
+        </Modal>
+      )}
+
+      {editando && (
+        <Modal title={`Editar item — ${editando.nome}`} onClose={() => setEditando(null)} width="960px">
+          <NovoItemEstoque
+            editando={editando}
+            onCriado={() => { setEditando(null); carregar(); }}
+            onCancelar={() => setEditando(null)}
+          />
         </Modal>
       )}
     </div>
