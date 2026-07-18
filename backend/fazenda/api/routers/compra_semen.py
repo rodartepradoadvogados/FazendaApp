@@ -33,17 +33,24 @@ ORIGENS = ("estoque", "naab")
 PREFIXOS_CONTA_COMPRA_SEMEN = ["3.01.02.01"]
 
 
-class CompraSemenIn(BaseModel):
+class ItemCompraSemenIn(BaseModel):
     origem: str  # "estoque" | "naab"
     estoque_semen_id: int | None = None  # obrigatório se origem == "estoque"
     naab: str | None = None              # obrigatório se origem == "naab"
     touro_nome: str | None = None        # obrigatório se origem == "naab" (nome a gravar/exibir)
     central: str | None = None           # opcional, só usado ao criar uma linha nova de EstoqueSemen
 
-    vendedor: str
     valor: float
     tipo_valor: str  # "por_dose" | "total"
     doses: int
+
+
+class CompraSemenIn(BaseModel):
+    # Um ou mais sêmens/touros comprados na mesma nota fiscal — todos
+    # compartilham vendedor, documento, parcelamento e pagamento abaixo.
+    itens: list[ItemCompraSemenIn]
+
+    vendedor: str
     data_compra: date
     observacao: str | None = None
     responsavel: str | None = None
@@ -80,56 +87,71 @@ def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
 
 @router.post("/")
 def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
-    if dados.origem not in ORIGENS:
-        raise HTTPException(status_code=400, detail="Informe a origem do sêmen (estoque ou NAAB)")
+    if not dados.itens:
+        raise HTTPException(status_code=400, detail="Adicione ao menos um sêmen/touro à compra")
     if not (dados.vendedor or "").strip():
         raise HTTPException(status_code=400, detail="Informe o vendedor")
-    if dados.valor is None or dados.valor <= 0:
-        raise HTTPException(status_code=400, detail="Informe o valor da compra")
-    if dados.tipo_valor not in TIPOS_VALOR:
-        raise HTTPException(status_code=400, detail="Informe se o valor é por dose ou total")
-    if not dados.doses or dados.doses <= 0:
-        raise HTTPException(status_code=400, detail="Informe o número de doses compradas")
     if not (dados.codigo_conta_gerencial or "").strip():
         raise HTTPException(status_code=400, detail="Selecione a conta gerencial da compra")
     if not any(dados.codigo_conta_gerencial.startswith(p) for p in PREFIXOS_CONTA_COMPRA_SEMEN):
         raise HTTPException(status_code=400, detail="A conta gerencial da compra de sêmen deve ser 3.01.02.01 — Sêmen")
 
-    # Resolve o touro/linha de EstoqueSemen a incrementar — de um touro já
-    # cadastrado na fazenda, ou casando/criando por NAAB.
-    if dados.origem == "estoque":
-        if not dados.estoque_semen_id:
-            raise HTTPException(status_code=400, detail="Selecione o touro em estoque")
-        estoque = session.get(EstoqueSemen, dados.estoque_semen_id)
-        if not estoque:
-            raise HTTPException(status_code=404, detail="Touro em estoque não encontrado")
-    else:
-        if not (dados.naab or "").strip():
-            raise HTTPException(status_code=400, detail="Selecione o touro do banco de dados NAAB")
-        touro_naab = session.exec(select(Touro).where(Touro.naab == dados.naab)).first()
-        if not touro_naab:
-            raise HTTPException(status_code=404, detail="Touro NAAB não encontrado")
-        estoque = session.exec(select(EstoqueSemen).where(EstoqueSemen.naab == dados.naab)).first()
-        if not estoque:
-            estoque = EstoqueSemen(
-                touro_nome=dados.touro_nome or touro_naab.nome or touro_naab.naab,
-                naab=touro_naab.naab, central=dados.central or touro_naab.central,
-                tipo="convencional", doses=0,
-            )
-            session.add(estoque)
-            session.flush()
+    # Resolve, para cada item, o touro/linha de EstoqueSemen a incrementar —
+    # de um touro já cadastrado na fazenda, ou casando/criando por NAAB — e
+    # calcula o valor daquele item. Vários itens desta lista compartilham a
+    # mesma nota fiscal/parcelamento, montados uma única vez abaixo.
+    resolvidos: list[tuple[EstoqueSemen, ItemCompraSemenIn, float, float]] = []
+    for item in dados.itens:
+        if item.origem not in ORIGENS:
+            raise HTTPException(status_code=400, detail="Informe a origem do sêmen (estoque ou NAAB)")
+        if item.valor is None or item.valor <= 0:
+            raise HTTPException(status_code=400, detail="Informe o valor da compra de cada sêmen/touro")
+        if item.tipo_valor not in TIPOS_VALOR:
+            raise HTTPException(status_code=400, detail="Informe se o valor é por dose ou total")
+        if not item.doses or item.doses <= 0:
+            raise HTTPException(status_code=400, detail="Informe o número de doses compradas de cada sêmen/touro")
 
-    quantidade = dados.doses
-    if dados.tipo_valor == "por_dose":
-        valor_unitario = round(dados.valor, 2)
-        valor_total_bruto = round(valor_unitario * quantidade, 2)
-    else:
-        valor_total_bruto = round(dados.valor, 2)
-        valor_unitario = round(valor_total_bruto / quantidade, 2)
-    valor_liquido = round(valor_total_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
+        if item.origem == "estoque":
+            if not item.estoque_semen_id:
+                raise HTTPException(status_code=400, detail="Selecione o touro em estoque")
+            estoque = session.get(EstoqueSemen, item.estoque_semen_id)
+            if not estoque:
+                raise HTTPException(status_code=404, detail="Touro em estoque não encontrado")
+        else:
+            if not (item.naab or "").strip():
+                raise HTTPException(status_code=400, detail="Selecione o touro do banco de dados NAAB")
+            touro_naab = session.exec(select(Touro).where(Touro.naab == item.naab)).first()
+            if not touro_naab:
+                raise HTTPException(status_code=404, detail="Touro NAAB não encontrado")
+            estoque = session.exec(select(EstoqueSemen).where(EstoqueSemen.naab == item.naab)).first()
+            if not estoque:
+                estoque = EstoqueSemen(
+                    touro_nome=item.touro_nome or touro_naab.nome or touro_naab.naab,
+                    naab=touro_naab.naab, central=item.central or touro_naab.central,
+                    tipo="convencional", doses=0,
+                )
+                session.add(estoque)
+                session.flush()
+
+        if item.tipo_valor == "por_dose":
+            valor_unitario = round(item.valor, 2)
+            valor_total_bruto = round(valor_unitario * item.doses, 2)
+        else:
+            valor_total_bruto = round(item.valor, 2)
+            valor_unitario = round(valor_total_bruto / item.doses, 2)
+        resolvidos.append((estoque, item, valor_unitario, valor_total_bruto))
+
+    quantidade_total = sum(item.doses for item in dados.itens)
+    valor_bruto = round(sum(vt for _, _, _, vt in resolvidos), 2)
+    valor_liquido = round(valor_bruto - (dados.desconto or 0) + (dados.acrescimo or 0), 2)
+    # Só faz sentido resumir um valor/dose único em ContaGerencial quando há
+    # apenas um item — com vários touros de preços distintos, cada um já
+    # guarda o próprio valor_unitario na sua linha de CompraSemen abaixo.
+    valor_unitario_resumo = resolvidos[0][2] if len(resolvidos) == 1 else None
 
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_compra.year)
-    descricao = dados.descricao or f"Compra de {quantidade} dose(s) de sêmen — {estoque.touro_nome} ({dados.vendedor})"
+    nomes_touros = ", ".join(dict.fromkeys(estoque.touro_nome for estoque, _, _, _ in resolvidos))
+    descricao = dados.descricao or f"Compra de {quantidade_total} dose(s) de sêmen — {nomes_touros} ({dados.vendedor})"
     campos_comuns = dict(
         numero_lancamento=numero_lancamento,
         codigo_conta=dados.codigo_conta_gerencial,
@@ -144,7 +166,7 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
         data_prevista_entrada=dados.data_prevista_entrada,
         data_pedido=dados.data_pedido,
         entregue=dados.entregue,
-        quantidade=quantidade,
+        quantidade=quantidade_total,
         desconto_nota=dados.desconto or None,
         acrescimo_nota=dados.acrescimo or None,
         tipo="despesa", origem="manual",
@@ -156,14 +178,14 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
         total_parcelas = len(dados.parcelas)
         for i, p in enumerate(dados.parcelas, start=1):
             session.add(ContaGerencial(
-                **campos_comuns, data_vencimento=p.data_vencimento, valor_unitario=valor_unitario,
+                **campos_comuns, data_vencimento=p.data_vencimento, valor_unitario=valor_unitario_resumo,
                 valor_total=p.valor, parcela_num=i, parcela_total=total_parcelas,
             ))
     else:
         registro = ContaGerencial(
             **campos_comuns,
             data_vencimento=dados.data_vencimento or dados.data_prevista_entrada or dados.data_compra,
-            valor_unitario=valor_unitario, valor_total=valor_liquido,
+            valor_unitario=valor_unitario_resumo, valor_total=valor_liquido,
             parcela_num=1, parcela_total=1,
         )
         if paga_agora:
@@ -173,18 +195,21 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
             registro.numero_documento_pagamento = dados.numero_documento_pagamento
         session.add(registro)
 
-    estoque.doses = estoque.doses + quantidade
-    estoque.valor_unitario = valor_unitario
-    session.add(estoque)
+    estoque_semen_ids = []
+    for estoque, item, valor_unitario, _ in resolvidos:
+        estoque.doses = estoque.doses + item.doses
+        estoque.valor_unitario = valor_unitario
+        session.add(estoque)
 
-    session.add(CompraSemen(
-        estoque_semen_id=estoque.id, touro_nome=estoque.touro_nome, naab=estoque.naab,
-        origem=dados.origem, doses=quantidade, valor_unitario=valor_unitario,
-        vendedor=dados.vendedor, data_compra=dados.data_compra,
-        responsavel=dados.responsavel, observacao=dados.observacao,
-        numero_lancamento_gerado=numero_lancamento,
-        usuario_id=usuario_id_seguro(user),
-    ))
+        session.add(CompraSemen(
+            estoque_semen_id=estoque.id, touro_nome=estoque.touro_nome, naab=estoque.naab,
+            origem=item.origem, doses=item.doses, valor_unitario=valor_unitario,
+            vendedor=dados.vendedor, data_compra=dados.data_compra,
+            responsavel=dados.responsavel, observacao=dados.observacao,
+            numero_lancamento_gerado=numero_lancamento,
+            usuario_id=usuario_id_seguro(user),
+        ))
+        estoque_semen_ids.append(estoque.id)
 
     session.commit()
-    return {"doses_compradas": quantidade, "estoque_semen_id": estoque.id, "numero_lancamento": numero_lancamento}
+    return {"doses_compradas": quantidade_total, "estoque_semen_ids": estoque_semen_ids, "numero_lancamento": numero_lancamento}

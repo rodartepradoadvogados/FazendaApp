@@ -26,7 +26,7 @@ type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
   categoria_completa: string | null; raca: string | null; sit_rep: string | null;
   del_dias: number | null; ult_cl_kg: number | null; diagnostico: string | null;
-  a_descartar?: boolean;
+  a_descartar?: boolean; sexo?: string | null;
 };
 
 const SIT_CORES: Record<string, string> = {
@@ -158,9 +158,18 @@ function RebanhoVisaoGeral() {
   const toggle = (g: string) => setAbertos((p) => { const n = new Set(p); n.has(g) ? n.delete(g) : n.add(g); return n; });
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
 
+  // "Animais por grupo" (inclui machos) × "Fêmeas por Grupo" (padrão) — e,
+  // cumulativa ou isoladamente, "somente fêmeas" (força só fêmeas mesmo com
+  // machos incluídos) e "ordenar por numeração" (inverte a tabela: em vez de
+  // agrupar por lote, lista tudo num só bloco ordenado pelo nº do animal).
+  const [incluirMachos, setIncluirMachos] = useState(false);
+  const [somenteFemeas, setSomenteFemeas] = useState(false);
+  const [ordenarPorNumeracao, setOrdenarPorNumeracao] = useState(false);
+  const femeasApenas = !incluirMachos || somenteFemeas;
+
   const carregar = useCallback(() => {
-    fetchAnimais().then(setRegs).catch((e) => setError(e.message));
-  }, []);
+    fetchAnimais({ incluirMachos }).then(setRegs).catch((e) => setError(e.message));
+  }, [incluirMachos]);
   useEffect(carregar, [carregar]);
 
   const opc = (f: (a: Animal) => string | null) => {
@@ -173,9 +182,15 @@ function RebanhoVisaoGeral() {
     return regs.filter((a) =>
       (fGrupo.length === 0 || (a.grupo_primario ? fGrupo.includes(a.grupo_primario) : false)) &&
       (fSit.length === 0 || (a.sit_rep ? fSit.includes(a.sit_rep) : false)) &&
-      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase()))
+      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+      (!somenteFemeas || a.sexo !== "M")
     );
-  }, [regs, fGrupo, fSit, busca]);
+  }, [regs, fGrupo, fSit, busca, somenteFemeas]);
+
+  const porNumero = useMemo(
+    () => [...filtrados].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true })),
+    [filtrados]
+  );
 
   const total = filtrados.length;
   const gestantes = filtrados.filter((a) => a.sit_rep === "Ges.").length;
@@ -235,7 +250,7 @@ function RebanhoVisaoGeral() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">Fêmeas (filtro)</p></div>
+            <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">{femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"}</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{gestantes}</p><p className="kpi-label">Gestantes</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{vazias}</p><p className="kpi-label">Vazias</p></div>
             <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--dourado-light)" }}>{inseminadas}</p><p className="kpi-label">Inseminadas</p></div>
@@ -273,14 +288,23 @@ function RebanhoVisaoGeral() {
           </div>
 
           <div className="card">
-            <div className="card-header mb-3 flex items-center justify-between">
-              <span>Fêmeas por Grupo</span>
-              <div className="flex items-center gap-3">
+            <div className="card-header mb-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+              <span>{ordenarPorNumeracao ? (femeasApenas ? "Fêmeas por Número" : "Animais por Número") : (femeasApenas ? "Fêmeas por Grupo" : "Animais por Grupo")}</span>
+              <div className="flex items-center gap-3" style={{ flexWrap: "wrap" }}>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--text)", cursor: "pointer" }} title="Inclui também os machos do rebanho">
+                  <input type="checkbox" checked={incluirMachos} onChange={(e) => setIncluirMachos(e.target.checked)} /> Animais por grupo (incluir machos)
+                </label>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--text)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={somenteFemeas} onChange={(e) => setSomenteFemeas(e.target.checked)} disabled={!incluirMachos} /> Somente fêmeas
+                </label>
+                <label className="flex items-center gap-2" style={{ fontSize: "0.78rem", color: "var(--text)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={ordenarPorNumeracao} onChange={(e) => setOrdenarPorNumeracao(e.target.checked)} /> Ordenar por numeração
+                </label>
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
                 <ExportarBotoes titulo="Rebanho" nomeArquivoBase="rebanho"
                   colunas={COLUNAS_REBANHO}
                   linhas={filtrados.map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa }))} />
-                {(() => {
+                {!ordenarPorNumeracao && (() => {
                   const todosAbertos = abertos.size === grupoLista.length && grupoLista.length > 0;
                   return (
                     <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
@@ -293,40 +317,73 @@ function RebanhoVisaoGeral() {
                 })()}
               </div>
             </div>
-            <div className="space-y-2">
-              {grupoLista.map(([grupo, lista]) => {
-                const aberto = abertos.has(grupo);
-                return (
-                  <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
-                    <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
-                      {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-                      <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
-                      <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} fêmea{lista.length !== 1 ? "s" : ""}</span>
-                    </button>
-                    {aberto && (
-                      <div className="overflow-x-auto">
-                        <table className="fazenda-table" style={{ margin: 0 }}>
-                          <thead><tr><th>Nº</th><th>Categoria</th><th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th></tr></thead>
-                          <tbody>
-                            {lista.map((a) => (
-                              <tr key={a.numero}>
-                                <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                                <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                                <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
-                                <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                                <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
-              {!grupoLista.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhuma fêmea no filtro.</p>}
-            </div>
+
+            {ordenarPorNumeracao ? (
+              <div className="overflow-x-auto">
+                <table className="fazenda-table" style={{ margin: 0 }}>
+                  <thead><tr>
+                    <th>Nº</th><th>Grupo</th><th>Categoria</th>
+                    {!femeasApenas && <th>Sexo</th>}
+                    <th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th>
+                  </tr></thead>
+                  <tbody>
+                    {porNumero.map((a) => (
+                      <tr key={a.numero}>
+                        <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                        <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
+                        <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+                        {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
+                        <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
+                        <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                        <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                        <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+                      </tr>
+                    ))}
+                    {!porNumero.length && <tr><td colSpan={femeasApenas ? 7 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.75rem" }}>Nenhum animal no filtro.</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <div className="space-y-2">
+                {grupoLista.map(([grupo, lista]) => {
+                  const aberto = abertos.has(grupo);
+                  return (
+                    <div key={grupo} style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden" }}>
+                      <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
+                        {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                        <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
+                        <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} {femeasApenas ? "fêmea" : "animal"}{lista.length !== 1 ? "s" : ""}</span>
+                      </button>
+                      {aberto && (
+                        <div className="overflow-x-auto">
+                          <table className="fazenda-table" style={{ margin: 0 }}>
+                            <thead><tr>
+                              <th>Nº</th><th>Categoria</th>
+                              {!femeasApenas && <th>Sexo</th>}
+                              <th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th>
+                            </tr></thead>
+                            <tbody>
+                              {lista.map((a) => (
+                                <tr key={a.numero}>
+                                  <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                                  <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+                                  {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
+                                  <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
+                                  <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                                  <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+                                  <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {!grupoLista.length && <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal no filtro.</p>}
+              </div>
+            )}
           </div>
         </>
       )}

@@ -1,10 +1,10 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Check, Search, Warehouse, Database, FlaskConical } from "lucide-react";
+import { Check, Search, Warehouse, Database, FlaskConical, Plus, X } from "lucide-react";
 import {
   fetchFornecedores, fetchPlanoContas, fetchOpcoesFinanceiro,
   fetchEstoqueSemen, fetchTouros, criarCompraSemen, fetchComprasSemen,
-  formatBRL, ehAdmin, type Touro,
+  formatBRL, ehAdmin, type Touro, type ItemCompraSemen,
 } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import type { ContaPlano } from "@/lib/contaGerencial";
@@ -43,15 +43,22 @@ type Registro = {
   numero_lancamento_gerado: string | null; usuario_nome?: string | null;
 };
 
+// Um item já adicionado ao carrinho da compra (aguardando confirmação final).
+type ItemCarrinho = {
+  origem: "estoque" | "naab"; estoqueSemenId?: number; naab?: string; touroNome: string; central?: string | null;
+  doses: number; valor: number; tipoValor: string;
+};
+
+const valorTotalItem = (it: ItemCarrinho) => (it.tipoValor === "total" ? it.valor : it.valor * it.doses);
+const valorUnitarioItem = (it: ItemCarrinho) => (it.tipoValor === "total" ? (it.doses ? it.valor / it.doses : 0) : it.valor);
+
 /**
- * Lançamentos > Compra/Venda > Comprar sêmen — origem em cascata (touro já
- * cadastrado no estoque da fazenda × banco de dados NAAB, mesmo padrão de
- * RebanhoTouros.tsx, mas aqui a linha clicada é SELECIONADA para a compra em
- * vez de só abrir um modal de consulta) seguida do mesmo bloco financeiro
- * rico de compra de animal (conta gerencial restrita, parcelamento,
- * pagamento). Ao salvar, soma as doses ao EstoqueSemen escolhido (ou cria uma
- * linha nova casada por NAAB) — é isso que faz a compra "comunicar" com o
- * estoque de sêmen, os relatórios e a baixa por dose nas inseminações.
+ * Lançamentos > Compra/Venda > Comprar sêmen — permite adicionar UM OU MAIS
+ * sêmens/touros à MESMA compra (carrinho de itens), todos vinculados à
+ * mesma nota fiscal/parcelamento/pagamento — análogo ao lançamento
+ * financeiro com múltiplos produtos, mas aqui cada item vira uma linha de
+ * CompraSemen própria (com seu próprio touro, doses e valor/dose), somando
+ * ao EstoqueSemen escolhido (ou criando uma linha nova casada por NAAB).
  */
 export default function CompraSemenForm() {
   const [origem, setOrigem] = useState<"estoque" | "naab" | null>(null);
@@ -61,12 +68,17 @@ export default function CompraSemenForm() {
   const [buscaTouro, setBuscaTouro] = useState("");
 
   const [touroSel, setTouroSel] = useState<{ estoqueSemenId?: number; naab?: string; touroNome: string; central?: string | null } | null>(null);
-
-  const [vendedor, setVendedor] = useState("");
-  const [data, setData] = useState(hoje());
   const [doses, setDoses] = useState("");
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_dose");
+
+  // Carrinho de itens (touros/sêmens) desta compra — todos ligados à mesma
+  // nota fiscal/parcelamento montados uma única vez abaixo.
+  const [itens, setItens] = useState<ItemCarrinho[]>([]);
+  const [adicionandoItem, setAdicionandoItem] = useState(true);
+
+  const [vendedor, setVendedor] = useState("");
+  const [data, setData] = useState(hoje());
   const [responsavel, setResponsavel] = useState("");
   const [observacao, setObservacao] = useState("");
 
@@ -130,9 +142,11 @@ export default function CompraSemenForm() {
 
   const dosesNum = Number(doses) || 0;
   const valorNum = Number(valor) || 0;
-  const valorUnitario = tipoValor === "por_dose" ? valorNum : (dosesNum ? valorNum / dosesNum : 0);
-  const valorTotalBruto = tipoValor === "total" ? valorNum : valorNum * dosesNum;
-  const valorLiquido = Math.round((valorTotalBruto - (Number(desconto) || 0) + (Number(acrescimo) || 0)) * 100) / 100;
+  const valorUnitarioAtual = tipoValor === "por_dose" ? valorNum : (dosesNum ? valorNum / dosesNum : 0);
+
+  const valorBrutoItens = useMemo(() => Math.round(itens.reduce((acc, it) => acc + valorTotalItem(it), 0) * 100) / 100, [itens]);
+  const dosesTotalItens = useMemo(() => itens.reduce((acc, it) => acc + it.doses, 0), [itens]);
+  const valorLiquido = Math.round((valorBrutoItens - (Number(desconto) || 0) + (Number(acrescimo) || 0)) * 100) / 100;
 
   useEffect(() => {
     if (!parcelado) { setParcelas([]); return; }
@@ -157,9 +171,29 @@ export default function CompraSemenForm() {
     return base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q));
   }, [naab, buscaTouro]);
 
+  const limparSelecaoAtual = () => {
+    setOrigem(null); setTouroSel(null); setBuscaTouro(""); setDoses(""); setValor(""); setTipoValor("por_dose");
+  };
+
+  const adicionarItem = () => {
+    setMsg(null);
+    if (!touroSel) { setMsg({ tipo: "erro", texto: "Escolha o touro (estoque ou NAAB)." }); return; }
+    if (!dosesNum) { setMsg({ tipo: "erro", texto: "Informe o número de doses." }); return; }
+    if (!valorNum) { setMsg({ tipo: "erro", texto: "Informe o valor da compra." }); return; }
+    setItens((prev) => [...prev, {
+      origem: origem!, estoqueSemenId: touroSel.estoqueSemenId, naab: touroSel.naab,
+      touroNome: touroSel.touroNome, central: touroSel.central, doses: dosesNum, valor: valorNum, tipoValor,
+    }]);
+    limparSelecaoAtual();
+    setAdicionandoItem(false);
+  };
+
+  const removerItem = (idx: number) => setItens((prev) => prev.filter((_, i) => i !== idx));
+
   const limpar = () => {
-    setOrigem(null); setTouroSel(null); setBuscaTouro("");
-    setVendedor(""); setDoses(""); setValor(""); setTipoValor("por_dose"); setResponsavel(""); setObservacao("");
+    limparSelecaoAtual();
+    setItens([]); setAdicionandoItem(true);
+    setVendedor(""); setResponsavel(""); setObservacao("");
     setCodigoConta(""); setNomeConta(""); setDescricao(""); setCentroCusto(""); setTipoDocumento("");
     setNumeroDocumento(""); setDataEmissao(""); setDataVencimento(""); setDataPrevista(""); setDataPedido("");
     setEntregue(false); setDesconto(""); setAcrescimo(""); setParcelado(false); setQtdParcelas("2"); setParcelas([]);
@@ -168,18 +202,20 @@ export default function CompraSemenForm() {
 
   const salvar = async () => {
     setMsg(null);
-    if (!touroSel) { setMsg({ tipo: "erro", texto: "Escolha o touro (estoque ou NAAB)." }); return; }
+    if (!itens.length) { setMsg({ tipo: "erro", texto: "Adicione ao menos um sêmen/touro à compra." }); return; }
     if (!vendedor.trim()) { setMsg({ tipo: "erro", texto: "Informe o vendedor." }); return; }
-    if (!dosesNum) { setMsg({ tipo: "erro", texto: "Informe o número de doses." }); return; }
-    if (!valor) { setMsg({ tipo: "erro", texto: "Informe o valor da compra." }); return; }
     if (!codigoConta) { setMsg({ tipo: "erro", texto: "Selecione a conta gerencial." }); return; }
 
     setSalvando(true);
     try {
+      const itensPayload: ItemCompraSemen[] = itens.map((it) => ({
+        origem: it.origem, estoque_semen_id: it.estoqueSemenId, naab: it.naab,
+        touro_nome: it.touroNome, central: it.central || undefined,
+        valor: it.valor, tipo_valor: it.tipoValor, doses: it.doses,
+      }));
       const r = await criarCompraSemen({
-        origem: origem!, estoque_semen_id: touroSel.estoqueSemenId, naab: touroSel.naab,
-        touro_nome: touroSel.touroNome, central: touroSel.central || undefined,
-        vendedor: vendedor.trim(), valor: valorNum, tipo_valor: tipoValor, doses: dosesNum, data_compra: data,
+        itens: itensPayload,
+        vendedor: vendedor.trim(), data_compra: data,
         observacao: observacao || undefined, responsavel: responsavel || undefined,
         codigo_conta_gerencial: codigoConta,
         descricao: descricao || undefined, centro_custo: centroCusto || undefined,
@@ -193,7 +229,8 @@ export default function CompraSemenForm() {
         conta_bancaria: !parcelado && jaPago ? contaBancaria || undefined : undefined,
         numero_documento_pagamento: !parcelado && jaPago ? numeroDocumentoPagamento || undefined : undefined,
       });
-      setMsg({ tipo: "sucesso", texto: `${(r as any).doses_compradas} dose(s) de sêmen registrada(s) e somada(s) ao estoque de ${touroSel.touroNome}.` });
+      const nomes = itens.map((it) => it.touroNome).join(", ");
+      setMsg({ tipo: "sucesso", texto: `${(r as any).doses_compradas} dose(s) de sêmen registrada(s) e somada(s) ao estoque de ${nomes}.` });
       limpar();
       carregar();
     } catch (e: any) {
@@ -208,94 +245,179 @@ export default function CompraSemenForm() {
   return (
     <div className="animate-in">
       <div className="card mb-4">
-        <div className="card-header mb-3">1. Origem do sêmen</div>
-        <div className="flex flex-wrap gap-3 mb-3">
-          <button type="button" style={cardBtn(origem === "estoque")} onClick={() => escolherOrigem("estoque")}>
-            <Warehouse size={16} /> Touro já cadastrado (estoque da fazenda)
+        <div className="card-header mb-3">1. Sêmens/touros desta compra</div>
+
+        {!!itens.length && (
+          <div className="overflow-x-auto mb-3">
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr>
+                <th>Touro</th><th>Origem</th><th style={{ textAlign: "right" }}>Doses</th>
+                <th style={{ textAlign: "right" }}>Valor/dose</th><th style={{ textAlign: "right" }}>Valor total</th><th></th>
+              </tr></thead>
+              <tbody>
+                {itens.map((it, idx) => (
+                  <tr key={idx}>
+                    <td style={{ fontWeight: 700 }}>{it.touroNome}{it.naab ? ` (${it.naab})` : ""}</td>
+                    <td style={{ fontSize: "0.8rem", textTransform: "capitalize" }}>{it.origem}</td>
+                    <td style={{ textAlign: "right" }}>{it.doses}</td>
+                    <td style={{ textAlign: "right" }}>{formatBRL(valorUnitarioItem(it))}</td>
+                    <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(valorTotalItem(it))}</td>
+                    <td style={{ textAlign: "right" }}>
+                      <button type="button" title="Remover" onClick={() => removerItem(idx)}
+                        style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)" }}>
+                        <X size={14} />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+              Total desta compra: <strong style={{ color: "var(--dourado-light)" }}>{dosesTotalItens} dose(s)</strong> por <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorBrutoItens)}</strong>
+            </p>
+          </div>
+        )}
+
+        {!adicionandoItem && (
+          <button type="button" className="btn-secondary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}
+            onClick={() => setAdicionandoItem(true)}>
+            <Plus size={14} /> Adicionar outro sêmen/touro a esta compra
           </button>
-          <button type="button" style={cardBtn(origem === "naab")} onClick={() => escolherOrigem("naab")}>
-            <Database size={16} /> Banco de dados NAAB
-          </button>
-        </div>
-
-        {origem && (
-          <div className="mb-3" style={{ position: "relative", maxWidth: 340 }}>
-            <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-            <input style={{ ...selStyle, paddingLeft: "1.6rem", width: "100%" }} value={buscaTouro} onChange={(e) => setBuscaTouro(e.target.value)}
-              placeholder={origem === "estoque" ? "Buscar touro, código, NAAB…" : "Buscar touro, NAAB, central, raça…"} />
-          </div>
         )}
 
-        {origem === "estoque" && (
-          <div className="overflow-x-auto">
-            {!estoque && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-            {estoque && (
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th></th><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th style={{ textAlign: "right" }}>Doses atuais</th></tr></thead>
-                <tbody>
-                  {estoqueFiltrado.map((e) => {
-                    const sel = touroSel?.estoqueSemenId === e.id;
-                    return (
-                      <tr key={e.id} style={{ cursor: "pointer" }} className="row-clickable"
-                        onClick={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })}>
-                        <td><input type="radio" checked={sel} onChange={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })} /></td>
-                        <td style={{ fontWeight: 700 }}>{e.touro_nome}</td>
-                        <td style={{ fontSize: "0.8rem" }}>{e.codigo || "—"}</td>
-                        <td style={{ fontSize: "0.8rem" }}>{e.naab || "—"}</td>
-                        <td style={{ fontSize: "0.8rem" }}>{e.central || "—"}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600 }}>{e.doses}</td>
-                      </tr>
-                    );
-                  })}
-                  {!estoqueFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro em estoque encontrado.</td></tr>}
-                </tbody>
-              </table>
+        {adicionandoItem && (
+          <>
+            {!!itens.length && (
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                Deseja adicionar mais um sêmen/touro à mesma compra (mesma nota fiscal/boletos)?
+              </p>
             )}
-          </div>
-        )}
+            <div className="flex flex-wrap gap-3 mb-3">
+              <button type="button" style={cardBtn(origem === "estoque")} onClick={() => escolherOrigem("estoque")}>
+                <Warehouse size={16} /> Touro já cadastrado (estoque da fazenda)
+              </button>
+              <button type="button" style={cardBtn(origem === "naab")} onClick={() => escolherOrigem("naab")}>
+                <Database size={16} /> Banco de dados NAAB
+              </button>
+              {!!itens.length && (
+                <button type="button" className="btn-secondary" onClick={() => { limparSelecaoAtual(); setAdicionandoItem(false); }}>
+                  Cancelar
+                </button>
+              )}
+            </div>
 
-        {origem === "naab" && (
-          <div className="overflow-x-auto">
-            {erroNaab && <p style={{ color: "var(--red)" }}>Não foi possível carregar o catálogo NAAB: {erroNaab}.</p>}
-            {!naab && !erroNaab && <p style={{ color: "var(--text-muted)" }}>Carregando catálogo NAAB…</p>}
-            {naab && (
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th></th><th>NAAB</th><th>Touro</th><th>Central</th><th>Raça</th><th style={{ textAlign: "right" }}>TPI</th></tr></thead>
-                <tbody>
-                  {naabFiltrado.slice(0, 200).map((t) => {
-                    const sel = touroSel?.naab === t.naab;
-                    return (
-                      <tr key={t.id ?? t.naab} style={{ cursor: "pointer" }} className="row-clickable"
-                        onClick={() => setTouroSel({ naab: t.naab, touroNome: t.nome || t.naab, central: t.central })}>
-                        <td><input type="radio" checked={sel} onChange={() => setTouroSel({ naab: t.naab, touroNome: t.nome || t.naab, central: t.central })} /></td>
-                        <td style={{ fontWeight: 700 }}>{t.naab}</td>
-                        <td style={{ fontSize: "0.8rem" }}>{t.nome || "—"}</td>
-                        <td style={{ fontSize: "0.8rem" }}>{t.central || "—"}</td>
-                        <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.raca || "—"}</td>
-                        <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{t.tpi ?? "—"}</td>
-                      </tr>
-                    );
-                  })}
-                  {!naabFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
-                </tbody>
-              </table>
+            {origem && (
+              <div className="mb-3" style={{ position: "relative", maxWidth: 340 }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyle, paddingLeft: "1.6rem", width: "100%" }} value={buscaTouro} onChange={(e) => setBuscaTouro(e.target.value)}
+                  placeholder={origem === "estoque" ? "Buscar touro, código, NAAB…" : "Buscar touro, NAAB, central, raça…"} />
+              </div>
             )}
-            {naab && naabFiltrado.length > 200 && (
-              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Mostrando 200 de {naabFiltrado.length} — refine a busca para ver mais.</p>
-            )}
-          </div>
-        )}
 
-        {touroSel && (
-          <p style={{ fontSize: "0.8rem", color: "var(--dourado-light)", marginTop: "0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
-            <FlaskConical size={14} /> Touro selecionado: <strong>{touroSel.touroNome}</strong>
-            {touroSel.naab && ` (NAAB ${touroSel.naab})`}
-            {!touroSel.estoqueSemenId && " — nova linha de estoque será criada ao salvar"}
-          </p>
+            {origem === "estoque" && (
+              <div className="overflow-x-auto">
+                {!estoque && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+                {estoque && (
+                  <table className="fazenda-table" style={{ margin: 0 }}>
+                    <thead><tr><th></th><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th style={{ textAlign: "right" }}>Doses atuais</th></tr></thead>
+                    <tbody>
+                      {estoqueFiltrado.map((e) => {
+                        const sel = touroSel?.estoqueSemenId === e.id;
+                        return (
+                          <tr key={e.id} style={{ cursor: "pointer" }} className="row-clickable"
+                            onClick={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })}>
+                            <td><input type="radio" checked={sel} onChange={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })} /></td>
+                            <td style={{ fontWeight: 700 }}>{e.touro_nome}</td>
+                            <td style={{ fontSize: "0.8rem" }}>{e.codigo || "—"}</td>
+                            <td style={{ fontSize: "0.8rem" }}>{e.naab || "—"}</td>
+                            <td style={{ fontSize: "0.8rem" }}>{e.central || "—"}</td>
+                            <td style={{ textAlign: "right", fontWeight: 600 }}>{e.doses}</td>
+                          </tr>
+                        );
+                      })}
+                      {!estoqueFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro em estoque encontrado.</td></tr>}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            )}
+
+            {origem === "naab" && (
+              <div className="overflow-x-auto">
+                {erroNaab && <p style={{ color: "var(--red)" }}>Não foi possível carregar o catálogo NAAB: {erroNaab}.</p>}
+                {!naab && !erroNaab && <p style={{ color: "var(--text-muted)" }}>Carregando catálogo NAAB…</p>}
+                {naab && (
+                  <table className="fazenda-table" style={{ margin: 0 }}>
+                    <thead><tr><th></th><th>NAAB</th><th>Touro</th><th>Central</th><th>Raça</th><th style={{ textAlign: "right" }}>TPI</th></tr></thead>
+                    <tbody>
+                      {naabFiltrado.slice(0, 200).map((t) => {
+                        const sel = touroSel?.naab === t.naab;
+                        return (
+                          <tr key={t.id ?? t.naab} style={{ cursor: "pointer" }} className="row-clickable"
+                            onClick={() => setTouroSel({ naab: t.naab, touroNome: t.nome || t.naab, central: t.central })}>
+                            <td><input type="radio" checked={sel} onChange={() => setTouroSel({ naab: t.naab, touroNome: t.nome || t.naab, central: t.central })} /></td>
+                            <td style={{ fontWeight: 700 }}>{t.naab}</td>
+                            <td style={{ fontSize: "0.8rem" }}>{t.nome || "—"}</td>
+                            <td style={{ fontSize: "0.8rem" }}>{t.central || "—"}</td>
+                            <td style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{t.raca || "—"}</td>
+                            <td style={{ textAlign: "right", fontWeight: 600, color: "var(--dourado-light)" }}>{t.tpi ?? "—"}</td>
+                          </tr>
+                        );
+                      })}
+                      {!naabFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro do catálogo NAAB encontrado.</td></tr>}
+                    </tbody>
+                  </table>
+                )}
+                {naab && naabFiltrado.length > 200 && (
+                  <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Mostrando 200 de {naabFiltrado.length} — refine a busca para ver mais.</p>
+                )}
+              </div>
+            )}
+
+            {touroSel && (
+              <div className="mt-3">
+                <p style={{ fontSize: "0.8rem", color: "var(--dourado-light)", marginBottom: "0.75rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+                  <FlaskConical size={14} /> Touro selecionado: <strong>{touroSel.touroNome}</strong>
+                  {touroSel.naab && ` (NAAB ${touroSel.naab})`}
+                  {!touroSel.estoqueSemenId && " — nova linha de estoque será criada ao salvar"}
+                </p>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2" style={{ maxWidth: "620px" }}>
+                  <Campo label="Nº de doses">
+                    <input type="number" min={1} style={inputStyle} value={doses} onChange={(e) => setDoses(e.target.value)} />
+                  </Campo>
+                  <Campo label="O valor informado é...">
+                    <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                        <input type="radio" name="tipo_valor_semen" checked={tipoValor === "por_dose"} onChange={() => setTipoValor("por_dose")} />
+                        Por dose
+                      </label>
+                      <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                        <input type="radio" name="tipo_valor_semen" checked={tipoValor === "total"} onChange={() => setTipoValor("total")} />
+                        Total
+                      </label>
+                    </div>
+                  </Campo>
+                  <Campo label={tipoValor === "total" ? "Valor total (R$)" : "Valor por dose (R$)"}>
+                    <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} />
+                  </Campo>
+                </div>
+                {!!dosesNum && !!valorNum && (
+                  <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                    Resumo deste item: <strong style={{ color: "var(--text)" }}>{dosesNum}</strong> dose(s) × {formatBRL(valorUnitarioAtual)} =
+                    {" "}<strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorUnitarioAtual * dosesNum)}</strong>
+                  </p>
+                )}
+                <button type="button" className="btn-primary" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={adicionarItem}>
+                  <Plus size={14} /> Adicionar sêmen/touro a esta compra
+                </button>
+              </div>
+            )}
+          </>
         )}
       </div>
 
-      {touroSel && (
+      {!!itens.length && !adicionandoItem && (
         <div className="card mb-4">
           <div className="card-header mb-3">2. Dados da compra</div>
 
@@ -312,36 +434,13 @@ export default function CompraSemenForm() {
             <Campo label="Data da compra">
               <input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} />
             </Campo>
-            <Campo label="Nº de doses">
-              <input type="number" min={1} style={inputStyle} value={doses} onChange={(e) => setDoses(e.target.value)} />
-            </Campo>
           </div>
 
-          <div className="mb-1" style={{ maxWidth: "480px" }}>
-            <label style={lbl}>O valor informado é...</label>
-            <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
-                <input type="radio" name="tipo_valor_semen" checked={tipoValor === "por_dose"} onChange={() => setTipoValor("por_dose")} />
-                Por dose
-              </label>
-              <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
-                <input type="radio" name="tipo_valor_semen" checked={tipoValor === "total"} onChange={() => setTipoValor("total")} />
-                Total ({dosesNum || 0} dose(s))
-              </label>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-3 mb-2" style={{ maxWidth: "480px" }}>
-            <Campo label={tipoValor === "total" ? "Valor total (R$)" : "Valor por dose (R$)"}>
-              <input type="number" step="0.01" style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} />
-            </Campo>
-          </div>
-          {!!dosesNum && !!valorNum && (
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Resumo: <strong style={{ color: "var(--text)" }}>{dosesNum}</strong> dose(s) × {formatBRL(valorUnitario)} =
-              {" "}<strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong>
-              {(Number(desconto) > 0 || Number(acrescimo) > 0) && " (já com desconto/acréscimo)"}
-            </p>
-          )}
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+            Total da nota: <strong style={{ color: "var(--text)" }}>{dosesTotalItens}</strong> dose(s) em <strong>{itens.length}</strong> item(ns) =
+            {" "}<strong style={{ color: "var(--dourado-light)" }}>{formatBRL(valorLiquido)}</strong>
+            {(Number(desconto) > 0 || Number(acrescimo) > 0) && " (já com desconto/acréscimo)"}
+          </p>
 
           <Campo label="Conta gerencial" full>
             <SeletorContaGerencial
@@ -434,9 +533,13 @@ export default function CompraSemenForm() {
             <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", margin: "0.75rem 0" }}>{msg.texto}</p>
           )}
           <button className="btn-primary mt-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
-            <Check size={14} /> {salvando ? "Salvando…" : `Registrar compra de ${dosesNum || ""} dose(s)`}
+            <Check size={14} /> {salvando ? "Salvando…" : `Registrar compra de ${dosesTotalItens || ""} dose(s)`}
           </button>
         </div>
+      )}
+
+      {msg && msg.tipo === "erro" && !(!!itens.length && !adicionandoItem) && (
+        <p style={{ color: "var(--red)", fontSize: "0.85rem", margin: "0.75rem 0" }}>{msg.texto}</p>
       )}
 
       {historico && historico.length > 0 && (
