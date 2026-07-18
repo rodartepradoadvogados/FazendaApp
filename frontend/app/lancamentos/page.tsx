@@ -3,7 +3,7 @@ import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } fr
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
-  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check,
+  ChevronDown, ChevronRight, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Check, Dna,
 } from "lucide-react";
 import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
@@ -36,6 +36,7 @@ import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
 import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
+import CompraSemenForm from "@/components/CompraSemenForm";
 import BaixarAnimal from "@/components/BaixarAnimal";
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
@@ -3898,6 +3899,7 @@ const TIPOS_GRUPOS = [
         id: "compra_venda", label: "Compra / Venda", icon: ShoppingCart, desc: "Registrar a compra ou a venda de animal(is).",
         subs: [
           { id: "comprar_animal", label: "Comprar animal", icon: ShoppingCart, desc: "Registrar a compra de animal(is) — vendedor via fornecedor, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
+          { id: "comprar_semen", label: "Comprar sêmen", icon: Dna, desc: "Registrar a compra de sêmen — touro já cadastrado ou do banco de dados NAAB, conta gerencial restrita (Sêmen); soma as doses ao estoque de sêmen." },
           { id: "vender_animal", label: "Vender animal", icon: ShoppingCart, desc: "Registrar a venda de animal(is) — comprador via cadastro, motivo/categoria(s) da venda, conta gerencial restrita, GTA/ICMS, comissão de corretagem." },
         ],
       },
@@ -4130,6 +4132,7 @@ export default function LancamentosPage() {
         {sel === "estoque" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}
         {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
+        {sel === "comprar_semen" && <CompraSemenForm />}
         {sel === "vender_animal" && <CompraVendaAnimalForm modo="venda" animais={animais} />}
         {sel === "baixar_animal" && <BaixarAnimal />}
         {sel === "alimentacao_dieta" && <FormAlimentacaoDieta />}

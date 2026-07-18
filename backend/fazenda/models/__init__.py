@@ -2150,6 +2150,33 @@ class VendaAnimal(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
+class CompraSemen(SQLModel, table=True):
+    """Registro de compra de sêmen — igual em espírito a CompraAnimal: o
+    efeito financeiro/histórico da aquisição (a conta gerencial rica vive na
+    ContaGerencial gerada). Sempre resulta em doses somadas a um EstoqueSemen
+    (existente, se `origem="estoque"`, ou criado/casado por NAAB se
+    `origem="naab"`) — é o que faz a compra "comunicar com o estoque de
+    sêmen" e, por consequência, com os relatórios e a baixa nas aplicações
+    de IA (que descontam de EstoqueSemen.doses)."""
+
+    __tablename__ = "compra_semen"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    estoque_semen_id: int = Field(foreign_key="estoque_semen.id", index=True)
+    touro_nome: str
+    naab: Optional[str] = None
+    origem: str  # "estoque" (touro já cadastrado na fazenda) | "naab" (banco de dados NAAB)
+    doses: int
+    valor_unitario: float  # R$ por dose
+    vendedor: str
+    data_compra: date
+    responsavel: Optional[str] = None
+    observacao: Optional[str] = None
+    numero_lancamento_gerado: Optional[str] = None  # LC-... do lançamento financeiro (ContaGerencial) gerado na compra
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
 # ---------------------------------------------------------------------------
 # Comissão de corretagem — gerada a partir de uma venda ou compra de animal,
 # quando há corretor envolvido. Sempre resulta em uma despesa (ContaGerencial)

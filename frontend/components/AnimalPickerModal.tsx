@@ -1,7 +1,9 @@
 "use client";
 import { useMemo, useState } from "react";
-import { Search, X, ChevronDown } from "lucide-react";
+import { Search, X, ChevronDown, UserPlus } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
+import { Modal } from "./Modal";
+import NovoAnimalRapido from "./NovoAnimalRapido";
 
 /**
  * Padrão único de seleção de VÁRIOS animais no site: um botão mostra quantos
@@ -10,31 +12,44 @@ import { AnimalRow } from "./AnimalModal";
  * (como era em Inseminação/Diagnóstico) ou de overlays reimplementados a cada
  * tela. Mesmo visual do `AnimalPicker` (seleção única), com checkboxes.
  */
-export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais" }: {
+export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, placeholder = "Selecionar animais…", titulo = "Escolher animais", permitirNovoAnimal = false }: {
   animais: AnimalRow[];
   selecionados: Set<string>;
   onToggle: (numero: string) => void;
   colunas: { header: string; render: (a: AnimalRow) => React.ReactNode }[];
   placeholder?: string;
   titulo?: string;
+  // Quando true, mostra "+ Cadastrar novo animal" dentro do seletor — usado
+  // no fluxo de Comprar animal, onde o animal recém-adquirido pode ainda não
+  // estar no cadastro. Os animais criados aqui somam-se localmente à lista
+  // recebida por prop (persistem até a tela ser recarregada/recém-buscada).
+  permitirNovoAnimal?: boolean;
 }) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const [filtroLote, setFiltroLote] = useState("");
+  const [novoAnimalAberto, setNovoAnimalAberto] = useState(false);
+  const [extras, setExtras] = useState<AnimalRow[]>([]);
+
+  const animaisComExtras = useMemo(() => {
+    if (!extras.length) return animais;
+    const numeros = new Set(animais.map((a) => a.numero));
+    return [...animais, ...extras.filter((e) => !numeros.has(e.numero))];
+  }, [animais, extras]);
 
   const lotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
-    [animais]
+    () => Array.from(new Set(animaisComExtras.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animaisComExtras]
   );
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
-    return animais.filter((a) => {
+    return animaisComExtras.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
       if (!q) return true;
       return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`.toLowerCase().includes(q);
     });
-  }, [animais, busca, filtroLote]);
+  }, [animaisComExtras, busca, filtroLote]);
 
   const todosFiltradosSelecionados = filtrados.length > 0 && filtrados.every((a) => selecionados.has(a.numero));
   function alternarFiltrados() {
@@ -64,7 +79,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
           <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "720px", maxWidth: "96vw", maxHeight: "85vh", display: "flex", flexDirection: "column" }}>
             <div className="flex items-center justify-between mb-3">
               <div className="card-header" style={{ margin: 0 }}>
-                {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({selecionados.size}/{animais.length})</span>
+                {titulo} <span style={{ color: "var(--dourado-light)", fontWeight: 400 }}>({selecionados.size}/{animaisComExtras.length})</span>
               </div>
               <button onClick={() => setAberto(false)} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
             </div>
@@ -80,6 +95,12 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
                   <option value="">Todos os lotes</option>
                   {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
                 </select>
+              )}
+              {permitirNovoAnimal && (
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                  onClick={() => setNovoAnimalAberto(true)}>
+                  <UserPlus size={14} /> Cadastrar novo animal
+                </button>
               )}
             </div>
             <div className="flex items-center justify-between mb-2">
@@ -106,6 +127,19 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
             </div>
           </div>
         </div>
+      )}
+
+      {novoAnimalAberto && (
+        <Modal title="Cadastrar novo animal" onClose={() => setNovoAnimalAberto(false)} width="560px" zIndex={80}>
+          <NovoAnimalRapido
+            onCriado={(novo) => {
+              setExtras((prev) => [...prev, novo]);
+              if (!selecionados.has(novo.numero)) onToggle(novo.numero);
+              setNovoAnimalAberto(false);
+            }}
+            onCancelar={() => setNovoAnimalAberto(false)}
+          />
+        </Modal>
       )}
     </>
   );

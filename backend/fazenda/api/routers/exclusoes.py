@@ -22,10 +22,12 @@ from fazenda.models import (
     CalendarioSanitario,
     ComissaoCorretagem,
     CompraAnimal,
+    CompraSemen,
     ContaGerencial,
     ControleLeiteiro,
     Doenca,
     Estoque,
+    EstoqueSemen,
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
@@ -62,6 +64,7 @@ TIPOS = [
     {"id": "protocolo_iatf_lancamento", "label": "Aplicação de protocolo hormonal (IATF)"},
     {"id": "financeiro", "label": "Financeiro"},
     {"id": "compra_animal", "label": "Compra de animal"},
+    {"id": "compra_semen", "label": "Compra de sêmen"},
     {"id": "venda_animal", "label": "Venda de animal"},
     {"id": "estoque", "label": "Estoque"},
     {"id": "evento_manual", "label": "Evento manual da agenda"},
@@ -82,7 +85,7 @@ TIPOS = [
 SUBTIPOS_TODOS = [
     "servico", "parto", "controle", "sanidade",
     "protocolo_sanitario_lancamento", "protocolo_iatf_lancamento",
-    "evento_manual", "financeiro", "compra_animal", "venda_animal",
+    "evento_manual", "financeiro", "compra_animal", "compra_semen", "venda_animal",
 ]
 
 
@@ -279,6 +282,21 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
             for v in rows
             if _contem(termo, v.numero_animal, v.comprador, v.numero_lancamento_gerado, v.gta)
             and _dentro_periodo(v.data_venda, data_inicio, data_fim)
+        ]
+        return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
+
+    if tipo == "compra_semen":
+        rows = session.exec(select(CompraSemen)).all()
+        out = [
+            {
+                "id": c.id,
+                "titulo": f"{c.touro_nome} — {c.vendedor} — {_br(c.data_compra)}",
+                "subtitulo": f"{c.doses} dose(s) · R$ {c.valor_unitario or 0:,.2f}/dose · lanç. {c.numero_lancamento_gerado or '—'}",
+                "_data": c.data_compra,
+            }
+            for c in rows
+            if _contem(termo, c.touro_nome, c.naab, c.vendedor, c.numero_lancamento_gerado)
+            and _dentro_periodo(c.data_compra, data_inicio, data_fim)
         ]
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
@@ -613,6 +631,26 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
             if comissoes:
                 impacto.append(f"{len(comissoes)} comissão(ões) de corretagem vinculada(s)")
             objetos += [*contas, *comissoes, *contas_comissao]
+        return impacto, objetos
+
+    if tipo == "compra_semen":
+        c = session.get(CompraSemen, int(id_))
+        if not c:
+            raise HTTPException(status_code=404, detail="Compra de sêmen não encontrada")
+        impacto = [f"Compra de {c.doses} dose(s) de sêmen — {c.touro_nome} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor_unitario or 0:,.2f}/dose)"]
+        objetos: list = [c]
+        contas = (
+            session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+            if c.numero_lancamento_gerado else []
+        )
+        if contas:
+            impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
+        estoque = session.get(EstoqueSemen, c.estoque_semen_id)
+        if estoque:
+            impacto.append(f"{c.doses} dose(s) serão subtraídas do estoque de sêmen de {estoque.touro_nome} (saldo atual: {estoque.doses})")
+            estoque.doses = estoque.doses - c.doses
+            session.add(estoque)
+        objetos += contas
         return impacto, objetos
 
     if tipo == "lote":
