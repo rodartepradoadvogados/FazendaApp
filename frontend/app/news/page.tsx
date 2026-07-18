@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
+import { estiloCardMateria } from "@/lib/newsVisual";
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -13,18 +14,6 @@ function formatarData(iso?: string | null): string {
 function dominio(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
-
-// Fundo de cada matéria: a mesma foto do compost barn usada no login, com uma
-// camada semitransparente na cor da paleta ativa por cima (var(--vinho) já
-// reflete vinho ou verde, o que o usuário tiver escolhido). O texto usa cores
-// claras fixas, já que essa camada é sempre escura nos dois temas/paletas.
-const cardStyle: React.CSSProperties = {
-  position: "relative", padding: "1.1rem 1.2rem", borderRadius: "12px",
-  border: "1px solid var(--vinho-light)",
-  backgroundImage:
-    "linear-gradient(color-mix(in srgb, var(--vinho) 76%, transparent), color-mix(in srgb, var(--vinho) 76%, transparent)), url('/images/login-fundo.webp')",
-  backgroundSize: "cover", backgroundPosition: "center 55%",
-};
 
 export default function NewsPage() {
   const [materias, setMaterias] = useState<NoticiaNews[] | null>(null);
@@ -79,8 +68,8 @@ export default function NewsPage() {
       )}
 
       <div className="flex flex-col gap-4">
-        {materias && materias.map((n) => (
-          <div key={n.id} style={cardStyle}>
+        {materias && materias.map((n, i) => (
+          <div key={n.id} style={{ position: "relative", padding: "1.1rem 1.2rem", borderRadius: "12px", ...estiloCardMateria(i) }}>
             <p style={{ fontWeight: 700, fontSize: "1.05rem", color: "var(--dourado-light)", marginBottom: "0.4rem" }}>
               {n.manchete}
             </p>

@@ -137,6 +137,10 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
         ),
         "link": "/news#milknews-2026-07-18-01",
         "data_publicacao": "2026-07-18",
+        "fontes": [
+            "https://www.cepea.org.br/br/indicador/leite.aspx",
+            "https://opresenterural.com.br/preco-do-leite-recua-para-r-266-por-litro-enquanto-importacoes-crescem-28/",
+        ],
     }],
     "milknews_20260718b": [{
         "manchete": "Preço-base do leite Classe I recua nos EUA em julho, aponta USDA",
@@ -150,6 +154,10 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
         ),
         "link": "/news#milknews-2026-07-18-02",
         "data_publicacao": "2026-07-18",
+        "fontes": [
+            "https://www.ams.usda.gov/mnreports/dymadvancedprices.pdf",
+            "https://www.ers.usda.gov/topics/animal-products/dairy/market-outlook",
+        ],
     }],
     "milknews_20260718c": [{
         "manchete": "Venda de sêmen bovino para leite cresce 5,9% no 1º trimestre de 2026, aponta Asbia",
@@ -163,6 +171,10 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
         ),
         "link": "/news#milknews-2026-07-18-03",
         "data_publicacao": "2026-07-18",
+        "fontes": [
+            "https://beefpoint.com.br/asbia-venda-de-semen-cresce-177-no-1o-tri-26-para-507-milhoes-de-doses/",
+            "https://girodoboi.canalrural.com.br/pecuaria/comercializacao-de-semen-bovino-cresce-177-no-primeiro-trimestre-de-2026",
+        ],
     }],
 }
 
@@ -185,19 +197,32 @@ def publicar_lotes_milknews(session: Session) -> None:
     lote roda uma única vez, guardado por SeedFlag — a rotina agendada só
     precisa acrescentar uma chave nova ao dict; lotes antigos nunca são
     reaplicados nem sobrescrevem edição manual. Como qualquer outra matéria,
-    nasce com revisado_final=False (o robô nunca faz essa revisão)."""
+    nasce com revisado_final=False (o robô nunca faz essa revisão).
+
+    Também faz um backfill idempotente de `fontes` (links oficiais clicáveis)
+    em matérias JÁ publicadas — se o dict for editado depois (ex.: para
+    acrescentar as fontes numa matéria de um lote antigo), a próxima
+    inicialização preenche o campo sem sobrescrever nada que já esteja lá."""
     for lote_chave, itens in MILKNEWS_LOTES.items():
         chave = f"milknews_lote_{lote_chave}"
-        if session.get(SeedFlag, chave):
-            continue
-        fonte = _fonte_milknews(session)
+        ja_publicado = session.get(SeedFlag, chave) is not None
+        fonte = None
         for item in itens:
             link = (item.get("link") or "").strip()
             manchete = (item.get("manchete") or "").strip()
             if not link or not manchete:
                 continue
-            if session.exec(select(NoticiaNews).where(NoticiaNews.link == link)).first():
+            urls = [u.strip() for u in item.get("fontes", []) if u and u.strip()]
+
+            existente = session.exec(select(NoticiaNews).where(NoticiaNews.link == link)).first()
+            if existente:
+                if urls and not existente.fontes:
+                    existente.fontes = json.dumps(urls)
+                    session.add(existente)
                 continue
+            if ja_publicado:
+                continue
+
             data_publicacao = None
             if item.get("data_publicacao"):
                 try:
@@ -207,11 +232,14 @@ def publicar_lotes_milknews(session: Session) -> None:
             resumo = (item.get("resumo") or "").strip() or None
             if resumo and len(resumo) > RESUMO_MAX:
                 resumo = resumo[: RESUMO_MAX - 1].rstrip() + "…"
+            fonte = fonte or _fonte_milknews(session)
             session.add(NoticiaNews(
                 fonte_id=fonte.id, manchete=manchete, resumo=resumo,
                 link=link, data_publicacao=data_publicacao,
+                fontes=json.dumps(urls) if urls else None,
             ))
-        session.add(SeedFlag(chave=chave))
+        if not ja_publicado:
+            session.add(SeedFlag(chave=chave))
         session.commit()
 
 

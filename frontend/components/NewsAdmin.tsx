@@ -2,21 +2,10 @@
 import { useEffect, useState } from "react";
 import { Newspaper, AlertTriangle, Plus, Trash2, X, Check, Link as LinkIcon, CalendarDays, ShieldCheck, ClipboardCheck } from "lucide-react";
 import { fetchNoticias, criarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias, type NoticiaNews } from "@/lib/api";
+import { estiloCardMateria } from "@/lib/newsVisual";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
-
-// Fundo de cada matéria: a mesma foto do compost barn usada no login, com uma
-// camada semitransparente na cor da paleta ativa por cima (var(--vinho) já
-// reflete vinho ou verde, o que o usuário tiver escolhido) — texto claro fixo
-// por cima, já que essa camada é sempre escura nos dois temas/paletas.
-const cardStyle: React.CSSProperties = {
-  position: "relative", padding: "1rem 1.1rem", borderRadius: "12px",
-  border: "1px solid var(--vinho-light)",
-  backgroundImage:
-    "linear-gradient(color-mix(in srgb, var(--vinho) 76%, transparent), color-mix(in srgb, var(--vinho) 76%, transparent)), url('/images/login-fundo.webp')",
-  backgroundSize: "cover", backgroundPosition: "center 55%",
-};
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -198,8 +187,8 @@ export default function NewsAdmin() {
 
           {materias && materias.length > 0 && (
             <div className="flex flex-col gap-3">
-              {materias.map((n) => (
-                <div key={n.id} style={cardStyle}>
+              {materias.map((n, i) => (
+                <div key={n.id} style={{ position: "relative", padding: "1rem 1.1rem", borderRadius: "12px", ...estiloCardMateria(i) }}>
                   <div className="flex items-start justify-between gap-2">
                     <p style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--dourado-light)", marginBottom: "0.3rem" }}>{n.manchete}</p>
                     <button type="button" onClick={() => excluir(n)} disabled={excluindo === n.id || !podePublicar} title={podePublicar ? "Excluir matéria" : "Sem permissão para excluir"}
