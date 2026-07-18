@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -33,6 +33,7 @@ import Dre from "@/components/mobile/menu/Dre";
 import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import News from "@/components/mobile/menu/News";
+import Estoque from "@/components/mobile/menu/Estoque";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -86,7 +87,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -136,6 +137,10 @@ export default function Pagina() {
     );
   }
 
+  if (secaoAberta === "estoque") {
+    return <Estoque onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // 2º nível: itens da sessão escolhida, em quadrados.
   if (secaoAberta === "aparencia") {
     return (
@@ -158,9 +163,11 @@ export default function Pagina() {
     );
   }
 
-  // 1º nível: sessões, em quadrados coloridos.
+  // 1º nível: sessões, em quadrados coloridos. "Estoque" fica ao lado de
+  // "Financeiro" (mesma permissão do módulo /estoque do site).
   const secoesOpcoes: OpcaoAcao[] = [
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
+    ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--mob-dourado)" }] : []),
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
@@ -171,7 +178,7 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news")}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque")}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}
