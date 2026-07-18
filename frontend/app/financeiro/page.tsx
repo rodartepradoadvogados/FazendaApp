@@ -43,7 +43,7 @@ type Lanc = {
   tipo: string; valor: number; valor_pago: number | null; desconto_acrescimo: number | null;
   centro_custo: string; codigo_conta: string; conta_completa: string;
   descricao: string; fornecedor: string; responsavel: string | null;
-  tipo_documento: string | null; numero_documento: string | null; numero_documento_pagamento: string | null;
+  tipo_documento: string | null; numero_documento: string | null; numero_os_orcamento: string | null; numero_documento_pagamento: string | null;
   conta_bancaria: string | null; forma_pagamento: string | null; data_vencimento_cartao: string | null; entregue: boolean | null;
   parcela_num: number | null; parcela_total: number | null;
   data_competencia: string | null; data_pagamento: string | null; data_vencimento: string | null; data_emissao: string | null;
@@ -310,7 +310,7 @@ export default function FinanceiroPage() {
       if (relTipo && r.tipo !== relTipo) return false;
       if (relFornecedor && r.fornecedor !== relFornecedor) return false;
       if (relProduto && !(r.itens || []).some((it) => it.produto === relProduto)) return false;
-      if (relDocumento && !((r.numero_documento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(relDocumento.toLowerCase()))) return false;
+      if (relDocumento && !((r.numero_documento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(relDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(relDocumento.toLowerCase()))) return false;
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
@@ -852,7 +852,7 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
     return regs.filter((r) =>
       !r.data_pagamento &&
       (tipoFiltro === "todos" || r.tipo === tipoFiltro) &&
-      (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+      (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
       (!fornecedor || r.fornecedor === fornecedor) &&
       (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
       (!centroCusto || r.centro_custo === centroCusto) &&
@@ -1344,6 +1344,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
   const [dataVencimento, setDataVencimento] = useState((lanc.data_vencimento || "").slice(0, 10));
   const [dataCompetencia, setDataCompetencia] = useState((lanc.data_competencia || "").slice(0, 10));
   const [numeroNota, setNumeroNota] = useState(lanc.numero_documento || "");
+  const [numeroOsOrcamento, setNumeroOsOrcamento] = useState(lanc.numero_os_orcamento || "");
   const [numeroPagamento, setNumeroPagamento] = useState(lanc.numero_documento_pagamento || "");
   const [tipoDocumento, setTipoDocumento] = useState(lanc.tipo_documento || "");
   const [tiposDocumento, setTiposDocumento] = useState<string[]>([]);
@@ -1361,6 +1362,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
         codigo_conta: codigoConta || null, valor_total: parseFloat(valor.replace(",", ".")) || 0,
         data_emissao: dataEmissao || null, data_vencimento: dataVencimento || null,
         data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
+        numero_os_orcamento: numeroOsOrcamento || null,
         numero_documento_pagamento: numeroPagamento || null, tipo_documento: tipoDocumento || null,
       });
       onSalvo();
@@ -1407,6 +1409,8 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
           </select></div>
         <div><label style={labelStyleLote}>Nº do documento</label>
           <input style={selStyleLote} value={numeroNota} onChange={(e) => setNumeroNota(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Nº da OS/Orçamento</label>
+          <input style={selStyleLote} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" /></div>
         <div><label style={labelStyleLote}>Número do pagamento</label>
           <input style={selStyleLote} value={numeroPagamento} onChange={(e) => setNumeroPagamento(e.target.value)} placeholder="ex.: comprovante, nº do PIX…" /></div>
       </div>
@@ -1457,7 +1461,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
   const filtradosLocal = useMemo(() => itens.filter((r) =>
     (!fProduto || (r.itens || []).some((it) => it.produto === fProduto)) &&
     (!fContraparte || r.fornecedor === fContraparte) &&
-    (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
+    (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
     casaContaGerencial(r, fConta) &&
     (rel !== "extrato" || !fTipo || r.tipo === fTipo) &&
     (!fVencDe || (r.data_vencimento || "") >= fVencDe) && (!fVencAte || (r.data_vencimento || "") <= fVencAte) &&
@@ -1629,7 +1633,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
   }, [opcoes.produtos, regs]);
 
   const filtradas = useMemo(() => abertas.filter((r) =>
-    (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
+    (!numeroDocumento || (r.numero_documento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(numeroDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(numeroDocumento.toLowerCase())) &&
     (!fornecedor || r.fornecedor === fornecedor) &&
     (!produto || (r.itens || []).some((it) => it.produto === produto)) &&
     (!centroCusto || r.centro_custo === centroCusto) &&

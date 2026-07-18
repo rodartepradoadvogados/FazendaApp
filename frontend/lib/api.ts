@@ -2038,6 +2038,7 @@ export async function criarBaixaLoteDetalhada(itens: BaixaLoteItem[]) {
 export async function atualizarLancamentoFinanceiro(id: number, dados: {
   descricao?: string | null; codigo_conta?: string | null; centro_custo?: string | null;
   fornecedor_cliente?: string | null; numero_nota?: string | null; numero_documento_pagamento?: string | null; tipo_documento?: string | null;
+  numero_os_orcamento?: string | null; numero_boleto?: string | null;
   data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
   data_prevista_entrada?: string | null; data_pedido?: string | null;
   quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;
@@ -2063,6 +2064,34 @@ export async function lerDocumentoFinanceiro(file: File) {
   form.append("file", file);
   const res = await authFetch(`${API}/financeiro/ler-documento`, { method: "POST", body: form });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ler o documento"); }
+  return res.json();
+}
+
+// Anexos do lançamento (ex.: boleto de um parcelamento) — o lançamento já
+// precisa existir (numero_lancamento vem do retorno de criarLancamentoFinanceiro).
+export type AnexoLancamento = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em?: string };
+
+export async function anexarArquivoLancamento(numeroLancamento: string, file: File): Promise<AnexoLancamento> {
+  const form = new FormData();
+  form.append("file", file);
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar o arquivo"); }
+  return res.json();
+}
+
+export async function listarAnexosLancamento(numeroLancamento: string): Promise<AnexoLancamento[]> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/anexos`);
+  if (!res.ok) throw new Error("Erro ao listar anexos");
+  return res.json();
+}
+
+export function urlAnexoLancamento(anexoId: number): string {
+  return `${API}/financeiro/anexos/${anexoId}`;
+}
+
+export async function excluirAnexoLancamento(anexoId: number) {
+  const res = await authFetch(`${API}/financeiro/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
   return res.json();
 }
 

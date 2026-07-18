@@ -130,3 +130,52 @@ class TestLerDocumento:
             MockAnthropic.return_value.messages.create.return_value = _resposta_mock({}, stop_reason="refusal")
             r = c.post("/financeiro/ler-documento", files={"file": ("nota.pdf", b"%PDF-1.4", "application/pdf")})
         assert r.status_code == 400
+
+    def test_boleto_multiplas_paginas_corrige_valor_total_para_a_soma(self, client, monkeypatch):
+        """Reproduz o bug relatado: um PDF de 8 páginas, uma parcela de
+        R$586,25 por página — a IA devolveu valor_total=586.25 (valor de
+        1 parcela) em vez de 4690.00 (a soma das 8). O servidor precisa
+        corrigir isso a partir de `parcelas_detectadas`, sem depender só do
+        que a IA disse em `valor_total`."""
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        payload = {
+            "tipo_documento": "boleto", "fornecedor_cliente": "Cooperativa Agro",
+            "numero_documento": "00001-2", "data_emissao": None, "data_pagamento": None,
+            "valor_total": 586.25,  # <- exatamente o bug: valor de 1 parcela, não a soma
+            "conta_bancaria": None, "itens": [], "observacao": None,
+            "parcela_num": 1, "parcela_total": 8, "linha_digitavel": "12340000058625",
+            "data_vencimento": "2026-08-10",
+            "parcelas_detectadas": [
+                {"numero": i, "valor": 586.25, "data_vencimento": f"2026-{7 + i:02d}-10", "linha_digitavel": f"1234000005862{i}"}
+                for i in range(1, 9)
+            ],
+        }
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("boleto8x.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["valor_total"] == 4690.0
+        assert d["valor_total_corrigido"] is True
+        assert len(d["parcelas_detectadas"]) == 8
+        assert d["parcelas_detectadas"][0]["valor"] == 586.25
+
+    def test_boleto_uma_parcela_nao_mexe_no_valor_total(self, client, monkeypatch):
+        c, engine = client
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        payload = {
+            "tipo_documento": "boleto", "fornecedor_cliente": "Fornecedor X",
+            "numero_documento": "999", "data_emissao": None, "data_pagamento": None,
+            "valor_total": 1200.0, "conta_bancaria": None, "itens": [], "observacao": None,
+            "parcela_num": None, "parcela_total": None, "linha_digitavel": "12340000012000",
+            "data_vencimento": "2026-08-10",
+            "parcelas_detectadas": [{"numero": 1, "valor": 1200.0, "data_vencimento": "2026-08-10", "linha_digitavel": "12340000012000"}],
+        }
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(payload)
+            r = c.post("/financeiro/ler-documento", files={"file": ("boleto_unico.pdf", b"%PDF-1.4", "application/pdf")})
+        assert r.status_code == 200
+        d = r.json()
+        assert d["valor_total"] == 1200.0
+        assert "valor_total_corrigido" not in d

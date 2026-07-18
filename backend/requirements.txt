@@ -13,3 +13,4 @@ aiosqlite>=0.20
 psycopg2-binary>=2.9
 openpyxl>=3.1
 anthropic>=0.90
+pypdf>=5.0

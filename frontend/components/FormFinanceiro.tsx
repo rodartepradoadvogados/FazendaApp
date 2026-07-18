@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
-  lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, type LancamentoParecido,
+  lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -24,7 +24,7 @@ function Campo({ label, children, full }: { label: string; children: React.React
   return <div style={{ gridColumn: full ? "1 / -1" : undefined }}><label style={lbl}>{label}</label>{children}</div>;
 }
 
-type Parcela = { data_vencimento: string; valor: string };
+type Parcela = { data_vencimento: string; valor: string; numero_boleto?: string };
 type TipoItem = "produto" | "servico";
 type ModoValor = "unitario" | "total";
 type Item = {
@@ -146,6 +146,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [responsavel, setResponsavel] = useState("");
   const [tipoDocumento, setTipoDocumento] = useState("");
   const [numeroDocumento, setNumeroDocumento] = useState("");
+  // Item de consulta À PARTE do número do documento — nº da ordem de serviço
+  // (OS) ou do orçamento que originou a compra, quando houver.
+  const [numeroOsOrcamento, setNumeroOsOrcamento] = useState("");
+  // Nº do boleto (linha digitável) — só para lançamento SEM parcelamento;
+  // com parcelamento, cada parcela tem o seu próprio (ver tabela de parcelas).
+  const [numeroBoleto, setNumeroBoleto] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
   const [dataVencimento, setDataVencimento] = useState("");
   const [dataPrevistaEntrada, setDataPrevistaEntrada] = useState("");
@@ -166,6 +172,14 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const [parcelado, setParcelado] = useState(false);
   const [qtdParcelas, setQtdParcelas] = useState("2");
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
+  // Quando a extração do boleto já traz os valores/vencimentos exatos de cada
+  // parcela (parcelas_detectadas), guarda aqui pra o efeito de auto-divisão
+  // (abaixo) usar esses valores reais em vez de dividir tudo igualmente.
+  const parcelasExtraidasRef = useRef<Parcela[] | null>(null);
+  // Boleto(s) a anexar ao lançamento quando ele nascer parcelado — sobem
+  // depois que o lançamento é criado (o anexo precisa do numero_lancamento).
+  const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
+  const boletoInputRef = useRef<HTMLInputElement>(null);
 
   const [jaPago, setJaPago] = useState(false);
   const [dataPagamento, setDataPagamento] = useState("");
@@ -215,9 +229,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   const valorBruto = useMemo(() => itens.reduce((a, i) => a + (Number(i.valor_total) || 0), 0), [itens]);
   const valorLiquido = useMemo(() => Math.round((valorBruto - (Number(desconto) || 0) + (Number(acrescimo) || 0)) * 100) / 100, [valorBruto, desconto, acrescimo]);
 
-  // Regenera as parcelas (divisão igual) quando ligar o parcelamento ou mudar quantidade.
+  // Regenera as parcelas (divisão igual) quando ligar o parcelamento ou mudar
+  // quantidade — EXCETO logo após uma extração de boleto multi-parcela, que já
+  // trouxe valor/vencimento reais de cada via (parcelasExtraidasRef): nesse
+  // caso usa esses valores exatos uma vez, sem sobrescrever com a divisão igual.
   useEffect(() => {
     if (!parcelado) { setParcelas([]); return; }
+    if (parcelasExtraidasRef.current) {
+      setParcelas(parcelasExtraidasRef.current);
+      parcelasExtraidasRef.current = null;
+      return;
+    }
     const n = Math.max(1, Math.round(Number(qtdParcelas) || 0));
     setParcelas(dividirParcelas(valorLiquido, n, dataPrevistaEntrada || dataEmissao));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -229,10 +251,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   function limpar() {
     setItens([itemVazio()]);
     setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
-    setNumeroDocumento(""); setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
+    setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
+    setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     setPedidoId("");
     setDesconto(""); setAcrescimo("");
-    setParcelado(false); setQtdParcelas("2"); setParcelas([]);
+    setParcelado(false); setQtdParcelas("2"); setParcelas([]); setBoletoFiles([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");
     setXmlTexto(""); setXmlAberto(false);
   }
@@ -249,7 +272,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
   function montarRascunho() {
     return {
-      itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento,
+      itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, numeroOsOrcamento, numeroBoleto,
       dataEmissao, dataVencimento, dataPrevistaEntrada, dataPedido, pedidoId, entregue, desconto, acrescimo,
       parcelado, qtdParcelas, parcelas, jaPago, dataPagamento, valorPago, contaBancaria,
       numeroDocumentoPagamento, formaPagamento, salvoEm: new Date().toISOString(),
@@ -260,6 +283,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
     setCentroCusto(d.centroCusto || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
+    setNumeroOsOrcamento(d.numeroOsOrcamento || ""); setNumeroBoleto(d.numeroBoleto || "");
     setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
     setPedidoId(d.pedidoId || "");
     setEntregue(!!d.entregue); setDesconto(d.desconto || ""); setAcrescimo(d.acrescimo || "");
@@ -283,7 +307,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       else localStorage.removeItem(RASCUNHO_KEY);
     } catch { /* ignore */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, dataEmissao, dataVencimento,
+  }, [sujo, itens, centroCusto, fornecedor, responsavel, tipoDocumento, numeroDocumento, numeroOsOrcamento, numeroBoleto, dataEmissao, dataVencimento,
       dataPrevistaEntrada, dataPedido, entregue, desconto, acrescimo, parcelado, qtdParcelas, parcelas,
       jaPago, dataPagamento, valorPago, contaBancaria, numeroDocumentoPagamento, formaPagamento]);
 
@@ -363,16 +387,42 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       if (!dados.itens?.length && dados.valor_total != null) {
         setItens([{ ...itemVazio(), produto: dados.observacao || "Boleto anexado", valor_total: String(dados.valor_total), modoValor: "total" }]);
       }
+      const parcelasDetectadas: any[] = Array.isArray(dados.parcelas_detectadas) ? dados.parcelas_detectadas : [];
       if (dados.parcela_num && dados.parcela_total && dados.parcela_total > 1) {
-        // O próprio boleto indica "parcela X/Y" — monta o plano com Y
-        // parcelas iguais (a divisão automática recalcula os valores; o
-        // usuário ajusta manualmente se as parcelas não forem iguais).
+        // O próprio boleto indica "parcela X/Y". Se a leitura conseguiu achar
+        // o valor/vencimento de CADA via (uma por página, tipicamente), usa
+        // esses valores exatos — não divide o total igualmente entre elas.
         setParcelado(true);
         setQtdParcelas(String(dados.parcela_total));
+        if (parcelasDetectadas.length > 1) {
+          parcelasExtraidasRef.current = parcelasDetectadas.map((p) => ({
+            data_vencimento: p.data_vencimento || "",
+            valor: p.valor != null ? String(p.valor) : "",
+            numero_boleto: p.linha_digitavel || "",
+          }));
+        }
+      } else if (parcelasDetectadas.length === 1 && parcelasDetectadas[0].linha_digitavel) {
+        setNumeroBoleto(parcelasDetectadas[0].linha_digitavel);
+        setAvisoDocumento(
+          "Boleto avulso: não achei indicação de parcelamento neste documento. Revise se é um lançamento único " +
+          "ou marque \"Parcelar\" abaixo se ele fizer parte de um plano.",
+        );
+      } else if (dados.linha_digitavel) {
+        setNumeroBoleto(dados.linha_digitavel);
+        setAvisoDocumento(
+          "Boleto avulso: não achei indicação de parcelamento neste documento. Revise se é um lançamento único " +
+          "ou marque \"Parcelar\" abaixo se ele fizer parte de um plano.",
+        );
       } else {
         setAvisoDocumento(
           "Boleto avulso: não achei indicação de parcelamento neste documento. Revise se é um lançamento único " +
           "ou marque \"Parcelar\" abaixo se ele fizer parte de um plano.",
+        );
+      }
+      if (dados.valor_total_corrigido) {
+        setAvisoDocumento(
+          (prev) => `${prev ? prev + " " : ""}Conferi: este boleto tem ${dados.parcela_total} parcela(s) — o valor total foi ` +
+          `ajustado para a soma de todas (${dados.paginas_documento ? `${dados.paginas_documento} página(s) lidas` : "várias vias"}). Revise os valores abaixo.`,
         );
       }
     }
@@ -428,6 +478,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       responsavel: responsavel || null,
       tipo_documento: tipoDocumento || null,
       numero_documento: numeroDocumento || null,
+      numero_os_orcamento: numeroOsOrcamento || null,
+      // Só vale para lançamento não-parcelado; com parcelamento, cada parcela
+      // carrega o seu próprio nº de boleto (ver `parcelas` abaixo).
+      numero_boleto: !parcelado ? (numeroBoleto || null) : null,
       data_emissao: dataEmissao || null,
       // Só vale para lançamento não-parcelado; nas parcelas cada uma tem seu vencimento.
       data_vencimento: !parcelado ? (dataVencimento || null) : null,
@@ -437,7 +491,9 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       entregue,
       desconto: Number(desconto) || 0,
       acrescimo: Number(acrescimo) || 0,
-      parcelas: parcelado ? parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0 })) : [],
+      parcelas: parcelado
+        ? parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: Number(p.valor) || 0, numero_boleto: p.numero_boleto || null }))
+        : [],
       data_pagamento: !parcelado && jaPago ? dataPagamento || null : null,
       valor_pago: !parcelado && jaPago ? Number(valorPago) || 0 : null,
       conta_bancaria: !parcelado && jaPago ? contaBancaria || null : null,
@@ -466,7 +522,12 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setSalvando(true);
     try {
       const r = await criarLancamentoFinanceiro(montarPayload());
-      setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.`);
+      let avisoAnexo = "";
+      if (boletoFiles.length) {
+        const falhas = (await Promise.all(boletoFiles.map((f) => anexarArquivoLancamento(r.numero_lancamento, f).then(() => null).catch(() => f.name)))).filter(Boolean);
+        if (falhas.length) avisoAnexo = ` (não foi possível anexar: ${falhas.join(", ")})`;
+      }
+      setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
       limpar();
       onSujo?.(false);
       onSalvo?.();
@@ -666,6 +727,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
         </Campo>
 
         <Campo label="Número do documento"><input style={inputStyle} value={numeroDocumento} onChange={(e) => setNumeroDocumento(e.target.value)} /></Campo>
+        <Campo label="Nº da OS/Orçamento">
+          <input style={inputStyle} value={numeroOsOrcamento} onChange={(e) => setNumeroOsOrcamento(e.target.value)} placeholder="ex.: OS-123 ou ORC-45" />
+          <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", display: "block", marginTop: "0.2rem" }}>
+            Item de consulta à parte do número do documento — nº da ordem de serviço ou do orçamento, se houver.
+          </span>
+        </Campo>
+        {!parcelado && (
+          <Campo label="Número do boleto">
+            <input style={inputStyle} value={numeroBoleto} onChange={(e) => setNumeroBoleto(e.target.value)} placeholder="linha digitável (opcional)" />
+          </Campo>
+        )}
         <Campo label="Data de emissão"><input type="date" style={inputStyle} value={dataEmissao} onChange={(e) => setDataEmissao(e.target.value)} /></Campo>
         {!parcelado && (
           <Campo label="Data de vencimento">
@@ -721,7 +793,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
               <input type="number" min={1} style={{ ...inputStyle, maxWidth: "8rem" }} value={qtdParcelas} onChange={(e) => setQtdParcelas(e.target.value)} />
             </Campo>
             <table className="fazenda-table mt-2">
-              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th></tr></thead>
+              <thead><tr><th>Parcela</th><th>Vencimento</th><th style={{ textAlign: "right" }}>Valor (R$)</th><th>Nº do boleto</th></tr></thead>
               <tbody>
                 {parcelas.map((p, i) => (
                   <tr key={i}>
@@ -730,6 +802,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                       onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, data_vencimento: e.target.value } : x))} /></td>
                     <td><input type="number" inputMode="decimal" style={{ ...inputStyle, textAlign: "right" }} value={p.valor}
                       onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, valor: e.target.value } : x))} /></td>
+                    <td><input style={inputStyle} value={p.numero_boleto || ""} placeholder="opcional" title="Linha digitável desta parcela, se houver"
+                      onChange={(e) => setParcelas((arr) => arr.map((x, j) => j === i ? { ...x, numero_boleto: e.target.value } : x))} /></td>
                   </tr>
                 ))}
               </tbody>
@@ -743,6 +817,40 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
               Cada parcela nasce em aberto (conta a {tipo === "despesa" ? "pagar" : "receber"}) — dê baixa individualmente quando for paga/recebida.
             </p>
+
+            {/* Anexar o(s) boleto(s) deste parcelamento — sobe junto ao salvar o lançamento */}
+            <div
+              onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); }}
+              onDragOver={(e) => e.preventDefault()}
+              className="card mt-3"
+              style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
+            >
+              <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
+                <FileText size={15} style={{ color: "var(--dourado-light)" }} />
+                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Arraste o(s) boleto(s) deste parcelamento aqui, ou</span>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => boletoInputRef.current?.click()}>
+                  <Upload size={12} /> selecionar arquivo(s)
+                </button>
+              </div>
+              <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
+                onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+                style={{ display: "none" }} />
+              {boletoFiles.length > 0 && (
+                <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem" }}>
+                  {boletoFiles.map((f, i) => (
+                    <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
+                      <span>{f.name}</span>
+                      <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
+                        <X size={12} style={{ color: "var(--red)" }} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                Opcional — fica disponível para consulta neste lançamento; não altera valores nem parcelas.
+              </p>
+            </div>
           </div>
         )}
       </div>
