@@ -97,7 +97,7 @@ export default function Pagina() {
   // Atalho do ícone "News" no cabeçalho do app (/app/menu#news) — abre a
   // sub-tela direto, sem passar pela grade de sessões.
   useEffect(() => {
-    const verificarHash = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
+    const verificarHash = () => { if (window.location.hash === "#news" && ehAdmin()) setSecaoAberta("news"); };
     verificarHash();
     window.addEventListener("hashchange", verificarHash);
     return () => window.removeEventListener("hashchange", verificarHash);

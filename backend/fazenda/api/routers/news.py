@@ -13,12 +13,20 @@ direto — cada item vira um LancamentoPendente (tipo "noticia_manual") na
 mesma fila de aprovação do Telegram, aparece no sininho de notificações, e só
 gera a NoticiaNews de verdade quando o administrador aprova em /aprovacoes
 (ver fazenda.rules.telegram_fluxos.criar_registro).
+
+POST /news/materias (só administrador — "Adicionar matéria ao blog", em
+Configurações > News) publica DIRETO: manchete, corpo do texto (materia) e 0-N
+fontes/URLs de referência, todas guardadas em NoticiaNews sob a fonte fixa
+"Blog CowData". A tela News em si (botão do topo + Configurações > News) só
+aparece para administradores — quem publica pelo robô também precisa
+autenticar com uma conta admin.
 """
 from __future__ import annotations
 
 import json
 from datetime import datetime, timedelta
 from urllib.parse import urlparse
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -53,6 +61,15 @@ class NoticiaManualIn(BaseModel):
 
 class NoticiasManualIn(BaseModel):
     itens: list[NoticiaManualIn]
+
+
+class MateriaBlogIn(BaseModel):
+    manchete: str
+    materia: str
+    fontes: list[str] = []
+
+
+NOME_FONTE_BLOG_PROPRIO = "Blog CowData"
 
 
 FONTES_PADRAO = [
@@ -300,6 +317,64 @@ def criar_noticia_a_partir_de_pendente(dados: dict, session: Session) -> dict:
     return noticia.model_dump()
 
 
+def _fonte_blog_propria(session: Session) -> FonteNews:
+    """Get-or-create a fonte fixa que representa o nosso próprio blog (matérias
+    escritas por nós via 'Adicionar matéria ao blog', não importadas de RSS
+    externo). Marcada manual — nunca busca RSS sozinha."""
+    fonte = session.exec(select(FonteNews).where(FonteNews.nome == NOME_FONTE_BLOG_PROPRIO)).first()
+    if fonte:
+        return fonte
+    fonte = FonteNews(nome=NOME_FONTE_BLOG_PROPRIO, url="", manual=True, ativo=True)
+    session.add(fonte)
+    session.commit()
+    session.refresh(fonte)
+    return fonte
+
+
+def _serializar_noticia(n: NoticiaNews) -> dict:
+    dados = n.model_dump()
+    dados["fontes"] = json.loads(n.fontes) if n.fontes else []
+    return dados
+
+
+@router.post("/materias")
+def criar_materia_blog(
+    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Publica direto uma matéria escrita por nós (admin ou robô agendado) em
+    Configurações > News > Adicionar matéria ao blog — sem passar pela fila de
+    aprovação (só administradores chegam a este endpoint). A data de
+    publicação exibida é sempre a de agora (quando publicamos no nosso blog),
+    não a de nenhuma fonte externa."""
+    manchete = dados.manchete.strip()
+    materia = dados.materia.strip()
+    if not manchete or not materia:
+        raise HTTPException(status_code=400, detail="Manchete e matéria são obrigatórias")
+
+    urls = [u.strip() for u in dados.fontes if u.strip()]
+    fonte = _fonte_blog_propria(session)
+    noticia = NoticiaNews(
+        fonte_id=fonte.id, manchete=manchete, materia=materia,
+        fontes=json.dumps(urls) if urls else None,
+        link=urls[0] if urls else f"blog://{uuid4().hex}",
+        data_publicacao=datetime.utcnow(),
+    )
+    session.add(noticia)
+    session.commit()
+    session.refresh(noticia)
+    return _serializar_noticia(noticia)
+
+
+@router.delete("/materias/{noticia_id}")
+def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+    noticia = session.get(NoticiaNews, noticia_id)
+    if not noticia:
+        raise HTTPException(status_code=404, detail="Matéria não encontrada")
+    session.delete(noticia)
+    session.commit()
+    return {"excluido": True, "id": noticia_id}
+
+
 @router.get("/")
 def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     fontes = session.exec(select(FonteNews).where(FonteNews.ativo == True).order_by(FonteNews.nome)).all()  # noqa: E712
@@ -313,6 +388,6 @@ def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_sessi
         noticias = todas if ver_tudo else [n for n in todas if (n.data_publicacao or n.capturado_em) >= corte]
         saida.append({
             "fonte": {"id": fonte.id, "nome": fonte.nome, "url": fonte.url, "erro": fonte.ultimo_erro},
-            "noticias": [n.model_dump() for n in noticias],
+            "noticias": [_serializar_noticia(n) for n in noticias],
         })
     return {"janela_dias": JANELA_PADRAO_DIAS, "fontes": saida}

@@ -64,7 +64,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
           <ThemeSwitcher />
         </div>
-        <NewsButton />
+        {ehAdmin() && <NewsButton />}
         <NotificationBell />
         <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">

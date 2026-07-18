@@ -195,6 +195,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("motivo_outro", "VARCHAR"),
     ],
     "fonte_news": [("manual", "BOOLEAN DEFAULT false")],
+    "noticia_news": [("materia", "TEXT"), ("fontes", "TEXT")],
     "agenda_manual": [
         ("lotes", "VARCHAR"),
         ("tipo_evento", "VARCHAR"),

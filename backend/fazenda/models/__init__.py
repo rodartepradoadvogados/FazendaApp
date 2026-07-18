@@ -2391,3 +2391,12 @@ class NoticiaNews(SQLModel, table=True):
     link: str = Field(unique=True)
     data_publicacao: Optional[datetime] = None  # data/hora informada pelo site (quando disponível)
     capturado_em: datetime = Field(default_factory=datetime.utcnow, index=True)
+    # Matéria escrita por nós (admin ou robô) via Configurações > News > Adicionar
+    # matéria ao blog — corpo completo do texto, distinto do `resumo` (que é o
+    # recorte curto vindo de fontes RSS externas). Nula para matérias antigas
+    # importadas de RSS.
+    materia: Optional[str] = None
+    # Fontes/URLs de referência informadas ao publicar a matéria (JSON: lista de
+    # strings) — 0 a N links, diferente do `link` único usado no fluxo antigo de
+    # importação RSS.
+    fontes: Optional[str] = None
