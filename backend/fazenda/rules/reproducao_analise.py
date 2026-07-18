@@ -70,6 +70,8 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "diagnosticado": diagnosticado,
             "positivo": diag == "POSITIVO",
             "perda": bool(s.get("data_perda_prenhez")),
+            "data_perda": dpp.isoformat() if isinstance(dpp, date) else None,
+            "motivo_perda": s.get("motivo_perda_prenhez"),
             "mes_perda": mes_perda,
             "usuario_id": s.get("usuario_id"),
         })

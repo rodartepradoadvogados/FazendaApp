@@ -362,6 +362,28 @@ export async function registrarReconfirmacao(dados: {
   return res.json();
 }
 
+export async function fetchPartosHistorico() {
+  const res = await authFetch(`${API}/reproducao/partos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Partos error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchSecagensHistorico() {
+  const res = await authFetch(`${API}/reproducao/secagens`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Secagens error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarPerdaPrenhez(dados: {
+  numero_matriz: string; data_perda_prenhez: string; motivo: "aborto" | "natimorto" | "outros";
+}) {
+  const res = await authFetch(`${API}/reproducao/perda-prenhez`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar perda de prenhez"); }
+  return res.json();
+}
+
 export async function fetchFornecedores() {
   const res = await authFetch(`${API}/cadastro/fornecedores`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Fornecedores error: ${res.status}`);
