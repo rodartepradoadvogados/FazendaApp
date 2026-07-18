@@ -161,6 +161,10 @@ class Servico(SQLModel, table=True):
     tipo_servico: Optional[str] = None
     protocolo: Optional[str] = None
     reprodutor: Optional[str] = None
+    # Sêmen sexado x convencional (ou monta natural, tipo "fazenda") — gravado no
+    # momento da inseminação para o histórico não depender de recasar o nome do
+    # touro com o Estoque de Sêmen depois (que pode mudar de tipo com o tempo).
+    tipo_semen: Optional[str] = None  # convencional | sexado | fazenda
     inseminador: Optional[str] = None  # quem fez a IA/cobertura (responsável)
     ordem_tentativa: Optional[int] = None
     intervalo_tentativas: Optional[int] = None
@@ -2166,6 +2170,7 @@ class CompraSemen(SQLModel, table=True):
     touro_nome: str
     naab: Optional[str] = None
     origem: str  # "estoque" (touro já cadastrado na fazenda) | "naab" (banco de dados NAAB)
+    tipo: str = "convencional"  # convencional | sexado — mesma modalidade do EstoqueSemen resultante
     doses: int
     valor_unitario: float  # R$ por dose
     vendedor: str
@@ -2349,6 +2354,19 @@ class CategoriaManejo(SQLModel, table=True):
     peso_min_kg: Optional[float] = None
     peso_max_kg: Optional[float] = None
     usa_status_reprodutivo: bool = False   # True: a partir daqui, o status reprodutivo assume
+    # Critérios adicionais — todos opcionais; None = não filtra por aquele
+    # critério. Permitem compor categorias como "Prenha", "Em lactação",
+    # "Seca", "Vazia atrasada" etc. além de idade/peso.
+    situacao_reprodutiva: Optional[str] = None   # "vazia" | "inseminada" | "prenha"
+    situacao_produtiva: Optional[str] = None     # "lactacao" | "seca"
+    dias_gestacao_min: Optional[int] = None
+    dias_gestacao_max: Optional[int] = None
+    dias_desde_servico_min: Optional[int] = None
+    dias_desde_servico_max: Optional[int] = None
+    dias_para_parto_min: Optional[int] = None
+    dias_para_parto_max: Optional[int] = None
+    dias_pos_parto_min: Optional[int] = None
+    dias_pos_parto_max: Optional[int] = None
     ordem: int = 0
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)

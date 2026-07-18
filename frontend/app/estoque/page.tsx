@@ -5,6 +5,7 @@ import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, 
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -60,6 +61,8 @@ export default function EstoquePage() {
       (!soAbaixo || i.abaixo_minimo === true)
     );
   }, [itens, fCat, busca, soAbaixo]);
+
+  const ordItens = useOrdenacao(filtrados);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
   const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
@@ -167,9 +170,16 @@ export default function EstoquePage() {
             </div>
             <div className="overflow-x-auto">
               <table className="fazenda-table">
-                <thead><tr><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Qtd</th><th style={{ textAlign: "right" }}>Mín.</th><th style={{ textAlign: "right" }}>Valor</th><th>Status</th></tr></thead>
+                <thead><tr>
+                  <ThOrdenavel label="Produto" campo="nome" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} />
+                  <ThOrdenavel label="Qtd" campo="quantidade" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Mín." campo="estoque_minimo" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Valor" campo="valor_total" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="abaixo_minimo" coluna={ordItens.coluna} dir={ordItens.dir} ordenar={ordItens.ordenar} />
+                </tr></thead>
                 <tbody>
-                  {filtrados.slice(0, 200).map((i, idx) => (
+                  {ordItens.linhasOrdenadas.slice(0, 200).map((i, idx) => (
                     <tr key={idx}>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{i.nome}</td>
                       <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.categoria || "—"}</td>

@@ -62,6 +62,7 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
   const semen = useCache<Semen[]>("semen", () => fetchEstoqueSemen(), []);
   const [matriz, setMatriz] = useState(animalFixado || "");
   const [data, setData] = useState(hoje());
+  const [categoria, setCategoria] = useState<"convencional" | "sexado">("convencional");
   const [touro, setTouro] = useState("");
   const [incluirSemEstoque, setIncluirSemEstoque] = useState(false);
   const [catalogoTouros, setCatalogoTouros] = useState<Touro[]>([]);
@@ -71,13 +72,13 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
     if (!data) return erroValidacao("Informe a data da inseminação.");
     enviar(
       "/reproducao/servico",
-      { numero_matriz: matriz, data_servico: data, tipo_servico: "IA", reprodutor: touro || undefined },
+      { numero_matriz: matriz, data_servico: data, tipo_servico: "IA", reprodutor: touro || undefined, tipo_semen: categoria },
       `Inseminação — matriz ${matriz}${touro ? ` (${touro})` : ""}`,
       () => setTouro(""),
     );
   }
 
-  const opcoes = semen.dados.map((s) => s.touro_nome).filter(Boolean);
+  const opcoes = semen.dados.filter((s) => (s.tipo || "convencional") === categoria).map((s) => s.touro_nome).filter(Boolean);
   const itensCatalogo: TouroPickerItem[] = catalogoTouros.map((t) => ({ naab: t.naab, nome: t.nome || t.naab, central: t.central, raca: t.raca, tpi: t.tpi }));
   return (
     <>
@@ -86,6 +87,12 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
       </MobCampo>
       <MobCampo label="Data da inseminação">
         <input type="date" className="mob-input" value={data} onChange={(e) => setData(e.target.value)} />
+      </MobCampo>
+      <MobCampo label="Sêmen sexado ou convencional?">
+        <BotoesEscolha
+          opcoes={[{ valor: "convencional", label: "Convencional" }, { valor: "sexado", label: "Sexado" }]}
+          valor={categoria} onChange={(v) => { setCategoria(v); setTouro(""); }}
+        />
       </MobCampo>
       <MobCampo label="Touro / sêmen (opcional)">
         {!incluirSemEstoque ? (
@@ -97,6 +104,7 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
           <TouroPicker className="mob-input" itens={itensCatalogo} value={touro} placeholder="Buscar touro no catálogo NAAB..."
             onChangeTexto={setTouro} onSelecionar={(t) => setTouro(t.nome)} />
         )}
+        {!incluirSemEstoque && !opcoes.length && <p style={{ fontSize: "0.72rem", color: "var(--mob-laranja)", marginTop: 2 }}>Nenhum sêmen {categoria} em estoque.</p>}
         <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginTop: "0.4rem", fontSize: "0.76rem", color: "var(--mob-muted)" }}>
           <input type="checkbox" checked={incluirSemEstoque}
             onChange={(e) => {

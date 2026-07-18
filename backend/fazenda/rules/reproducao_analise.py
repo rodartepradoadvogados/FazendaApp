@@ -56,6 +56,10 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "protocolo": s.get("protocolo") or "(sem protocolo)",
             # 'reprodutor' na fonte é o touro/sêmen usado no serviço.
             "touro": s.get("reprodutor") or "(sem touro)",
+            # Sexado/convencional/fazenda — gravado no serviço desde que essa
+            # distinção passou a ser perguntada; None em registros antigos (o
+            # chamador pode completar por nome via Estoque de Sêmen).
+            "tipo_semen": s.get("tipo_semen"),
             "inseminador": s.get("inseminador") or "(sem inseminador)",
             "metodo_ia": _metodo_ia(s.get("tipo_servico"), s.get("protocolo")),
             "ano": ano,

@@ -8,6 +8,7 @@ import { fetchRelatoriosManejo } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { SecaoRecolhivel } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { estiloSexado } from "@/lib/constants";
 
 /**
  * RelatoriosManejo — listas de trabalho diárias da reprodução (PEV, a inseminar,
@@ -118,12 +119,13 @@ type Col = { header: string; campo?: string; render: (row: any) => React.ReactNo
 
 // Tabela padrão de manejo: 1ª coluna é o semáforo (bolinha por `cor`), demais são as colunas passadas.
 function TabelaManejo({
-  colunas, linhas, corKey = "cor", renderDot,
+  colunas, linhas, corKey = "cor", renderDot, rowStyle,
 }: {
   colunas: Col[];
   linhas: any[];
   corKey?: string;
   renderDot?: (row: any) => React.ReactNode;
+  rowStyle?: (row: any) => React.CSSProperties | undefined;
 }) {
   const dotDe = renderDot || ((row: any) => <Dot cor={row[corKey]} />);
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhas);
@@ -144,7 +146,7 @@ function TabelaManejo({
         </thead>
         <tbody>
           {linhasOrdenadas.map((row, i) => (
-            <tr key={`${row.numero ?? row.touro_nome ?? "l"}-${i}`}>
+            <tr key={`${row.numero ?? row.touro_nome ?? "l"}-${i}`} style={rowStyle?.(row)}>
               <td style={{ textAlign: "center" }}>{dotDe(row)}</td>
               {colunas.map((c) => <td key={c.header} style={c.style}>{c.render(row)}</td>)}
             </tr>
@@ -336,6 +338,7 @@ export default function RelatoriosManejo() {
             {/* A bolinha principal usa `cor` (= cor_dias); há uma coluna extra de semáforo para o Cio provável (cor_cio). */}
             <TabelaManejo
               linhas={dados.inseminados}
+              rowStyle={(r) => estiloSexado(r.tipo_semen)}
               colunas={[
                 { header: "Nº", campo: "numero", render: (r) => r.numero, style: estiloNum },
                 { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },

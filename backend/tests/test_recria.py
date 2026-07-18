@@ -263,14 +263,16 @@ class TestCategoriaManejo:
             s.add(Animal(numero="C2", data_nasc=hoje - timedelta(days=150), ativo=True, sexo="F"))   # recria 1
             s.add(Animal(numero="C3", data_nasc=hoje - timedelta(days=300), ativo=True, sexo="F"))   # recria 2
             s.add(Animal(numero="C4", data_nasc=hoje - timedelta(days=420), ativo=True, sexo="F", sit_rep="Ges."))
-            s.add(PesagemCorporal(numero_matriz="C4", data_pesagem=hoje, peso_kg=400))               # apta → gestante
+            s.add(PesagemCorporal(numero_matriz="C4", data_pesagem=hoje, peso_kg=400))               # apta → prenha
             s.commit()
         j = c.get("/recria/categorias/composicao").json()
         comp = {x["categoria"]: x["n"] for x in j["composicao"]}
         assert comp.get("Aleitamento") == 1
         assert comp.get("Recria 1", 0) >= 1  # C2 + os animais do fixture (~192 dias)
         assert comp.get("Recria 2") == 1
-        assert comp.get("Gestante") == 1
+        # "Prenha" (situação reprodutiva) tem prioridade sobre a "Recria apta"
+        # legada (usa_status_reprodutivo) — ver _CATEGORIAS_NOVAS_PADRAO.
+        assert comp.get("Prenha") == 1
 
     def test_categorias_semeadas_crud(self, client):
         c, _ = client

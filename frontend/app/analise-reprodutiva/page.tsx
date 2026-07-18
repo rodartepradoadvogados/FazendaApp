@@ -5,6 +5,7 @@ import { fetchServicosAnalise, fetchInseminadores, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import { estiloSexado } from "@/lib/constants";
 import AnaliseInterativa from "@/components/AnaliseInterativa";
 
 function comparaNumero(a: string, b: string) {
@@ -23,6 +24,7 @@ type Reg = {
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
   tipo_servico: string; protocolo: string; touro: string; inseminador: string; metodo_ia: string;
+  tipo_semen?: string | null;
   ano: number | null; mes: string | null; data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
   usuario_nome?: string | null;
@@ -217,7 +219,7 @@ export default function AnaliseReprodutivaPage() {
                 </tr></thead>
                 <tbody>
                   {ordFiltrados.linhasOrdenadas.map((r, i) => (
-                    <tr key={`${r.numero}-${r.data}-${i}`}>
+                    <tr key={`${r.numero}-${r.data}-${i}`} style={estiloSexado(r.tipo_semen)} title={r.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
                       <td style={{ fontWeight: 700 }}>{r.numero}</td>
                       <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{r.raca}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>

@@ -301,6 +301,7 @@ export async function fetchSemenDisponivel() {
 export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
+  tipo_semen?: string | null;
 }) {
   const res = await authFetch(`${API}/reproducao/servico-lote`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -948,7 +949,7 @@ export async function fetchComprasSemen() {
 }
 export type ItemCompraSemen = {
   origem: "estoque" | "naab"; estoque_semen_id?: number; naab?: string; touro_nome?: string; central?: string;
-  valor: number; tipo_valor: string; doses: number;
+  tipo?: string; valor: number; tipo_valor: string; doses: number;
 };
 export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
   itens: ItemCompraSemen[];
@@ -1842,6 +1843,7 @@ export async function adicionarAnimaisIatf(lancamentoId: number, animais: string
 export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
   protocolo?: string; reprodutor?: string; responsavel?: string;
+  tipo_semen?: string | null;
 }) {
   const res = await authFetch(`${API}/reproducao/servico`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -2594,12 +2596,24 @@ export async function importarCochoPlanilha(file: File): Promise<{ criados: numb
 export type Estratificacao = { total: number; estratos: Record<string, number>; percentuais: Record<string, number>; vacas_total: number; pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number };
 export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);
 
-export type CategoriaManejo = { id?: number; nome: string; dia_min: number; dia_max?: number | null; peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean; ordem: number; ativo: boolean };
+export type CategoriaManejo = {
+  id?: number; nome: string; dia_min: number; dia_max?: number | null;
+  peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean;
+  // Critérios adicionais — todos opcionais; deixe em branco para não filtrar por eles.
+  situacao_reprodutiva?: "vazia" | "inseminada" | "prenha" | null;
+  situacao_produtiva?: "lactacao" | "seca" | null;
+  dias_gestacao_min?: number | null; dias_gestacao_max?: number | null;
+  dias_desde_servico_min?: number | null; dias_desde_servico_max?: number | null;
+  dias_para_parto_min?: number | null; dias_para_parto_max?: number | null;
+  dias_pos_parto_min?: number | null; dias_pos_parto_max?: number | null;
+  ordem: number; ativo: boolean;
+};
 export const fetchCategoriasManejo = (): Promise<CategoriaManejo[]> => _rGet(`/recria/categorias`);
 export const criarCategoriaManejo = (d: CategoriaManejo) => _rSend(`/recria/categorias`, "POST", d);
 export const atualizarCategoriaManejo = (id: number, d: CategoriaManejo) => _rSend(`/recria/categorias/${id}`, "PUT", d);
 export const excluirCategoriaManejo = (id: number) => _rSend(`/recria/categorias/${id}`, "DELETE");
 export const fetchComposicaoCategorias = (): Promise<{ composicao: { categoria: string; n: number }[]; total: number }> => _rGet(`/recria/categorias/composicao`);
+export const fetchCategoriaSugerida = (numero: string): Promise<{ categoria: string | null }> => _rGet(`/recria/categorias/animal/${numero}`);
 
 export type Touro = {
   id?: number; naab: string; nome?: string | null; nome_completo?: string | null; raca?: string | null; central?: string | null;

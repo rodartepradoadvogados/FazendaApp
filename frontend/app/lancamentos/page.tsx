@@ -691,6 +691,7 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
         reprodutor: touro || undefined, responsavel: responsavel || undefined,
         protocolo_lancamento_id: tipo === "iatf" && protocoloId ? Number(protocoloId) : null,
         auto_lancar_iatf: tipo === "iatf" ? autoLancar : false,
+        tipo_semen: categoria === "fazenda" ? null : categoria,
       });
       if (r.incompativeis.length) {
         setVinculoInsem("animal"); setLotesSelecionadosInsem([]); setSel(new Set(r.incompativeis));

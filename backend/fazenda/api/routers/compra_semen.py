@@ -27,6 +27,10 @@ router = APIRouter(prefix="/compras-semen", tags=["compras-semen"])
 
 TIPOS_VALOR = ("por_dose", "total")
 ORIGENS = ("estoque", "naab")
+# Sêmen sexado x convencional — modalidades realmente compráveis (o 3º valor
+# de EstoqueSemen.tipo, "fazenda", é touro de monta natural, nunca comprado
+# por nota fiscal de sêmen).
+TIPOS_SEMEN_COMPRA = ("convencional", "sexado")
 # Única conta gerencial onde a compra de sêmen deve ser lançada — o seletor
 # do frontend só mostra esta folha (não é um ramo com sub-contas, como em
 # compra_animal.py; é uma conta-folha específica).
@@ -39,6 +43,10 @@ class ItemCompraSemenIn(BaseModel):
     naab: str | None = None              # obrigatório se origem == "naab"
     touro_nome: str | None = None        # obrigatório se origem == "naab" (nome a gravar/exibir)
     central: str | None = None           # opcional, só usado ao criar uma linha nova de EstoqueSemen
+    # Sexado ou convencional — só relevante quando origem == "naab" (decide
+    # com qual linha de EstoqueSemen casar/criar); ignorado quando origem ==
+    # "estoque", já que a linha escolhida já tem seu próprio tipo definido.
+    tipo: str = "convencional"
 
     valor: float
     tipo_valor: str  # "por_dose" | "total"
@@ -120,15 +128,23 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
         else:
             if not (item.naab or "").strip():
                 raise HTTPException(status_code=400, detail="Selecione o touro do banco de dados NAAB")
+            if item.tipo not in TIPOS_SEMEN_COMPRA:
+                raise HTTPException(status_code=400, detail="Informe se o sêmen é sexado ou convencional")
             touro_naab = session.exec(select(Touro).where(Touro.naab == item.naab)).first()
             if not touro_naab:
                 raise HTTPException(status_code=404, detail="Touro NAAB não encontrado")
-            estoque = session.exec(select(EstoqueSemen).where(EstoqueSemen.naab == item.naab)).first()
+            # Casa por NAAB *e* tipo — o mesmo touro pode ter uma linha de
+            # estoque convencional e outra sexada; comprar um sêmen sexado de
+            # um touro já em estoque como convencional não pode misturar as
+            # doses na mesma linha (são produtos diferentes).
+            estoque = session.exec(
+                select(EstoqueSemen).where(EstoqueSemen.naab == item.naab, EstoqueSemen.tipo == item.tipo)
+            ).first()
             if not estoque:
                 estoque = EstoqueSemen(
                     touro_nome=item.touro_nome or touro_naab.nome or touro_naab.naab,
                     naab=touro_naab.naab, central=item.central or touro_naab.central,
-                    tipo="convencional", doses=0,
+                    tipo=item.tipo, doses=0,
                 )
                 session.add(estoque)
                 session.flush()
@@ -203,7 +219,7 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
 
         session.add(CompraSemen(
             estoque_semen_id=estoque.id, touro_nome=estoque.touro_nome, naab=estoque.naab,
-            origem=item.origem, doses=item.doses, valor_unitario=valor_unitario,
+            origem=item.origem, tipo=estoque.tipo, doses=item.doses, valor_unitario=valor_unitario,
             vendedor=dados.vendedor, data_compra=dados.data_compra,
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,

@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
 import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react";
-import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem } from "@/lib/api";
+import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { SecaoRecolhivel } from "@/components/ui";
+import { estiloSexado } from "@/lib/constants";
 
 type Ficha = {
   animal: Record<string, unknown>;
@@ -184,6 +185,14 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       excluir_bst: a2.excluir_bst ?? false,
     });
     setEditAnimal(true); setAviso(null);
+    // Categoria em branco (comum em animais recém-importados) → sugere pelos
+    // parâmetros cadastrados em Configurações > Cadastro > Categorias, já que
+    // "os animais seguem os parâmetros". Continua editável/substituível.
+    if (!a2.categoria_abrev && numero) {
+      fetchCategoriaSugerida(numero).then((r) => {
+        if (r.categoria) setFormAnimal((f) => (f.categoria_abrev ? f : { ...f, categoria_abrev: r.categoria as string }));
+      }).catch(() => {});
+    }
   }
   async function salvarAnimal() {
     setSalvando(true); setAviso(null);
@@ -412,7 +421,9 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                     <thead><tr>{s.colunas.map((c) => <th key={c.key}>{c.header}</th>)}</tr></thead>
                     <tbody>
                       {linhas.map((l, i) => (
-                        <tr key={i}>{s.colunas.map((c) => {
+                        <tr key={i} style={s.chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}
+                          title={s.chave === "servicos" && l.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
+                          {s.colunas.map((c) => {
                           const val = l[c.key];
                           // Número da cria: link para abrir a ficha da própria cria.
                           if ((c.key === "numero_cria_1" || c.key === "numero_cria_2") && val) {
