@@ -20,6 +20,7 @@ from fazenda.api.routers import (
     baixas,
     cadastro,
     compra_animal,
+    compra_semen,
     estoque,
     exclusoes,
     farmacia,
@@ -207,6 +208,7 @@ app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_
 app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,

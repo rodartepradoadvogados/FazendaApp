@@ -940,6 +940,24 @@ export async function fetchRelatorioCompraVendaAnimais(filtros: {
   return res.json() as Promise<LinhaRelatorioCompraVendaAnimal[]>;
 }
 
+// ── Compra de sêmen (Lançamentos > Compra/Venda > Comprar sêmen) ──
+export async function fetchComprasSemen() {
+  const res = await authFetch(`${API}/compras-semen/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Compras de sêmen error: ${res.status}`);
+  return res.json();
+}
+export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
+  origem: "estoque" | "naab"; estoque_semen_id?: number; naab?: string; touro_nome?: string; central?: string;
+  vendedor: string; valor: number; tipo_valor: string; doses: number; data_compra: string;
+  observacao?: string; responsavel?: string; data_prevista_entrada?: string;
+}) {
+  const res = await authFetch(`${API}/compras-semen/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar compra de sêmen"); }
+  return res.json();
+}
+
 export async function fetchSanidade() {
   const res = await authFetch(`${API}/sanidade/aplicacoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Sanidade error: ${res.status}`);

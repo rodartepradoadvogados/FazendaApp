@@ -238,6 +238,7 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
             onToggle={toggleAnimal}
             titulo={`Escolher animais para ${ehCompra ? "comprar" : "vender"}`}
             placeholder="Selecionar animais…"
+            permitirNovoAnimal={ehCompra}
             colunas={[
               { header: "Nº", render: (a) => a.numero },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },
