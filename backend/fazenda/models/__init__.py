@@ -1334,6 +1334,61 @@ class Doenca(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ExameDefinicao(SQLModel, table=True):
+    """
+    Cadastro de um exame (ex.: Tuberculose, Brucelose) para o calendário
+    sanitário preventivo — define como o RESULTADO é lançado: por
+    diagnóstico (positivo/negativo/indefinido) ou numérico (faixa de x até
+    y, com o que fazer abaixo/dentro/acima dela). Vinculado ao princípio
+    ativo do exame. Consumido em Lançamentos > Sanitário > Preventivo — o
+    lançamento de exame nunca gera aplicação de medicamento nem baixa de
+    estoque (ver EventoSanitario.categoria_preventiva == "exame").
+    """
+
+    __tablename__ = "exame_definicao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
+    tipo_resultado: str = "diagnostico"  # "diagnostico" | "numerico"
+    # tipo_resultado == "numerico": faixa [faixa_min, faixa_max] e o que fazer
+    # abaixo/dentro/acima dela — texto livre (orientação, não muda o rebanho).
+    faixa_min: Optional[float] = None
+    faixa_max: Optional[float] = None
+    acao_abaixo: Optional[str] = None
+    acao_dentro: Optional[str] = None
+    acao_acima: Optional[str] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ExameResultado(SQLModel, table=True):
+    """
+    Resultado de um exame preventivo por animal (ex.: tuberculose,
+    brucelose), lançado junto com o calendário sanitário preventivo (ver
+    cadastrar_preventivo). Diagnóstico: positivo marca Animal.a_descartar
+    automaticamente; negativo é informativo ("liberada"); indefinido marca
+    para repetir o exame — ambos só para fins de relatório. Numérico: valor
+    + banda (abaixo/dentro/acima da faixa do ExameDefinicao vinculado).
+    Nunca gera aplicação de medicamento nem baixa de estoque.
+    """
+
+    __tablename__ = "exame_resultado"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_matriz: str = Field(index=True)
+    evento_sanitario_id: int = Field(foreign_key="evento_sanitario.id")
+    exame_definicao_id: Optional[int] = Field(default=None, foreign_key="exame_definicao.id")
+    data_exame: date
+    resultado: Optional[str] = None  # diagnóstico: "positivo" | "negativo" | "indefinido"
+    valor_numerico: Optional[float] = None  # numérico: valor lançado
+    banda: Optional[str] = None  # numérico: "abaixo" | "dentro" | "acima" da faixa
+    veterinario: Optional[str] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class EventoSanitario(SQLModel, table=True):
     """
     Evento/protocolo sanitário (ex.: Vermífugo, Brucelose B19, Leptospirose).
@@ -1355,6 +1410,10 @@ class EventoSanitario(SQLModel, table=True):
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     # Tipo do manejo preventivo: "vacina" | "exame" | "tratamento".
     categoria_preventiva: Optional[str] = None
+    # Só para exame: qual ExameDefinicao (Configurações > Cadastro > Sanitário
+    # > Exames) decide o tipo de resultado (diagnóstico/numérico) mostrado no
+    # lançamento. Sem vínculo, o lançamento usa o modo diagnóstico padrão.
+    exame_definicao_id: Optional[int] = Field(default=None, foreign_key="exame_definicao.id")
 
     # Por época — recorrência fixa a partir de uma data de referência.
     data_primeiro: Optional[date] = None

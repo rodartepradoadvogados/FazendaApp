@@ -127,6 +127,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("gatilho", "VARCHAR"), ("gatilho_lote", "VARCHAR"), ("gatilho_idade_meses", "INTEGER"), ("offset_dias", "INTEGER"),
         ("produto_padrao", "VARCHAR"), ("dose_padrao", "FLOAT"), ("unidade_padrao", "VARCHAR"), ("via_padrao", "VARCHAR"),
         ("categoria_preventiva", "VARCHAR"), ("agenda_dias_antes", "INTEGER"), ("condicao_evento_id", "INTEGER"),
+        ("exame_definicao_id", "INTEGER"),
     ],
     "calendario_sanitario": [("veterinario", "VARCHAR"), ("unidade", "VARCHAR")],
     "protocolo_sanitario_etapa": [("criterio_tipo", "VARCHAR DEFAULT 'medicamento'"), ("observacao", "TEXT")],

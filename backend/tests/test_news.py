@@ -140,6 +140,49 @@ class TestCadastroFontesAdmin:
         assert r.status_code == 403
 
 
+class TestLeituraPublicaSemLogin:
+    """GET /news/ é aberto a qualquer visitante — a leitura do blog não exige
+    login (só cadastro/publicação/edição continuam exigindo permissão)."""
+
+    def test_lista_sem_qualquer_autenticacao(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+        # Nenhum override de get_current_user — simula visitante sem token algum.
+
+        with TestClient(main.app) as c:
+            with Session(engine) as s:
+                s.add(FonteNews(nome="Fonte Pública", url="https://publica.com/feed"))
+                s.commit()
+            r = c.get("/news/")  # sem header Authorization
+
+        main.app.dependency_overrides.clear()
+        assert r.status_code == 200, r.text
+
+    def test_fontes_admin_continuam_exigindo_login(self):
+        engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+        SQLModel.metadata.create_all(engine)
+
+        def _get_session_override():
+            with Session(engine) as session:
+                yield session
+
+        import main
+        main.app.dependency_overrides[database.get_session] = _get_session_override
+
+        with TestClient(main.app) as c:
+            r = c.post("/news/fontes", json={"nome": "X", "url": "https://x.com"})
+
+        main.app.dependency_overrides.clear()
+        assert r.status_code == 401
+
+
 class TestListagemNoticias:
     def test_busca_filtra_por_palavra_chave_e_grava(self, client, monkeypatch):
         c, engine = client

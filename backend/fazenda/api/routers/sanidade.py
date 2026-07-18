@@ -15,16 +15,19 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
-    EventoSanitario, MovimentoEstoque,
+    EventoSanitario, ExameDefinicao, ExameResultado, MovimentoEstoque,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
+from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
+
+RESULTADOS_EXAME = ["positivo", "negativo", "indefinido"]
 
 TETOS_VALIDOS = ["AE", "AD", "PD", "PE"]
 CLASSIFICACOES_MASTITE = ["clinica", "subclinica", "ambiental"]
@@ -576,6 +579,22 @@ class CadastrarPreventivoIn(BaseModel):
     unidade: str | None = None
     via: str | None = None
     principio_ativo_id: int | None = None
+    # Resultado do exame (só quando o evento é categoria_preventiva == "exame") —
+    # diagnóstico: positivo/negativo/indefinido; numérico: valor lançado (a
+    # banda é calculada a partir do ExameDefinicao vinculado ao evento).
+    # Nunca gera aplicação de medicamento — só grava ExameResultado p/ relatório.
+    resultado_exame: str | None = None
+    resultado_numerico: float | None = None
+
+
+def _banda_numerica(exame_def: ExameDefinicao | None, valor: float) -> str | None:
+    if not exame_def or exame_def.faixa_min is None or exame_def.faixa_max is None:
+        return None
+    if valor < exame_def.faixa_min:
+        return "abaixo"
+    if valor > exame_def.faixa_max:
+        return "acima"
+    return "dentro"
 
 
 @router.post("/calendario/cadastrar-preventivo")
@@ -627,8 +646,61 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             user,
         )
 
+    # 3) Diagnóstico/resultado do exame (só evento categoria_preventiva ==
+    # "exame") — grava um ExameResultado por animal, para fins de relatório, e
+    # aplica a ação automática do diagnóstico: positivo marca "A descartar";
+    # negativo é informativo ("liberada"); indefinido marca para repetir o
+    # exame (ambos só leitura no relatório). Nunca baixa estoque.
+    resultado_exame = None
+    if (dados.resultado_exame or dados.resultado_numerico is not None) and dados.animais:
+        if ev.categoria_preventiva != "exame":
+            raise HTTPException(status_code=400, detail="Diagnóstico só se aplica a eventos do tipo exame")
+        exame_def = session.get(ExameDefinicao, ev.exame_definicao_id) if ev.exame_definicao_id else None
+        if dados.resultado_exame and dados.resultado_exame not in RESULTADOS_EXAME:
+            raise HTTPException(status_code=400, detail=f"Resultado inválido (use: {', '.join(RESULTADOS_EXAME)})")
+        banda = _banda_numerica(exame_def, dados.resultado_numerico) if dados.resultado_numerico is not None else None
+        for numero in dados.animais:
+            session.add(ExameResultado(
+                numero_matriz=numero, evento_sanitario_id=ev.id, exame_definicao_id=ev.exame_definicao_id,
+                data_exame=dados.data_evento, resultado=dados.resultado_exame,
+                valor_numerico=dados.resultado_numerico, banda=banda,
+                veterinario=dados.veterinario, observacao=dados.observacao,
+            ))
+        session.commit()
+        if dados.resultado_exame == "positivo":
+            marcar_a_descartar(
+                ADescartarIn(animais=dados.animais, descartar=True, observacao=f"Exame {ev.nome}: positivo"),
+                session,
+            )
+        resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais)}
+
     eventos, doencas, principios, categorias = _nomes(session)
-    return {"regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None, "aplicacao": aplicacao}
+    return {
+        "regra": _serializar(regra, eventos, doencas, principios, categorias) if regra else None,
+        "aplicacao": aplicacao,
+        "resultado_exame": resultado_exame,
+    }
+
+
+@router.get("/exames/resultados")
+def listar_resultados_exame(
+    evento_sanitario_id: int | None = None, resultado: str | None = None, session: Session = Depends(get_session),
+) -> list[dict]:
+    """Relatório de resultados de exames (positivo/negativo/indefinido ou
+    numérico) lançados via calendário sanitário preventivo — ver
+    cadastrar_preventivo. Só leitura, para acompanhamento."""
+    query = select(ExameResultado).order_by(ExameResultado.data_exame.desc(), ExameResultado.id.desc())
+    if evento_sanitario_id is not None:
+        query = query.where(ExameResultado.evento_sanitario_id == evento_sanitario_id)
+    if resultado is not None:
+        query = query.where(ExameResultado.resultado == resultado)
+    eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    saida = []
+    for r in session.exec(query).all():
+        d = r.model_dump()
+        d["evento_sanitario_nome"] = eventos.get(r.evento_sanitario_id)
+        saida.append(d)
+    return saida
 
 
 # ---------------------------------------------------------------------------

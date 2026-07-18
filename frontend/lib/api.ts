@@ -1119,6 +1119,9 @@ export type EventoSanitarioPayload = {
   // Exclusão mútua — ex.: não agendar se o animal já recebeu o evento apontado
   // aqui (alternativas de vacina/estirpe para a mesma doença).
   condicao_evento_id?: number | null;
+  // Só para exame: qual ExameDefinicao decide o tipo de resultado
+  // (diagnóstico/numérico) mostrado no lançamento de Sanitário > Preventivo.
+  exame_definicao_id?: number | null;
 };
 export async function fetchEventosSanitarios() {
   const res = await authFetch(`${API}/cadastro/eventos-sanitarios`, { cache: "no-store" });
@@ -1138,6 +1141,60 @@ export async function atualizarEventoSanitario(id: number, dados: EventoSanitari
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar evento sanitário"); }
   return res.json();
+}
+
+// Exame (Configurações > Cadastro > Sanitário > Exames) — nome + tipo de
+// resultado (diagnóstico ou numérico), vinculado ao princípio ativo. Decide
+// o que aparece no lançamento de Sanitário > Preventivo para um evento do
+// tipo exame — nunca gera aplicação de medicamento nem baixa de estoque.
+export type ExameDefinicaoPayload = {
+  nome: string; ativo?: boolean;
+  principio_ativo_id?: number | null;
+  tipo_resultado?: "diagnostico" | "numerico";
+  faixa_min?: number | null; faixa_max?: number | null;
+  acao_abaixo?: string | null; acao_dentro?: string | null; acao_acima?: string | null;
+  observacao?: string | null;
+};
+export async function fetchExames() {
+  const res = await authFetch(`${API}/cadastro/exames`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Exames error: ${res.status}`);
+  return res.json();
+}
+export async function criarExame(dados: ExameDefinicaoPayload) {
+  const res = await authFetch(`${API}/cadastro/exames`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  return res.json();
+}
+export async function atualizarExame(id: number, dados: ExameDefinicaoPayload) {
+  const res = await authFetch(`${API}/cadastro/exames/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar exame"); }
+  return res.json();
+}
+export async function excluirExame(id: number) {
+  const res = await authFetch(`${API}/cadastro/exames/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir exame"); }
+  return res.json();
+}
+
+// Resultados de exames (relatório) — GET /sanidade/exames/resultados.
+export type ExameResultado = {
+  id: number; numero_matriz: string; evento_sanitario_id: number; evento_sanitario_nome: string | null;
+  exame_definicao_id: number | null; data_exame: string;
+  resultado: "positivo" | "negativo" | "indefinido" | null;
+  valor_numerico: number | null; banda: "abaixo" | "dentro" | "acima" | null;
+  veterinario: string | null; observacao: string | null;
+};
+export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: number; resultado?: string }) {
+  const qs = new URLSearchParams();
+  if (filtros?.eventoSanitarioId) qs.set("evento_sanitario_id", String(filtros.eventoSanitarioId));
+  if (filtros?.resultado) qs.set("resultado", filtros.resultado);
+  const res = await authFetch(`${API}/sanidade/exames/resultados${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Resultados de exame error: ${res.status}`);
+  return res.json() as Promise<ExameResultado[]>;
 }
 
 // Classificações de medicamento (para cadastrar/protocolar por classificação).
@@ -1336,6 +1393,11 @@ export type CadastrarPreventivoPayload = {
   // usados na confirmação inline da Agenda ("dar baixa" sem abrir Lançamentos).
   produto?: string | null; dose?: number | null; unidade?: string | null; via?: string | null;
   principio_ativo_id?: number | null;
+  // Diagnóstico do exame (só evento categoria_preventiva == "exame") — nunca
+  // gera aplicação de medicamento nem baixa de estoque, só ExameResultado
+  // (relatório) + ação automática (positivo → A descartar).
+  resultado_exame?: "positivo" | "negativo" | "indefinido" | null;
+  resultado_numerico?: number | null;
 };
 export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {

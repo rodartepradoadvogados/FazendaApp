@@ -37,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user
+from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user, get_current_user_opcional
 from fazenda.database import get_session
 from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews, SeedFlag, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
@@ -527,7 +527,8 @@ def revisar_publicacao_final(
 
 
 @router.get("/")
-def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_session), user: Usuario | None = Depends(get_current_user_opcional)) -> dict:
+    # Leitura pública — qualquer visitante (mesmo sem login) pode ler as matérias do blog.
     fontes = session.exec(select(FonteNews).where(FonteNews.ativo == True).order_by(FonteNews.nome)).all()  # noqa: E712
     corte = datetime.utcnow() - timedelta(days=JANELA_PADRAO_DIAS)
     saida = []

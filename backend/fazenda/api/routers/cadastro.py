@@ -26,7 +26,7 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaPagamento, Doenca,
-    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, FolhaPagamento, Fornecedor,
+    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, ExameDefinicao, FolhaPagamento, Fornecedor,
     GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
     ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro,
     TipoPessoa, TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
@@ -1792,6 +1792,9 @@ class EventoSanitarioIn(BaseModel):
     # Condição de exclusão mútua — ex.: não agendar "Brucelose RB51" se o
     # animal já recebeu "Brucelose B19" (alternativas de vacina/estirpe).
     condicao_evento_id: int | None = None
+    # Só para exame: qual ExameDefinicao decide o tipo de resultado
+    # (diagnóstico/numérico) mostrado no lançamento (Sanitário > Preventivo).
+    exame_definicao_id: int | None = None
 
 
 def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
@@ -1804,6 +1807,10 @@ def _dto_evento_sanitario(session: Session, ev: EventoSanitario) -> dict:
     if ev.condicao_evento_id:
         condicao = session.get(EventoSanitario, ev.condicao_evento_id)
         d["condicao_evento_nome"] = condicao.nome if condicao else None
+    d["exame_definicao_nome"] = None
+    if ev.exame_definicao_id:
+        exame_def = session.get(ExameDefinicao, ev.exame_definicao_id)
+        d["exame_definicao_nome"] = exame_def.nome if exame_def else None
     if ev.tipo_agendamento == "epoca" and ev.data_primeiro and ev.frequencia_valor and ev.frequencia_unidade:
         d["proxima_ocorrencia"] = proxima_ocorrencia(ev.data_primeiro, ev.frequencia_valor, ev.frequencia_unidade).isoformat()
     else:
@@ -1821,6 +1828,8 @@ def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, ite
             raise HTTPException(status_code=400, detail="Um evento não pode ser condição de si mesmo")
         if not session.get(EventoSanitario, dados.condicao_evento_id):
             raise HTTPException(status_code=400, detail="Evento sanitário da condição não encontrado")
+    if dados.exame_definicao_id is not None and not session.get(ExameDefinicao, dados.exame_definicao_id):
+        raise HTTPException(status_code=400, detail="Exame (cadastro) não encontrado")
     if dados.tipo_agendamento == "epoca":
         if not dados.data_primeiro:
             raise HTTPException(status_code=400, detail="Informe a data do primeiro evento (agendamento por época)")
@@ -1873,6 +1882,97 @@ def atualizar_evento_sanitario(item_id: int, dados: EventoSanitarioIn, session: 
     session.commit()
     session.refresh(ev)
     return _dto_evento_sanitario(session, ev)
+
+# ---------------------------------------------------------------------------
+# Exames (Configurações > Cadastro > Sanitário > Exames) — nome do exame +
+# tipo de resultado (diagnóstico ou numérico), vinculado ao princípio ativo.
+# Consumido em Lançamentos > Sanitário > Preventivo (ver sanidade.py
+# cadastrar_preventivo) — nunca gera aplicação de medicamento.
+# ---------------------------------------------------------------------------
+TIPOS_RESULTADO_EXAME = ["diagnostico", "numerico"]
+
+
+class ExameDefinicaoIn(BaseModel):
+    nome: str
+    ativo: bool = True
+    principio_ativo_id: int | None = None
+    tipo_resultado: str = "diagnostico"
+    faixa_min: float | None = None
+    faixa_max: float | None = None
+    acao_abaixo: str | None = None
+    acao_dentro: str | None = None
+    acao_acima: str | None = None
+    observacao: str | None = None
+
+
+def _dto_exame_definicao(session: Session, ex: ExameDefinicao) -> dict:
+    d = ex.model_dump()
+    d["principio_ativo_nome"] = None
+    if ex.principio_ativo_id:
+        principio = session.get(PrincipioAtivo, ex.principio_ativo_id)
+        d["principio_ativo_nome"] = principio.nome if principio else None
+    return d
+
+
+def _validar_exame_definicao(dados: ExameDefinicaoIn, session: Session) -> None:
+    if dados.tipo_resultado not in TIPOS_RESULTADO_EXAME:
+        raise HTTPException(status_code=400, detail=f"Tipo de resultado inválido (use: {', '.join(TIPOS_RESULTADO_EXAME)})")
+    if dados.principio_ativo_id is not None and not session.get(PrincipioAtivo, dados.principio_ativo_id):
+        raise HTTPException(status_code=400, detail="Princípio ativo não encontrado")
+    if dados.tipo_resultado == "numerico":
+        if dados.faixa_min is None or dados.faixa_max is None:
+            raise HTTPException(status_code=400, detail="Informe a faixa (de x até y) para exame numérico")
+        if dados.faixa_min > dados.faixa_max:
+            raise HTTPException(status_code=400, detail="A faixa mínima não pode ser maior que a máxima")
+
+
+@router.get("/exames")
+def listar_exames(session: Session = Depends(get_session)) -> list[dict]:
+    exames = session.exec(select(ExameDefinicao).order_by(ExameDefinicao.nome)).all()
+    return [_dto_exame_definicao(session, ex) for ex in exames]
+
+
+@router.post("/exames")
+def criar_exame(dados: ExameDefinicaoIn, session: Session = Depends(get_session)) -> dict:
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    if session.exec(select(ExameDefinicao).where(ExameDefinicao.nome == nome)).first():
+        raise HTTPException(status_code=409, detail=f"Já existe um exame com o nome '{nome}'")
+    _validar_exame_definicao(dados, session)
+    ex = ExameDefinicao(**{**dados.model_dump(), "nome": nome})
+    session.add(ex)
+    session.commit()
+    session.refresh(ex)
+    return _dto_exame_definicao(session, ex)
+
+
+@router.put("/exames/{item_id}")
+def atualizar_exame(item_id: int, dados: ExameDefinicaoIn, session: Session = Depends(get_session)) -> dict:
+    ex = session.get(ExameDefinicao, item_id)
+    if not ex:
+        raise HTTPException(status_code=404, detail="Exame não encontrado")
+    nome = dados.nome.strip()
+    if not nome:
+        raise HTTPException(status_code=400, detail="Nome é obrigatório")
+    _validar_exame_definicao(dados, session)
+    for campo, valor in {**dados.model_dump(), "nome": nome}.items():
+        setattr(ex, campo, valor)
+    session.add(ex)
+    session.commit()
+    session.refresh(ex)
+    return _dto_exame_definicao(session, ex)
+
+
+@router.delete("/exames/{item_id}")
+def excluir_exame(item_id: int, session: Session = Depends(get_session)) -> dict:
+    ex = session.get(ExameDefinicao, item_id)
+    if not ex:
+        raise HTTPException(status_code=404, detail="Exame não encontrado")
+    session.delete(ex)
+    session.commit()
+    return {"excluido": True, "id": item_id}
+
 
 _listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa)
 router.get("/motivos-baixa")(_listar_motivos_baixa)

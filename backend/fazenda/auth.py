@@ -97,6 +97,23 @@ def get_current_user(
     return user
 
 
+def get_current_user_opcional(
+    authorization: str | None = Header(default=None),
+    session: Session = Depends(get_session),
+) -> Usuario | None:
+    """Igual a get_current_user, mas retorna None em vez de 401 sem token —
+    para rotas públicas (ex.: leitura do blog News) que também aceitam login."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    username = validar_token(authorization.split(" ", 1)[1])
+    if not username:
+        return None
+    user = session.exec(select(Usuario).where(Usuario.username == username)).first()
+    if not user or not user.ativo:
+        return None
+    return user
+
+
 def exigir_admin(user: Usuario = Depends(get_current_user)) -> Usuario:
     if user.papel != "admin":
         raise HTTPException(status_code=403, detail="Requer administrador")
