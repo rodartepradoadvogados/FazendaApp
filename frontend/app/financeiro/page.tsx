@@ -22,7 +22,7 @@ import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
-import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { RESPONSAVEIS } from "@/lib/constants";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
@@ -92,7 +92,7 @@ const mesCompLabel = (comp: string) => {
 };
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
+  return <Indicador valor={v} rotulo={l} categoria="financeiro" cor={c} />;
 }
 
 // ── Ordenação client-side genérica das listas de notas ──

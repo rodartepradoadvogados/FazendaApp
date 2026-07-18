@@ -42,17 +42,21 @@ export function Indicador({
   extra?: React.ReactNode;
 }) {
   const clicavel = !!onClick && (podeClicar ?? true);
-  const corFinal = cor || CATEGORIA_COR[categoria];
+  // O círculo do ícone é sempre a cor da categoria (identidade fixa da área);
+  // `cor` só sobrescreve o texto do valor, para destaque semântico (positivo/
+  // negativo, alerta) — sem isso, o círculo mudava de cor a cada indicador.
+  const corCategoria = CATEGORIA_COR[categoria];
+  const corValor = cor || corCategoria;
   const Icon = icon || CATEGORIA_ICONE[categoria];
   return (
     <div
       className={clicavel ? "kpi-card row-clickable" : "kpi-card"}
       onClick={clicavel ? onClick : undefined}
       title={clicavel ? "Clique para ver os detalhes" : undefined}
-      style={{ ["--kpi-c" as any]: corFinal, cursor: clicavel ? "pointer" : undefined }}
+      style={{ ["--kpi-c" as any]: corCategoria, cursor: clicavel ? "pointer" : undefined }}
     >
       <div className="kpi-chip"><Icon size={15} /></div>
-      <p className="kpi-value" style={{ fontSize: "1.4rem", color: corFinal }}>{valor}</p>
+      <p className="kpi-value" style={{ fontSize: "1.4rem", color: corValor }}>{valor}</p>
       <p className="kpi-label flex items-center gap-1 flex-wrap">{rotulo}{extra}</p>
     </div>
   );
