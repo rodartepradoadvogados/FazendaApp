@@ -10,6 +10,7 @@ import {
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
+  fetchExames,
   atualizarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
@@ -2387,8 +2388,11 @@ function codigoGrupo(grupo: string | null | undefined): string | null {
 type EventoPrev = {
   id: number; nome: string; categoria_preventiva: string | null; doenca_nome: string | null;
   produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null;
+  exame_definicao_id: number | null;
 };
 const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", outros: "Outros" };
+type ExameDef = { id: number; nome: string; tipo_resultado: "diagnostico" | "numerico"; faixa_min: number | null; faixa_max: number | null; acao_abaixo: string | null; acao_dentro: string | null; acao_acima: string | null };
+const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", negativo: "Negativo", indefinido: "Indefinido" };
 
 function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
@@ -2454,7 +2458,16 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   // salvar, marca a pendência original como realizada para sumir da Agenda.
   const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
 
+  // Diagnóstico do exame (positivo/negativo/indefinido) ou resultado numérico
+  // — só para eventos categoria_preventiva == "exame". Nunca gera aplicação
+  // de medicamento; positivo marca "A descartar" automaticamente.
+  const [exames, setExames] = useState<ExameDef[]>([]);
+  const [diagnostico, setDiagnostico] = useState<"" | "positivo" | "negativo" | "indefinido">("");
+  const [resultadoNumerico, setResultadoNumerico] = useState("");
+
   useEffect(() => { fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {}); }, []);
+  useEffect(() => { fetchExames().then(setExames).catch(() => {}); }, []);
+  useEffect(() => { setDiagnostico(""); setResultadoNumerico(""); }, [eventoId]);
 
   // Pré-preenche a partir da Agenda — evento, data e (se for por animal) o
   // número da matriz já vêm prontos; o restante (categoria/lote, se for um
@@ -2472,6 +2485,8 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
+  const exameDef = evento?.exame_definicao_id ? exames.find((x) => x.id === evento.exame_definicao_id) : undefined;
+  const modoNumerico = ehExame && exameDef?.tipo_resultado === "numerico";
 
   // Produto padrão do evento zerado/negativo/no mínimo — oferece a opção de
   // escolher um medicamento substituto na hora do lançamento.
@@ -2543,6 +2558,8 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         frequencia_valor: freqValorNum, frequencia_unidade: freqUnidade,
         animais: numeros, aplicar: !ehExame, aplicado, veterinario: veterinario || null,
         produto: substituto?.nome, unidade: substituto?.unidade,
+        resultado_exame: ehExame && !modoNumerico && diagnostico ? diagnostico : undefined,
+        resultado_numerico: ehExame && modoNumerico && resultadoNumerico !== "" ? Number(resultadoNumerico) : undefined,
       });
       // Para vacina/tratamento, "aplicado" já diz se aconteceu (some da Agenda) ou
       // não (continua pendente); exame usa o checkbox "realizado" independente.
@@ -2558,8 +2575,17 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
       }
       const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
       const agendado = !ehExame && !aplicado && nApl > 0;
-      setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)${agendado ? " programada(s) na Agenda" : ""}` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
+      let txtDiagnostico = "";
+      if (r?.resultado_exame) {
+        const { resultado, banda, animais: nDiag } = r.resultado_exame;
+        if (resultado === "positivo") txtDiagnostico = ` · ${nDiag} animal(is) positivo(s) — marcado(s) automaticamente "A descartar".`;
+        else if (resultado === "negativo") txtDiagnostico = ` · ${nDiag} animal(is) negativo(s) (liberada).`;
+        else if (resultado === "indefinido") txtDiagnostico = ` · ${nDiag} animal(is) indefinido(s) — marcado(s) para repetir o exame.`;
+        else if (banda) txtDiagnostico = ` · resultado numérico: ${banda === "abaixo" ? "abaixo da faixa" : banda === "acima" ? "acima da faixa" : "dentro da faixa"}.`;
+      }
+      setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)${agendado ? " programada(s) na Agenda" : ""}` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}${txtDiagnostico}.` });
       setAnimaisSel(new Set()); setLotesSelecionados([]); setCategoriasSel(new Set());
+      setDiagnostico(""); setResultadoNumerico("");
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
     finally { setSalvando(false); }
   }
@@ -2628,6 +2654,46 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
               <button className="btn-ghost" onClick={() => setDecisaoRegra("novo")}>É um novo evento avulso</button>
             </div>
           </div>
+        </div>
+      )}
+
+      {ehExame && (
+        <div style={{ marginTop: "0.9rem", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "10px", padding: "0.9rem 1rem" }}>
+          <p style={{ fontWeight: 700, fontSize: "0.85rem", marginBottom: "0.6rem" }}>Diagnóstico do exame{exameDef ? ` — ${exameDef.nome}` : ""}</p>
+          {!modoNumerico ? (
+            <>
+              <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+                {(["positivo", "negativo", "indefinido"] as const).map((r) => (
+                  <button key={r} type="button" onClick={() => setDiagnostico((d) => (d === r ? "" : r))}
+                    style={{ fontSize: "0.8rem", padding: "0.4rem 1rem", borderRadius: "999px", cursor: "pointer",
+                      border: "1px solid " + (diagnostico === r ? "var(--dourado)" : "var(--border)"),
+                      background: diagnostico === r ? "rgba(94,26,46,0.4)" : "transparent",
+                      color: diagnostico === r ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: diagnostico === r ? 700 : 500 }}>
+                    {LABEL_RESULTADO_EXAME[r]}
+                  </button>
+                ))}
+              </div>
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                Aplica-se aos animais marcados abaixo. <strong>Positivo</strong> marca automaticamente "A descartar";
+                {" "}<strong>negativo</strong> fica liberada; <strong>indefinido</strong> marca para repetir o exame — para fins de relatório.
+              </p>
+            </>
+          ) : (
+            <>
+              <div style={{ maxWidth: 220 }}>
+                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Valor lançado</label>
+                <input type="number" inputMode="decimal" style={inputStyle} value={resultadoNumerico} onChange={(e) => setResultadoNumerico(e.target.value)} />
+              </div>
+              {exameDef?.faixa_min != null && exameDef?.faixa_max != null && (
+                <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
+                  Faixa cadastrada: {exameDef.faixa_min} a {exameDef.faixa_max}.
+                  {exameDef.acao_abaixo && <> Abaixo: {exameDef.acao_abaixo}.</>}
+                  {exameDef.acao_dentro && <> Dentro: {exameDef.acao_dentro}.</>}
+                  {exameDef.acao_acima && <> Acima: {exameDef.acao_acima}.</>}
+                </p>
+              )}
+            </>
+          )}
         </div>
       )}
 

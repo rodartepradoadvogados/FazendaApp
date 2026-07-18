@@ -4,6 +4,7 @@ import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, P
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
+  fetchResultadosExame, type ExameResultado,
 } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -155,8 +156,87 @@ function RelatorioEventosVidaView() {
   );
 }
 
+const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", negativo: "Negativo", indefinido: "Indefinido" };
+const COR_RESULTADO_EXAME: Record<string, string> = { positivo: "var(--red)", negativo: "var(--green-light)", indefinido: "var(--amber)" };
+
+/**
+ * Relatório de resultados de exames preventivos (tuberculose, brucelose etc.)
+ * lançados em Lançamentos > Sanitário > Preventivo — diagnóstico
+ * (positivo/negativo/indefinido) ou valor numérico + banda. Só leitura.
+ */
+function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
+  const [eventoId, setEventoId] = useState("");
+  const [resultadoFiltro, setResultadoFiltro] = useState("");
+  const [linhas, setLinhas] = useState<ExameResultado[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  const eventosExame = useMemo(() => eventos.filter((e) => e.categoria_preventiva === "exame"), [eventos]);
+
+  useEffect(() => {
+    fetchResultadosExame({
+      eventoSanitarioId: eventoId ? Number(eventoId) : undefined,
+      resultado: resultadoFiltro || undefined,
+    }).then(setLinhas).catch((e) => setErro(e.message));
+  }, [eventoId, resultadoFiltro]);
+
+  return (
+    <div className="card">
+      <div className="card-header mb-3 flex items-center gap-2"><Shield size={16} /> Resultados de exames</div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+        Diagnóstico (positivo/negativo/indefinido) ou valor numérico lançado em cada exame preventivo — positivo marca
+        automaticamente "A descartar"; negativo é informativo (liberada); indefinido marca para repetir o exame.
+      </p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Exame</label>
+          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+            value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
+            <option value="">Todos</option>
+            {eventosExame.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+          </select></div>
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Resultado</label>
+          <select style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+            value={resultadoFiltro} onChange={(e) => setResultadoFiltro(e.target.value)}>
+            <option value="">Todos</option>
+            <option value="positivo">Positivo</option>
+            <option value="negativo">Negativo</option>
+            <option value="indefinido">Indefinido</option>
+          </select></div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}
+      {!linhas && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {linhas && (
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr><th>Nº</th><th>Exame</th><th>Data</th><th>Resultado</th><th>Veterinário</th></tr></thead>
+            <tbody>
+              {linhas.map((l) => (
+                <tr key={l.id}>
+                  <td style={{ fontWeight: 700 }}>{l.numero_matriz}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{l.evento_sanitario_nome || "—"}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{formatDate(l.data_exame)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>
+                    {l.resultado ? (
+                      <span style={{ fontWeight: 700, color: COR_RESULTADO_EXAME[l.resultado] }}>{LABEL_RESULTADO_EXAME[l.resultado]}</span>
+                    ) : l.valor_numerico != null ? (
+                      <>{l.valor_numerico}{l.banda ? ` (${l.banda === "abaixo" ? "abaixo da faixa" : l.banda === "acima" ? "acima da faixa" : "dentro da faixa"})` : ""}</>
+                    ) : "—"}
+                  </td>
+                  <td style={{ fontSize: "0.78rem" }}>{l.veterinario || "—"}</td>
+                </tr>
+              ))}
+              {!linhas.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum resultado no filtro.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CalendarioSanitarioView() {
-  const [modo, setModo] = useState<"regras" | "relatorio">("regras");
+  const [modo, setModo] = useState<"regras" | "relatorio" | "exames">("regras");
   const [regras, setRegras] = useState<RegraCalendario[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
@@ -201,12 +281,13 @@ function CalendarioSanitarioView() {
         abas={[
           { id: "regras", label: "Regras cadastradas", title: "Regras recorrentes já cadastradas" },
           { id: "relatorio", label: "Relatório de eventos de vida", title: "Quais animais entrarão em cada calendário na próxima aplicação" },
+          { id: "exames", label: "Resultados de exames", title: "Diagnóstico/valor lançado em cada exame preventivo" },
         ] as const}
         ativa={modo}
         onChange={setModo}
       />
 
-      {modo === "relatorio" ? <RelatorioEventosVidaView /> : (
+      {modo === "relatorio" ? <RelatorioEventosVidaView /> : modo === "exames" ? <RelatorioResultadosExameView eventos={eventos} /> : (
       <>
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>

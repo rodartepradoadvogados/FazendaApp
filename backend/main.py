@@ -228,9 +228,11 @@ app.include_router(notificacoes.router, dependencies=_protegido)
 app.include_router(telegram.router)
 # Aprovações: cada rota já exige admin (exigir_admin) internamente.
 app.include_router(aprovacoes.router)
-# News: leitura aberta a qualquer usuário logado; cadastro de fontes (POST/PUT/
-# DELETE /news/fontes) já exige admin internamente (exigir_admin).
-app.include_router(news.router, dependencies=_protegido)
+# News: leitura (GET /news/) é pública — qualquer visitante lê o blog sem
+# login; cada rota de gestão (cadastro de fontes, publicar/excluir/revisar
+# matéria) já exige a permissão certa internamente (exigir_admin /
+# exigir_pode_publicar) — por isso este router NÃO leva o _protegido global.
+app.include_router(news.router)
 # Assistente Claude (protótipo): aberto a qualquer usuário logado — cada
 # ferramenta interna é oferecida só conforme os módulos liberados dele.
 app.include_router(assistente.router, dependencies=_protegido)

@@ -1,6 +1,8 @@
 "use client";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { LogIn } from "lucide-react";
 import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
@@ -10,10 +12,16 @@ import { NewsButton } from "@/components/NewsButton";
 import { SubNavProvider } from "@/components/SubNavContext";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
+import { CowDataWordmark } from "@/components/CowDataWordmark";
+
+// Rotas públicas: acessíveis sem login, sem redirecionar para /login.
+// News é o blog da fazenda — leitura livre para qualquer visitante.
+const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news";
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
- * A rota /login é aberta; qualquer outra sem token redireciona para o login.
+ * A rota /login é aberta; /news também é pública (leitura sem login);
+ * qualquer outra sem token redireciona para o login.
  */
 export function AuthShell({ children }: { children: React.ReactNode }) {
   const path = usePathname();
@@ -27,6 +35,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     if (path === "/login") { setEstado("deslogado"); return; }
     if (!getToken()) {
       setEstado("deslogado");
+      if (ROTA_PUBLICA(path)) return; // /news: mostra a matéria mesmo sem sessão.
       // No app móvel, volta para o app depois do login.
       router.replace(ehApp ? `/login?next=${encodeURIComponent(path)}` : "/login");
       return;
@@ -49,6 +58,17 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   }, [estado]);
 
   if (path === "/login") return <>{children}</>;
+
+  // Visitante sem login em /news: mostra a matéria com uma casca própria e
+  // simples (sem a sidebar do sistema, que é só para quem está logado).
+  if (path === "/news" && estado === "deslogado") {
+    return (
+      <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
+        <PublicNewsHeader />
+        {children}
+      </div>
+    );
+  }
 
   if (estado !== "logado") {
     return <div style={{ display: "flex", height: "100vh", alignItems: "center", justifyContent: "center", color: "var(--text-muted)" }}>Carregando…</div>;
@@ -73,5 +93,22 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </SubNavProvider>
+  );
+}
+
+/** Cabeçalho enxuto para quem chega em /news sem estar logado — identifica a
+ * marca e oferece o caminho de volta para o sistema, sem expor a sidebar. */
+function PublicNewsHeader() {
+  return (
+    <header style={{
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+      padding: "0.9rem 1.5rem", borderBottom: "1px solid var(--border)",
+      background: "var(--surface)", flexWrap: "wrap", gap: "0.6rem",
+    }}>
+      <CowDataWordmark size="1.2rem" />
+      <Link href="/login" className="btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", textDecoration: "none" }}>
+        <LogIn size={15} /> Entrar no sistema
+      </Link>
+    </header>
   );
 }

@@ -1,15 +1,16 @@
 "use client";
 import { Fragment, useEffect, useRef, useState } from "react";
-import { Syringe, Bug, CalendarClock, ClipboardList, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
+import { Syringe, Bug, CalendarClock, ClipboardList, FlaskConical, Plus, Pencil, AlertTriangle, Check, X, Trash2, Search, ChevronDown, ChevronRight, Upload, Download } from "lucide-react";
 import {
   fetchPrincipiosAtivos, restaurarCatalogoPrincipios,
   fetchFarmaciaPrincipios, fetchFarmaciaDetalhe, criarPrincipioFarmacia, atualizarPrincipioFarmacia,
   criarMarcaFarmacia, excluirMarcaFarmacia,
   fetchDoencas, criarDoenca, atualizarDoenca,
   fetchEventosSanitarios, criarEventoSanitario, atualizarEventoSanitario,
+  fetchExames, criarExame, atualizarExame, excluirExame,
   fetchProtocolosSanitarios, criarProtocoloSanitario, atualizarProtocoloSanitario, importarProtocoloSanitarioExcel,
   fetchEstoque, fetchLotes,
-  type ProtocoloEtapa, type EventoSanitarioPayload, type PrincipioFarmacia, type MarcaComercial,
+  type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
@@ -43,6 +44,7 @@ const ABAS = [
   ["doencas", "Doença", Bug],
   ["eventos", "Evento sanitário", CalendarClock],
   ["protocolos", "Protocolo sanitário", ClipboardList],
+  ["exames", "Exames", FlaskConical],
 ] as const;
 // Reexportado para o Cadastro compor a árvore de sub-navegação (Configurações
 // › Cadastro › Sanitário › estas 4 abas) sem duplicar rótulos/ícones.
@@ -79,6 +81,7 @@ export default function CadastroSanitario({ abaControlada, onAbaChange }: {
       )}
       {aba === "eventos" && <CadastroEventosSanitarios />}
       {aba === "protocolos" && <CadastroProtocolosSanitarios />}
+      {aba === "exames" && <CadastroExames />}
     </div>
   );
 }
@@ -398,6 +401,7 @@ type EventoForm = {
   produto_padrao: string; dose_padrao: string; unidade_padrao: string; via_padrao: string;
   avisar_veterinario_30_dias: boolean;
   condicao_evento_id: string;
+  exame_definicao_id: string;
 };
 const eventoFormVazio = (): EventoForm => ({
   nome: "", ativo: true, tipo_agendamento: "nenhum", categoria_alvo: "", categoria_preventiva: "", doenca_id: "",
@@ -406,6 +410,7 @@ const eventoFormVazio = (): EventoForm => ({
   produto_padrao: "", dose_padrao: "", unidade_padrao: "", via_padrao: "",
   avisar_veterinario_30_dias: false,
   condicao_evento_id: "",
+  exame_definicao_id: "",
 });
 
 export function CadastroEventosSanitarios() {
@@ -413,6 +418,7 @@ export function CadastroEventosSanitarios() {
   const [doencas, setDoencas] = useState<{ id: number; nome: string }[]>([]);
   const [estoque, setEstoque] = useState<EstoqueItemPicker[]>([]);
   const [lotes, setLotes] = useState<{ codigo: string; nome?: string }[]>([]);
+  const [exames, setExames] = useState<{ id: number; nome: string }[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [editando, setEditando] = useState<number | "novo" | null>(null);
   const [form, setForm] = useState<EventoForm>(eventoFormVazio());
@@ -426,6 +432,7 @@ export function CadastroEventosSanitarios() {
     fetchDoencas().then(setDoencas).catch(() => {});
     fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
     fetchLotes().then(setLotes).catch(() => {});
+    fetchExames().then(setExames).catch(() => {});
   }, []);
 
   const abrirNovo = () => { setForm(eventoFormVazio()); setEditando("novo"); setMsg(null); };
@@ -441,6 +448,7 @@ export function CadastroEventosSanitarios() {
       unidade_padrao: e.unidade_padrao || "", via_padrao: e.via_padrao || "",
       avisar_veterinario_30_dias: !!(e as any).agenda_dias_antes,
       condicao_evento_id: e.condicao_evento_id ? String(e.condicao_evento_id) : "",
+      exame_definicao_id: (e as any).exame_definicao_id ? String((e as any).exame_definicao_id) : "",
     });
     setEditando(e.id); setMsg(null);
   };
@@ -463,6 +471,7 @@ export function CadastroEventosSanitarios() {
       unidade_padrao: form.unidade_padrao || null, via_padrao: form.via_padrao || null,
       agenda_dias_antes: form.categoria_preventiva === "exame" && form.avisar_veterinario_30_dias ? 30 : null,
       condicao_evento_id: form.condicao_evento_id ? Number(form.condicao_evento_id) : null,
+      exame_definicao_id: form.categoria_preventiva === "exame" && form.exame_definicao_id ? Number(form.exame_definicao_id) : null,
     };
     setSalvando(true); setMsg(null);
     try {
@@ -585,10 +594,19 @@ export function CadastroEventosSanitarios() {
               </select></div>
           </div>
           {form.categoria_preventiva === "exame" && (
-            <label className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
-              <input type="checkbox" checked={form.avisar_veterinario_30_dias} onChange={(e) => setForm({ ...form, avisar_veterinario_30_dias: e.target.checked })} />
-              Avisar na Agenda 30 dias antes, para confirmar o exame com o veterinário
-            </label>
+            <>
+              <div className="mb-3" style={{ maxWidth: 360 }}>
+                <label style={labelStyle}>Exame vinculado (Cadastro › Sanitário › Exames)</label>
+                <select style={inputStyle} value={form.exame_definicao_id} onChange={(e) => setForm({ ...form, exame_definicao_id: e.target.value })}>
+                  <option value="">— (usa diagnóstico padrão: positivo/negativo/indefinido)</option>
+                  {exames.map((ex) => <option key={ex.id} value={ex.id}>{ex.nome}</option>)}
+                </select>
+              </div>
+              <label className="flex items-center gap-2 mb-3" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                <input type="checkbox" checked={form.avisar_veterinario_30_dias} onChange={(e) => setForm({ ...form, avisar_veterinario_30_dias: e.target.checked })} />
+                Avisar na Agenda 30 dias antes, para confirmar o exame com o veterinário
+              </label>
+            </>
           )}
         </>
       )}
@@ -658,6 +676,207 @@ export function CadastroEventosSanitarios() {
                   </Fragment>
                 ))}
                 {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento sanitário cadastrado ainda.</td></tr>}
+                {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────── Exames (nome + tipo de resultado) ───────────────────────
+type ExameRow = ExameDefinicaoPayload & { id: number; principio_ativo_nome?: string | null };
+type ExameForm = {
+  nome: string; ativo: boolean; principio_ativo_id: string;
+  tipo_resultado: "diagnostico" | "numerico";
+  faixa_min: string; faixa_max: string;
+  acao_abaixo: string; acao_dentro: string; acao_acima: string;
+  observacao: string;
+};
+const exameFormVazio = (): ExameForm => ({
+  nome: "", ativo: true, principio_ativo_id: "", tipo_resultado: "diagnostico",
+  faixa_min: "", faixa_max: "", acao_abaixo: "", acao_dentro: "", acao_acima: "", observacao: "",
+});
+
+function CadastroExames() {
+  const [itens, setItens] = useState<ExameRow[] | null>(null);
+  const [principios, setPrincipios] = useState<{ id: number; nome: string }[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [editando, setEditando] = useState<number | "novo" | null>(null);
+  const [form, setForm] = useState<ExameForm>(exameFormVazio());
+  const [salvando, setSalvando] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const [busca, setBusca] = useState("");
+
+  const carregar = () => fetchExames().then(setItens).catch((e) => setError(e.message));
+  useEffect(() => {
+    carregar();
+    fetchPrincipiosAtivos().then(setPrincipios).catch(() => {});
+  }, []);
+
+  const abrirNovo = () => { setForm(exameFormVazio()); setEditando("novo"); setMsg(null); };
+  const abrirEdicao = (e: ExameRow) => {
+    setForm({
+      nome: e.nome, ativo: e.ativo ?? true, principio_ativo_id: e.principio_ativo_id ? String(e.principio_ativo_id) : "",
+      tipo_resultado: (e.tipo_resultado as any) || "diagnostico",
+      faixa_min: e.faixa_min != null ? String(e.faixa_min) : "", faixa_max: e.faixa_max != null ? String(e.faixa_max) : "",
+      acao_abaixo: e.acao_abaixo || "", acao_dentro: e.acao_dentro || "", acao_acima: e.acao_acima || "",
+      observacao: e.observacao || "",
+    });
+    setEditando(e.id); setMsg(null);
+  };
+  const cancelar = () => { setEditando(null); setMsg(null); };
+
+  const salvar = async () => {
+    if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
+    if (form.tipo_resultado === "numerico" && (!form.faixa_min.trim() || !form.faixa_max.trim())) {
+      setMsg("Informe a faixa (de x até y) para exame numérico."); return;
+    }
+    const dados: ExameDefinicaoPayload = {
+      nome: form.nome.trim(), ativo: form.ativo,
+      principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : null,
+      tipo_resultado: form.tipo_resultado,
+      faixa_min: form.tipo_resultado === "numerico" && form.faixa_min ? Number(form.faixa_min) : null,
+      faixa_max: form.tipo_resultado === "numerico" && form.faixa_max ? Number(form.faixa_max) : null,
+      acao_abaixo: form.tipo_resultado === "numerico" ? (form.acao_abaixo.trim() || null) : null,
+      acao_dentro: form.tipo_resultado === "numerico" ? (form.acao_dentro.trim() || null) : null,
+      acao_acima: form.tipo_resultado === "numerico" ? (form.acao_acima.trim() || null) : null,
+      observacao: form.observacao.trim() || null,
+    };
+    setSalvando(true); setMsg(null);
+    try {
+      if (editando === "novo") await criarExame(dados);
+      else if (typeof editando === "number") await atualizarExame(editando, dados);
+      setEditando(null);
+      await carregar();
+    } catch (e: any) { setMsg(e.message || "Erro ao salvar"); }
+    finally { setSalvando(false); }
+  };
+
+  const excluir = async (e: ExameRow) => {
+    if (!window.confirm(`Excluir o exame "${e.nome}"?`)) return;
+    try { await excluirExame(e.id); await carregar(); }
+    catch (err: any) { setError(err.message); }
+  };
+
+  const termoBusca = normalizar(busca.trim());
+  const filtrados = (itens ?? []).filter((e) => !termoBusca || normalizar(e.nome).includes(termoBusca));
+
+  const formEl = (
+    <div style={{ background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", padding: "1rem", marginBottom: "1rem" }}>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Nome do exame</label>
+          <input style={inputStyle} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder='ex.: "Tuberculina", "Brucelose B19"' /></div>
+        <div><label style={labelStyle}>Princípio ativo</label>
+          <select style={inputStyle} value={form.principio_ativo_id} onChange={(e) => setForm({ ...form, principio_ativo_id: e.target.value })}>
+            <option value="">—</option>{principios.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+          </select></div>
+        <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
+      </div>
+
+      <label style={labelStyle}>Resultados possíveis</label>
+      <div className="flex items-center gap-2 mb-3" style={{ flexWrap: "wrap" }}>
+        {([["diagnostico", "Por diagnóstico (positivo/negativo/indefinido)"], ["numerico", "Numérico (faixa de valores)"]] as const).map(([v, lbl]) => (
+          <button key={v} type="button" onClick={() => setForm({ ...form, tipo_resultado: v })}
+            style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", borderRadius: "999px", cursor: "pointer",
+              border: "1px solid " + (form.tipo_resultado === v ? "var(--dourado)" : "var(--border)"),
+              background: form.tipo_resultado === v ? "rgba(94,26,46,0.4)" : "transparent",
+              color: form.tipo_resultado === v ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: form.tipo_resultado === v ? 700 : 500 }}>
+            {lbl}
+          </button>
+        ))}
+      </div>
+
+      {form.tipo_resultado === "diagnostico" && (
+        <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+          No lançamento (Sanitário › Preventivo), o resultado é <strong>positivo</strong> (marca automaticamente
+          "A descartar"), <strong>negativo</strong> (liberada) ou <strong>indefinido</strong> (repetir exame) — para fins de relatório.
+        </p>
+      )}
+
+      {form.tipo_resultado === "numerico" && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyle}>Faixa — de</label>
+            <input type="number" inputMode="decimal" style={inputStyle} value={form.faixa_min} onChange={(e) => setForm({ ...form, faixa_min: e.target.value })} /></div>
+          <div><label style={labelStyle}>Faixa — até</label>
+            <input type="number" inputMode="decimal" style={inputStyle} value={form.faixa_max} onChange={(e) => setForm({ ...form, faixa_max: e.target.value })} /></div>
+          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer abaixo da faixa</label>
+            <input style={inputStyle} value={form.acao_abaixo} onChange={(e) => setForm({ ...form, acao_abaixo: e.target.value })} placeholder="ex.: Sem ação" /></div>
+          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer dentro da faixa</label>
+            <input style={inputStyle} value={form.acao_dentro} onChange={(e) => setForm({ ...form, acao_dentro: e.target.value })} placeholder="ex.: Monitorar" /></div>
+          <div style={{ gridColumn: "span 4" }}><label style={labelStyle}>O que fazer acima da faixa</label>
+            <input style={inputStyle} value={form.acao_acima} onChange={(e) => setForm({ ...form, acao_acima: e.target.value })} placeholder="ex.: Investigar" /></div>
+        </div>
+      )}
+
+      <div className="mb-3"><label style={labelStyle}>Observação</label>
+        <input style={inputStyle} value={form.observacao} onChange={(e) => setForm({ ...form, observacao: e.target.value })} /></div>
+
+      {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
+      <div className="flex items-center gap-2">
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
+          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
+        </button>
+        <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={cancelar}>
+          <X size={14} /> Cancelar
+        </button>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="card">
+      <div className="card-header mb-3 flex items-center justify-between">
+        <span className="flex items-center gap-2"><FlaskConical size={16} /> Exames</span>
+        <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={abrirNovo}>
+          <Plus size={14} /> Novo
+        </button>
+      </div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+        Cadastro de exames (ex.: tuberculose, brucelose) usados em Sanitário › Preventivo. Vincule ao princípio ativo
+        e escolha o tipo de resultado: por diagnóstico (positivo/negativo/indefinido) ou numérico (faixa de x até y,
+        com o que fazer abaixo, dentro e acima dela). Depois vincule este exame ao evento sanitário correspondente
+        (aba Evento sanitário). Lançamento de exame nunca gera aplicação de medicamento nem baixa de estoque.
+      </p>
+
+      {error && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!itens && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {editando === "novo" && formEl}
+
+      {itens && (
+        <>
+          <div style={{ position: "relative", marginBottom: "0.8rem" }}>
+            <Search size={14} style={{ position: "absolute", left: "0.65rem", top: "50%", transform: "translateY(-50%)", color: "var(--text-muted)" }} />
+            <input style={buscaInputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar exame…" />
+          </div>
+          <div className="overflow-x-auto">
+            <table className="fazenda-table">
+              <thead><tr><th>Nome</th><th>Princípio ativo</th><th>Tipo de resultado</th><th>Faixa</th><th></th></tr></thead>
+              <tbody>
+                {filtrados.map((e) => (
+                  <Fragment key={e.id}>
+                    <tr>
+                      <td style={{ fontWeight: 700 }}>{e.nome}{!e.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{e.principio_ativo_nome || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{e.tipo_resultado === "numerico" ? "Numérico" : "Diagnóstico"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{e.tipo_resultado === "numerico" && e.faixa_min != null ? `${e.faixa_min} a ${e.faixa_max}` : "—"}</td>
+                      <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        <span style={{ display: "inline-flex", gap: "0.35rem", alignItems: "center" }}>
+                          <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(e)}>
+                            <Pencil size={13} /> Editar
+                          </button>
+                          <button title="Excluir" onClick={() => excluir(e)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                        </span>
+                      </td>
+                    </tr>
+                    {editando === e.id && <tr><td colSpan={5} style={{ padding: 0 }}>{formEl}</td></tr>}
+                  </Fragment>
+                ))}
+                {!itens.length && !editando && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum exame cadastrado ainda.</td></tr>}
                 {!!itens.length && !filtrados.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum resultado para “{busca}”.</td></tr>}
               </tbody>
             </table>
