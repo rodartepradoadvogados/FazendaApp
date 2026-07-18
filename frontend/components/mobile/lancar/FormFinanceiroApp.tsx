@@ -11,9 +11,10 @@ import { LinhaPills, MobPill, type Animal } from "@/components/mobile/lancar/com
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
 import CompraSemenForm from "@/components/CompraSemenForm";
+import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import { RESPONSAVEIS } from "@/lib/constants";
 
-type TipoLancamento = "despesa" | "receita" | "compra_animal" | "compra_semen";
+type TipoLancamento = "despesa" | "receita" | "compra_animal" | "compra_semen" | "folha";
 
 export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita"; animais: Animal[] }) {
   const [tipo, setTipo] = useState<TipoLancamento>(tipoInicial || "despesa");
@@ -26,11 +27,13 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
         <MobPill ativa={tipo === "receita"} onClick={() => setTipo("receita")}>Contas a receber</MobPill>
         <MobPill ativa={tipo === "compra_animal"} onClick={() => setTipo("compra_animal")}>Compra de animal</MobPill>
         <MobPill ativa={tipo === "compra_semen"} onClick={() => setTipo("compra_semen")}>Compra de sêmen</MobPill>
+        <MobPill ativa={tipo === "folha"} onClick={() => setTipo("folha")}>Folha de pagamento</MobPill>
       </LinhaPills>
       <div className="mob-form-embutido">
         {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} />}
         {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}
         {tipo === "compra_semen" && <CompraSemenForm key="compra_semen" />}
+        {tipo === "folha" && <FolhaPagamentoView key="folha" />}
       </div>
     </div>
   );
