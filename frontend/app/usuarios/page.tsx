@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Users, AlertTriangle, UserPlus, Check, Pencil, X, ShieldCheck, Clock } from "lucide-react";
+import { Users, AlertTriangle, UserPlus, Check, Pencil, X, ShieldCheck, Clock, Newspaper } from "lucide-react";
 import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchAcessos, type UsuarioAcesso } from "@/lib/api";
 
 const MODULOS = [
@@ -28,6 +28,7 @@ export default function UsuariosPage() {
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
   const [perms, setPerms] = useState<Set<string>>(new Set(TODOS));
+  const [podePublicarBlog, setPodePublicarBlog] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [editando, setEditando] = useState<any | null>(null);
 
@@ -39,9 +40,12 @@ export default function UsuariosPage() {
   const criar = async () => {
     setSalvando(true); setError(null); setMsg(null);
     try {
-      await criarUsuario({ username: username.trim(), senha, nome: nome.trim() || undefined, email: email.trim() || undefined, papel, permissoes: papel === "admin" ? TODOS : Array.from(perms) });
+      await criarUsuario({
+        username: username.trim(), senha, nome: nome.trim() || undefined, email: email.trim() || undefined, papel,
+        permissoes: papel === "admin" ? TODOS : Array.from(perms), pode_publicar_materias_blog: podePublicarBlog,
+      });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setNome(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS));
+      setUsername(""); setNome(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setPodePublicarBlog(false);
       carregar();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
@@ -100,6 +104,16 @@ export default function UsuariosPage() {
                 <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>A Capa fica sempre liberada. O Financeiro é bloqueado de verdade (dados e tela) para quem não tiver o módulo.</p>
               </div>
             )}
+
+            <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+                <input type="checkbox" checked={podePublicarBlog} onChange={(e) => setPodePublicarBlog(e.target.checked)} />
+                <Newspaper size={14} /> Permitir publicação de matérias no blog (News)
+              </label>
+              <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                Independente do tipo de acesso — todo usuário nasce sem essa permissão, mesmo administrador.
+              </p>
+            </div>
 
             <button className="btn-primary" onClick={criar} disabled={salvando || !username || !senha} style={{ width: "100%", justifyContent: "center" }}>
               <Check size={16} /> Criar usuário
@@ -194,6 +208,7 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
   const [papel, setPapel] = useState<"admin" | "operador">(usuario.papel);
   const [perms, setPerms] = useState<Set<string>>(new Set(usuario.papel === "admin" ? TODOS : usuario.permissoes || []));
   const [ativo, setAtivo] = useState<boolean>(usuario.ativo);
+  const [podePublicarBlog, setPodePublicarBlog] = useState<boolean>(usuario.pode_publicar_materias_blog === true);
   const [novaSenha, setNovaSenha] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
@@ -206,7 +221,7 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
       await atualizarUsuario(usuario.id, {
         username: username.trim(), nome: nome.trim() || undefined, email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms),
-        ativo, ...(novaSenha ? { senha: novaSenha } : {}),
+        ativo, pode_publicar_materias_blog: podePublicarBlog, ...(novaSenha ? { senha: novaSenha } : {}),
       });
       onSalvo();
     } catch (e: any) { setErro(e.message); }
@@ -257,6 +272,16 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
               <input type="checkbox" checked={ativo} disabled={souEu} onChange={(e) => setAtivo(e.target.checked)} /> Ativo
             </label>
             {souEu && <p style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Você não pode desativar a si mesmo.</p>}
+          </div>
+
+          <div style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+              <input type="checkbox" checked={podePublicarBlog} onChange={(e) => setPodePublicarBlog(e.target.checked)} />
+              <Newspaper size={14} /> Permitir publicação de matérias no blog (News)
+            </label>
+            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+              Independente do tipo de acesso — inclusive administrador pode não ter essa permissão.
+            </p>
           </div>
 
           {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem" }}>{erro}</p>}

@@ -19,7 +19,7 @@ from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Usuario
+from fazenda.models import SeedFlag, Usuario
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -111,6 +111,15 @@ def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     return user
 
 
+def exigir_pode_publicar(user: Usuario = Depends(get_current_user)) -> Usuario:
+    """Permissão específica para publicar/gerenciar matérias do blog (News) e
+    confirmar a revisão de publicação definitiva. Independente de papel/admin
+    — igual exigir_dono, um admin comum não passa por aqui sem a flag."""
+    if not user.pode_publicar_materias_blog:
+        raise HTTPException(status_code=403, detail="Sem permissão para publicar matérias no blog")
+    return user
+
+
 # Módulos do sistema (chaves usadas nas permissões dos operadores).
 MODULOS = [
     "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise",
@@ -157,4 +166,22 @@ def seed_admin(session: Session) -> None:
     username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
     senha = os.environ.get("ADMIN_PASS", "820908")
     session.add(Usuario(username=username, nome="Alexandre Rodarte", senha_hash=hash_senha(senha), papel="admin"))
+    session.commit()
+
+
+def seed_permissao_publicar_dono(session: Session) -> None:
+    """Uma única vez (SeedFlag): o proprietário (EMAIL_DONO) já nasce com a
+    permissão de publicar matérias no blog, já que ele já usa essa função hoje
+    (Configurações > News > Adicionar matéria ao blog). Todos os demais
+    usuários — inclusive outros admins — começam sem essa permissão, como
+    pedido; essa migração nunca roda de novo, então o proprietário pode
+    revogar a própria depois se quiser."""
+    chave = "pode_publicar_materias_blog_dono_202607"
+    if session.get(SeedFlag, chave):
+        return
+    dono = session.exec(select(Usuario).where(Usuario.email == EMAIL_DONO)).first()
+    if dono:
+        dono.pode_publicar_materias_blog = True
+        session.add(dono)
+    session.add(SeedFlag(chave=chave))
     session.commit()

@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin
+from fazenda.auth import exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin, seed_permissao_publicar_dono
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -61,7 +61,7 @@ from fazenda.api.routers.estoque import sindicar_estoque_semen
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
-from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_202607, seed_fontes_news
+from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -128,6 +128,13 @@ async def lifespan(app: FastAPI):
         # que já tinha sido importado — a aba News passa a ser alimentada só
         # pelo robô agendado /milknews, sob aprovação do administrador.
         desligar_fontes_rss_e_apagar_noticias_202607(session)
+        # Publica os lotes novos do robô agendado /milknews (MILKNEWS_LOTES) —
+        # cada lote roda uma única vez, sob a fonte manual "robô Milknews".
+        publicar_lotes_milknews(session)
+        # O proprietário já nasce com permissão de publicar matérias no blog
+        # (ele já usa essa função hoje); todos os demais usuários começam sem
+        # essa permissão, por padrão (uma única vez, ver seed_permissao_publicar_dono).
+        seed_permissao_publicar_dono(session)
         # Compatibiliza cada item de estoque sem conta gerencial padrão com a
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.

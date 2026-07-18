@@ -136,7 +136,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "fornecedor": [("categoria", "VARCHAR")],
     "pessoa": [("salario_base", "FLOAT"), ("data_admissao", "DATE")],
-    "usuario": [("permissoes", "VARCHAR"), ("paleta", "VARCHAR"), ("email", "VARCHAR"), ("ultimo_login", "TIMESTAMP")],
+    "usuario": [
+        ("permissoes", "VARCHAR"), ("paleta", "VARCHAR"), ("email", "VARCHAR"), ("ultimo_login", "TIMESTAMP"),
+        ("pode_publicar_materias_blog", "BOOLEAN DEFAULT false"),
+    ],
     "conta_gerencial": [
         ("numero_lancamento", "VARCHAR"),
         ("data_prevista_entrada", "DATE"),
@@ -203,7 +206,10 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("motivo_outro", "VARCHAR"),
     ],
     "fonte_news": [("manual", "BOOLEAN DEFAULT false")],
-    "noticia_news": [("materia", "TEXT"), ("fontes", "TEXT")],
+    "noticia_news": [
+        ("materia", "TEXT"), ("fontes", "TEXT"),
+        ("revisado_final", "BOOLEAN DEFAULT false"), ("revisado_final_em", "TIMESTAMP"), ("revisado_final_por", "VARCHAR"),
+    ],
     "agenda_manual": [
         ("lotes", "VARCHAR"),
         ("tipo_evento", "VARCHAR"),

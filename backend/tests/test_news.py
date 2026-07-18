@@ -36,9 +36,40 @@ def client():
         papel = "admin"
         ativo = True
         username = "admin_teste"
+        pode_publicar_materias_blog = True
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeAdmin()
+
+    with TestClient(main.app) as c:
+        yield c, engine
+
+    main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_admin_sem_permissao_publicar():
+    """Admin comum, mas SEM a permissão pode_publicar_materias_blog — confirma
+    que essa permissão é independente de papel/admin (igual exigir_dono)."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeAdminSemPermissao:
+        id = 3
+        papel = "admin"
+        ativo = True
+        username = "admin_sem_permissao"
+        pode_publicar_materias_blog = False
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemPermissao()
 
     with TestClient(main.app) as c:
         yield c, engine
@@ -64,6 +95,7 @@ def client_operador():
         papel = "operador"
         ativo = True
         username = "operador_teste"
+        pode_publicar_materias_blog = False
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
@@ -423,8 +455,9 @@ class TestAprovarNoticiaManual:
 
 class TestMateriaBlog:
     """POST /news/materias — "Adicionar matéria ao blog" (Configurações >
-    News), só admin, publica direto (sem fila de aprovação) sob a fonte fixa
-    "Blog CowData". DELETE /news/materias/{id} exclui."""
+    News), exige a permissão pode_publicar_materias_blog, publica direto (sem
+    fila de aprovação) sob a fonte fixa "Blog CowData". DELETE
+    /news/materias/{id} exclui. Toda matéria nasce com revisado_final=False."""
 
     def test_publica_com_tres_fontes(self, client):
         c, engine = client
@@ -448,6 +481,7 @@ class TestMateriaBlog:
             noticia = s.get(NoticiaNews, dados["id"])
             assert noticia.fonte_id == fonte.id
             assert json.loads(noticia.fontes) == ["https://a.com/1", "https://b.com/2", "https://c.com/3"]
+            assert noticia.revisado_final is False
 
     def test_publica_sem_fontes_gera_link_placeholder_unico(self, client):
         c, engine = client
@@ -488,6 +522,15 @@ class TestMateriaBlog:
         r = c.post("/news/materias", json={"manchete": "X", "materia": "Y", "fontes": []})
         assert r.status_code == 403
 
+    def test_admin_sem_permissao_nao_pode_publicar_nem_excluir(self, client_admin_sem_permissao_publicar):
+        """A permissão pode_publicar_materias_blog é independente de papel —
+        um admin comum sem a flag também recebe 403 (igual exigir_dono)."""
+        c, _ = client_admin_sem_permissao_publicar
+        r = c.post("/news/materias", json={"manchete": "X", "materia": "Y", "fontes": []})
+        assert r.status_code == 403
+        r = c.delete("/news/materias/1")
+        assert r.status_code == 403
+
     def test_excluir_materia(self, client):
         c, engine = client
         r = c.post("/news/materias", json={"manchete": "Para excluir", "materia": "Corpo", "fontes": []})
@@ -520,3 +563,118 @@ class TestMateriaBlog:
         assert len(fonte["noticias"]) == 1
         assert fonte["noticias"][0]["manchete"] == "Visível na listagem"
         assert fonte["noticias"][0]["fontes"] == ["https://x.com"]
+
+
+class TestRevisaoPublicacaoFinal:
+    """POST /news/materias/{id}/revisar-final — aba própria em Configurações >
+    News > "Revisão de publicação definitiva". Vale para qualquer matéria já
+    publicada (robô /milknews, "Adicionar matéria ao blog" ou aprovação de
+    pendente) — todas nascem com revisado_final=False; exige a permissão
+    pode_publicar_materias_blog, e é sempre uma ação humana (o robô nunca
+    chama este endpoint)."""
+
+    def test_confirma_revisao_de_materia_do_blog(self, client):
+        c, engine = client
+        r = c.post("/news/materias", json={"manchete": "A revisar", "materia": "Corpo", "fontes": []})
+        nid = r.json()["id"]
+        assert r.json()["revisado_final"] is False
+
+        r = c.post(f"/news/materias/{nid}/revisar-final")
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["revisado_final"] is True
+        assert dados["revisado_final_por"] == "admin_teste"
+        assert dados["revisado_final_em"] is not None
+
+        with Session(engine) as s:
+            noticia = s.get(NoticiaNews, nid)
+            assert noticia.revisado_final is True
+            assert noticia.revisado_final_por == "admin_teste"
+
+    def test_confirma_revisao_de_materia_aprovada_do_robo(self, client):
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Preço do leite sobe", "link": "https://milknews.example.com/1"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+        c.post(f"/aprovacoes/{pend_id}/aprovar")
+        with Session(engine) as s:
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/1")).first()
+            assert noticia.revisado_final is False
+            nid = noticia.id
+
+        r = c.post(f"/news/materias/{nid}/revisar-final")
+        assert r.status_code == 200, r.text
+        assert r.json()["revisado_final"] is True
+
+    def test_revisar_materia_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/news/materias/999/revisar-final")
+        assert r.status_code == 404
+
+    def test_operador_nao_pode_revisar(self, client_operador):
+        c, _ = client_operador
+        r = c.post("/news/materias/1/revisar-final")
+        assert r.status_code == 403
+
+    def test_admin_sem_permissao_nao_pode_revisar(self, client_admin_sem_permissao_publicar):
+        c, _ = client_admin_sem_permissao_publicar
+        r = c.post("/news/materias/1/revisar-final")
+        assert r.status_code == 403
+
+
+class TestPublicarLotesMilknews:
+    """publicar_lotes_milknews() — seed de startup que publica cada lote de
+    MILKNEWS_LOTES como matérias já aprovadas (sem fila de aprovação), sob a
+    fonte manual "robô Milknews". Cada lote roda uma única vez (SeedFlag)."""
+
+    def test_publica_lote_novo_sob_fonte_robo_milknews(self, client, monkeypatch):
+        from fazenda.api.routers import news as news_module
+
+        c, engine = client
+        lotes = {
+            "milknews_20260720": [{
+                "manchete": "Preço do leite sobe no Cepea/Esalq",
+                "resumo": "Cotação em alta na última semana. Dados: Cepea/Esalq (18/07/2026).",
+                "link": "/news#milknews-2026-07-20-01",
+                "data_publicacao": "2026-07-20",
+            }],
+        }
+        monkeypatch.setattr(news_module, "MILKNEWS_LOTES", lotes)
+
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        with Session(engine) as s:
+            fonte = s.exec(select(FonteNews).where(FonteNews.nome == "robô Milknews")).first()
+            assert fonte is not None and fonte.manual is True
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "/news#milknews-2026-07-20-01")).first()
+            assert noticia is not None
+            assert noticia.manchete == "Preço do leite sobe no Cepea/Esalq"
+            assert noticia.revisado_final is False
+            assert noticia.data_publicacao == datetime(2026, 7, 20)
+
+    def test_nao_republica_o_mesmo_lote_duas_vezes(self, client, monkeypatch):
+        from fazenda.api.routers import news as news_module
+
+        c, engine = client
+        lotes = {
+            "milknews_20260720": [{
+                "manchete": "Matéria única do lote", "resumo": "Resumo.",
+                "link": "/news#milknews-2026-07-20-01", "data_publicacao": "2026-07-20",
+            }],
+        }
+        monkeypatch.setattr(news_module, "MILKNEWS_LOTES", lotes)
+
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        # Mesmo que o lote mude de conteúdo depois, já rodou uma vez — nunca reaplica.
+        lotes["milknews_20260720"][0]["manchete"] = "Manchete alterada"
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        with Session(engine) as s:
+            todas = s.exec(select(NoticiaNews)).all()
+            assert len(todas) == 1
+            assert todas[0].manchete == "Matéria única do lote"
