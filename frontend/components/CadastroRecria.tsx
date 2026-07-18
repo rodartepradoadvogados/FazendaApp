@@ -68,10 +68,35 @@ function SecBenchmark() {
   );
 }
 
+const CATEGORIA_VAZIA: CategoriaManejo = {
+  nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false,
+  situacao_reprodutiva: null, situacao_produtiva: null,
+  dias_gestacao_min: null, dias_gestacao_max: null,
+  dias_desde_servico_min: null, dias_desde_servico_max: null,
+  dias_para_parto_min: null, dias_para_parto_max: null,
+  dias_pos_parto_min: null, dias_pos_parto_max: null,
+  ordem: 0, ativo: true,
+};
+
+// Modelos prontos pedidos pela fazenda — clique para carregar no formulário
+// acima (dá pra ajustar antes de salvar). Já vêm semeados no backend na
+// primeira execução; os botões servem para recriar ou usar de referência.
+const PRESETS_CATEGORIA: { label: string; descricao: string; dados: Partial<CategoriaManejo> }[] = [
+  { label: "Recria atrasada", descricao: "≥ 391 dias de vida e < 370 kg", dados: { nome: "Recria atrasada", dia_min: 391, peso_max_kg: 369.99 } },
+  { label: "Prenha", descricao: "Do diagnóstico positivo até o parto", dados: { nome: "Prenha", situacao_reprodutiva: "prenha" } },
+  { label: "Em lactação", descricao: "Do parto até 61 dias faltando para o próximo parto", dados: { nome: "Em lactação", situacao_produtiva: "lactacao" } },
+  { label: "Seca", descricao: "Entre 60 e 30 dias para o parto", dados: { nome: "Seca", dias_para_parto_min: 30, dias_para_parto_max: 60 } },
+  { label: "Pré-parto", descricao: "30 dias ou menos para o parto", dados: { nome: "Pré-parto", dias_para_parto_max: 30 } },
+  { label: "Pós-parto - PEV", descricao: "Do parto até 45 dias após o parto", dados: { nome: "Pós-parto - PEV", dias_pos_parto_max: 45 } },
+  { label: "Liberada/apta", descricao: "Mais de 45 dias após o parto, vazia e não inseminada", dados: { nome: "Liberada/apta", situacao_reprodutiva: "vazia", dias_pos_parto_min: 46 } },
+  { label: "Vazia atrasada", descricao: "Vazia, > 45 dias pós-parto e ≥ 30 dias sem novo serviço", dados: { nome: "Vazia atrasada", situacao_reprodutiva: "vazia", dias_pos_parto_min: 46, dias_desde_servico_min: 30 } },
+  { label: "Inseminada", descricao: "Entre a data do serviço/monta e o diagnóstico reprodutivo", dados: { nome: "Inseminada", situacao_reprodutiva: "inseminada" } },
+];
+
 function SecCategorias() {
   const [lista, setLista] = useState<CategoriaManejo[]>([]);
   const [comp, setComp] = useState<{ categoria: string; n: number }[]>([]);
-  const [form, setForm] = useState<CategoriaManejo>({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: 0, ativo: true });
+  const [form, setForm] = useState<CategoriaManejo>(CATEGORIA_VAZIA);
   const [editId, setEditId] = useState<number | null>(null);
   const carregar = () => { fetchCategoriasManejo().then(setLista).catch(() => {}); fetchComposicaoCategorias().then((d) => setComp(d.composicao)).catch(() => {}); };
   useEffect(() => { carregar(); }, []);
@@ -79,12 +104,37 @@ function SecCategorias() {
   const salvar = () => {
     if (!form.nome.trim()) return;
     const p = editId ? atualizarCategoriaManejo(editId, form) : criarCategoriaManejo(form);
-    p.then(() => { setForm({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: lista.length, ativo: true }); setEditId(null); carregar(); });
+    p.then(() => { setForm({ ...CATEGORIA_VAZIA, ordem: lista.length }); setEditId(null); carregar(); });
+  };
+  const usarPreset = (dados: Partial<CategoriaManejo>) => { setEditId(null); setForm({ ...CATEGORIA_VAZIA, ordem: lista.length, ...dados }); };
+  const resumoCriterios = (c: CategoriaManejo): string => {
+    const partes: string[] = [];
+    if (c.situacao_reprodutiva) partes.push(`sit. reprod.: ${c.situacao_reprodutiva}`);
+    if (c.situacao_produtiva) partes.push(`sit. prod.: ${c.situacao_produtiva}`);
+    if (c.dias_gestacao_min != null || c.dias_gestacao_max != null) partes.push(`gestação ${c.dias_gestacao_min ?? 0}–${c.dias_gestacao_max ?? "∞"}d`);
+    if (c.dias_desde_servico_min != null || c.dias_desde_servico_max != null) partes.push(`desde serviço ${c.dias_desde_servico_min ?? 0}–${c.dias_desde_servico_max ?? "∞"}d`);
+    if (c.dias_para_parto_min != null || c.dias_para_parto_max != null) partes.push(`p/ parto ${c.dias_para_parto_min ?? 0}–${c.dias_para_parto_max ?? "∞"}d`);
+    if (c.dias_pos_parto_min != null || c.dias_pos_parto_max != null) partes.push(`pós-parto ${c.dias_pos_parto_min ?? 0}–${c.dias_pos_parto_max ?? "∞"}d`);
+    return partes.join(" · ") || "—";
   };
   return (
     <div style={card}>
-      <div style={secTit}><Baby size={15} /> Parâmetros de categoria (idade / peso)</div>
-      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Faixas que classificam cada animal automaticamente. Na categoria de aptidão, o status reprodutivo (apta/inseminada/gestante) assume.</p>
+      <div style={secTit}><Baby size={15} /> Parâmetros de categoria</div>
+      <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>
+        Cada categoria classifica o animal automaticamente cruzando idade, peso e (opcionalmente) situação reprodutiva/produtiva, dias de gestação, dias desde o último serviço, dias para o parto provável e dias pós-parto. Deixe um critério em branco para não filtrar por ele.
+      </p>
+
+      <p style={{ ...lbl, marginTop: "0.6rem" }}>Modelos prontos (clique para carregar no formulário abaixo)</p>
+      <div className="flex flex-wrap gap-2 mb-3">
+        {PRESETS_CATEGORIA.map((p) => (
+          <button key={p.label} type="button" className="btn-ghost" title={p.descricao}
+            style={{ fontSize: "0.74rem", border: "1px solid var(--border)", borderRadius: 999, padding: "0.3rem 0.7rem" }}
+            onClick={() => usarPreset(p.dados)}>
+            {p.label}
+          </button>
+        ))}
+      </div>
+
       <div className="grid grid-cols-2 md:grid-cols-6 gap-2 items-end mb-2">
         <div style={{ gridColumn: "span 2" }}><label style={lbl}>Nome</label><input style={input} value={form.nome} onChange={(e) => setForm({ ...form, nome: e.target.value })} placeholder="ex.: Recria 1" /></div>
         <div><label style={lbl}>Dia mín.</label><input type="number" style={input} value={form.dia_min} onChange={(e) => setForm({ ...form, dia_min: Number(e.target.value) })} /></div>
@@ -92,23 +142,54 @@ function SecCategorias() {
         <div><label style={lbl}>Peso mín. (kg)</label><input type="number" style={input} value={form.peso_min_kg ?? ""} onChange={(e) => setForm({ ...form, peso_min_kg: num(e.target.value) })} /></div>
         <div><label style={lbl}>Peso máx. (kg)</label><input type="number" style={input} value={form.peso_max_kg ?? ""} onChange={(e) => setForm({ ...form, peso_max_kg: num(e.target.value) })} /></div>
       </div>
+
+      <p style={{ ...lbl, marginTop: "0.3rem" }}>Critérios adicionais (opcionais)</p>
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-2 items-end mb-2">
+        <div>
+          <label style={lbl}>Situação reprodutiva</label>
+          <select style={input} value={form.situacao_reprodutiva ?? ""} onChange={(e) => setForm({ ...form, situacao_reprodutiva: (e.target.value || null) as CategoriaManejo["situacao_reprodutiva"] })}>
+            <option value="">— não filtra —</option>
+            <option value="vazia">Vazia</option>
+            <option value="inseminada">Inseminada</option>
+            <option value="prenha">Prenha</option>
+          </select>
+        </div>
+        <div>
+          <label style={lbl}>Situação produtiva</label>
+          <select style={input} value={form.situacao_produtiva ?? ""} onChange={(e) => setForm({ ...form, situacao_produtiva: (e.target.value || null) as CategoriaManejo["situacao_produtiva"] })}>
+            <option value="">— não filtra —</option>
+            <option value="lactacao">Em lactação</option>
+            <option value="seca">Seca</option>
+          </select>
+        </div>
+        <div><label style={lbl}>Dias de gestação mín.</label><input type="number" style={input} value={form.dias_gestacao_min ?? ""} onChange={(e) => setForm({ ...form, dias_gestacao_min: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias de gestação máx.</label><input type="number" style={input} value={form.dias_gestacao_max ?? ""} onChange={(e) => setForm({ ...form, dias_gestacao_max: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias desde último serviço mín.</label><input type="number" style={input} value={form.dias_desde_servico_min ?? ""} onChange={(e) => setForm({ ...form, dias_desde_servico_min: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias desde último serviço máx.</label><input type="number" style={input} value={form.dias_desde_servico_max ?? ""} onChange={(e) => setForm({ ...form, dias_desde_servico_max: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias para o parto provável mín.</label><input type="number" style={input} value={form.dias_para_parto_min ?? ""} onChange={(e) => setForm({ ...form, dias_para_parto_min: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias para o parto provável máx.</label><input type="number" style={input} value={form.dias_para_parto_max ?? ""} onChange={(e) => setForm({ ...form, dias_para_parto_max: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias pós-parto mín.</label><input type="number" style={input} value={form.dias_pos_parto_min ?? ""} onChange={(e) => setForm({ ...form, dias_pos_parto_min: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Dias pós-parto máx.</label><input type="number" style={input} value={form.dias_pos_parto_max ?? ""} onChange={(e) => setForm({ ...form, dias_pos_parto_max: num(e.target.value) })} /></div>
+        <div><label style={lbl}>Ordem de prioridade</label><input type="number" style={input} value={form.ordem} onChange={(e) => setForm({ ...form, ordem: Number(e.target.value) })} /></div>
+      </div>
+
       <label className="flex items-center gap-2 mb-2" style={{ fontSize: "0.8rem" }}>
-        <input type="checkbox" checked={form.usa_status_reprodutivo} onChange={(e) => setForm({ ...form, usa_status_reprodutivo: e.target.checked })} /> Categoria de aptidão (usa status reprodutivo)
+        <input type="checkbox" checked={form.usa_status_reprodutivo} onChange={(e) => setForm({ ...form, usa_status_reprodutivo: e.target.checked })} /> Categoria de aptidão legada (usa status reprodutivo Apta/Inseminada/Gestante)
       </label>
       <div className="flex items-center gap-2 mb-3">
         <button className="btn-primary" style={{ display: "inline-flex", alignItems: "center", gap: 6 }} onClick={salvar}><Check size={14} /> {editId ? "Salvar" : "Adicionar categoria"}</button>
-        {editId && <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => { setEditId(null); setForm({ nome: "", dia_min: 0, dia_max: null, peso_min_kg: null, peso_max_kg: null, usa_status_reprodutivo: false, ordem: 0, ativo: true }); }}>Cancelar</button>}
+        {editId && <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => { setEditId(null); setForm(CATEGORIA_VAZIA); }}>Cancelar</button>}
       </div>
       <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table">
-          <thead><tr><th>Categoria</th><th>Idade (dias)</th><th>Peso (kg)</th><th>Aptidão?</th><th>Animais hoje</th><th></th></tr></thead>
+          <thead><tr><th>Categoria</th><th>Idade (dias)</th><th>Peso (kg)</th><th>Outros critérios</th><th>Animais hoje</th><th></th></tr></thead>
           <tbody>
             {lista.map((c) => (
               <tr key={c.id}>
                 <td style={{ fontWeight: 600 }}>{c.nome}</td>
                 <td>{c.dia_min}–{c.dia_max ?? "∞"}</td>
                 <td>{c.peso_min_kg ?? "—"}{c.peso_max_kg ? `–${c.peso_max_kg}` : ""}</td>
-                <td>{c.usa_status_reprodutivo ? "Sim" : "—"}</td>
+                <td style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>{c.usa_status_reprodutivo ? "Aptidão legada (Apta/Inseminada/Gestante)" : resumoCriterios(c)}</td>
                 <td>{comp.filter((x) => x.categoria === c.nome || (c.usa_status_reprodutivo && ["Apta", "Inseminada", "Gestante"].includes(x.categoria))).reduce((a, b) => a + b.n, 0) || 0}</td>
                 <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
                   <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={() => { setEditId(c.id!); setForm(c); }}>Editar</button>

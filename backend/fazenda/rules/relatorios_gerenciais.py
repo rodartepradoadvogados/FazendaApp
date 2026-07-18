@@ -96,6 +96,13 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
 
     serv_idx, parto_idx = _indexar(servicos, partos)
     femeas = [a for a in animais if a.get("ativo") and not a.get("eh_semen") and a.get("sexo") != "M"]
+    # Sexado/convencional por nome do touro — fallback para serviços antigos
+    # que não gravaram tipo_semen no momento da inseminação (ver Servico.tipo_semen).
+    tipo_semen_por_touro: dict[str, str] = {}
+    for s in semen:
+        nome = (s.get("touro_nome") or "").strip().lower()
+        if nome:
+            tipo_semen_por_touro.setdefault(nome, s.get("tipo") or "convencional")
 
     l_pev, l_inseminar, l_inseminados, l_tocar, l_reconfirmar = [], [], [], [], []
     l_prenhes, l_secagem, l_partos = [], [], []
@@ -156,9 +163,10 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                     tipo_ia = "IATF"
                 else:
                     tipo_ia = "Cio natural"
+                tipo_semen = us.get("tipo_semen") or tipo_semen_por_touro.get((us.get("reprodutor") or "").strip().lower())
                 l_inseminados.append({"numero": num, "grupo": grupo, "dias_inseminada": di,
                                       "data_ultima_ia": us.get("data_servico"), "touro": us.get("reprodutor"),
-                                      "tipo": tipo_ia, "cor_dias": cor_di, "cor_cio": cor_cio,
+                                      "tipo": tipo_ia, "tipo_semen": tipo_semen, "cor_dias": cor_di, "cor_cio": cor_cio,
                                       "cor": cor_di})
 
                 # 4a) Toque — já passou o período de toque e ainda sem diagnóstico

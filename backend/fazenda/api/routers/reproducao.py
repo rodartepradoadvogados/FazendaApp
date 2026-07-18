@@ -94,8 +94,14 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
     servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
     registros = analisar_servicos(servicos)
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
+    tipo_por_touro = _mapa_tipo_semen_por_touro(session)
     for r in registros:
         r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
+        # Serviços antigos (lançados antes de o tipo ser perguntado) não têm
+        # tipo_semen gravado — completa casando o nome do touro com o Estoque
+        # de Sêmen atual, mesma regra usada na baixa de dose.
+        if not r.get("tipo_semen") and r.get("touro") and r["touro"] != "(sem touro)":
+            r["tipo_semen"] = tipo_por_touro.get(r["touro"].strip().lower())
     return {"servicos": registros, "total": len(registros)}
 
 
@@ -530,6 +536,45 @@ def adicionar_animais_iatf(lancamento_id: int, dados: AdicionarAnimaisIatfIn, se
     return {"adicionados": novos, "lancamento_id": lancamento_id, "nome_protocolo": lancamento.nome_protocolo}
 
 
+def _mapa_tipo_semen_por_touro(session: Session) -> dict[str, str]:
+    """touro_nome (minúsculo) -> tipo (convencional/sexado/fazenda) do Estoque
+    de Sêmen — usado para completar o tipo_semen de serviços antigos que não
+    gravaram a modalidade no momento da inseminação."""
+    mapa: dict[str, str] = {}
+    for e in session.exec(select(EstoqueSemen)).all():
+        if e.touro_nome:
+            mapa.setdefault(e.touro_nome.strip().lower(), e.tipo or "convencional")
+    return mapa
+
+
+def _baixar_dose_semen(session: Session, reprodutor: str | None, tipo_semen: str | None, quantidade: int) -> None:
+    """Desconta `quantidade` doses do Estoque de Sêmen do touro usado, casando
+    por nome, NAAB ou código. Quando o tipo (sexado/convencional/fazenda) é
+    conhecido, restringe o casamento a esse tipo primeiro — o mesmo touro pode
+    ter linhas de estoque separadas por modalidade, e usar a errada bagunçaria
+    o saldo de quem realmente tem doses. Sem casamento por tipo (ou tipo
+    desconhecido), cai no casamento antigo por nome/NAAB/código, para não
+    quebrar compras/lançamentos que ainda não informam o tipo."""
+    if not reprodutor:
+        return
+    alvo = reprodutor.strip().lower()
+    candidatos = [
+        t for t in session.exec(select(EstoqueSemen)).all()
+        if (t.touro_nome or "").strip().lower() == alvo
+        or (t.naab or "").strip().lower() == alvo
+        or (t.codigo or "").strip().lower() == alvo
+    ]
+    if tipo_semen:
+        por_tipo = [t for t in candidatos if t.tipo == tipo_semen]
+        if por_tipo:
+            candidatos = por_tipo
+    touro = candidatos[0] if candidatos else None
+    if touro:
+        touro.doses = touro.doses - quantidade
+        touro.atualizado_em = datetime.utcnow()
+        session.add(touro)
+
+
 class ServicoIn(BaseModel):
     numero_matriz: str
     data_servico: date
@@ -537,6 +582,7 @@ class ServicoIn(BaseModel):
     protocolo: str | None = None  # preenchido = veio de um protocolo IATF; vazio = cio natural
     reprodutor: str | None = None
     responsavel: str | None = None
+    tipo_semen: str | None = None  # convencional | sexado | fazenda
 
 
 @router.post("/servico")
@@ -568,6 +614,7 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session),
         tipo_servico=dados.tipo_servico,
         protocolo=dados.protocolo,
         reprodutor=dados.reprodutor,
+        tipo_semen=dados.tipo_semen,
         inseminador=dados.responsavel,
         ordem_tentativa=ordem_tentativa,
         intervalo_tentativas=intervalo,
@@ -576,6 +623,11 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session),
         usuario_id=usuario_id_seguro(user),
     )
     session.add(servico)
+    # Desconta 1 dose do Estoque de Sêmen (mesma regra do lançamento em lote,
+    # ver registrar_servico_lote) — não se aplica a monta natural, que não usa
+    # sêmen estocado.
+    if dados.tipo_servico != "Monta natural":
+        _baixar_dose_semen(session, dados.reprodutor, dados.tipo_semen, 1)
 
     # Veio de um protocolo IATF: resolve automaticamente a aplicação D11 em
     # aberto correspondente — a Agenda para de lembrar essa etapa sozinha,
@@ -609,7 +661,8 @@ def _nome_auto_iatf(d0: date) -> str:
 
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
                           tipo_servico: str, protocolo: str | None, reprodutor: str | None,
-                          inseminador: str | None = None, usuario_id: int | None = None) -> Servico | None:
+                          inseminador: str | None = None, usuario_id: int | None = None,
+                          tipo_semen: str | None = None) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
     commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
     animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
@@ -626,7 +679,8 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     servico = Servico(
         animal_id=animal.id, numero_matriz=numero_matriz, raca_matriz=animal.raca,
         data_nasc_matriz=animal.data_nasc, data_servico=data_servico, tipo_servico=tipo_servico,
-        protocolo=protocolo, reprodutor=reprodutor, inseminador=inseminador, ordem_tentativa=ordem_tentativa,
+        protocolo=protocolo, reprodutor=reprodutor, tipo_semen=tipo_semen, inseminador=inseminador,
+        ordem_tentativa=ordem_tentativa,
         intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1, usuario_id=usuario_id,
     )
     session.add(servico)
@@ -669,6 +723,7 @@ class ServicoLoteIn(BaseModel):
     responsavel: str | None = None
     protocolo_lancamento_id: int | None = None  # IATF: vincular a este lançamento
     auto_lancar_iatf: bool = False  # IATF: se não há protocolo, cria um retroativo (D0 = serviço − 11)
+    tipo_semen: str | None = None  # convencional | sexado | fazenda
 
 
 @router.post("/servico-lote")
@@ -723,7 +778,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             session.flush()
             protocolo_name = alvo.nome_protocolo
 
-        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel, usuario_id=usuario_id_seguro(user))
+        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel, usuario_id=usuario_id_seguro(user), tipo_semen=dados.tipo_semen)
         if s is None:
             incompativeis.append(numero)
         else:
@@ -731,21 +786,10 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
 
     # Desconta 1 dose por inseminação realizada (IA — cio natural ou IATF; não
     # se aplica à monta natural, que não usa sêmen estocado) do touro
-    # informado, casando por nome, NAAB ou código — mantém o Estoque de Sêmen
-    # em dia com o uso real sem exigir baixa manual a cada inseminação.
+    # informado — mantém o Estoque de Sêmen em dia com o uso real sem exigir
+    # baixa manual a cada inseminação.
     if criados and dados.tipo != "monta_natural" and dados.reprodutor:
-        alvo = dados.reprodutor.strip().lower()
-        touro = next(
-            (t for t in session.exec(select(EstoqueSemen)).all()
-             if (t.touro_nome or "").strip().lower() == alvo
-             or (t.naab or "").strip().lower() == alvo
-             or (t.codigo or "").strip().lower() == alvo),
-            None,
-        )
-        if touro:
-            touro.doses = touro.doses - criados
-            touro.atualizado_em = datetime.utcnow()
-            session.add(touro)
+        _baixar_dose_semen(session, dados.reprodutor, dados.tipo_semen, criados)
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}

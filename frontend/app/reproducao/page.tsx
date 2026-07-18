@@ -5,6 +5,7 @@ import { fetchServicosAnalise, podeModulo, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { estiloSexado } from "@/lib/constants";
 import AnaliseReprodutivaPage from "@/app/analise-reprodutiva/page";
 import AgendaVeterinarioPage from "@/app/reproducao/AgendaVeterinario";
 
@@ -12,6 +13,7 @@ type Serv = {
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
   tipo_servico: string; touro: string; metodo_ia?: string;
+  tipo_semen?: string | null;
   data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
   usuario_nome?: string | null;
@@ -171,7 +173,7 @@ function ReproducaoVisaoGeral() {
               </tr></thead>
               <tbody>
                 {ordServ.linhasOrdenadas.slice(0, 500).map((s) => (
-                  <tr key={`${s.numero}-${s.data}`}>
+                  <tr key={`${s.numero}-${s.data}`} style={estiloSexado(s.tipo_semen)} title={s.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.tipo_servico}</td>

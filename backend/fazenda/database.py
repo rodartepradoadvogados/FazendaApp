@@ -41,7 +41,15 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("raca", "VARCHAR"), ("ordenha1_kg", "FLOAT"), ("ordenha2_kg", "FLOAT"), ("ordenha3_kg", "FLOAT"),
         ("usuario_id", "INTEGER"),
     ],
-    "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR"), ("inseminador", "VARCHAR"), ("usuario_id", "INTEGER")],
+    "servico": [("retoque", "BOOLEAN"), ("data_reconfirmacao", "DATE"), ("diagnostico_reconfirmacao", "VARCHAR"), ("metodo_diagnostico", "VARCHAR"), ("inseminador", "VARCHAR"), ("usuario_id", "INTEGER"), ("tipo_semen", "VARCHAR")],
+    "compra_semen": [("tipo", "VARCHAR DEFAULT 'convencional'")],
+    "categoria_manejo": [
+        ("situacao_reprodutiva", "VARCHAR"), ("situacao_produtiva", "VARCHAR"),
+        ("dias_gestacao_min", "INTEGER"), ("dias_gestacao_max", "INTEGER"),
+        ("dias_desde_servico_min", "INTEGER"), ("dias_desde_servico_max", "INTEGER"),
+        ("dias_para_parto_min", "INTEGER"), ("dias_para_parto_max", "INTEGER"),
+        ("dias_pos_parto_min", "INTEGER"), ("dias_pos_parto_max", "INTEGER"),
+    ],
     "parto": [("numero_cria_1", "VARCHAR"), ("numero_cria_2", "VARCHAR"), ("gemelar_sexo", "VARCHAR"), ("usuario_id", "INTEGER")],
     "colostragem_bezerra": [
         ("hora_parto", "VARCHAR"), ("hora_colostro", "VARCHAR"), ("peso_nascer_kg", "FLOAT"),

@@ -46,6 +46,9 @@ type Registro = {
 // Um item já adicionado ao carrinho da compra (aguardando confirmação final).
 type ItemCarrinho = {
   origem: "estoque" | "naab"; estoqueSemenId?: number; naab?: string; touroNome: string; central?: string | null;
+  // Sexado ou convencional — vem fixo do estoque já cadastrado, ou é
+  // perguntado ao comprar por NAAB (decide com qual linha de estoque casar).
+  tipo: string;
   doses: number; valor: number; tipoValor: string;
 };
 
@@ -67,10 +70,13 @@ export default function CompraSemenForm() {
   const [erroNaab, setErroNaab] = useState<string | null>(null);
   const [buscaTouro, setBuscaTouro] = useState("");
 
-  const [touroSel, setTouroSel] = useState<{ estoqueSemenId?: number; naab?: string; touroNome: string; central?: string | null } | null>(null);
+  const [touroSel, setTouroSel] = useState<{ estoqueSemenId?: number; naab?: string; touroNome: string; central?: string | null; tipo?: string } | null>(null);
   const [doses, setDoses] = useState("");
   const [valor, setValor] = useState("");
   const [tipoValor, setTipoValor] = useState("por_dose");
+  // Só perguntado ao comprar por NAAB — decide com qual linha de EstoqueSemen
+  // casar (ou criar); ao comprar do estoque já cadastrado, o tipo é o da linha.
+  const [tipoSemen, setTipoSemen] = useState<"convencional" | "sexado">("convencional");
 
   // Carrinho de itens (touros/sêmens) desta compra — todos ligados à mesma
   // nota fiscal/parcelamento montados uma única vez abaixo.
@@ -172,7 +178,7 @@ export default function CompraSemenForm() {
   }, [naab, buscaTouro]);
 
   const limparSelecaoAtual = () => {
-    setOrigem(null); setTouroSel(null); setBuscaTouro(""); setDoses(""); setValor(""); setTipoValor("por_dose");
+    setOrigem(null); setTouroSel(null); setBuscaTouro(""); setDoses(""); setValor(""); setTipoValor("por_dose"); setTipoSemen("convencional");
   };
 
   const adicionarItem = () => {
@@ -182,7 +188,9 @@ export default function CompraSemenForm() {
     if (!valorNum) { setMsg({ tipo: "erro", texto: "Informe o valor da compra." }); return; }
     setItens((prev) => [...prev, {
       origem: origem!, estoqueSemenId: touroSel.estoqueSemenId, naab: touroSel.naab,
-      touroNome: touroSel.touroNome, central: touroSel.central, doses: dosesNum, valor: valorNum, tipoValor,
+      touroNome: touroSel.touroNome, central: touroSel.central,
+      tipo: origem === "naab" ? tipoSemen : (touroSel.tipo || "convencional"),
+      doses: dosesNum, valor: valorNum, tipoValor,
     }]);
     limparSelecaoAtual();
     setAdicionandoItem(false);
@@ -210,7 +218,7 @@ export default function CompraSemenForm() {
     try {
       const itensPayload: ItemCompraSemen[] = itens.map((it) => ({
         origem: it.origem, estoque_semen_id: it.estoqueSemenId, naab: it.naab,
-        touro_nome: it.touroNome, central: it.central || undefined,
+        touro_nome: it.touroNome, central: it.central || undefined, tipo: it.tipo,
         valor: it.valor, tipo_valor: it.tipoValor, doses: it.doses,
       }));
       const r = await criarCompraSemen({
@@ -251,7 +259,7 @@ export default function CompraSemenForm() {
           <div className="overflow-x-auto mb-3">
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr>
-                <th>Touro</th><th>Origem</th><th style={{ textAlign: "right" }}>Doses</th>
+                <th>Touro</th><th>Origem</th><th>Tipo</th><th style={{ textAlign: "right" }}>Doses</th>
                 <th style={{ textAlign: "right" }}>Valor/dose</th><th style={{ textAlign: "right" }}>Valor total</th><th></th>
               </tr></thead>
               <tbody>
@@ -259,6 +267,7 @@ export default function CompraSemenForm() {
                   <tr key={idx}>
                     <td style={{ fontWeight: 700 }}>{it.touroNome}{it.naab ? ` (${it.naab})` : ""}</td>
                     <td style={{ fontSize: "0.8rem", textTransform: "capitalize" }}>{it.origem}</td>
+                    <td style={{ fontSize: "0.8rem", textTransform: "capitalize" }}>{it.tipo}</td>
                     <td style={{ textAlign: "right" }}>{it.doses}</td>
                     <td style={{ textAlign: "right" }}>{formatBRL(valorUnitarioItem(it))}</td>
                     <td style={{ textAlign: "right", fontWeight: 600 }}>{formatBRL(valorTotalItem(it))}</td>
@@ -319,23 +328,24 @@ export default function CompraSemenForm() {
                 {!estoque && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
                 {estoque && (
                   <table className="fazenda-table" style={{ margin: 0 }}>
-                    <thead><tr><th></th><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th style={{ textAlign: "right" }}>Doses atuais</th></tr></thead>
+                    <thead><tr><th></th><th>Touro</th><th>Código</th><th>NAAB</th><th>Central</th><th>Tipo</th><th style={{ textAlign: "right" }}>Doses atuais</th></tr></thead>
                     <tbody>
                       {estoqueFiltrado.map((e) => {
                         const sel = touroSel?.estoqueSemenId === e.id;
                         return (
                           <tr key={e.id} style={{ cursor: "pointer" }} className="row-clickable"
-                            onClick={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })}>
-                            <td><input type="radio" checked={sel} onChange={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central })} /></td>
+                            onClick={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central, tipo: e.tipo })}>
+                            <td><input type="radio" checked={sel} onChange={() => setTouroSel({ estoqueSemenId: e.id, touroNome: e.touro_nome, central: e.central, tipo: e.tipo })} /></td>
                             <td style={{ fontWeight: 700 }}>{e.touro_nome}</td>
                             <td style={{ fontSize: "0.8rem" }}>{e.codigo || "—"}</td>
                             <td style={{ fontSize: "0.8rem" }}>{e.naab || "—"}</td>
                             <td style={{ fontSize: "0.8rem" }}>{e.central || "—"}</td>
+                            <td style={{ fontSize: "0.78rem", textTransform: "capitalize" }}>{e.tipo || "—"}</td>
                             <td style={{ textAlign: "right", fontWeight: 600 }}>{e.doses}</td>
                           </tr>
                         );
                       })}
-                      {!estoqueFiltrado.length && <tr><td colSpan={6} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro em estoque encontrado.</td></tr>}
+                      {!estoqueFiltrado.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", textAlign: "center", padding: "0.75rem" }}>Nenhum touro em estoque encontrado.</td></tr>}
                     </tbody>
                   </table>
                 )}
@@ -381,6 +391,26 @@ export default function CompraSemenForm() {
                   {touroSel.naab && ` (NAAB ${touroSel.naab})`}
                   {!touroSel.estoqueSemenId && " — nova linha de estoque será criada ao salvar"}
                 </p>
+
+                {origem === "naab" && (
+                  <div className="mb-3" style={{ maxWidth: "620px" }}>
+                    <Campo label="Sêmen sexado ou convencional?">
+                      <div className="flex gap-4 mt-1" style={{ fontSize: "0.82rem" }}>
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                          <input type="radio" name="tipo_semen_naab" checked={tipoSemen === "convencional"} onChange={() => setTipoSemen("convencional")} />
+                          Convencional
+                        </label>
+                        <label style={{ display: "flex", alignItems: "center", gap: "0.35rem", cursor: "pointer" }}>
+                          <input type="radio" name="tipo_semen_naab" checked={tipoSemen === "sexado"} onChange={() => setTipoSemen("sexado")} />
+                          Sexado
+                        </label>
+                      </div>
+                      <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                        Sexado e convencional do mesmo touro são linhas de estoque diferentes — mesmo se já existir estoque convencional deste touro, um sêmen sexado cria/soma numa linha própria.
+                      </p>
+                    </Campo>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-2" style={{ maxWidth: "620px" }}>
                   <Campo label="Nº de doses">

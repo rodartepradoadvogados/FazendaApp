@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
 import { fetchAnimais, fetchFichaAnimal, formatDate, registrarColostragem } from "@/lib/api";
 import { fetchComCache, cacheEm } from "@/lib/offline";
 import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
+import { estiloSexado } from "@/lib/constants";
 import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
 
 type Ficha = {
@@ -24,7 +25,7 @@ type Campo = [chave: string, rotulo: string, data?: boolean];
 const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "movimentos_lote", titulo: "Movimentações de lote", campos: [["data_movimento", "Data", true], ["lote_origem", "De"], ["lote_destino", "Para"], ["motivo", "Motivo"]] },
   { chave: "partos", titulo: "Partos", campos: [["data_parto", "Data", true], ["ordem_parto", "Ordem"], ["tipo_parto", "Tipo"]] },
-  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true]] },
+  { chave: "servicos", titulo: "Reprodução — serviço/IA", campos: [["data_servico", "Data", true], ["tipo_servico", "Tipo"], ["reprodutor", "Reprodutor"], ["tipo_semen", "Sêmen"], ["diagnostico", "Diagnóstico"], ["data_diagnostico", "Diagnosticado em", true]] },
   { chave: "protocolos_iatf", titulo: "Protocolo IATF", campos: [["dia", "Dia"], ["descricao", "Descrição"], ["data_prevista", "Prevista", true], ["realizada", "Feito"]] },
   { chave: "controles_leiteiros", titulo: "Controle leiteiro", campos: [["data_controle", "Data", true], ["producao_kg", "Produção (kg)"], ["del_no_controle", "DEL"]] },
   { chave: "pesagens_corporais", titulo: "Pesagens", campos: [["data_pesagem", "Data", true], ["peso_kg", "Peso (kg)"], ["del_dias", "DEL"]] },
@@ -57,7 +58,7 @@ function Grade({ children }: { children: React.ReactNode }) {
   return <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.7rem 1rem" }}>{children}</div>;
 }
 
-function Secao({ titulo, linhas, campos, altInicio }: { titulo: string; linhas: Record<string, unknown>[]; campos: Campo[]; altInicio: number }) {
+function Secao({ chave, titulo, linhas, campos, altInicio }: { chave: string; titulo: string; linhas: Record<string, unknown>[]; campos: Campo[]; altInicio: number }) {
   if (!linhas.length) return null;
   return (
     <details style={{ marginBottom: "0.7rem" }}>
@@ -67,7 +68,8 @@ function Secao({ titulo, linhas, campos, altInicio }: { titulo: string; linhas: 
       </summary>
       <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
         {linhas.map((l, i) => (
-          <MobCard key={i} alt={((altInicio + i) % 2) as 0 | 1}>
+          <MobCard key={i} alt={((altInicio + i) % 2) as 0 | 1}
+            style={chave === "servicos" ? estiloSexado(l.tipo_semen as string | null | undefined) : undefined}>
             <Grade>
               {campos.map(([chave, rot, data]) => (
                 <ParDado key={chave} label={rot} valor={mostrarValor(l[chave], data)} />
@@ -303,7 +305,7 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
             const linhas = (ficha?.[s.chave] as Record<string, unknown>[]) || [];
             const altInicio = altContador;
             altContador += linhas.length;
-            return <Secao key={s.chave} titulo={s.titulo} campos={s.campos} linhas={linhas} altInicio={altInicio} />;
+            return <Secao key={s.chave} chave={s.chave} titulo={s.titulo} campos={s.campos} linhas={linhas} altInicio={altInicio} />;
           })}
           {SECOES.every((s) => !((ficha?.[s.chave] as unknown[]) || []).length) && (
             <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum lançamento registrado para este animal.</p>

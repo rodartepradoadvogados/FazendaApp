@@ -56,3 +56,11 @@ export function centralPorCodigoNaab(codigo: string): string | null {
 
 // Motivos de movimentação agora são cadastráveis (Configurações > Cadastro >
 // Motivos) — ver fetchMotivosMovimentacao em lib/api.ts.
+
+// Destaque visual de inseminação com sêmen SEXADO — fundo azul claro
+// translúcido, para identificar de relance em qualquer tabela/lista/ficha
+// que mostre uma IA (site e app), nos temas claro/escuro/misto.
+export const SEXADO_BG = "rgba(59,130,246,0.16)";
+export function estiloSexado(tipoSemen?: string | null): { background: string } | undefined {
+  return tipoSemen === "sexado" ? { background: SEXADO_BG } : undefined;
+}

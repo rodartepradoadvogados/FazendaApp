@@ -176,10 +176,17 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero).order_by(Servico.data_servico)).all()
     # Código NAAB do pai (touro/sêmen usado no serviço), buscado no catálogo de
     # sêmen pelo nome do reprodutor — anexado a cada serviço para exibir na ficha.
+    estoque_semen_todos = session.exec(select(EstoqueSemen)).all()
     naab_por_touro = {
         s.touro_nome.strip().lower(): s.naab
-        for s in session.exec(select(EstoqueSemen)).all() if s.naab
+        for s in estoque_semen_todos if s.naab
     }
+    # Sexado/convencional/fazenda por nome do touro — usado como fallback para
+    # serviços antigos que não gravaram o tipo_semen no momento da inseminação.
+    tipo_semen_por_touro: dict[str, str] = {}
+    for s in estoque_semen_todos:
+        if s.touro_nome:
+            tipo_semen_por_touro.setdefault(s.touro_nome.strip().lower(), s.tipo or "convencional")
     # Banco de touros (provas NAAB/CDCB) — para mostrar nome + provas do pai.
     touros = session.exec(select(Touro)).all()
     touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
@@ -189,6 +196,7 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         d = s.model_dump()
         naab = naab_por_touro.get((s.reprodutor or "").strip().lower())
         d["reprodutor_naab"] = naab
+        d["tipo_semen"] = s.tipo_semen or tipo_semen_por_touro.get((s.reprodutor or "").strip().lower())
         # Casa o touro pelo NAAB (ou, na falta, pelo nome do reprodutor).
         touro = (touro_por_naab.get((naab or "").strip().upper())
                  or touro_por_nome.get((s.reprodutor or "").strip().lower()))

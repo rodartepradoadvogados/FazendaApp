@@ -23,7 +23,7 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
-    Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Servico, Usuario,
+    Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Secagem, Servico, Usuario,
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.auditoria import mapa_usuarios
@@ -289,6 +289,9 @@ def montar_dossie(session: Session = Depends(get_session)) -> dict:
 
 
 # --- Parâmetros de categoria de manejo -------------------------------------
+GESTACAO_DIAS_CATEGORIA = 280  # gestação média — mesma referência de fazenda.rules.relatorios_gerenciais
+
+
 def _status_reprodutivo(sit_rep: str | None) -> str:
     """Refina a categoria de aptidão pelo status reprodutivo (a partir do sit_rep)."""
     s = (sit_rep or "").strip().lower()
@@ -299,11 +302,48 @@ def _status_reprodutivo(sit_rep: str | None) -> str:
     return "Apta"
 
 
-def classificar_categoria(dias: int | None, peso: float | None, sit_rep: str | None, categorias: list[CategoriaManejo]) -> str:
-    """Categoria de manejo de um animal por idade (dias) e peso, respeitando os
-    parâmetros cadastrados. Na categoria de aptidão, o status reprodutivo assume."""
+def _situacao_reprodutiva_3(sit_rep: str | None) -> str | None:
+    """Situação reprodutiva em 3 categorias (inseminada/vazia/prenha), usada
+    para casar com CategoriaManejo.situacao_reprodutiva. None = sem sit_rep
+    confiável (não filtra nem casa com nenhum critério cadastrado)."""
+    s = (sit_rep or "").strip().lower()
+    if s.startswith("ges") or "prenh" in s:
+        return "prenha"
+    if s.startswith("ins") or "insem" in s:
+        return "inseminada"
+    if s.startswith("vaz"):
+        return "vazia"
+    return None
+
+
+def _dentro_faixa(valor: int | float | None, minimo, maximo) -> bool:
+    """Sem mínimo nem máximo cadastrados = critério não se aplica (sempre bate).
+    Com algum limite cadastrado, exige que o animal tenha o valor calculado
+    (ex.: só entra em 'dias de gestação' quem está prenhe) e que caiba na faixa."""
+    if minimo is None and maximo is None:
+        return True
+    if valor is None:
+        return False
+    if minimo is not None and valor < minimo:
+        return False
+    if maximo is not None and valor > maximo:
+        return False
+    return True
+
+
+def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
+    """Categoria de manejo de um animal, cruzando idade/peso (sempre) com os
+    critérios adicionais cadastrados (situação reprodutiva/produtiva, dias de
+    gestação, dias desde o último serviço, dias para o parto provável, dias
+    pós-parto) — um critério só filtra quando cadastrado (min/max ambos None
+    = não filtra).
+    Na categoria de aptidão legada (usa_status_reprodutivo), o status
+    reprodutivo textual (Apta/Inseminada/Gestante) assume o nome da categoria."""
+    dias = ctx.get("dias")
     if dias is None:
         return "Sem data de nascimento"
+    peso = ctx.get("peso")
+    sit_rep_3 = _situacao_reprodutiva_3(ctx.get("sit_rep"))
     peso_faltou: CategoriaManejo | None = None
     for cat in sorted(categorias, key=lambda c: (c.ordem, c.dia_min)):
         if dias < cat.dia_min:
@@ -315,8 +355,20 @@ def classificar_categoria(dias: int | None, peso: float | None, sit_rep: str | N
         if peso_baixo or peso_alto:
             peso_faltou = peso_faltou or cat
             continue
+        if cat.situacao_reprodutiva and cat.situacao_reprodutiva != sit_rep_3:
+            continue
+        if cat.situacao_produtiva and cat.situacao_produtiva != ctx.get("situacao_produtiva"):
+            continue
+        if not _dentro_faixa(ctx.get("dias_gestacao"), cat.dias_gestacao_min, cat.dias_gestacao_max):
+            continue
+        if not _dentro_faixa(ctx.get("dias_desde_servico"), cat.dias_desde_servico_min, cat.dias_desde_servico_max):
+            continue
+        if not _dentro_faixa(ctx.get("dias_para_parto"), cat.dias_para_parto_min, cat.dias_para_parto_max):
+            continue
+        if not _dentro_faixa(ctx.get("dias_pos_parto"), cat.dias_pos_parto_min, cat.dias_pos_parto_max):
+            continue
         if cat.usa_status_reprodutivo:
-            return _status_reprodutivo(sit_rep)
+            return _status_reprodutivo(ctx.get("sit_rep"))
         return cat.nome
     # Idade compatível com uma categoria, mas o peso ainda não alcançou o alvo.
     if peso_faltou is not None:
@@ -324,23 +376,102 @@ def classificar_categoria(dias: int | None, peso: float | None, sit_rep: str | N
     return "Fora das faixas"
 
 
+def _contexto_categoria(
+    dias: int | None, peso: float | None, sit_rep: str | None, hoje: date,
+    servicos: list[Servico], partos: list[Parto], secagens: list[Secagem],
+) -> dict:
+    """Monta o contexto de classificação de um animal a partir dos lançamentos
+    já feitos (serviço/IA, parto, secagem) — mesma referência de cálculo de
+    fazenda.rules.relatorios_gerenciais (concepção = data do serviço com
+    diagnóstico positivo e sem perda de prenhez)."""
+    servs = sorted((s for s in servicos if s.data_servico), key=lambda s: s.data_servico)
+    ult_serv = servs[-1] if servs else None
+    dias_desde_servico = (hoje - ult_serv.data_servico).days if ult_serv else None
+
+    concep = None
+    for s in reversed(servs):
+        if (s.diagnostico or "").strip().upper() == "POSITIVO" and not s.data_perda_prenhez:
+            concep = s.data_servico
+            break
+    dias_gestacao = (hoje - concep).days if concep else None
+    dias_para_parto = (GESTACAO_DIAS_CATEGORIA - dias_gestacao) if dias_gestacao is not None else None
+
+    ult_parto = max((p.data_parto for p in partos if p.data_parto), default=None)
+    ult_secagem = max((s.data_secagem for s in secagens if s.data_secagem), default=None)
+    if ult_secagem and (not ult_parto or ult_secagem > ult_parto):
+        situacao_produtiva = "seca"
+    elif ult_parto:
+        situacao_produtiva = "lactacao"
+    else:
+        situacao_produtiva = None  # novilha — nunca pariu, não se aplica
+    dias_pos_parto = (hoje - ult_parto).days if ult_parto else None
+
+    return {
+        "dias": dias, "peso": peso, "sit_rep": sit_rep,
+        "dias_gestacao": dias_gestacao, "dias_desde_servico": dias_desde_servico,
+        "dias_para_parto": dias_para_parto, "dias_pos_parto": dias_pos_parto,
+        "situacao_produtiva": situacao_produtiva,
+    }
+
+
 @router.get("/categorias/composicao")
 def composicao_categorias(session: Session = Depends(get_session)) -> dict:
-    """Conta os animais ativos em cada categoria de manejo (idade/peso/status)."""
+    """Conta os animais ativos em cada categoria de manejo (idade/peso/status/
+    situação reprodutiva-produtiva/dias de gestação/serviço/parto provável)."""
     categorias = session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all()  # noqa: E712
     ult_peso: dict[str, float] = {}
     for p in session.exec(select(PesagemCorporal).order_by(PesagemCorporal.data_pesagem)).all():
         if p.peso_kg:
             ult_peso[p.numero_matriz] = p.peso_kg  # a última pesagem (ordenada asc) prevalece
+    servicos_idx: dict[str, list[Servico]] = {}
+    for s in session.exec(select(Servico)).all():
+        if s.numero_matriz:
+            servicos_idx.setdefault(s.numero_matriz, []).append(s)
+    partos_idx: dict[str, list[Parto]] = {}
+    for p in session.exec(select(Parto)).all():
+        if p.numero_matriz:
+            partos_idx.setdefault(p.numero_matriz, []).append(p)
+    secagens_idx: dict[str, list[Secagem]] = {}
+    for s in session.exec(select(Secagem)).all():
+        if s.numero_matriz:
+            secagens_idx.setdefault(s.numero_matriz, []).append(s)
     hoje = date.today()
     cont: dict[str, int] = {}
     for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
         if a.eh_semen or a.sexo == "M":
             continue
         dias = (hoje - a.data_nasc).days if a.data_nasc else None
-        cat = classificar_categoria(dias, ult_peso.get(a.numero), a.sit_rep, categorias)
+        ctx = _contexto_categoria(
+            dias, ult_peso.get(a.numero), a.sit_rep, hoje,
+            servicos_idx.get(a.numero, []), partos_idx.get(a.numero, []), secagens_idx.get(a.numero, []),
+        )
+        cat = classificar_categoria(ctx, categorias)
         cont[cat] = cont.get(cat, 0) + 1
     return {"composicao": [{"categoria": k, "n": cont[k]} for k in sorted(cont)], "total": sum(cont.values())}
+
+
+@router.get("/categorias/animal/{numero}")
+def categoria_sugerida_animal(numero: str, session: Session = Depends(get_session)) -> dict:
+    """Categoria de manejo sugerida para UM animal — usada para pré-preencher
+    a categoria na ficha (Rebanho > editar), já que o animal segue os
+    parâmetros cadastrados em Configurações > Cadastro > Categorias."""
+    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+    if animal.eh_semen or animal.sexo == "M":
+        return {"categoria": None}
+    categorias = session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all()  # noqa: E712
+    hoje = date.today()
+    dias = (hoje - animal.data_nasc).days if animal.data_nasc else None
+    ult = session.exec(
+        select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
+    ).all()
+    peso = ult[-1].peso_kg if ult else None
+    servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero)).all()
+    partos = session.exec(select(Parto).where(Parto.numero_matriz == numero)).all()
+    secagens = session.exec(select(Secagem).where(Secagem.numero_matriz == numero)).all()
+    ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens)
+    return {"categoria": classificar_categoria(ctx, categorias)}
 
 
 class CategoriaManejoIn(BaseModel):
@@ -350,6 +481,16 @@ class CategoriaManejoIn(BaseModel):
     peso_min_kg: float | None = None
     peso_max_kg: float | None = None
     usa_status_reprodutivo: bool = False
+    situacao_reprodutiva: str | None = None
+    situacao_produtiva: str | None = None
+    dias_gestacao_min: int | None = None
+    dias_gestacao_max: int | None = None
+    dias_desde_servico_min: int | None = None
+    dias_desde_servico_max: int | None = None
+    dias_para_parto_min: int | None = None
+    dias_para_parto_max: int | None = None
+    dias_pos_parto_min: int | None = None
+    dias_pos_parto_max: int | None = None
     ordem: int = 0
     ativo: bool = True
 
@@ -807,6 +948,38 @@ _BENCHMARK_PADRAO = [
 ]
 
 
+# Categorias reprodutivas/produtivas mais finas pedidas pelo usuário — ordem
+# negativa para serem tentadas ANTES da "Recria apta" legada (ordem=3), que
+# do contrário classificaria todo adulto fértil (idade/peso ok) sem chegar a
+# olhar estes critérios mais ricos.
+_CATEGORIAS_NOVAS_PADRAO: list[dict] = [
+    dict(nome="Pós-parto - PEV", dias_pos_parto_max=45, ordem=-8),
+    dict(nome="Pré-parto", dias_para_parto_max=30, ordem=-7),
+    dict(nome="Seca", dias_para_parto_min=30, dias_para_parto_max=60, ordem=-6),
+    # "Atrasada" = já passou 30 dias desde a última tentativa de serviço sem
+    # nova IA/monta; senão (nunca servida ou servida há pouco) cai em "apta".
+    dict(nome="Vazia atrasada", situacao_reprodutiva="vazia", dias_pos_parto_min=46, dias_desde_servico_min=30, ordem=-5),
+    dict(nome="Liberada/apta", situacao_reprodutiva="vazia", dias_pos_parto_min=46, ordem=-4),
+    dict(nome="Inseminada", situacao_reprodutiva="inseminada", ordem=-3),
+    dict(nome="Prenha", situacao_reprodutiva="prenha", ordem=-2),
+    dict(nome="Em lactação", situacao_produtiva="lactacao", ordem=-1),
+    # Mesma faixa de idade da "Recria apta" legada (dia_min=391), mas abaixo
+    # do peso mínimo — ordem menor para ser tentada antes dela.
+    dict(nome="Recria atrasada", dia_min=391, peso_max_kg=369.99, ordem=2),
+]
+
+
+def seed_categorias_novas(session: Session) -> None:
+    """Acrescenta (por nome, idempotente) as categorias de manejo mais ricas
+    acima — roda mesmo em bancos que já têm as 4 categorias legadas
+    (Aleitamento/Recria 1/Recria 2/Recria apta) cadastradas."""
+    existentes = {c.nome for c in session.exec(select(CategoriaManejo)).all()}
+    for dados in _CATEGORIAS_NOVAS_PADRAO:
+        if dados["nome"] not in existentes:
+            session.add(CategoriaManejo(**dados))
+    session.commit()
+
+
 def seed_recria(session: Session) -> None:
     """Cria metas (linha única), curva de peso-alvo e janelas padrão se vazio."""
     if not session.get(MetaRecria, 1):
@@ -831,3 +1004,4 @@ def seed_recria(session: Session) -> None:
         session.add(CategoriaManejo(nome="Recria 2", dia_min=211, dia_max=390, ordem=2))
         session.add(CategoriaManejo(nome="Recria apta", dia_min=391, dia_max=None, peso_min_kg=370, usa_status_reprodutivo=True, ordem=3))
     session.commit()
+    seed_categorias_novas(session)
