@@ -30,6 +30,7 @@ import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
+import { EstoquePicker } from "@/components/EstoquePicker";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { FormExclusao } from "@/components/FormExclusao";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
@@ -1978,13 +1979,11 @@ function FormSanidade({ animais, lotes, estoque, produtos }: { animais: AnimalRo
               </div>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                 <Campo label={`Produto/medicamento ${idx + 1}`}>
-                  <select style={inputStyle} value={item.produto} onChange={(e) => escolherProduto(idx, e.target.value)} disabled={item.definirPor !== "medicamento" && !item.criterio}>
-                    <option value="" disabled>Selecione…</option>
-                    {(item.definirPor === "medicamento" ? listaProdutos : (opcoesPorItem[idx] || [])).map((nome) => {
-                      const est = estoque.find((e) => e.nome === nome);
-                      return <option key={nome} value={nome}>{nome}{est?.quantidade != null ? ` (${est.quantidade} ${est.unidade || ""})` : ""}</option>;
-                    })}
-                  </select>
+                  <EstoquePicker
+                    itens={(item.definirPor === "medicamento" ? listaProdutos : (opcoesPorItem[idx] || [])).map((nome) => estoque.find((e) => e.nome === nome) || { nome })}
+                    value={item.produto} onChange={(nome) => escolherProduto(idx, nome)}
+                    placeholder={item.definirPor !== "medicamento" && !item.criterio ? `Escolha ${item.definirPor === "principio_ativo" ? "o princípio ativo" : "a doença"} primeiro` : "Selecionar produto…"}
+                  />
                   {item.definirPor !== "medicamento" && item.criterio && !(opcoesPorItem[idx] || []).length && (
                     <p style={{ fontSize: "0.68rem", color: "var(--amber)", marginTop: 2 }}>Nenhum medicamento com esse critério.</p>
                   )}
@@ -2068,7 +2067,6 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [editando, setEditando] = useState<number | null>(null);
   const [eventoId, setEventoId] = useState("");
   const [categoriaAlvoSel, setCategoriaAlvoSel] = useState<string[]>([]);
-  const [outraCategoria, setOutraCategoria] = useState("");
   const [doencaId, setDoencaId] = useState("");
   const [produto, setProduto] = useState("");
   const [principioId, setPrincipioId] = useState("");
@@ -2128,7 +2126,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [abrirNovoEvento, setAbrirNovoEvento] = useState(false);
 
   const limpar = () => {
-    setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setOutraCategoria(""); setDoencaId(""); setProduto("");
+    setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setDoencaId(""); setProduto("");
     setPrincipioId(""); setDosagem(""); setUnidade(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
     setDataEvento(""); setObservacao(""); setRealizado(false);
     setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
@@ -2137,7 +2135,6 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const abrirEdicao = (r: RegraCalendario) => {
     setEditando(r.id); setEventoId(String(r.evento_sanitario_id));
     setCategoriaAlvoSel(r.categoria_alvo ? r.categoria_alvo.split(SEP_CATEGORIAS).map((c) => c.trim()).filter(Boolean) : []);
-    setOutraCategoria("");
     setDoencaId(r.doenca_id ? String(r.doenca_id) : ""); setProduto(r.produto || "");
     setPrincipioId(r.principio_ativo_id ? String(r.principio_ativo_id) : ""); setDosagem(r.dosagem || "");
     setUnidade(r.unidade || "");
@@ -2222,21 +2219,12 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
           )}
         </Campo>
         <Campo label="Categoria(s) alvo (período de vida)">
-          <MultiFiltro label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...categoriaAlvoSel]))} selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel} />
-          <div className="flex items-center gap-2 mt-1">
-            <input style={{ ...inputStyle, fontSize: "0.78rem" }} value={outraCategoria} onChange={(e) => setOutraCategoria(e.target.value)}
-              placeholder="+ outra categoria…"
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" || !outraCategoria.trim()) return;
-                e.preventDefault();
-                setCategoriaAlvoSel((p) => Array.from(new Set([...p, outraCategoria.trim()])));
-                setOutraCategoria("");
-              }} />
-            <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }}
-              onClick={() => { if (!outraCategoria.trim()) return; setCategoriaAlvoSel((p) => Array.from(new Set([...p, outraCategoria.trim()]))); setOutraCategoria(""); }}>
-              Adicionar
-            </button>
-          </div>
+          <MultiFiltro
+            label="Categorias" opcoes={Array.from(new Set([...categoriasVida, ...categoriaAlvoSel]))}
+            selecionados={categoriaAlvoSel} onChange={setCategoriaAlvoSel}
+            permitirNovo placeholderNovo="+ outra categoria…"
+            onAdicionarNovo={(v) => setCategoriaAlvoSel((p) => Array.from(new Set([...p, v])))}
+          />
         </Campo>
         <Campo label="Doença combatida">
           <select style={inputStyle} value={doencaId} onChange={(e) => setDoencaId(e.target.value)}>
@@ -2255,8 +2243,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
               </select>
             </Campo>
             <Campo label="Produto (item de estoque)">
-              <input style={inputStyle} list="produtos-calendario-sanitario" value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="ex.: VACINA RB 51 - FR 25 DS" />
-              <datalist id="produtos-calendario-sanitario">{estoque.map((e) => <option key={e.nome} value={e.nome} />)}</datalist>
+              <EstoquePicker itens={estoque} value={produto} onChange={setProduto} />
             </Campo>
             <Campo label="Dosagem recomendada">
               <input style={inputStyle} value={dosagem} onChange={(e) => setDosagem(e.target.value)} placeholder="ex.: 2 mL a 5 mL (conforme bula)" />
@@ -2615,10 +2602,9 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
             Selecionar medicamento substituto
           </label>
           {usarSubstituto && (
-            <select style={{ ...inputStyle, marginTop: "0.25rem", maxWidth: 320 }} value={produtoSubstituto} onChange={(e) => setProdutoSubstituto(e.target.value)}>
-              <option value="">Selecione o substituto…</option>
-              {opcoesSubstituto.map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
-            </select>
+            <div style={{ marginTop: "0.25rem", maxWidth: 320 }}>
+              <EstoquePicker itens={opcoesSubstituto} value={produtoSubstituto} onChange={setProdutoSubstituto} placeholder="Selecione o substituto…" />
+            </div>
           )}
         </div>
       )}
@@ -2961,10 +2947,11 @@ function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRow[]; es
               {etapasCriterio.map((e) => (
                 <div key={e.id}>
                   <label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>D{e.dia} — {e.criterio_tipo === "principio_ativo" ? "Princípio ativo" : e.criterio_tipo === "doenca" ? "Doença" : "Classificação"}: <strong>{e.produto}</strong></label>
-                  <select style={inputStyle} value={escolhasMed[e.id as number] || ""} onChange={(ev) => setEscolhasMed((s) => ({ ...s, [e.id as number]: ev.target.value }))}>
-                    <option value="">Selecione o medicamento…</option>
-                    {(medOpcoes[e.id as number] || []).map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
-                  </select>
+                  <EstoquePicker
+                    itens={medOpcoes[e.id as number] || []} value={escolhasMed[e.id as number] || ""}
+                    onChange={(nome) => setEscolhasMed((s) => ({ ...s, [e.id as number]: nome }))}
+                    placeholder="Selecione o medicamento…"
+                  />
                   {!(medOpcoes[e.id as number] || []).length && <p style={{ fontSize: "0.7rem", color: "var(--amber)" }}>Nenhum medicamento cadastrado com esse critério.</p>}
                 </div>
               ))}
@@ -3082,10 +3069,13 @@ function FormProtocoloSanitario({ animais, estoque }: { animais: AnimalRow[]; es
                             Selecionar medicamento substituto
                           </label>
                           {substitutosAtivos.has(e.id as number) && (
-                            <select style={{ ...inputStyle, marginTop: "0.25rem" }} value={escolhasMed[e.id as number] || ""} onChange={(ev) => setEscolhasMed((s) => ({ ...s, [e.id as number]: ev.target.value }))}>
-                              <option value="">Selecione o substituto…</option>
-                              {(medOpcoesSubstituto[e.id as number] || []).map((m) => <option key={m.nome} value={m.nome}>{m.nome}{m.quantidade != null ? ` (${m.quantidade} ${m.unidade || ""})` : ""}</option>)}
-                            </select>
+                            <div style={{ marginTop: "0.25rem" }}>
+                              <EstoquePicker
+                                itens={medOpcoesSubstituto[e.id as number] || []} value={escolhasMed[e.id as number] || ""}
+                                onChange={(nome) => setEscolhasMed((s) => ({ ...s, [e.id as number]: nome }))}
+                                placeholder="Selecione o substituto…"
+                              />
+                            </div>
                           )}
                         </div>
                       )}

@@ -11,6 +11,9 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineCh
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, TabBar } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { AnimalPickerModal } from "@/components/AnimalPickerModal";
+import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
+import type { AnimalRow } from "@/components/AnimalModal";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -295,8 +298,15 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [buscaProd, setBuscaProd] = useState("");
-  const [buscaAnimal, setBuscaAnimal] = useState("");
   const [fOrdemParto, setFOrdemParto] = useState<string[]>([]);
+  // Filtro por animal(is)/lote(s)/categoria(s) do animal — mesmo padrão de
+  // seleção "todos ou vários" do lançamento de Aplicação: escolher lote(s) ou
+  // categoria(s) abre a lista dos animais correspondentes para afinar a seleção.
+  const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
+  const [lotesSel, setLotesSel] = useState<string[]>([]);
+  const [selDosLotes, setSelDosLotes] = useState<Set<string>>(new Set());
+  const [categoriasAnimalSel, setCategoriasAnimalSel] = useState<string[]>([]);
+  const [selDasCategorias, setSelDasCategorias] = useState<Set<string>>(new Set());
   const [editId, setEditId] = useState<number | null>(null);
   const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
@@ -351,6 +361,43 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
     return Array.from(s).sort();
   };
 
+  // Animais distintos já lançados (com lote/categoria) — dá para montar os
+  // pickers padrão (AnimalPickerModal/LotePicker) sem precisar do cadastro
+  // completo do rebanho, já que cada aplicação já carrega lote/categoria_animal.
+  const animaisDeAplic = useMemo<AnimalRow[]>(() => {
+    const porNumero = new Map<string, AnimalRow>();
+    (regs ?? []).forEach((a) => {
+      if (!porNumero.has(a.numero)) porNumero.set(a.numero, { numero: a.numero, grupo_primario: a.lote, categoria_abrev: a.categoria_animal });
+    });
+    return Array.from(porNumero.values());
+  }, [regs]);
+  const codigosLotesTodos = useMemo(
+    () => Array.from(new Set(animaisDeAplic.map((a) => a.grupo_primario).filter((c): c is string => !!c))).sort(),
+    [animaisDeAplic]
+  );
+  const animaisDosLotesSel = useMemo(() => {
+    if (!lotesSel.length) return [];
+    const cods = new Set(lotesSel);
+    return animaisDeAplic.filter((a) => a.grupo_primario && cods.has(a.grupo_primario));
+  }, [animaisDeAplic, lotesSel]);
+  useEffect(() => {
+    setSelDosLotes(new Set(animaisDosLotesSel.map((a) => a.numero)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lotesSel.join("|")]);
+  const categoriasAnimalTodas = useMemo(
+    () => Array.from(new Set(animaisDeAplic.map((a) => a.categoria_abrev).filter((c): c is string => !!c))).sort(),
+    [animaisDeAplic]
+  );
+  const animaisDasCategoriasSel = useMemo(() => {
+    if (!categoriasAnimalSel.length) return [];
+    const cats = new Set(categoriasAnimalSel);
+    return animaisDeAplic.filter((a) => a.categoria_abrev && cats.has(a.categoria_abrev));
+  }, [animaisDeAplic, categoriasAnimalSel]);
+  useEffect(() => {
+    setSelDasCategorias(new Set(animaisDasCategoriasSel.map((a) => a.numero)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [categoriasAnimalSel.join("|")]);
+
   const filtrados = useMemo(() => {
     if (!regs) return [];
     return regs.filter((a) =>
@@ -358,10 +405,12 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
       (!ini || (a.data ? a.data >= ini : false)) &&
       (!fim || (a.data ? a.data <= fim : false)) &&
       (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
-      (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+      (animaisSel.size === 0 || animaisSel.has(a.numero)) &&
+      (lotesSel.length === 0 || selDosLotes.has(a.numero)) &&
+      (categoriasAnimalSel.length === 0 || selDasCategorias.has(a.numero)) &&
       (fOrdemParto.length === 0 || (a.ordem_parto !== null && fOrdemParto.includes(String(a.ordem_parto))))
     );
-  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal, fOrdemParto]);
+  }, [regs, fCat, ini, fim, buscaProd, animaisSel, lotesSel, selDosLotes, categoriasAnimalSel, selDasCategorias, fOrdemParto]);
 
   // Quando há filtro por período (de/até), as linhas SEM data ficam de fora — conta quantas para avisar o usuário.
   const semDataExcluidas = useMemo(() => {
@@ -369,10 +418,12 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
     return regs.filter((a) =>
       (!fCat || a.categoria === fCat) &&
       (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
-      (!buscaAnimal || a.numero.toLowerCase().includes(buscaAnimal.toLowerCase())) &&
+      (animaisSel.size === 0 || animaisSel.has(a.numero)) &&
+      (lotesSel.length === 0 || selDosLotes.has(a.numero)) &&
+      (categoriasAnimalSel.length === 0 || selDasCategorias.has(a.numero)) &&
       !a.data
     ).length;
-  }, [regs, fCat, ini, fim, buscaProd, buscaAnimal]);
+  }, [regs, fCat, ini, fim, buscaProd, animaisSel, lotesSel, selDosLotes, categoriasAnimalSel, selDasCategorias]);
 
   const porCategoria = useMemo(() => {
     const by = new Map<string, number>();
@@ -408,10 +459,55 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
               <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
               <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaProd} onChange={(e) => setBuscaProd(e.target.value)} placeholder="ex.: Ivermectina" /></div></div>
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaAnimal} onChange={(e) => setBuscaAnimal(e.target.value)} placeholder="ex.: 068" /></div></div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
+              <AnimalPickerModal
+                animais={animaisDeAplic} selecionados={animaisSel} onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                placeholder="Todos" titulo="Filtrar por animal(is)"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || "—" },
+                ]}
+              />
+            </div>
+            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Lote(s)</label>
+              <LotePicker opcoes={opcoesLoteDeAnimais(animaisDeAplic, codigosLotesTodos)} selecionados={lotesSel} onChange={setLotesSel} placeholder="Todos" />
+            </div>
+            <MultiFiltro label="Categoria do animal" opcoes={categoriasAnimalTodas} selecionados={categoriasAnimalSel} onChange={setCategoriasAnimalSel} />
             <MultiFiltro label="Ordem de parto" opcoes={opc((a) => a.ordem_parto == null ? null : String(a.ordem_parto))} selecionados={fOrdemParto} onChange={setFOrdemParto} formatar={(v) => `${v}ª`} />
           </div>
+          {lotesSel.length > 0 && (
+            <div style={{ marginTop: "0.6rem" }}>
+              <AnimalPickerModal
+                animais={animaisDosLotesSel} selecionados={selDosLotes} onToggle={(n) => setSelDosLotes((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                titulo="Ajustar animais do(s) lote(s) selecionado(s)" placeholder="Ajustar animais do(s) lote(s)…"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || "—" },
+                ]}
+              />
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {selDosLotes.size} de {animaisDosLotesSel.length} animal(is) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir algum.
+              </p>
+            </div>
+          )}
+          {categoriasAnimalSel.length > 0 && (
+            <div style={{ marginTop: "0.6rem" }}>
+              <AnimalPickerModal
+                animais={animaisDasCategoriasSel} selecionados={selDasCategorias} onToggle={(n) => setSelDasCategorias((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
+                titulo="Ajustar animais das categorias selecionadas" placeholder="Ajustar animais das categorias…"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || "—" },
+                ]}
+              />
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {selDasCategorias.size} de {animaisDasCategoriasSel.length} animal(is) na(s) categoria(s) selecionada(s) — desmarque na janela acima para excluir algum.
+              </p>
+            </div>
+          )}
         </div>
 
         {semDataExcluidas > 0 && (
