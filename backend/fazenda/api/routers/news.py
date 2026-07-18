@@ -151,6 +151,19 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
         "link": "/news#milknews-2026-07-18-02",
         "data_publicacao": "2026-07-18",
     }],
+    "milknews_20260718c": [{
+        "manchete": "Venda de sêmen bovino para leite cresce 5,9% no 1º trimestre de 2026, aponta Asbia",
+        "resumo": (
+            "Segundo a Asbia (Associação Brasileira de Inseminação Artificial), em parceria com o "
+            "Cepea/Esalq, as vendas de sêmen bovino para pecuária leiteira somaram 1.526.970 doses "
+            "no 1º trimestre de 2026, alta de 5,9% frente ao mesmo período de 2025. O mercado total "
+            "de sêmen bovino (leite e corte) cresceu 17,7% no trimestre, para 5,07 milhões de doses, "
+            "puxado principalmente pelo corte (+26,1%). As importações de sêmen subiram 54,7% no "
+            "período. Dados: Asbia/Cepea (1º trimestre de 2026)."
+        ),
+        "link": "/news#milknews-2026-07-18-03",
+        "data_publicacao": "2026-07-18",
+    }],
 }
 
 
