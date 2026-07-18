@@ -172,6 +172,7 @@ class Servico(SQLModel, table=True):
     diagnostico: Optional[str] = None  # POSITIVO | NEGATIVO | INDEFINIDO
     metodo_diagnostico: Optional[str] = None  # Palpação | Ultrassom | Cio de repasse
     data_perda_prenhez: Optional[date] = None
+    motivo_perda_prenhez: Optional[str] = None  # aborto | natimorto | outros
     pev_dias: Optional[int] = None
     del_servico: Optional[int] = None
     ult_ocorrencia: Optional[int] = None

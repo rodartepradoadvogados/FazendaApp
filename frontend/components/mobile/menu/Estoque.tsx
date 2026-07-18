@@ -1,14 +1,14 @@
 "use client";
-// Menu ▸ Estoque (só leitura) — pílulas Alimentação / Medicamentos / Sêmen /
-// Outros. As 3 primeiras filtram Estoque (Estoque.finalidade); "Outros" pega
+// Menu ▸ Estoque — pílulas Alimentação / Medicamentos / Sêmen / Outros. As 3
+// primeiras filtram Estoque (Estoque.finalidade), só leitura; "Outros" pega
 // o que sobra (Material/Insumo, Equipamento, Outro ou sem finalidade). Sêmen
-// não vive em Estoque — mostra o Estoque de Sêmen (touros com doses) e, como
-// segunda pílula interna, o catálogo NAAB (banco de dados de touros).
+// mostra o Estoque de Sêmen (touros com doses, com botão excluir) e, como
+// segunda pílula interna, o catálogo NAAB (banco de dados de touros, só leitura).
 import { useMemo, useState } from "react";
-import { Search, Warehouse, Database } from "lucide-react";
+import { Search, Warehouse, Database, Trash2 } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { LinhaPills, MobPill } from "@/components/mobile/lancar/comum";
-import { fetchEstoque, fetchEstoqueSemen, fetchTouros, type Touro } from "@/lib/api";
+import { fetchEstoque, fetchEstoqueSemen, fetchTouros, excluirEstoqueSemen, type Touro } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
 
 type ItemEstoque = {
@@ -120,6 +120,16 @@ function SemenView() {
     return q ? base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q)) : base;
   }, [naabReq.dados, q]);
 
+  async function excluir(e: ItemSemen) {
+    if (!window.confirm(`Excluir "${e.touro_nome}" do estoque de sêmen?`)) return;
+    try {
+      await excluirEstoqueSemen(e.id);
+      estoqueReq.recarregar();
+    } catch (err: any) {
+      alert(err.message || "Erro ao excluir sêmen do estoque");
+    }
+  }
+
   return (
     <div>
       <LinhaPills>
@@ -151,7 +161,13 @@ function SemenView() {
               <MobCard key={e.id} alt={(idx % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{e.touro_nome}</span>
-                  <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>{e.doses} dose{e.doses !== 1 ? "s" : ""}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: "0.6rem" }}>
+                    <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>{e.doses} dose{e.doses !== 1 ? "s" : ""}</span>
+                    <button type="button" onClick={() => excluir(e)} aria-label="Excluir do estoque"
+                      style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--mob-vermelho)", padding: 0, display: "flex" }}>
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
                 </div>
                 <div style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginTop: "0.2rem" }}>
                   {e.naab ? `NAAB ${e.naab} · ` : ""}{e.central || "—"} · <span style={{ textTransform: "capitalize" }}>{e.tipo}</span>

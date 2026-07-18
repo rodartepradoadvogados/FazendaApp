@@ -68,6 +68,59 @@ def sindicar_estoque_semen(session: Session) -> None:
     session.add(SeedFlag(chave=chave))
     session.commit()
 
+
+def sincronizar_item_estoque_semen(estoque_semen: EstoqueSemen, session: Session) -> None:
+    """Espelha um touro do Estoque de Sêmen (`EstoqueSemen`) num item de
+    `Estoque` genérico (categoria "Sêmen e genética"), casado por
+    `estoque_semen_id` — sem isso, uma compra de sêmen só aparecia em
+    Rebanho > Touros > Sêmen (que lê `EstoqueSemen` direto), nunca na
+    listagem/filtro de Estoque (que lê só a tabela `Estoque`). Chamado toda
+    vez que `EstoqueSemen.doses` muda (compra, movimentação vinculada).
+    Não mexe em `estoque_minimo`/`abaixo_minimo` por item — o "estoque
+    mínimo" de sêmen é tratado à parte, agregado por tipo (ver
+    `cadastro.MINIMO_SEMEN`), não por touro individual. Touro "fazenda" (monta
+    natural) não entra — não é dose comprável/estocável, não faz sentido
+    virar item de Estoque."""
+    if estoque_semen.tipo == "fazenda":
+        return
+    item = session.exec(select(Estoque).where(Estoque.estoque_semen_id == estoque_semen.id)).first()
+    nome = f"Sêmen — {estoque_semen.touro_nome}" + (f" ({estoque_semen.naab})" if estoque_semen.naab else "")
+    valor_total = (
+        (estoque_semen.doses or 0) * estoque_semen.valor_unitario if estoque_semen.valor_unitario is not None else None
+    )
+    if item:
+        item.nome = nome
+        item.quantidade = estoque_semen.doses
+        item.valor_unitario = estoque_semen.valor_unitario
+        item.valor_total = valor_total
+        item.tipo_semen = estoque_semen.tipo
+        item.ativo = estoque_semen.ativo
+        item.atualizado_em = datetime.utcnow()
+        session.add(item)
+    else:
+        session.add(Estoque(
+            nome=nome, categoria="Sêmen e genética", unidade="dose",
+            quantidade=estoque_semen.doses, valor_unitario=estoque_semen.valor_unitario, valor_total=valor_total,
+            estocavel=True, ativo=estoque_semen.ativo,
+            estoque_semen_id=estoque_semen.id, tipo_semen=estoque_semen.tipo,
+        ))
+
+
+def backfill_estoque_semen_generico(session: Session) -> None:
+    """Roda uma única vez: cria/atualiza o item de `Estoque` espelhado (ver
+    `sincronizar_item_estoque_semen`) para cada touro já existente em
+    `EstoqueSemen` — corrige o histórico de compras de sêmen registradas
+    antes desta sincronização existir, que nunca apareceram na listagem/
+    filtro de Estoque (só em Rebanho > Touros > Sêmen)."""
+    chave = "estoque_semen_backfill_202607"
+    if session.get(SeedFlag, chave):
+        return
+    for touro in session.exec(select(EstoqueSemen)).all():
+        sincronizar_item_estoque_semen(touro, session)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
 UNIDADES_EMBALAGEM = ["Saca", "Pote", "Frasco", "Pacote", "Bag", "Fardo", "Garrafa", "Unidade"]
 MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades/fardo", "potes/caixa", "unidades"]
 

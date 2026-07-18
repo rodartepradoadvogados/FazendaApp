@@ -29,6 +29,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "agenda_sistema": "Agenda e sistema",
     "metas_reproducao": "Metas reprodutivas",
     "producao_descarte": "Produção e descarte",
+    "estoque_semen": "Estoque de sêmen",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -88,6 +89,13 @@ DEFINICOES: list[dict] = [
     {"chave": "producao_minima_secagem", "grupo": "producao_descarte", "label": "Produção mínima de leite para secagem", "valor": 15, "unidade": "kg/dia"},
     {"chave": "meses_queda_reprodutiva", "grupo": "producao_descarte", "label": "Meses de queda reprodutiva (ex.: estresse calórico)", "valor": 4, "unidade": "meses"},
     {"chave": "concepcao_meses_queda", "grupo": "producao_descarte", "label": "Taxa de concepção nos meses de queda", "valor": 25, "unidade": "%"},
+
+    # ---- Estoque de sêmen — mínimo agregado por TIPO (convencional/sexado),
+    # não por touro individual. Editável em Configurações > Cadastro >
+    # Central de Sêmen > Estoque mínimo. Consumido por `semen_disponivel`
+    # (cadastro.py) e pelo alerta de sêmen abaixo do mínimo na Agenda.
+    {"chave": "estoque_minimo_semen_convencional", "grupo": "estoque_semen", "label": "Estoque mínimo — sêmen convencional", "valor": 20, "unidade": "doses"},
+    {"chave": "estoque_minimo_semen_sexado", "grupo": "estoque_semen", "label": "Estoque mínimo — sêmen sexado", "valor": 5, "unidade": "doses"},
 ]
 
 
@@ -270,6 +278,22 @@ def dias_contas_a_pagar_agenda() -> int:
 def data_corte_taxa_concepcao() -> date:
     from datetime import date as _date
     return get_param_date("data_corte_taxa_concepcao", _date(2026, 1, 1)) or _date(2026, 1, 1)
+
+
+def estoque_minimo_semen_convencional() -> int:
+    return int(get_param("estoque_minimo_semen_convencional", 20) or 20)
+
+
+def estoque_minimo_semen_sexado() -> int:
+    return int(get_param("estoque_minimo_semen_sexado", 5) or 5)
+
+
+def minimos_semen_por_tipo() -> dict[str, int]:
+    """Único ponto de leitura do estoque mínimo de sêmen, agregado por tipo —
+    usado em `cadastro.semen_disponivel` e no alerta de sêmen abaixo do
+    mínimo na Agenda (antes, cada um tinha sua própria constante hardcoded
+    e desincronizada, `MINIMO_SEMEN`)."""
+    return {"convencional": estoque_minimo_semen_convencional(), "sexado": estoque_minimo_semen_sexado()}
 
 
 # Metas do benchmark (nosso valor será comparado a estes) — usadas na capa.

@@ -21,8 +21,14 @@ const FREQUENCIAS = [
   { id: "mensal", label: "Mensal" },
   { id: "semanal", label: "Semanal" },
   { id: "quinzenal", label: "Quinzenal" },
+  { id: "inicio_empreita", label: "No início da empreita" },
+  { id: "fim_empreita", label: "Ao final da empreita" },
   { id: "por_etapa", label: "Ao final de cada etapa" },
 ];
+// Forma de pagamento com data única (não recorrente) — pede só 1 data e
+// lança 1 parcela com o valor total, que cai na Agenda/Contas a Pagar
+// igual às demais (ver ParcelamentoEditor para mensal/semanal/quinzenal).
+const FORMAS_DATA_UNICA = ["inicio_empreita", "fim_empreita"];
 
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
 const inputSm: React.CSSProperties = {
@@ -66,7 +72,8 @@ export default function EmpreitadaView() {
     if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione o empreiteiro." }); return; }
     if (!descricao.trim()) { setMsg({ tipo: "erro", texto: "Informe a descrição da empreita." }); return; }
     if (!valorTotal || parseFloat(valorTotal) <= 0) { setMsg({ tipo: "erro", texto: "Informe o valor total." }); return; }
-    if (tipoPagamento !== "por_etapa" && !parcelas.length) { setMsg({ tipo: "erro", texto: "Gere as parcelas do pagamento." }); return; }
+    if (tipoPagamento !== "por_etapa" && !FORMAS_DATA_UNICA.includes(tipoPagamento) && !parcelas.length) { setMsg({ tipo: "erro", texto: "Gere as parcelas do pagamento." }); return; }
+    if (FORMAS_DATA_UNICA.includes(tipoPagamento) && !dataPrimeiroPagamento) { setMsg({ tipo: "erro", texto: "Informe a data do pagamento." }); return; }
     if (tipoPagamento === "por_etapa" && !etapasForm.some((e) => e.nome.trim() && e.valor)) {
       setMsg({ tipo: "erro", texto: "Informe ao menos uma etapa com nome e valor." }); return;
     }
@@ -75,7 +82,9 @@ export default function EmpreitadaView() {
       await criarEmpreitada({
         pessoa_id: Number(pessoaId), descricao: descricao.trim(), valor_total: parseFloat(valorTotal),
         tipo_pagamento: tipoPagamento, observacao: observacao || undefined,
-        parcelas: tipoPagamento !== "por_etapa" ? parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: parseFloat(p.valor) || 0 })) : undefined,
+        parcelas: tipoPagamento === "por_etapa" ? undefined
+          : FORMAS_DATA_UNICA.includes(tipoPagamento) ? [{ data_vencimento: dataPrimeiroPagamento, valor: parseFloat(valorTotal) || 0 }]
+          : parcelas.map((p) => ({ data_vencimento: p.data_vencimento, valor: parseFloat(p.valor) || 0 })),
         etapas: tipoPagamento === "por_etapa"
           ? etapasForm.filter((e) => e.nome.trim() && e.valor).map((e) => ({ nome: e.nome.trim(), valor: parseFloat(e.valor) || 0 }))
           : undefined,
@@ -128,13 +137,17 @@ export default function EmpreitadaView() {
           </div>
           {tipoPagamento !== "por_etapa" && (
             <div>
-              <label style={lbl}>Data do primeiro pagamento</label>
+              <label style={lbl}>{FORMAS_DATA_UNICA.includes(tipoPagamento) ? "Data do pagamento" : "Data do primeiro pagamento"}</label>
               <input type="date" style={inputSm} value={dataPrimeiroPagamento} onChange={(e) => setDataPrimeiroPagamento(e.target.value)} />
             </div>
           )}
         </div>
 
-        {tipoPagamento !== "por_etapa" ? (
+        {FORMAS_DATA_UNICA.includes(tipoPagamento) ? (
+          <p className="mb-3" style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>
+            Será lançada 1 conta no valor total ({formatBRL(parseFloat(valorTotal) || 0)}), com vencimento na data acima — cai na Agenda e em Contas a Pagar.
+          </p>
+        ) : tipoPagamento !== "por_etapa" ? (
           <div className="mb-3">
             <ParcelamentoEditor
               valorTotal={parseFloat(valorTotal) || 0} frequencia={tipoPagamento} primeiraData={dataPrimeiroPagamento}

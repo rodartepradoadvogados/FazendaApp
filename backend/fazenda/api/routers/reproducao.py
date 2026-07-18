@@ -201,6 +201,78 @@ def registrar_reconfirmacao(dados: ReconfirmacaoIn, session: Session = Depends(g
     return servico.model_dump()
 
 
+MOTIVOS_PERDA_PRENHEZ = ["aborto", "natimorto", "outros"]
+
+
+class PerdaPrenhezIn(BaseModel):
+    numero_matriz: str
+    data_perda_prenhez: date
+    motivo: str  # aborto | natimorto | outros
+
+
+@router.post("/perda-prenhez")
+def registrar_perda_prenhez(dados: PerdaPrenhezIn, session: Session = Depends(get_session)) -> dict:
+    """
+    Registra a perda de prenhez (com motivo) no serviço mais recente da
+    matriz — sem isso, `data_perda_prenhez` só era populado pela importação de
+    CSV, sem nenhuma classificação nem forma manual de lançar. Alimenta o
+    histórico de perda de prenhezes (filtro aborto/natimorto/outros).
+    """
+    if dados.motivo not in MOTIVOS_PERDA_PRENHEZ:
+        raise HTTPException(status_code=400, detail="Motivo inválido")
+
+    servico = session.exec(
+        select(Servico)
+        .where(Servico.numero_matriz == dados.numero_matriz)
+        .order_by(Servico.data_servico.desc())
+    ).first()
+    if not servico:
+        raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
+
+    servico.data_perda_prenhez = dados.data_perda_prenhez
+    servico.motivo_perda_prenhez = dados.motivo
+    session.add(servico)
+    session.commit()
+    session.refresh(servico)
+    return servico.model_dump()
+
+
+@router.get("/partos")
+def listar_partos_historico(session: Session = Depends(get_session)) -> dict:
+    """Todos os partos, achatados — histórico de partos (Reprodução), com os
+    mesmos filtros de animal/data/ciclo/ordem de parto da sub-aba Reprodução."""
+    partos = session.exec(select(Parto).order_by(Parto.data_parto.desc())).all()
+    nomes = mapa_usuarios(session, {p.usuario_id for p in partos})
+    registros = []
+    for p in partos:
+        d = p.model_dump()
+        d["numero"] = d.pop("numero_matriz")
+        ds = d.get("data_parto")
+        d["ano"] = ds.year if isinstance(ds, date) else None
+        d["mes"] = f"{ds.year}-{ds.month:02d}" if isinstance(ds, date) else None
+        d["data"] = ds.isoformat() if isinstance(ds, date) else None
+        d["usuario_nome"] = nomes.get(d.pop("usuario_id"))
+        registros.append(d)
+    return {"partos": registros, "total": len(registros)}
+
+
+@router.get("/secagens")
+def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
+    """Todas as secagens, achatadas — histórico de secagens (Reprodução), com
+    os mesmos filtros de animal/data/ciclo da sub-aba Reprodução."""
+    secagens = session.exec(select(Secagem).order_by(Secagem.data_secagem.desc())).all()
+    registros = []
+    for s in secagens:
+        d = s.model_dump()
+        d["numero"] = d.pop("numero_matriz")
+        ds = d.get("data_secagem")
+        d["ano"] = ds.year if isinstance(ds, date) else None
+        d["mes"] = f"{ds.year}-{ds.month:02d}" if isinstance(ds, date) else None
+        d["data"] = ds.isoformat() if isinstance(ds, date) else None
+        registros.append(d)
+    return {"secagens": registros, "total": len(registros)}
+
+
 class CriaIn(BaseModel):
     numero: str = ""      # vazio = cria sem número → baixa automática (natimorto/não entra no rebanho)
     sexo: str  # "F" | "M"
