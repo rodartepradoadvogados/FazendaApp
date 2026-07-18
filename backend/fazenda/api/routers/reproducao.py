@@ -418,11 +418,12 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
             proxima_visita = data_d11 + timedelta(days=intervalo)
             if hoje > proxima_visita + timedelta(days=7):
                 continue  # já passou da janela útil — não mostra mais
+            animais_concluidos = sorted({ap.numero_matriz for ap in aps}, key=chave_numero)
             ativos.append({
                 "lancamento_id": lanc.id,
                 "nome_protocolo": lanc.nome_protocolo,
                 "data_d0": lanc.data_d0.isoformat(),
-                "animais": [],
+                "animais": [{"numero_matriz": n, "etapa_atual": "Concluído", "data_etapa_atual": None} for n in animais_concluidos],
                 "concluido": True,
                 "data_d11": data_d11.isoformat(),
                 "proxima_visita": proxima_visita.isoformat(),
