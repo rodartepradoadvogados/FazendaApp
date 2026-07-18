@@ -325,6 +325,10 @@ class TestProtocoloIatf:
         assert item["data_d11"] == "2026-07-19"
         assert item["proxima_visita"] == "2026-08-09"
         assert "candidatas_proxima_visita" in item
+        # #440: mesmo concluído, a lista de animais do protocolo continua
+        # populada (para a Agenda poder mostrar "ÚLTIMA IATF — y animais"
+        # com clique para ver quem foi inseminado nesse grupo).
+        assert item["animais"] == [{"numero_matriz": "500", "etapa_atual": "Concluído", "data_etapa_atual": None}]
 
 
 class TestRegistrarServico:

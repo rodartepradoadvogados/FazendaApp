@@ -1,12 +1,13 @@
 "use client";
 
-import React, { useEffect, useState, useCallback } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User } from "lucide-react";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch } from "lucide-react";
 import {
-  fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado, fetchProtocoloIatfConcluidos,
+  fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
-  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo,
+  cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
 } from "@/lib/api";
+import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
 // Unidades aceitas na aplicação (mesma lista usada em Sanidade/Cadastro).
@@ -15,7 +16,6 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -183,13 +183,14 @@ export default function AgendaPage() {
 
   useEffect(() => { carregar(); }, [carregar]);
 
-  // Protocolo IATF concluídos — permite desfazer um grupo (lançamento+dia)
-  // marcado como realizado por engano.
-  const [iatfConcluidos, setIatfConcluidos] = useState<any[]>([]);
-  const carregarConcluidos = useCallback(async () => {
-    try { setIatfConcluidos(await fetchProtocoloIatfConcluidos()); } catch { setIatfConcluidos([]); }
+  // Protocolos IATF ativos/concluídos (D0..D11) — alimenta os quadros "IATF
+  // atual" (etapas ainda em aberto) e "Última IATF" (grupo mais recente já
+  // concluído, com data de D0/D11 e os animais que entraram nele).
+  const [iatfAtivos, setIatfAtivos] = useState<any[]>([]);
+  const carregarIatfAtivos = useCallback(async () => {
+    try { setIatfAtivos(await fetchProtocolosIatfAtivos()); } catch { setIatfAtivos([]); }
   }, []);
-  useEffect(() => { carregarConcluidos(); }, [carregarConcluidos]);
+  useEffect(() => { carregarIatfAtivos(); }, [carregarIatfAtivos]);
   // Indução de lactação concluídas — mesma ideia (desfazer se marcado por engano).
   const [inducaoConcluidos, setInducaoConcluidos] = useState<any[]>([]);
   const carregarConcluidosInducao = useCallback(async () => {
@@ -199,7 +200,7 @@ export default function AgendaPage() {
   const [desfazendo, setDesfazendo] = useState<Set<string>>(new Set());
   const desfazerIatf = async (id: string) => {
     setDesfazendo((p) => new Set(p).add(id));
-    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarConcluidos(), carregarConcluidosInducao()]); mostrarFeedback("Desfeito."); }
+    try { await desmarcarEventoRealizado(id); await Promise.all([carregar(), carregarIatfAtivos(), carregarConcluidosInducao()]); mostrarFeedback("Desfeito."); }
     catch (e: any) { mostrarFeedback(e.message, true); }
     finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
   };
@@ -397,7 +398,7 @@ export default function AgendaPage() {
       await marcarEventoRealizado(eventoId, animais, medicamentos);
       cancelarConfirmacao(eventoId);
       await carregar();
-      if (eventoId.startsWith("protocolo_iatf_")) await carregarConcluidos();
+      if (eventoId.startsWith("protocolo_iatf_")) await carregarIatfAtivos();
       if (eventoId.startsWith("protocolo_inducao_")) await carregarConcluidosInducao();
       mostrarFeedback("Atividade marcada como realizada.");
     }
@@ -1127,18 +1128,38 @@ export default function AgendaPage() {
   const bstAptos = agenda?.bst_elegiveis || [];
   const bstExcl = agenda?.bst_excluidos || [];
   const bstNuncaAplicados = agenda?.bst_nunca_aplicados || [];
-  // "IATF atual" — animais com alguma etapa de protocolo (D0/D7/D9/D11) em
-  // aberto agora, contados sem repetir o mesmo animal em dois dias.
-  const iatfAtual = new Set(
-    (agenda?.eventos || []).filter((e: any) => e.tipo === "protocolo_iatf").flatMap((e: any) => e.animais || [])
-  ).size;
   const estoqueAlertasTotal = (agenda?.estoque_negativo?.length || 0) + (agenda?.estoque_abaixo_minimo?.length || 0);
+
+  // "IATF atual" — protocolos com pelo menos uma etapa (D0/D7/D9/D11) ainda em
+  // aberto agora (ver GET /reproducao/protocolo-iatf/ativos); some sozinho
+  // quando não há nenhum D0 em andamento até a inseminação (D11). "Última
+  // IATF" — o grupo mais recente já concluído (D11 com baixa), com os
+  // animais que entraram nele (para o quadro "ÚLTIMA IATF").
+  const gruposIatfAtivos = iatfAtivos.filter((g: any) => !g.concluido);
+  const animaisIatfAtual = gruposIatfAtivos.flatMap((g: any) =>
+    (g.animais || []).map((a: any) => ({ ...a, nome_protocolo: g.nome_protocolo, data_d0: g.data_d0 }))
+  );
+  const grupoUltimaIatf = iatfAtivos
+    .filter((g: any) => g.concluido)
+    .sort((a: any, b: any) => (b.data_d11 || "").localeCompare(a.data_d11 || ""))[0] || null;
 
   // Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
   // rebanho (calculada no backend; ex.: último serviço 03/07 -> visita 24/07).
   const fmtCurta = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" }) : null);
+  // Igual a fmtCurta, mas com o ano (2 dígitos) — usado no quadro "Última
+  // IATF" (ex.: D0 03/07/26), onde a data sozinha ficaria ambígua entre anos.
+  const fmtCurtaAno = (iso: string | null) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit" }) : null);
   const proxVisita = fmtCurta(agenda?.proxima_visita_iatf);
   const proxBST = fmtCurta(agenda?.proxima_visita_bst);
+
+  // Referência para rolar até a seção "Estoque — alertas" (agora no final da
+  // página) quando o quadro "Alertas de estoque" das informações gerenciais
+  // é clicado.
+  const estoqueAlertasRef = useRef<HTMLDivElement>(null);
+  const abrirAlertasEstoque = () => {
+    setPaineis((p) => new Set(p).add("estoqueAlertas"));
+    estoqueAlertasRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  };
 
   const ordIatf = useOrdenacao(candidatas);
   const ordBstAptos = useOrdenacao(bstAptos);
@@ -1165,6 +1186,67 @@ export default function AgendaPage() {
       <Plus size={12} /> {agendandoNumero === numero ? "…" : "Agendar"}
     </button>
   );
+
+  // Exportar Excel/PDF da Agenda — pede o período (data início/fim) antes de
+  // gerar, para filtrar exatamente o que sai no arquivo (em vez de sempre
+  // exportar tudo o que está carregado na tela).
+  const ExportarAgendaBotoes = ({ eventos }: { eventos: any[] }) => {
+    const [aberto, setAberto] = useState<"excel" | "pdf" | null>(null);
+    const [inicio, setInicio] = useState("");
+    const [fim, setFim] = useState("");
+    const [gerando, setGerando] = useState(false);
+    const semDados = eventos.length === 0;
+    const btn: React.CSSProperties = {
+      display: "flex", alignItems: "center", gap: "0.35rem", padding: "0.4rem 0.7rem", borderRadius: "6px",
+      border: "1px solid var(--border)", background: "var(--surface-2)", color: "var(--text-muted)",
+      fontSize: "0.78rem", fontWeight: 600, cursor: semDados ? "not-allowed" : "pointer", opacity: semDados ? 0.5 : 1,
+    };
+    const confirmar = async () => {
+      setGerando(true);
+      try {
+        const filtrados = eventos.filter((e) => (!inicio || e.data >= inicio) && (!fim || e.data <= fim));
+        if (aberto === "excel") await exportarExcel("Agenda", COLUNAS_AGENDA, filtrados, "agenda");
+        else await exportarPDF("Agenda", COLUNAS_AGENDA, filtrados, "agenda");
+        setAberto(null);
+      } finally { setGerando(false); }
+    };
+    return (
+      <div style={{ position: "relative" }}>
+        <div className="flex items-center gap-2">
+          <button type="button" style={btn} disabled={semDados} onClick={() => setAberto("excel")} title="Exportar para Excel">
+            <FileSpreadsheet size={14} /> Excel
+          </button>
+          <button type="button" style={btn} disabled={semDados} onClick={() => setAberto("pdf")} title="Exportar para PDF">
+            <FileText size={14} /> PDF
+          </button>
+        </div>
+        {aberto && (
+          <div className="card" style={{ position: "absolute", top: "2.3rem", right: 0, zIndex: 20, width: "260px", padding: "0.9rem" }}>
+            <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.5rem" }}>
+              Exportar {aberto === "excel" ? "Excel" : "PDF"} — período
+            </p>
+            <div className="grid grid-cols-2 gap-2 mb-2">
+              <div>
+                <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>De</label>
+                <input type="date" value={inicio} onChange={(e) => setInicio(e.target.value)}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+              </div>
+              <div>
+                <label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Até</label>
+                <input type="date" value={fim} onChange={(e) => setFim(e.target.value)}
+                  style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", color: "var(--text)", fontSize: "0.75rem" }} />
+              </div>
+            </div>
+            <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>Deixe em branco para exportar tudo o que está carregado.</p>
+            <div className="flex items-center gap-2">
+              <button className="btn-primary" style={{ fontSize: "0.75rem" }} disabled={gerando} onClick={confirmar}>{gerando ? "Gerando…" : "Exportar"}</button>
+              <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setAberto(null)}>Cancelar</button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className="p-6 animate-in">
@@ -1215,33 +1297,96 @@ export default function AgendaPage() {
         </div>
       )}
 
-      {/* Quadros rápidos — cada quadro clicável expande/recolhe a lista logo
-          abaixo (mesmo estado listaAtiva de antes); Pendências e Alertas de
-          estoque são só informativos, já que suas próprias seções (Atrasados
-          na linha do tempo; card de Estoque) ficam sempre visíveis abaixo. */}
+      {/* Informações gerenciais — cada quadro clicável expande/recolhe uma
+          lista logo abaixo (estado listaAtiva); "Alertas de estoque" rola até
+          a seção de Estoque, no final da página. */}
       {loading && !agenda ? (
         <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
       ) : agenda && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
-          {[
-            { key: "iatf", label: "Candidatas IATF", value: candidatas.length, color: "var(--blue)", clicavel: candidatas.length > 0 },
-            { key: null, label: "IATF atual", value: iatfAtual, color: "var(--green-light)", clicavel: false },
-            { key: "bstAptos", label: "BST aptos", value: bstAptos.length, color: "var(--green-light)", clicavel: bstAptos.length > 0 },
-            { key: "bstExcl", label: "BST excluídos", value: bstExcl.length, color: "var(--amber)", clicavel: bstExcl.length > 0 },
-            { key: "bstNunca", label: "Incluir no próximo BST", value: bstNuncaAplicados.length, color: "var(--blue)", clicavel: bstNuncaAplicados.length > 0 },
-            { key: null, label: "Pendências", value: eventosPendentes.length, color: "var(--red)", destaque: eventosPendentes.length > 0 },
-            { key: null, label: "Alertas de estoque", value: estoqueAlertasTotal, color: "var(--amber)" },
-          ].map((k: any) => (
-            <div key={k.label} className="kpi-card"
-              style={{ padding: "0.9rem", cursor: k.clicavel ? "pointer" : undefined, border: k.destaque ? "1px solid var(--red)" : undefined }}
-              onClick={() => k.clicavel && k.key && toggleLista(k.key)}>
-              <p className="kpi-value" style={{ fontSize: "1.6rem", color: k.destaque ? "var(--red)" : k.color }}>{k.value ?? "—"}</p>
-              <p className="kpi-label flex items-center gap-1" style={{ color: k.destaque ? "var(--red)" : undefined }}>
-                {k.label}
-                {k.clicavel ? (listaAtiva.has(k.key) ? <ChevronDown size={11} /> : <ChevronRight size={11} />) : null}
-              </p>
-            </div>
-          ))}
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: candidatas.length > 0 ? "pointer" : undefined }}
+            onClick={() => candidatas.length > 0 && toggleLista("iatf")}>
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--blue)" }}>{candidatas.length}</p>
+            <p className="kpi-label flex items-center gap-1">
+              Candidatas à próxima IATF
+              {candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: animaisIatfAtual.length > 0 ? "pointer" : undefined }}
+            onClick={() => animaisIatfAtual.length > 0 && toggleLista("iatfAtual")}
+            title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)">
+            <p className="kpi-value" style={{ fontSize: "1.3rem", color: "var(--green-light)" }}>{animaisIatfAtual.length} animal(is)</p>
+            <p className="kpi-label flex items-center gap-1">
+              IATF atual
+              {animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: grupoUltimaIatf ? "pointer" : undefined }}
+            onClick={() => grupoUltimaIatf && toggleLista("iatfUltima")}>
+            {grupoUltimaIatf ? (
+              <>
+                <p style={{ fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
+                  D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
+                </p>
+                <p style={{ fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem" }}>{grupoUltimaIatf.animais.length} animal(is)</p>
+              </>
+            ) : (
+              <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--text-muted)" }}>—</p>
+            )}
+            <p className="kpi-label flex items-center gap-1">
+              Última IATF
+              {grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstAptos.length > 0 ? "pointer" : undefined }}
+            onClick={() => bstAptos.length > 0 && toggleLista("bstAptos")}>
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--green-light)" }}>{bstAptos.length}</p>
+            {proxBST && <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "-0.25rem", marginBottom: "0.15rem" }}>Próx. aplicação: {proxBST}</p>}
+            <p className="kpi-label flex items-center gap-1">
+              BST aptos
+              {bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstExcl.length > 0 ? "pointer" : undefined }}
+            onClick={() => bstExcl.length > 0 && toggleLista("bstExcl")}>
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--amber)" }}>{bstExcl.length}</p>
+            <p className="kpi-label flex items-center gap-1">
+              BST excluídos
+              {bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstNuncaAplicados.length > 0 ? "pointer" : undefined }}
+            onClick={() => bstNuncaAplicados.length > 0 && toggleLista("bstNunca")}>
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--blue)" }}>{bstNuncaAplicados.length}</p>
+            <p className="kpi-label flex items-center gap-1">
+              Incluir no próximo BST
+              {bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: eventosPendentes.length > 0 ? "pointer" : undefined, border: eventosPendentes.length > 0 ? "1px solid var(--red)" : undefined }}
+            onClick={() => eventosPendentes.length > 0 && toggleLista("pendencias")}>
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: eventosPendentes.length > 0 ? "var(--red)" : undefined }}>{eventosPendentes.length}</p>
+            <p className="kpi-label flex items-center gap-1" style={{ color: eventosPendentes.length > 0 ? "var(--red)" : undefined }}>
+              Pendências
+              {eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
+            </p>
+          </div>
+
+          <div className="kpi-card" style={{ padding: "0.9rem", cursor: estoqueAlertasTotal > 0 ? "pointer" : undefined }}
+            onClick={() => estoqueAlertasTotal > 0 && abrirAlertasEstoque()}
+            title="Ver o detalhe dos alertas de estoque, no final da página">
+            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--amber)" }}>{estoqueAlertasTotal}</p>
+            <p className="kpi-label flex items-center gap-1">
+              Alertas de estoque
+              {estoqueAlertasTotal > 0 && <PackageSearch size={11} />}
+            </p>
+          </div>
         </div>
       )}
       {eventosPendentes.length > 0 && (
@@ -1269,7 +1414,8 @@ export default function AgendaPage() {
       </div>
 
       {/* Listas expansíveis — abrem/fecham a partir do clique nos quadros acima */}
-      {(candidatas.length > 0 || bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0) && (
+      {(candidatas.length > 0 || animaisIatfAtual.length > 0 || (grupoUltimaIatf?.animais?.length ?? 0) > 0 ||
+        bstAptos.length > 0 || bstExcl.length > 0 || bstNuncaAplicados.length > 0 || eventosPendentes.length > 0) && (
         <div className="mb-4">
           {listaAtiva.has("iatf") && (
             <div className="card mb-2" style={{ overflowX: "auto" }}>
@@ -1290,6 +1436,42 @@ export default function AgendaPage() {
                       <td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{c.motivo}</td>
                       <td><BotaoAgendar numero={c.numero_matriz} descricao="IATF: candidata a novo serviço" categoria="Reprodutivo" /></td>
                     </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {listaAtiva.has("iatfAtual") && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <table className="fazenda-table">
+                <thead><tr><th>Nº Animal</th><th>Protocolo</th><th>D0</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                <tbody>
+                  {animaisIatfAtual.map((a: any, i: number) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{a.nome_protocolo}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{fmtCurta(a.data_d0)}</td>
+                      <td><span className="badge-reprodutivo" style={{ padding: "0.1rem 0.4rem", borderRadius: "4px", fontSize: "0.75rem" }}>{a.etapa_atual}</span></td>
+                      <td style={{ color: "var(--text-muted)", fontSize: "0.78rem" }}>{a.data_etapa_atual ? fmtCurta(a.data_etapa_atual) : "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          {listaAtiva.has("iatfUltima") && grupoUltimaIatf && (
+            <div className="card mb-2" style={{ overflowX: "auto" }}>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                {grupoUltimaIatf.nome_protocolo} — D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
+                {grupoUltimaIatf.proxima_visita && <> · próxima visita {fmtCurtaAno(grupoUltimaIatf.proxima_visita)}</>}
+              </p>
+              <table className="fazenda-table">
+                <thead><tr><th>Nº Animal</th></tr></thead>
+                <tbody>
+                  {grupoUltimaIatf.animais.map((a: any) => (
+                    <tr key={a.numero_matriz}><td style={{ fontWeight: 700 }}>{a.numero_matriz}</td></tr>
                   ))}
                 </tbody>
               </table>
@@ -1376,37 +1558,9 @@ export default function AgendaPage() {
               </table>
             </div>
           )}
-        </div>
-      )}
 
-      {/* Protocolo IATF — concluídos recentemente, com opção de desfazer */}
-      {iatfConcluidos.length > 0 && (
-        <div className="card mb-4">
-          <button onClick={() => togglePainel("iatfConcluidos")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left", padding: 0 }}>
-            {paineis.has("iatfConcluidos") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
-            <span className="card-header" style={{ margin: 0 }}>Protocolo IATF — concluídos ({iatfConcluidos.length})</span>
-          </button>
-          {paineis.has("iatfConcluidos") && (
-            <div className="overflow-x-auto mt-3">
-              <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Protocolo</th><th>Etapa</th><th>Animais</th><th>Concluído em</th><th></th></tr></thead>
-                <tbody>
-                  {iatfConcluidos.map((g: any) => (
-                    <tr key={g.id}>
-                      <td style={{ fontSize: "0.83rem" }}>{g.nome_protocolo}</td>
-                      <td>D{g.dia}</td>
-                      <td style={{ fontSize: "0.78rem" }}>{g.animais.join(", ")}</td>
-                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{g.data_realizacao ? new Date(g.data_realizacao + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
-                      <td>
-                        <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} disabled={desfazendo.has(g.id)} onClick={() => desfazerIatf(g.id)}>
-                          <RotateCcw size={12} /> Desfazer
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+          {listaAtiva.has("pendencias") && eventosPendentes.length > 0 && (
+            <div className="mb-2">{renderEventos(eventosPendentes, true)}</div>
           )}
         </div>
       )}
@@ -1461,38 +1615,6 @@ export default function AgendaPage() {
         {(de || ate || fCat || filtro) && <button className="btn-ghost" style={{ marginTop: "0.75rem", fontSize: "0.75rem" }} onClick={() => { setDe(""); setAte(""); setFCat(""); setFiltro(""); }}>Limpar filtros</button>}
       </div>
 
-      {/* Estoque — alertas de saldo negativo/abaixo do mínimo. Sempre visível
-          (informação, não pendência a marcar como feita) — some sozinho
-          quando o saldo normalizar. */}
-      {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
-        <div className="card mb-4" style={{ border: "1px solid var(--red)" }}>
-          <button onClick={() => togglePainel("estoqueAlertas")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--red)", cursor: "pointer", textAlign: "left", padding: 0 }}>
-            {paineis.has("estoqueAlertas") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
-            <span className="card-header" style={{ margin: 0, color: "var(--red)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
-              <AlertTriangle size={15} /> Estoque — alertas ({estoqueNegativo.length + estoqueAbaixoMinimo.length})
-            </span>
-          </button>
-          {paineis.has("estoqueAlertas") && (
-            <div className="space-y-2 mt-3">
-              {estoqueNegativo.map((i) => (
-                <div key={`neg_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "rgba(220,38,38,0.1)", border: "1px solid var(--red)" }}>
-                  <span style={{ fontSize: "0.83rem" }}>
-                    <strong>{i.nome}</strong> — saldo <strong style={{ color: "var(--red)" }}>negativo</strong> ({i.quantidade} {i.unidade || ""})
-                  </span>
-                </div>
-              ))}
-              {estoqueAbaixoMinimo.map((i) => (
-                <div key={`min_${i.nome}`} className="flex items-center justify-between gap-3" style={{ padding: "0.5rem 0.8rem", borderRadius: "8px", background: "var(--surface-2)", border: "1px solid var(--amber)" }}>
-                  <span style={{ fontSize: "0.83rem" }}>
-                    <strong>{i.nome}</strong> — abaixo do mínimo ({i.quantidade} de {i.estoque_minimo} {i.unidade || ""})
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
       {/* Comunicados — avisos informativos (ex.: nova dieta do lote). Diferente
           de uma atividade: não têm botão de excluir/realizado, ficam fixos
           enquanto vigoram e somem sozinhos quando a data passa. */}
@@ -1541,7 +1663,7 @@ export default function AgendaPage() {
             {visualizacao === "linha_do_tempo" && !ate && (
               <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>próximos {DIAS_PADRAO_FUTURO} dias — defina "Até" para ampliar</span>
             )}
-            <ExportarBotoes titulo="Agenda" nomeArquivoBase="agenda" colunas={COLUNAS_AGENDA} linhas={[...eventosPendentes, ...eventosFuturos]} />
+            <ExportarAgendaBotoes eventos={[...eventosPendentes, ...eventosFuturos]} />
           </div>
         </div>
         {loading ? (
@@ -1550,25 +1672,61 @@ export default function AgendaPage() {
           <div style={{ marginTop: "0.75rem" }}>{renderCalendario()}</div>
         ) : (
           <div style={{ marginTop: "0.75rem" }}>
+            <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
+              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
+            </div>
+            {eventosFuturos.length > 0 ? (
+              <div className="space-y-2 mb-3">{renderEventos(eventosFuturos)}</div>
+            ) : (
+              <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>Nenhum evento no filtro atual.</p>
+            )}
             {eventosPendentes.length > 0 && (
               <>
                 <div className="flex items-center gap-2" style={{ color: "var(--red)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
                   <AlertTriangle size={14} /> Atrasados ({eventosPendentes.length})
                 </div>
-                <div className="space-y-2 mb-3">{renderEventos(eventosPendentes, true)}</div>
+                <div className="space-y-2">{renderEventos(eventosPendentes, true)}</div>
               </>
-            )}
-            <div className="flex items-center gap-2" style={{ color: "var(--dourado-light)", fontWeight: 700, fontSize: "0.8rem", margin: "0.6rem 0" }}>
-              <Calendar size={14} /> Hoje · {new Date(hoje + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long" })}
-            </div>
-            {eventosFuturos.length > 0 ? (
-              <div className="space-y-2">{renderEventos(eventosFuturos)}</div>
-            ) : (
-              <p style={{ color: "var(--text-muted)", padding: "1rem", textAlign: "center" }}>Nenhum evento no filtro atual.</p>
             )}
           </div>
         )}
       </div>
+
+      {/* Estoque — alertas de saldo negativo/abaixo do mínimo, no final da
+          página. Sempre visível (informação, não pendência a marcar como
+          feita) — some sozinho quando o saldo normalizar. Cada item vira um
+          quadro individual (mesmo estilo dos cartões da Capa): fundo ouro e
+          contorno amarelo para abaixo do mínimo (mas ainda positivo); fundo
+          vinho transparente e contorno vermelho para saldo zero/negativo. */}
+      <div ref={estoqueAlertasRef} />
+      {(estoqueNegativo.length > 0 || estoqueAbaixoMinimo.length > 0) && (
+        <div className="card mt-4" style={{ border: "1px solid var(--red)" }}>
+          <button onClick={() => togglePainel("estoqueAlertas")} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", background: "none", border: "none", color: "var(--red)", cursor: "pointer", textAlign: "left", padding: 0 }}>
+            {paineis.has("estoqueAlertas") ? <ChevronDown size={15} style={{ color: "var(--text-muted)" }} /> : <ChevronRight size={15} style={{ color: "var(--text-muted)" }} />}
+            <span className="card-header" style={{ margin: 0, color: "var(--red)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
+              <AlertTriangle size={15} /> Estoque — alertas ({estoqueNegativo.length + estoqueAbaixoMinimo.length})
+            </span>
+          </button>
+          {paineis.has("estoqueAlertas") && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-3">
+              {estoqueNegativo.map((i) => (
+                <div key={`neg_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--vinho) 25%, transparent)", border: "1px solid var(--red)" }}>
+                  <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
+                  <p style={{ fontSize: "0.85rem", color: "var(--red)", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} {i.unidade || ""}</p>
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>saldo negativo</p>
+                </div>
+              ))}
+              {estoqueAbaixoMinimo.map((i) => (
+                <div key={`min_${i.nome}`} style={{ padding: "0.85rem", borderRadius: "10px", background: "color-mix(in srgb, var(--dourado) 20%, transparent)", border: "1px solid var(--amber)" }}>
+                  <p style={{ fontWeight: 700, fontSize: "0.85rem" }}>{i.nome}</p>
+                  <p style={{ fontSize: "0.85rem", fontWeight: 700, marginTop: "0.2rem" }}>{i.quantidade} de {i.estoque_minimo} {i.unidade || ""}</p>
+                  <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.1rem" }}>abaixo do mínimo</p>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Modal adicionar evento */}
       {showModal && (
