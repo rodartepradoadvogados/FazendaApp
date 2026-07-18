@@ -678,3 +678,54 @@ class TestPublicarLotesMilknews:
             todas = s.exec(select(NoticiaNews)).all()
             assert len(todas) == 1
             assert todas[0].manchete == "Matéria única do lote"
+
+    def test_backfill_preenche_fontes_de_materia_ja_publicada(self, client, monkeypatch):
+        """Se o lote já publicado ganhar `fontes` depois (edição do dict), a
+        próxima chamada preenche o campo na matéria existente sem reaplicar
+        o lote nem alterar mais nada."""
+        from fazenda.api.routers import news as news_module
+
+        c, engine = client
+        lotes = {
+            "milknews_20260720": [{
+                "manchete": "Matéria sem fontes ainda", "resumo": "Resumo.",
+                "link": "/news#milknews-2026-07-20-01", "data_publicacao": "2026-07-20",
+            }],
+        }
+        monkeypatch.setattr(news_module, "MILKNEWS_LOTES", lotes)
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        lotes["milknews_20260720"][0]["fontes"] = ["https://cepea.esalq.usp.br/br/indicador/leite.aspx"]
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        with Session(engine) as s:
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "/news#milknews-2026-07-20-01")).first()
+            assert noticia.manchete == "Matéria sem fontes ainda"
+            assert json.loads(noticia.fontes) == ["https://cepea.esalq.usp.br/br/indicador/leite.aspx"]
+
+    def test_backfill_nao_sobrescreve_fontes_ja_preenchidas(self, client, monkeypatch):
+        """Se a matéria já tem `fontes` (preenchida manualmente ou por um
+        backfill anterior), rodar de novo não troca o valor já salvo."""
+        from fazenda.api.routers import news as news_module
+
+        c, engine = client
+        lotes = {
+            "milknews_20260720": [{
+                "manchete": "Matéria", "resumo": "Resumo.",
+                "link": "/news#milknews-2026-07-20-01", "data_publicacao": "2026-07-20",
+                "fontes": ["https://fonte-original.example.com"],
+            }],
+        }
+        monkeypatch.setattr(news_module, "MILKNEWS_LOTES", lotes)
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        lotes["milknews_20260720"][0]["fontes"] = ["https://fonte-diferente.example.com"]
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        with Session(engine) as s:
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "/news#milknews-2026-07-20-01")).first()
+            assert json.loads(noticia.fontes) == ["https://fonte-original.example.com"]
