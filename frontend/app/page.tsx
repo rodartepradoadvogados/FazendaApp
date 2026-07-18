@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw } from "lucide-react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Gauge } from "@/components/Gauge";
+import { Indicador, EstadoVazio } from "@/components/ui";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -106,17 +107,13 @@ export default function Home() {
 
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
-  const KPI = ({ v, l, c, onClick, podeClicar }: { v: any; l: string; c?: string; onClick?: () => void; podeClicar?: boolean }) => {
-    const clic = !!onClick && (podeClicar ?? animais.length > 0);
-    return (
-      <div className={clic ? "kpi-card row-clickable" : "kpi-card"} onClick={clic ? onClick : undefined}
-        title={clic ? "Clique para ver os animais" : undefined}
-        style={clic ? { cursor: "pointer" } : undefined}>
-        <p className="kpi-value" style={{ fontSize: "1.4rem", color: c }}>{v}</p>
-        <p className="kpi-label flex items-center gap-1">{l}{clic ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}</p>
-      </div>
-    );
-  };
+  const KPI = ({ v, l, c, cat, onClick, podeClicar }: { v: any; l: string; c?: string; cat?: "geral" | "reprodutivo" | "producao" | "financeiro"; onClick?: () => void; podeClicar?: boolean }) => (
+    <Indicador
+      valor={v} rotulo={l} categoria={cat} cor={c}
+      onClick={onClick} podeClicar={podeClicar ?? animais.length > 0}
+      extra={onClick ? <Target size={11} style={{ color: "var(--dourado-light)" }} /> : null}
+    />
+  );
   const candidatasList: AnimalRow[] = (d.ag?.candidatas_iatf || []).map((c: any) => ({ numero: c.numero_matriz, sit_rep: c.sit_rep, del_dias: c.del_dias }));
   const aDescartarList: AnimalRow[] = animais.filter((a) => a.a_descartar);
   const descartadosList = baixas.filter((b) => TIPOS_DESCARTE.includes(b.tipo_baixa) && (!desdeDescarte || b.data_baixa >= desdeDescarte));
@@ -152,16 +149,16 @@ export default function Home() {
 
       {/* KPIs executivos */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
-        <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
-        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
-        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" c="var(--green-light)" />
-        <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" c="var(--blue)" />
-        <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" c="var(--green-light)" />
-        <KPI v={prod?.del_medio ?? "—"} l="DEL médio" />
-        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" c="var(--dourado-light)"
+        <KPI v={reb?.total ?? "—"} l="Fêmeas no rebanho" cat="geral" onClick={() => abrir("Fêmeas no rebanho", () => true)} />
+        <KPI v={reb?.vacas_lactacao ?? "—"} l="Vacas em lactação" cat="geral" onClick={() => abrir("Vacas em lactação", (a) => LACTACAO.includes(cod(a.grupo_primario) || ""))} />
+        <KPI v={rep?.taxa_prenhez_pct != null ? `${rep.taxa_prenhez_pct}%` : "—"} l="Fêmeas prenhas" cat="reprodutivo" />
+        <KPI v={rep?.taxa_concepcao_pct != null ? `${rep.taxa_concepcao_pct}%` : "—"} l="Concepção / serviço" cat="reprodutivo" />
+        <KPI v={prod?.producao_total_dia_kg != null ? `${prod.producao_total_dia_kg} kg` : "—"} l="Produção/dia (últ. controle)" cat="producao" />
+        <KPI v={prod?.del_medio ?? "—"} l="DEL médio" cat="producao" />
+        <KPI v={d.ag?.totais?.candidatas_iatf ?? "—"} l="Candidatas IATF" cat="reprodutivo"
           podeClicar={candidatasList.length > 0}
           onClick={() => setModal({ title: "Candidatas IATF", list: candidatasList })} />
-        <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
+        <KPI v={resultadoMes != null ? formatBRL(resultadoMes) : "—"} l={`Resultado ${mesLabel}`} cat="financeiro" c={resultadoMes != null && resultadoMes >= 0 ? "var(--green-light)" : "var(--amber)"} />
       </div>
 
       {/* Medidores reprodutivos (modelo velocímetro) */}
@@ -236,7 +233,7 @@ export default function Home() {
                 <Area type="monotone" dataKey="kg" stroke="var(--green-light)" strokeWidth={2.5} fill="url(#gradProd)" dot={{ r: 3, fill: "var(--green-light)", strokeWidth: 0 }} activeDot={{ r: 5 }} />
               </AreaChart>
             </ResponsiveContainer>
-          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem controle leiteiro — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a>.</p>}
+          ) : <EstadoVazio icon={MilkOff}>Sem controle leiteiro ainda — <a href="/upload" style={{ color: "var(--dourado-light)" }}>suba o CSV</a> para ver o gráfico aqui.</EstadoVazio>}
         </div>
         <div className="card">
           <div className="card-header mb-2 flex flex-wrap items-center gap-2"><HeartPulse size={14} /> Situação Reprodutiva{animais.length ? <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para ver os animais)</span> : null}
@@ -255,19 +252,20 @@ export default function Home() {
           {repSel ? (
             <div className="grid grid-cols-3 gap-2 mb-2">
               {([
-                ["Aptas", repSel.aptas, "var(--dourado-light)", (a: AnimalRow) => (repSel.aptas_nums || []).includes(a.numero)],
-                ["Inseminadas", repSel.inseminadas, "var(--dourado-light)", (a: AnimalRow) => a.sit_rep === "Ins." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-                ["Gestantes", repSel.prenhes, "var(--green-light)", (a: AnimalRow) => a.sit_rep === "Ges." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
-              ] as const).map(([l, v, c, f]) => (
-                <KPI key={l} l={l} v={v} c={c} onClick={() => abrir(l, f)} />
+                ["Aptas", repSel.aptas, (a: AnimalRow) => (repSel.aptas_nums || []).includes(a.numero)],
+                ["Inseminadas", repSel.inseminadas, (a: AnimalRow) => a.sit_rep === "Ins." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
+                ["Gestantes", repSel.prenhes, (a: AnimalRow) => a.sit_rep === "Ges." && (catRep === "todas" ? true : catRep === "vaca" ? !!a.data_ult_parto : !a.data_ult_parto)],
+              ] as const).map(([l, v, f]) => (
+                <KPI key={l} l={l} v={v} cat="reprodutivo" onClick={() => abrir(l, f)} />
               ))}
             </div>
           ) : null}
           <div className="grid grid-cols-2 gap-2 mb-2" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.5rem" }}>
-            <KPI l="A descartar (atual)" v={aDescartarList.length} c="var(--amber)"
+            <KPI l="A descartar (atual)" v={aDescartarList.length} cat="geral" c="var(--amber)"
               podeClicar={aDescartarList.length > 0}
               onClick={() => setModal({ title: "A descartar (atual)", list: aDescartarList })} />
-            <div className="kpi-card" style={{ cursor: descartadosList.length ? "pointer" : undefined }}>
+            <div className="kpi-card" style={{ cursor: descartadosList.length ? "pointer" : undefined, ["--kpi-c" as any]: "var(--red)" }}>
+              <div className="kpi-chip"><Skull size={14} /></div>
               <p className="kpi-value" style={{ fontSize: "1.4rem", color: "var(--red)" }}
                 onClick={() => descartadosList.length && setModalDescartados({ title: "Descartados", list: descartadosList })}>
                 {descartadosList.length}
@@ -305,7 +303,7 @@ export default function Home() {
                 <Tooltip contentStyle={tip} />
               </PieChart>
             </ResponsiveContainer>
-          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem dados reprodutivos.</p>}
+          ) : <EstadoVazio icon={HeartPulse}>Sem dados reprodutivos ainda — assim que houver lançamentos, o gráfico aparece aqui.</EstadoVazio>}
         </div>
       </div>
 
@@ -325,7 +323,7 @@ export default function Home() {
                 </div>
               ))}
             </div>
-          ) : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum evento nos próximos 7 dias.</p>;
+          ) : <EstadoVazio icon={Calendar}>Nenhum evento nos próximos 7 dias.</EstadoVazio>;
         })()}
       </div>
 
