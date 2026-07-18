@@ -127,7 +127,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("ccs_ultima", "FLOAT"), ("recidiva", "BOOLEAN"), ("curada", "BOOLEAN"), ("usuario_id", "INTEGER"),
     ],
     "fornecedor": [("categoria", "VARCHAR")],
-    "pessoa": [("salario_base", "FLOAT")],
+    "pessoa": [("salario_base", "FLOAT"), ("data_admissao", "DATE")],
     "usuario": [("permissoes", "VARCHAR"), ("paleta", "VARCHAR"), ("email", "VARCHAR"), ("ultimo_login", "TIMESTAMP")],
     "conta_gerencial": [
         ("numero_lancamento", "VARCHAR"),
