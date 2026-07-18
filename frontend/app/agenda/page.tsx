@@ -421,6 +421,22 @@ export default function AgendaPage() {
     finally { setMarcando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
   };
 
+  // Descartar pendência sanitária sem aplicar (ex.: pendência antiga que não
+  // faz mais sentido registrar) — some da Agenda sem criar Sanidade nem baixa
+  // de estoque, ao contrário de "Dar baixa". Reaproveita o mesmo
+  // EventoRealizado usado em "Realizado", então é reversível (desfazer).
+  const [descartando, setDescartando] = useState<Set<string>>(new Set());
+  const descartarPendencia = async (e: any) => {
+    setDescartando((p) => new Set(p).add(e.id));
+    try {
+      await marcarEventoRealizado(e.id);
+      cancelarConfirmacao(`descartar:${e.id}`);
+      await carregar();
+      mostrarFeedback("Pendência descartada (nenhuma aplicação foi registrada).");
+    } catch (err: any) { mostrarFeedback(err.message, true); }
+    finally { setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; }); }
+  };
+
   // Botão "Realizado" com confirmação inline ("Deseja cumprir essa atividade?
   // Sim/Não") em vez de agir direto no primeiro clique.
   const BotaoRealizado = ({ chave, onConfirmar, compacto }: { chave: string; onConfirmar: () => void; compacto?: boolean }) => {
@@ -436,6 +452,29 @@ export default function AgendaPage() {
     return (
       <button className="btn-ghost" style={{ fontSize: "0.68rem" }} title="Marcar como realizado" disabled={marcando.has(chave)} onClick={(e) => { e.stopPropagation(); pedirConfirmacao(chave); }}>
         <CheckCircle2 size={12} /> {compacto ? "" : "Realizado"}
+      </button>
+    );
+  };
+
+  // Botão "Descartar" — mesma UX de confirmação do BotaoRealizado, mas para
+  // pendências sanitárias que o usuário decide não aplicar (ex.: pendência
+  // antiga substituída por um lançamento retroativo já feito por fora).
+  const BotaoDescartar = ({ e }: { e: any }) => {
+    const chave = `descartar:${e.id}`;
+    if (confirmando.has(chave)) {
+      return (
+        <span className="flex items-center gap-1" style={{ fontSize: "0.66rem" }} onClick={(ev) => ev.stopPropagation()}>
+          Descartar sem aplicar?
+          <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.3rem" }} disabled={descartando.has(e.id)} onClick={() => descartarPendencia(e)}>Sim</button>
+          <button className="btn-ghost" style={{ padding: "0.1rem 0.3rem" }} onClick={() => cancelarConfirmacao(chave)}>Não</button>
+        </span>
+      );
+    }
+    return (
+      <button className="btn-ghost" style={{ fontSize: "0.66rem", color: "var(--text-muted)" }} disabled={descartando.has(e.id)}
+        title="Remove esta pendência da Agenda sem registrar aplicação nem baixar estoque"
+        onClick={(ev) => { ev.stopPropagation(); pedirConfirmacao(chave); }}>
+        <X size={11} /> Descartar
       </button>
     );
   };
@@ -693,9 +732,12 @@ export default function AgendaPage() {
                                   // Sem matriz específica (gatilho de época/rebanho) — não dá pra
                                   // resolver inline sem escolher os animais; segue para o formulário,
                                   // que já sabe tratar exame (sem produto/dose) e vacina/tratamento.
-                                  <a href={linkFormularioCompleto(false)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
-                                    <Syringe size={12} /> Dar baixa (aplicar)
-                                  </a>
+                                  <div className="flex flex-col gap-1" style={{ alignItems: "flex-start" }}>
+                                    <a href={linkFormularioCompleto(false)} className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} title="Aplicar/confirmar (evento sem matriz específica — escolha o alvo no formulário)">
+                                      <Syringe size={12} /> Dar baixa (aplicar)
+                                    </a>
+                                    <BotaoDescartar e={e} />
+                                  </div>
                                 ) : loteAtivoDia ? (
                                   <label className="flex items-center gap-1" style={{ fontSize: "0.72rem", opacity: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? 1 : 0.4, cursor: (!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "pointer" : "not-allowed" }}
                                     title={(!categoriaLoteDia[d] || categoriaLoteDia[d] === grupoLoteChave(e)) ? "Selecionar para dar baixa em lote" : "Só é possível combinar pendências da mesma categoria/lote e evento"}>
@@ -723,6 +765,7 @@ export default function AgendaPage() {
                                     <label className="flex items-center gap-1" style={{ fontSize: "0.66rem", color: "var(--text-muted)", cursor: "pointer" }}>
                                       <input type="checkbox" checked={abrirLancamento[e.id] ?? false} onChange={() => setAbrirLancamento((p) => ({ ...p, [e.id]: !p[e.id] }))} /> abrir lançamento
                                     </label>
+                                    <BotaoDescartar e={e} />
                                   </div>
                                 )
                               ) : (e as any).tipo === "confirmar_cura" ? (
