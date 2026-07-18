@@ -31,6 +31,10 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
   const [aba, setAba] = useState<CategoriaChave>("alimentacao");
   const { dados, doCache, carregando } = useCarregar<{ itens: ItemEstoque[] }>("menu_estoque", fetchEstoque);
   const [busca, setBusca] = useState("");
+  // Dois filtros independentes de saldo: positivo/negativo e abaixo do mínimo
+  // — mesma ideia do Balanço de estoque (Lançar) e do filtro do site.
+  const [filtroSaldo, setFiltroSaldo] = useState<"todos" | "positivo" | "negativo">("todos");
+  const [soAbaixo, setSoAbaixo] = useState(false);
 
   const itens = dados?.itens || [];
 
@@ -46,8 +50,11 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
       base = [];
     }
     const q = busca.trim().toLowerCase();
-    return q ? base.filter((i) => i.nome.toLowerCase().includes(q)) : base;
-  }, [itens, aba, busca]);
+    return base
+      .filter((i) => !q || i.nome.toLowerCase().includes(q))
+      .filter((i) => filtroSaldo === "todos" || (filtroSaldo === "positivo" ? (i.quantidade ?? 0) > 0 : (i.quantidade ?? 0) <= 0))
+      .filter((i) => !soAbaixo || i.abaixo_minimo === true);
+  }, [itens, aba, busca, filtroSaldo, soAbaixo]);
 
   return (
     <div>
@@ -70,6 +77,16 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
             <input className="mob-input" value={busca} onChange={(e) => setBusca(e.target.value)}
               placeholder="Buscar produto…" style={{ paddingLeft: "2.5rem" }} />
           </div>
+
+          <LinhaPills>
+            <MobPill ativa={filtroSaldo === "todos"} onClick={() => setFiltroSaldo("todos")}>Todos</MobPill>
+            <MobPill ativa={filtroSaldo === "positivo"} onClick={() => setFiltroSaldo("positivo")}>Saldo positivo</MobPill>
+            <MobPill ativa={filtroSaldo === "negativo"} onClick={() => setFiltroSaldo("negativo")}>Saldo negativo</MobPill>
+          </LinhaPills>
+          <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", margin: "0.6rem 0 0.9rem" }}>
+            <input type="checkbox" checked={soAbaixo} onChange={(e) => setSoAbaixo(e.target.checked)} style={{ width: 18, height: 18 }} />
+            Só abaixo do mínimo
+          </label>
 
           {carregando && !dados ? (
             <Carregando />
