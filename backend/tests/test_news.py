@@ -419,3 +419,104 @@ class TestAprovarNoticiaManual:
         fonte = r.json()["fontes"][0]
         assert fonte["fonte"]["erro"] is None
         assert len(fonte["noticias"]) == 1
+
+
+class TestMateriaBlog:
+    """POST /news/materias — "Adicionar matéria ao blog" (Configurações >
+    News), só admin, publica direto (sem fila de aprovação) sob a fonte fixa
+    "Blog CowData". DELETE /news/materias/{id} exclui."""
+
+    def test_publica_com_tres_fontes(self, client):
+        c, engine = client
+        r = c.post("/news/materias", json={
+            "manchete": "Compost Barn reduz mastite",
+            "materia": "Texto completo da matéria sobre compost barn...",
+            "fontes": ["https://a.com/1", "https://b.com/2", "https://c.com/3"],
+        })
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["manchete"] == "Compost Barn reduz mastite"
+        assert dados["materia"] == "Texto completo da matéria sobre compost barn..."
+        assert dados["fontes"] == ["https://a.com/1", "https://b.com/2", "https://c.com/3"]
+        assert dados["link"] == "https://a.com/1"
+        assert dados["data_publicacao"] is not None
+
+        with Session(engine) as s:
+            fonte = s.exec(select(FonteNews).where(FonteNews.nome == "Blog CowData")).first()
+            assert fonte is not None
+            assert fonte.manual is True
+            noticia = s.get(NoticiaNews, dados["id"])
+            assert noticia.fonte_id == fonte.id
+            assert json.loads(noticia.fontes) == ["https://a.com/1", "https://b.com/2", "https://c.com/3"]
+
+    def test_publica_sem_fontes_gera_link_placeholder_unico(self, client):
+        c, engine = client
+        r1 = c.post("/news/materias", json={"manchete": "Matéria 1", "materia": "Corpo 1", "fontes": []})
+        r2 = c.post("/news/materias", json={"manchete": "Matéria 2", "materia": "Corpo 2", "fontes": []})
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert r1.json()["fontes"] == []
+        assert r1.json()["link"].startswith("blog://")
+        assert r1.json()["link"] != r2.json()["link"]
+
+    def test_publica_com_uma_fonte(self, client):
+        c, _ = client
+        r = c.post("/news/materias", json={"manchete": "Só uma fonte", "materia": "Corpo", "fontes": ["https://unica.com"]})
+        assert r.status_code == 200, r.text
+        assert r.json()["fontes"] == ["https://unica.com"]
+        assert r.json()["link"] == "https://unica.com"
+
+    def test_reusa_a_mesma_fonte_blog_entre_publicacoes(self, client):
+        c, engine = client
+        c.post("/news/materias", json={"manchete": "A", "materia": "a", "fontes": []})
+        c.post("/news/materias", json={"manchete": "B", "materia": "b", "fontes": []})
+        with Session(engine) as s:
+            fontes = s.exec(select(FonteNews).where(FonteNews.nome == "Blog CowData")).all()
+            assert len(fontes) == 1
+
+    def test_manchete_vazia_da_erro(self, client):
+        c, _ = client
+        r = c.post("/news/materias", json={"manchete": "  ", "materia": "Corpo", "fontes": []})
+        assert r.status_code == 400
+
+    def test_materia_vazia_da_erro(self, client):
+        c, _ = client
+        r = c.post("/news/materias", json={"manchete": "Título", "materia": "   ", "fontes": []})
+        assert r.status_code == 400
+
+    def test_operador_nao_pode_publicar(self, client_operador):
+        c, _ = client_operador
+        r = c.post("/news/materias", json={"manchete": "X", "materia": "Y", "fontes": []})
+        assert r.status_code == 403
+
+    def test_excluir_materia(self, client):
+        c, engine = client
+        r = c.post("/news/materias", json={"manchete": "Para excluir", "materia": "Corpo", "fontes": []})
+        nid = r.json()["id"]
+
+        r = c.delete(f"/news/materias/{nid}")
+        assert r.status_code == 200, r.text
+        assert r.json()["excluido"] is True
+
+        with Session(engine) as s:
+            assert s.get(NoticiaNews, nid) is None
+
+    def test_excluir_materia_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.delete("/news/materias/999")
+        assert r.status_code == 404
+
+    def test_operador_nao_pode_excluir(self, client_operador):
+        c, _ = client_operador
+        r = c.delete("/news/materias/1")
+        assert r.status_code == 403
+
+    def test_materia_aparece_na_listagem(self, client, monkeypatch):
+        c, _ = client
+        monkeypatch.setattr("fazenda.api.routers.news.buscar_noticias_fonte", lambda url: [])
+        c.post("/news/materias", json={"manchete": "Visível na listagem", "materia": "Corpo", "fontes": ["https://x.com"]})
+        r = c.get("/news/")
+        assert r.status_code == 200, r.text
+        fonte = next(f for f in r.json()["fontes"] if f["fonte"]["nome"] == "Blog CowData")
+        assert len(fonte["noticias"]) == 1
+        assert fonte["noticias"][0]["manchete"] == "Visível na listagem"
+        assert fonte["noticias"][0]["fontes"] == ["https://x.com"]

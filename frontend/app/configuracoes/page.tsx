@@ -10,7 +10,7 @@ import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components
 import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
-import NewsFontesAdmin from "@/components/NewsFontesAdmin";
+import NewsAdmin from "@/components/NewsAdmin";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
@@ -114,7 +114,7 @@ export default function ConfiguracoesPage() {
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "usuarios" && <UsuariosPage />}
-        {aba === "news" && <NewsFontesAdmin />}
+        {aba === "news" && <NewsAdmin />}
       </div>
     </div>
   );
