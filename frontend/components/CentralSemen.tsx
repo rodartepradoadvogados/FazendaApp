@@ -1,12 +1,14 @@
 "use client";
 import { useState } from "react";
-import { Dna } from "lucide-react";
+import { Dna, SlidersHorizontal } from "lucide-react";
 import CadastroEstoqueSemen from "./CadastroEstoqueSemen";
 import CadastroTouros from "./CadastroTouros";
+import CadastroSemenMinimo from "./CadastroSemenMinimo";
 
 const ABAS = [
   ["estoque-semen", "Estoque de sêmen", Dna],
   ["touros", "Touros (NAAB)", Dna],
+  ["estoque-minimo", "Estoque mínimo", SlidersHorizontal],
 ] as const;
 // Reexportado para o Cadastro compor a árvore de sub-navegação (Configurações
 // › Cadastro › Central de Sêmen › estas 2 abas) sem duplicar rótulos/ícones.
@@ -26,6 +28,7 @@ export default function CentralSemen({ abaControlada, onAbaChange }: {
     <div>
       {aba === "estoque-semen" && <CadastroEstoqueSemen />}
       {aba === "touros" && <CadastroTouros />}
+      {aba === "estoque-minimo" && <CadastroSemenMinimo />}
     </div>
   );
 }

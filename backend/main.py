@@ -57,7 +57,7 @@ from fazenda.api.routers.cadastro import (
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa,
 )
-from fazenda.api.routers.estoque import sindicar_estoque_semen
+from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
@@ -143,6 +143,10 @@ async def lifespan(app: FastAPI):
         # Estoque de Sêmen (por nome ou NAAB/código) — a partir daí, toda
         # entrada/saída deste item também atualiza as doses do touro.
         sindicar_estoque_semen(session)
+        # Corrige o histórico: cria/atualiza o item de Estoque espelhado de
+        # cada touro do Estoque de Sêmen (compras antigas nunca criavam esse
+        # item — só apareciam em Rebanho > Touros > Sêmen).
+        backfill_estoque_semen_generico(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     yield

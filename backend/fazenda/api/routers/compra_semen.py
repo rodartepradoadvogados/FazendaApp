@@ -21,6 +21,7 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import CompraSemen, ContaGerencial, EstoqueSemen, Touro, Usuario
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
+from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 
 router = APIRouter(prefix="/compras-semen", tags=["compras-semen"])
@@ -216,6 +217,8 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
         estoque.doses = estoque.doses + item.doses
         estoque.valor_unitario = valor_unitario
         session.add(estoque)
+        session.flush()
+        sincronizar_item_estoque_semen(estoque, session)
 
         session.add(CompraSemen(
             estoque_semen_id=estoque.id, touro_nome=estoque.touro_nome, naab=estoque.naab,

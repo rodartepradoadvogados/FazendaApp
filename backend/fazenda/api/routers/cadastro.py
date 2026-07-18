@@ -35,6 +35,7 @@ from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.parametros import minimos_semen_por_tipo
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
@@ -2351,9 +2352,10 @@ async def importar_protocolos_sanitarios(file: UploadFile = File(...), session: 
 # Estoque de sêmen — doses por touro (usado no relatório de manejo).
 # ---------------------------------------------------------------------------
 TIPOS_SEMEN = ["convencional", "sexado", "fazenda"]
-# Estoque mínimo de sêmen POR CATEGORIA (não por touro). Abaixo disso, gera
+# Estoque mínimo de sêmen POR CATEGORIA (não por touro) — editável em
+# Configurações > Cadastro > Central de Sêmen > Estoque mínimo, ver
+# `fazenda.rules.parametros.minimos_semen_por_tipo`. Abaixo disso, gera
 # alerta nas notificações e um evento diário na agenda até a NF suprir.
-MINIMO_SEMEN = {"convencional": 20, "sexado": 5}
 # Touros da fazenda (monta natural) — sempre disponíveis na inseminação.
 TOUROS_FAZENDA = ["Sevaverde", "Frederico"]
 
@@ -2515,8 +2517,9 @@ def semen_disponivel(session: Session = Depends(get_session)) -> dict:
         # Fazenda sempre aparece; sêmen (conv/sexado) só com dose.
         if i.tipo == "fazenda" or (i.doses or 0) > 0:
             touros.append({"nome": i.touro_nome, "tipo": i.tipo, "doses": i.doses or 0})
-    abaixo = {cat: totais[cat] < minimo for cat, minimo in MINIMO_SEMEN.items()}
-    return {"touros": touros, "totais": totais, "minimos": MINIMO_SEMEN, "abaixo_minimo": abaixo}
+    minimos = minimos_semen_por_tipo()
+    abaixo = {cat: totais[cat] < minimo for cat, minimo in minimos.items()}
+    return {"touros": touros, "totais": totais, "minimos": minimos, "abaixo_minimo": abaixo}
 
 
 @router.post("/estoque-semen")

@@ -27,6 +27,7 @@ from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.auditoria import usuario_id_seguro
+from fazenda.rules.parametros import minimos_semen_por_tipo
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -575,15 +576,15 @@ def calcular_agenda(
 
     # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
     # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
-    # repor). Mínimos: convencional 20, sexado 5 (ver cadastro.MINIMO_SEMEN).
-    MINIMO_SEMEN = {"convencional": 20, "sexado": 5}
+    # repor). Mínimos editáveis em Configurações > Cadastro > Central de
+    # Sêmen > Estoque mínimo (ver parametros.minimos_semen_por_tipo).
     totais_semen = {"convencional": 0, "sexado": 0}
     for s in session.exec(select(EstoqueSemen)).all():
         if s.ativo and s.tipo in totais_semen:
             totais_semen[s.tipo] += s.doses or 0
     eventos_semen = []
     hoje_iso = data.isoformat()
-    for cat, minimo in MINIMO_SEMEN.items():
+    for cat, minimo in minimos_semen_por_tipo().items():
         total = totais_semen[cat]
         if total < minimo:
             chave = f"semen_minimo_{cat}_{hoje_iso}"

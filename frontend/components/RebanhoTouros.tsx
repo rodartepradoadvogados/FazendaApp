@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, X } from "lucide-react";
-import { fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, type Touro, type TouroIn } from "@/lib/api";
+import { Dna, Search, Warehouse, FlaskConical, Database, Pencil, Trash2, X } from "lucide-react";
+import { fetchEstoqueSemen, fetchTouros, fetchAnimais, atualizarEstoqueSemen, atualizarTouro, excluirEstoqueSemen, type Touro, type TouroIn } from "@/lib/api";
 import type { AnimalRow } from "./AnimalModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
 import { TouroDetalheModal } from "./TouroDetalheModal";
@@ -202,6 +202,16 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const ordEstoque = useOrdenacao(estoqueFiltrado);
   const ordNaab = useOrdenacao(naabFiltrado);
 
+  const excluirDoEstoque = async (e: EstoqueSemenItem) => {
+    if (!window.confirm(`Excluir "${e.touro_nome}" do estoque de sêmen? Esta ação não pode ser desfeita.`)) return;
+    try {
+      await excluirEstoqueSemen(e.id);
+      setEstoque((prev) => (prev ?? []).filter((x) => x.id !== e.id));
+    } catch (err: any) {
+      alert(err.message || "Erro ao excluir sêmen do estoque");
+    }
+  };
+
   const salvarEdicaoEstoque = async (d: EstoqueSemenItem) => {
     const atualizado = await atualizarEstoqueSemen(d.id, {
       touro_nome: d.touro_nome.trim(), codigo: d.codigo || undefined, naab: d.naab || undefined,
@@ -321,6 +331,10 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                         <button onClick={(ev) => { ev.stopPropagation(); setEditEstoque(e); }} title="Editar touro"
                           style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--text-muted)" }}>
                           <Pencil size={14} />
+                        </button>
+                        <button onClick={(ev) => { ev.stopPropagation(); excluirDoEstoque(e); }} title="Excluir do estoque"
+                          style={{ background: "transparent", border: "none", cursor: "pointer", color: "var(--red, #d33)", marginLeft: "0.4rem" }}>
+                          <Trash2 size={14} />
                         </button>
                       </td>
                     </tr>
