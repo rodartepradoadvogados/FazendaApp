@@ -846,6 +846,26 @@ class TestEmpreitada:
             assert conta.data_vencimento.day == 1
             assert conta.valor_total == 1000.0
 
+    def test_pagamento_no_inicio_ou_fim_da_empreita_gera_1_parcela_na_data_informada(self, client):
+        c, engine = client
+        pessoa_id = self._empreiteiro(c)
+        for tipo, data_pagamento in (("inicio_empreita", "2026-08-01"), ("fim_empreita", "2026-09-30")):
+            r = c.post("/cadastro/empreitadas", json={
+                "pessoa_id": pessoa_id, "descricao": "Roçagem pontual", "valor_total": 800.0,
+                "tipo_pagamento": tipo,
+                "parcelas": [{"data_vencimento": data_pagamento, "valor": 800.0}],
+            })
+            assert r.status_code == 200
+            dados = r.json()
+            assert len(dados["parcelas"]) == 1
+            assert dados["parcelas"][0]["data_vencimento"] == data_pagamento
+            assert dados["parcelas"][0]["valor"] == 800.0
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Empreitada")).all()
+            assert len(contas) == 2
+            assert {c.valor_total for c in contas} == {800.0}
+
     def test_rejeita_pessoa_inexistente(self, client):
         c, engine = client
         r = c.post("/cadastro/empreitadas", json={

@@ -746,7 +746,13 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
 # concluída (cada etapa gera a conta a pagar no dia 1º do mês seguinte).
 # ---------------------------------------------------------------------------
 FORMAS_PAGAMENTO_FREQUENCIA = ["mensal", "semanal", "quinzenal"]
-TIPOS_PAGAMENTO_EMPREITADA = FORMAS_PAGAMENTO_FREQUENCIA + ["por_etapa"]
+# Pagamento único numa data fixa (não recorrente) — "ao final da empreita" ou
+# "no início da empreita". O frontend pede só a data e monta 1 parcela com o
+# valor_total inteiro; entram no mesmo fluxo de `dados.parcelas` que mensal/
+# semanal/quinzenal (ver FORMAS_PAGAMENTO_PARCELA abaixo).
+FORMAS_PAGAMENTO_DATA_UNICA = ["inicio_empreita", "fim_empreita"]
+FORMAS_PAGAMENTO_PARCELA = FORMAS_PAGAMENTO_FREQUENCIA + FORMAS_PAGAMENTO_DATA_UNICA
+TIPOS_PAGAMENTO_EMPREITADA = FORMAS_PAGAMENTO_PARCELA + ["por_etapa"]
 
 
 class EmpreitadaParcelaIn(BaseModel):
@@ -763,10 +769,11 @@ class EmpreitadaIn(BaseModel):
     pessoa_id: int
     descricao: str
     valor_total: float
-    tipo_pagamento: str  # mensal | semanal | quinzenal | por_etapa
+    tipo_pagamento: str  # mensal | semanal | quinzenal | inicio_empreita | fim_empreita | por_etapa
     observacao: str | None = None
-    # Preenchido quando tipo_pagamento é mensal/semanal/quinzenal — já calculado
-    # e editável no frontend (mesmo padrão do parcelamento do Financeiro).
+    # Preenchido quando tipo_pagamento é mensal/semanal/quinzenal (parcelamento
+    # calculado e editável no frontend, mesmo padrão do Financeiro) ou
+    # início/fim da empreita (1 única parcela, na data informada, valor cheio).
     parcelas: list[EmpreitadaParcelaIn] = []
     # Preenchido quando tipo_pagamento == "por_etapa" — nome + valor de cada
     # etapa (dividido proporcionalmente ou lançado específico, editável).
@@ -811,7 +818,7 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.tipo_pagamento not in TIPOS_PAGAMENTO_EMPREITADA:
         raise HTTPException(status_code=400, detail="Tipo de pagamento inválido")
-    if dados.tipo_pagamento in FORMAS_PAGAMENTO_FREQUENCIA and not dados.parcelas:
+    if dados.tipo_pagamento in FORMAS_PAGAMENTO_PARCELA and not dados.parcelas:
         raise HTTPException(status_code=400, detail="Informe ao menos uma parcela para o pagamento por frequência")
     if dados.tipo_pagamento == "por_etapa" and not dados.etapas:
         raise HTTPException(status_code=400, detail="Informe ao menos uma etapa")
@@ -824,7 +831,7 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
     session.commit()
     session.refresh(empreitada)
 
-    if dados.tipo_pagamento in FORMAS_PAGAMENTO_FREQUENCIA:
+    if dados.tipo_pagamento in FORMAS_PAGAMENTO_PARCELA:
         for parcela in dados.parcelas:
             numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
             session.add(EmpreitadaParcela(
