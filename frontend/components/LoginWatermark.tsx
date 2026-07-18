@@ -20,11 +20,11 @@ export function LoginWatermark() {
       >
         <svg viewBox="0 0 1160 400" width="100%" height="auto">
           <path d="M240,305 A140,140 0 1 1 240,75"
-            fill="none" stroke="var(--dourado)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M240,75 L380,305 L520,75 L660,305 L920,75"
-            fill="none" stroke="var(--dourado)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M920,75 L920,305 A150,150 0 1,0 920,74.9"
-            fill="none" stroke="var(--dourado)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
           <text x="1015" y="272" textAnchor="middle" className="font-script" fontSize="60" fill="var(--vinho)">Milk</text>
         </svg>
       </div>

@@ -54,7 +54,7 @@ export function LancarTela() {
         {tela === "alimentacao" && <FormAlimentacao />}
         {tela === "movimentar" && <Movimentar />}
         {tela === "baixar" && <Baixar />}
-        {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} tipoInicial={tipoFinanceiroInicial} />}
+        {tela === "financeiro" && <FormFinanceiroApp onVoltar={() => setTela(null)} tipoInicial={tipoFinanceiroInicial} animais={animais.dados} />}
         {tela === "folha" && <FolhaPagamentoApp onVoltar={() => setTela(null)} />}
         {tela === "estoque" && (
           <BalancoEstoque
