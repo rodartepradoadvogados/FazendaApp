@@ -16,14 +16,26 @@ export function MultiFiltro({
   selecionados,
   onChange,
   formatar,
+  permitirNovo,
+  onAdicionarNovo,
+  placeholderNovo,
 }: {
   label: string;
   opcoes: string[];
   selecionados: string[];
   onChange: (v: string[]) => void;
   formatar?: (v: string) => string;
+  // Quando true, mostra um campo "+ novo" dentro do próprio painel — corrige o
+  // caso de opções que não vêm de um cadastro fixo (ex.: categoria-alvo livre
+  // do calendário sanitário): sem isso, depois de adicionar a 1ª opção por um
+  // campo externo, reabrir o painel para escolher a 2ª só mostrava o que já
+  // tinha sido marcado, sem nada novo para selecionar.
+  permitirNovo?: boolean;
+  onAdicionarNovo?: (valor: string) => void;
+  placeholderNovo?: string;
 }) {
   const [aberto, setAberto] = useState(false);
+  const [novoValor, setNovoValor] = useState("");
   const ref = useRef<HTMLDivElement>(null);
   const painelRef = useRef<HTMLDivElement>(null);
   const [posicao, setPosicao] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -88,6 +100,26 @@ export function MultiFiltro({
           background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
           boxShadow: "0 8px 24px rgba(0,0,0,0.18)", maxHeight: "260px", overflowY: "auto", padding: "0.25rem",
         }}>
+          {permitirNovo && (
+            <div style={{ display: "flex", gap: "0.3rem", padding: "0.3rem 0.5rem" }}>
+              <input
+                value={novoValor} onChange={(e) => setNovoValor(e.target.value)}
+                placeholder={placeholderNovo || "+ novo…"} autoFocus
+                style={{ flex: 1, minWidth: 0, fontSize: "0.75rem", padding: "0.25rem 0.4rem", border: "1px solid var(--border)", borderRadius: 5, background: "var(--surface-2)", color: "var(--text)" }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || !novoValor.trim()) return;
+                  e.preventDefault();
+                  onAdicionarNovo?.(novoValor.trim());
+                  setNovoValor("");
+                }}
+              />
+              <button type="button"
+                onClick={() => { if (!novoValor.trim()) return; onAdicionarNovo?.(novoValor.trim()); setNovoValor(""); }}
+                style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem", border: "1px solid var(--border)", borderRadius: 5, background: "var(--surface-2)", color: "var(--text)", cursor: "pointer", whiteSpace: "nowrap" }}>
+                Adicionar
+              </button>
+            </div>
+          )}
           {selecionados.length > 0 && (
             <button type="button" onClick={() => onChange([])}
               style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer",
