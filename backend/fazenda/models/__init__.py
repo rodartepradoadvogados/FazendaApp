@@ -470,6 +470,9 @@ class ContaGerencial(SQLModel, table=True):
     fornecedor_cliente: Optional[str] = None
     numero_nota: Optional[str] = None  # número do documento (nota fiscal, recibo, fatura...)
     tipo_documento: Optional[str] = None  # nota fiscal | recibo | folha de pagamento | fatura | contrato
+    # Item de consulta À PARTE do número do documento — nº da ordem de serviço
+    # (OS) ou do orçamento que originou a compra, quando houver.
+    numero_os_orcamento: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
     conta_bancaria: Optional[str] = None
     forma_pagamento: Optional[str] = None  # pix | transferencia | boleto | credito
@@ -481,6 +484,10 @@ class ContaGerencial(SQLModel, table=True):
     desconto_acrescimo: Optional[float] = None
     parcela_num: Optional[int] = None
     parcela_total: Optional[int] = None
+    # Linha digitável/número do boleto DESTA parcela — opcional para o usuário
+    # preencher, mas o sistema tenta extrair sozinho ao importar um boleto
+    # (ver rules/leitura_documento.py); nunca bloqueia o lançamento se faltar.
+    numero_boleto: Optional[str] = None
     responsavel: Optional[str] = None
     centro_custo: Optional[str] = None
     tipo: Optional[str] = None
@@ -517,6 +524,23 @@ class LancamentoItem(SQLModel, table=True):
     valor_unitario: Optional[float] = None
     valor_total: float
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Anexo de lançamento financeiro (ex.: boleto de um parcelamento) — o conteúdo
+# fica no próprio banco (bytes), sem depender de disco persistente no deploy.
+# ---------------------------------------------------------------------------
+class LancamentoAnexo(SQLModel, table=True):
+    __tablename__ = "lancamento_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: str = Field(index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    conteudo: bytes
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
 # ---------------------------------------------------------------------------

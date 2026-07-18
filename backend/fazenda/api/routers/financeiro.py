@@ -13,9 +13,10 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
+from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, LancamentoItem, MovimentoEstoque,
-    Patrimonio, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
+    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, LancamentoAnexo, LancamentoItem,
+    MovimentoEstoque, Patrimonio, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
@@ -161,6 +162,9 @@ def normalizar_centros_custo(session: Session) -> None:
 class ParcelaIn(BaseModel):
     data_vencimento: date
     valor: float
+    # Linha digitável/número do boleto DESTA parcela — opcional, preenchido
+    # manualmente ou extraído automaticamente ao importar o boleto.
+    numero_boleto: Optional[str] = None
 
 
 class ItemIn(BaseModel):
@@ -182,6 +186,9 @@ class LancamentoIn(BaseModel):
     responsavel: Optional[str] = None
     tipo_documento: Optional[str] = None
     numero_documento: Optional[str] = None
+    # Item de consulta À PARTE do número do documento — nº da ordem de
+    # serviço (OS) ou do orçamento que originou a compra, quando houver.
+    numero_os_orcamento: Optional[str] = None
     data_emissao: Optional[date] = None
     data_vencimento: Optional[date] = None  # vencimento do lançamento não-parcelado (vai p/ contas a pagar e agenda)
     data_competencia: Optional[date] = None
@@ -191,6 +198,9 @@ class LancamentoIn(BaseModel):
     desconto: float = 0
     acrescimo: float = 0
     parcelas: list[ParcelaIn] = []
+    # Só para o lançamento SEM parcelamento (parcela única) — nas parcelas,
+    # cada uma tem o seu próprio ParcelaIn.numero_boleto.
+    numero_boleto: Optional[str] = None
     # Preenchidos só quando o lançamento já nasce pago/recebido (sem parcelamento).
     data_pagamento: Optional[date] = None
     valor_pago: Optional[float] = None
@@ -351,6 +361,8 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "responsavel": c.responsavel,
             "tipo_documento": c.tipo_documento,
             "numero_documento": c.numero_nota,
+            "numero_os_orcamento": c.numero_os_orcamento,
+            "numero_boleto": c.numero_boleto,
             "numero_documento_pagamento": c.numero_documento_pagamento,
             "conta_bancaria": c.conta_bancaria,
             "forma_pagamento": c.forma_pagamento,
@@ -876,6 +888,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,
         numero_nota=dados.numero_documento,
+        numero_os_orcamento=dados.numero_os_orcamento,
         data_emissao=dados.data_emissao,
         data_competencia=data_competencia,
         data_prevista_entrada=dados.data_prevista_entrada,
@@ -903,6 +916,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
                 valor_total=p.valor,
                 parcela_num=i,
                 parcela_total=total_parcelas,
+                numero_boleto=p.numero_boleto,
             ))
     else:
         registro = ContaGerencial(
@@ -913,6 +927,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
             valor_total=valor_liquido,
             parcela_num=1,
             parcela_total=1,
+            numero_boleto=dados.numero_boleto,
         )
         if dados.data_pagamento:
             registro.data_pagamento = dados.data_pagamento
@@ -955,6 +970,8 @@ class LancamentoEditIn(BaseModel):
     centro_custo: Optional[str] = None
     fornecedor_cliente: Optional[str] = None
     numero_nota: Optional[str] = None
+    numero_os_orcamento: Optional[str] = None
+    numero_boleto: Optional[str] = None
     numero_documento_pagamento: Optional[str] = None
     tipo_documento: Optional[str] = None
     data_emissao: Optional[date] = None
@@ -1132,6 +1149,73 @@ async def ler_documento_anexado(file: UploadFile) -> dict:
         raise HTTPException(status_code=503, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler o documento: {e}")
+
+
+# Tamanho máximo por anexo (boleto, contrato etc.) — o conteúdo fica no banco,
+# então um limite generoso evita que um arquivo enorme infle a tabela à toa.
+TAMANHO_MAXIMO_ANEXO = 15 * 1024 * 1024  # 15 MB
+
+
+@router.post("/lancamentos/{numero_lancamento}/anexos", status_code=201)
+async def anexar_arquivo_lancamento(
+    numero_lancamento: str, file: UploadFile,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """Anexa um arquivo (ex.: boleto) a um lançamento já criado — várias chamadas
+    para vários arquivos do mesmo lançamento (um boleto por parcela, por
+    exemplo). Não faz nenhuma leitura/OCR aqui; isso já aconteceu, se foi o
+    caso, em /ler-documento antes de o lançamento ser salvo."""
+    if not session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first():
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    anexo = LancamentoAnexo(
+        numero_lancamento=numero_lancamento,
+        nome_arquivo=file.filename or "arquivo",
+        mime_type=file.content_type or "application/octet-stream",
+        tamanho_bytes=len(conteudo),
+        conteudo=conteudo,
+        usuario_id=user.id if isinstance(user, Usuario) else None,
+    )
+    session.add(anexo)
+    session.commit()
+    session.refresh(anexo)
+    return {"id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type, "tamanho_bytes": anexo.tamanho_bytes}
+
+
+@router.get("/lancamentos/{numero_lancamento}/anexos")
+def listar_anexos_lancamento(numero_lancamento: str, session: Session = Depends(get_session)) -> list[dict]:
+    """Metadados dos anexos do lançamento — sem o conteúdo (ver /anexos/{id} p/ baixar)."""
+    anexos = session.exec(
+        select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
+    ).all()
+    return [
+        {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
+         "criado_em": a.criado_em.isoformat()}
+        for a in anexos
+    ]
+
+
+@router.get("/anexos/{anexo_id}")
+def baixar_anexo(anexo_id: int, session: Session = Depends(get_session)) -> Response:
+    anexo = session.get(LancamentoAnexo, anexo_id)
+    if not anexo:
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    return Response(
+        content=anexo.conteudo, media_type=anexo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
+    )
+
+
+@router.delete("/anexos/{anexo_id}")
+def excluir_anexo(anexo_id: int, session: Session = Depends(get_session)) -> dict:
+    anexo = session.get(LancamentoAnexo, anexo_id)
+    if not anexo:
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    session.delete(anexo)
+    session.commit()
+    return {"excluido": True}
 
 
 @router.get("/contas-a-pagar")

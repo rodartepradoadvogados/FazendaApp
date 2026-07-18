@@ -259,6 +259,100 @@ class TestLancamentoMultiplosItens:
         assert len(registro["itens"]) == 2
 
 
+class TestNumeroOsOrcamentoENumeroBoleto:
+    """Nº da OS/orçamento é um campo de consulta à parte do nº do documento;
+    nº do boleto é opcional e vale por parcela (cada parcela pode ter o seu)."""
+
+    def test_numero_documento_e_numero_os_orcamento_sao_campos_distintos(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Peças", "valor_total": 400.0}],
+            "numero_documento": "NF-1234",
+            "numero_os_orcamento": "OS-777",
+        })
+        assert r.status_code == 201
+        numero = r.json()["numero_lancamento"]
+        registro = next(l for l in c.get("/financeiro/lancamentos").json()["lancamentos"] if l["numero_lancamento"] == numero)
+        assert registro["numero_documento"] == "NF-1234"
+        assert registro["numero_os_orcamento"] == "OS-777"
+
+    def test_numero_boleto_por_parcela_no_lancamento_parcelado(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "Insumo", "valor_total": 1200.0}],
+            "parcelas": [
+                {"data_vencimento": "2026-08-10", "valor": 600.0, "numero_boleto": "111.11"},
+                {"data_vencimento": "2026-09-10", "valor": 600.0, "numero_boleto": "222.22"},
+            ],
+        })
+        assert r.status_code == 201
+        numero = r.json()["numero_lancamento"]
+        parcelas = sorted(
+            (l for l in c.get("/financeiro/lancamentos").json()["lancamentos"] if l["numero_lancamento"] == numero),
+            key=lambda l: l["parcela_num"],
+        )
+        assert [p["numero_boleto"] for p in parcelas] == ["111.11", "222.22"]
+
+    def test_edicao_do_lancamento_atualiza_os_orcamento_e_numero_boleto(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [{"produto": "X", "valor_total": 100.0}]})
+        lanc_id = r.json()["ids"][0]
+        r2 = c.put(f"/financeiro/lancamentos/{lanc_id}", json={"numero_os_orcamento": "ORC-55", "numero_boleto": "999"})
+        assert r2.status_code == 200
+        assert r2.json()["numero_os_orcamento"] == "ORC-55"
+        assert r2.json()["numero_boleto"] == "999"
+
+
+class TestAnexosLancamento:
+    def _criar_lancamento(self, c) -> str:
+        r = c.post("/financeiro/lancamentos", json={"tipo": "despesa", "itens": [{"produto": "Insumo", "valor_total": 500.0}]})
+        return r.json()["numero_lancamento"]
+
+    def test_anexa_e_lista_arquivo(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        r = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("boleto.pdf", b"%PDF-1.4 conteudo", "application/pdf")})
+        assert r.status_code == 201
+        assert r.json()["nome_arquivo"] == "boleto.pdf"
+
+        listagem = c.get(f"/financeiro/lancamentos/{numero}/anexos").json()
+        assert len(listagem) == 1
+        assert listagem[0]["mime_type"] == "application/pdf"
+
+    def test_anexa_varios_arquivos_ao_mesmo_lancamento(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        for i in range(3):
+            r = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": (f"boleto{i}.pdf", b"conteudo", "application/pdf")})
+            assert r.status_code == 201
+        assert len(c.get(f"/financeiro/lancamentos/{numero}/anexos").json()) == 3
+
+    def test_anexo_de_lancamento_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/financeiro/lancamentos/LC-9999-99999/anexos", files={"file": ("x.pdf", b"conteudo", "application/pdf")})
+        assert r.status_code == 404
+
+    def test_baixa_o_conteudo_do_anexo(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        conteudo = b"%PDF-1.4 conteudo do boleto"
+        anexo_id = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("boleto.pdf", conteudo, "application/pdf")}).json()["id"]
+        r = c.get(f"/financeiro/anexos/{anexo_id}")
+        assert r.status_code == 200
+        assert r.content == conteudo
+        assert r.headers["content-type"] == "application/pdf"
+
+    def test_exclui_anexo(self, client):
+        c, _ = client
+        numero = self._criar_lancamento(c)
+        anexo_id = c.post(f"/financeiro/lancamentos/{numero}/anexos", files={"file": ("boleto.pdf", b"conteudo", "application/pdf")}).json()["id"]
+        assert c.delete(f"/financeiro/anexos/{anexo_id}").status_code == 200
+        assert c.get(f"/financeiro/anexos/{anexo_id}").status_code == 404
+        assert c.get(f"/financeiro/lancamentos/{numero}/anexos").json() == []
+
+
 class TestPlanoContas:
     def test_traz_contas_ativas_e_de_grupo(self, client):
         c, engine = client
