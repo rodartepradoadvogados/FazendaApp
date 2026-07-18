@@ -1,5 +1,6 @@
 """Testes de compra de sêmen (Lançamentos > Compra/Venda > Comprar sêmen) —
-efeito financeiro + soma de doses ao estoque de sêmen (existente ou novo, via NAAB)."""
+efeito financeiro + soma de doses ao estoque de sêmen (existente ou novo, via
+NAAB), incluindo compras com múltiplos touros/sêmens na mesma nota fiscal."""
 from __future__ import annotations
 
 import pytest
@@ -21,7 +22,7 @@ def client():
             yield session
 
     import main
-    from fazenda.auth import get_current_user
+    from fazenda.auth import get_current_user, exigir_admin
 
     class _FakeUser:
         id = 1
@@ -31,6 +32,7 @@ def client():
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
     main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+    main.app.dependency_overrides[exigir_admin] = lambda: _FakeUser()
 
     with TestClient(main.app) as c:
         c.engine = engine
@@ -41,7 +43,9 @@ def client():
 
 def _criar_estoque_semen(engine, **kwargs) -> int:
     with Session(engine) as s:
-        item = EstoqueSemen(touro_nome="Touro da Fazenda", doses=10, tipo="convencional", **kwargs)
+        campos = dict(touro_nome="Touro da Fazenda", doses=10, tipo="convencional")
+        campos.update(kwargs)
+        item = EstoqueSemen(**campos)
         s.add(item)
         s.commit()
         s.refresh(item)
@@ -58,14 +62,13 @@ class TestRegistrarCompraSemen:
     def test_compra_de_touro_ja_em_estoque_soma_doses(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         r = client.post("/compras-semen/", json={
-            "origem": "estoque", "estoque_semen_id": estoque_id,
-            "vendedor": "Central Genética", "valor": 50.0, "tipo_valor": "por_dose", "doses": 20,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 20}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["doses_compradas"] == 20
-        assert corpo["estoque_semen_id"] == estoque_id
+        assert corpo["estoque_semen_ids"] == [estoque_id]
 
         with Session(client.engine) as s:
             estoque = s.get(EstoqueSemen, estoque_id)
@@ -76,6 +79,7 @@ class TestRegistrarCompraSemen:
             assert conta is not None
             assert conta.tipo == "despesa"
             assert conta.valor_total == 1000.0  # 20 x 50
+            assert conta.valor_unitario == 50.0  # único item — resumo preenchido
 
             registro = s.exec(select(CompraSemen)).first()
             assert registro.origem == "estoque"
@@ -85,9 +89,8 @@ class TestRegistrarCompraSemen:
     def test_compra_valor_total_calcula_valor_por_dose(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         client.post("/compras-semen/", json={
-            "origem": "estoque", "estoque_semen_id": estoque_id,
-            "vendedor": "Central Genética", "valor": 900.0, "tipo_valor": "total", "doses": 18,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 900.0, "tipo_valor": "total", "doses": 18}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         with Session(client.engine) as s:
             conta = s.exec(select(ContaGerencial).where(ContaGerencial.codigo_conta == "3.01.02.01")).first()
@@ -97,9 +100,8 @@ class TestRegistrarCompraSemen:
     def test_compra_de_touro_naab_novo_cria_linha_de_estoque(self, client):
         _criar_touro_naab(client.engine)
         r = client.post("/compras-semen/", json={
-            "origem": "naab", "naab": "7HO12345", "touro_nome": "Supersire",
-            "vendedor": "ABS Brasil", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "naab", "naab": "7HO12345", "touro_nome": "Supersire", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "ABS Brasil", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         assert r.status_code == 200
         with Session(client.engine) as s:
@@ -113,9 +115,8 @@ class TestRegistrarCompraSemen:
         _criar_touro_naab(client.engine)
         estoque_id = _criar_estoque_semen(client.engine, naab="7HO12345")
         client.post("/compras-semen/", json={
-            "origem": "naab", "naab": "7HO12345", "touro_nome": "Supersire",
-            "vendedor": "ABS Brasil", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "naab", "naab": "7HO12345", "touro_nome": "Supersire", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "ABS Brasil", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         with Session(client.engine) as s:
             linhas = s.exec(select(EstoqueSemen).where(EstoqueSemen.naab == "7HO12345")).all()
@@ -126,37 +127,155 @@ class TestRegistrarCompraSemen:
     def test_compra_exige_conta_gerencial_de_semen(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         r = client.post("/compras-semen/", json={
-            "origem": "estoque", "estoque_semen_id": estoque_id,
-            "vendedor": "Central Genética", "valor": 50.0, "tipo_valor": "por_dose", "doses": 10,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.10.06",
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.10.06",
         })
         assert r.status_code == 400
 
     def test_compra_naab_inexistente_da_404(self, client):
         r = client.post("/compras-semen/", json={
-            "origem": "naab", "naab": "NAOEXISTE", "touro_nome": "Fantasma",
-            "vendedor": "ABS Brasil", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "naab", "naab": "NAOEXISTE", "touro_nome": "Fantasma", "valor": 80.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "ABS Brasil", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         assert r.status_code == 404
 
     def test_compra_exige_doses_positivas(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         r = client.post("/compras-semen/", json={
-            "origem": "estoque", "estoque_semen_id": estoque_id,
-            "vendedor": "Central Genética", "valor": 50.0, "tipo_valor": "por_dose", "doses": 0,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 0}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        assert r.status_code == 400
+
+    def test_compra_exige_ao_menos_um_item(self, client):
+        r = client.post("/compras-semen/", json={
+            "itens": [], "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         assert r.status_code == 400
 
     def test_lista_compras_registradas(self, client):
         estoque_id = _criar_estoque_semen(client.engine)
         client.post("/compras-semen/", json={
-            "origem": "estoque", "estoque_semen_id": estoque_id,
-            "vendedor": "Central Genética", "valor": 50.0, "tipo_valor": "por_dose", "doses": 10,
-            "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
         })
         r = client.get("/compras-semen/")
         assert r.status_code == 200
         assert len(r.json()) == 1
         assert r.json()[0]["doses"] == 10
+
+
+class TestCompraSemenMultiItem:
+    """Vários touros/sêmens na mesma compra — mesma nota fiscal/parcelamento
+    (o pedido do usuário: "vincular à mesma nota fiscal, mesmos boletos")."""
+
+    def test_dois_touros_compartilham_numero_lancamento_e_valor_somado(self, client):
+        estoque_id_1 = _criar_estoque_semen(client.engine)
+        _criar_touro_naab(client.engine, naab="7HO99999", nome="Outro Touro")
+        r = client.post("/compras-semen/", json={
+            "itens": [
+                {"origem": "estoque", "estoque_semen_id": estoque_id_1, "valor": 50.0, "tipo_valor": "por_dose", "doses": 10},
+                {"origem": "naab", "naab": "7HO99999", "touro_nome": "Outro Touro", "valor": 700.0, "tipo_valor": "total", "doses": 14},
+            ],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["doses_compradas"] == 24
+        assert len(corpo["estoque_semen_ids"]) == 2
+
+        with Session(client.engine) as s:
+            estoque_1 = s.get(EstoqueSemen, estoque_id_1)
+            assert estoque_1.doses == 20  # 10 + 10
+
+            estoque_2 = s.exec(select(EstoqueSemen).where(EstoqueSemen.naab == "7HO99999")).first()
+            assert estoque_2.doses == 14
+            assert estoque_2.valor_unitario == 50.0  # 700 / 14
+
+            compras = s.exec(select(CompraSemen)).all()
+            assert len(compras) == 2
+            numeros = {c.numero_lancamento_gerado for c in compras}
+            assert len(numeros) == 1  # mesma nota fiscal para os dois itens
+
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numeros.pop())).all()
+            assert len(contas) == 1  # não parcelado → 1 linha só, valor somado dos 2 itens
+            assert contas[0].valor_total == 500.0 + 700.0
+            assert contas[0].valor_unitario is None  # 2 itens com valores/dose distintos — sem resumo único
+            assert contas[0].quantidade == 24
+
+    def test_multi_item_parcelado_gera_uma_parcela_por_entrada_compartilhada(self, client):
+        estoque_id_1 = _criar_estoque_semen(client.engine)
+        estoque_id_2 = _criar_estoque_semen(client.engine, touro_nome="Segundo Touro")
+        r = client.post("/compras-semen/", json={
+            "itens": [
+                {"origem": "estoque", "estoque_semen_id": estoque_id_1, "valor": 40.0, "tipo_valor": "por_dose", "doses": 10},
+                {"origem": "estoque", "estoque_semen_id": estoque_id_2, "valor": 60.0, "tipo_valor": "por_dose", "doses": 10},
+            ],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+            "parcelas": [
+                {"data_vencimento": "2026-08-10", "valor": 500.0},
+                {"data_vencimento": "2026-09-10", "valor": 500.0},
+            ],
+        })
+        assert r.status_code == 200
+        numero_lancamento = r.json()["numero_lancamento"]
+        with Session(client.engine) as s:
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).all()
+            assert len(contas) == 2  # 2 parcelas, compartilhadas pelos 2 itens
+            assert sum(c.valor_total for c in contas) == 1000.0
+
+    def test_exclusao_de_um_item_nao_apaga_lancamento_compartilhado_com_irmao(self, client):
+        estoque_id_1 = _criar_estoque_semen(client.engine)
+        estoque_id_2 = _criar_estoque_semen(client.engine, touro_nome="Segundo Touro")
+        r = client.post("/compras-semen/", json={
+            "itens": [
+                {"origem": "estoque", "estoque_semen_id": estoque_id_1, "valor": 40.0, "tipo_valor": "por_dose", "doses": 10},
+                {"origem": "estoque", "estoque_semen_id": estoque_id_2, "valor": 60.0, "tipo_valor": "por_dose", "doses": 5},
+            ],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        assert r.status_code == 200
+        numero_lancamento = r.json()["numero_lancamento"]
+
+        with Session(client.engine) as s:
+            compras = s.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == numero_lancamento)).all()
+            compra_do_item_2 = next(c for c in compras if c.estoque_semen_id == estoque_id_2)
+
+        # Prévia de impacto deve avisar que é parte de uma compra com mais itens.
+        r_impacto = client.post("/exclusoes/impacto", json={"tipo": "compra_semen", "id": str(compra_do_item_2.id)})
+        assert r_impacto.status_code == 200
+        assert any("mais 1 sêmen/touro" in linha for linha in r_impacto.json()["impacto"])
+
+        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra_do_item_2.id)})
+        assert r_confirma.status_code == 200
+
+        with Session(client.engine) as s:
+            # O item excluído sumiu e teve suas doses revertidas...
+            assert s.get(CompraSemen, compra_do_item_2.id) is None
+            estoque_2 = s.get(EstoqueSemen, estoque_id_2)
+            assert estoque_2.doses == 10  # 10 iniciais + 5 compradas - 5 revertidas
+
+            # ...mas o item irmão e o lançamento financeiro compartilhado continuam intactos.
+            compras_restantes = s.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == numero_lancamento)).all()
+            assert len(compras_restantes) == 1
+            assert compras_restantes[0].estoque_semen_id == estoque_id_1
+
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).all()
+            assert len(contas) == 1
+
+    def test_exclusao_do_ultimo_item_apaga_lancamento_financeiro(self, client):
+        estoque_id = _criar_estoque_semen(client.engine)
+        r = client.post("/compras-semen/", json={
+            "itens": [{"origem": "estoque", "estoque_semen_id": estoque_id, "valor": 50.0, "tipo_valor": "por_dose", "doses": 10}],
+            "vendedor": "Central Genética", "data_compra": "2026-07-10", "codigo_conta_gerencial": "3.01.02.01",
+        })
+        numero_lancamento = r.json()["numero_lancamento"]
+        with Session(client.engine) as s:
+            compra = s.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == numero_lancamento)).first()
+
+        r_confirma = client.post("/exclusoes/confirmar", json={"tipo": "compra_semen", "id": str(compra.id)})
+        assert r_confirma.status_code == 200
+        with Session(client.engine) as s:
+            assert s.get(CompraSemen, compra.id) is None
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).all()
+            assert len(contas) == 0

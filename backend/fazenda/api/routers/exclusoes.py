@@ -639,18 +639,32 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
             raise HTTPException(status_code=404, detail="Compra de sêmen não encontrada")
         impacto = [f"Compra de {c.doses} dose(s) de sêmen — {c.touro_nome} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor_unitario or 0:,.2f}/dose)"]
         objetos: list = [c]
-        contas = (
-            session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
-            if c.numero_lancamento_gerado else []
-        )
-        if contas:
-            impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
         estoque = session.get(EstoqueSemen, c.estoque_semen_id)
         if estoque:
             impacto.append(f"{c.doses} dose(s) serão subtraídas do estoque de sêmen de {estoque.touro_nome} (saldo atual: {estoque.doses})")
             estoque.doses = estoque.doses - c.doses
             session.add(estoque)
-        objetos += contas
+        # Uma compra pode ter vários touros/sêmens lançados na mesma nota
+        # (mesmo numero_lancamento_gerado) — o lançamento financeiro só é
+        # apagado junto quando este é o ÚLTIMO item daquela nota; do
+        # contrário, ele continua valendo para os itens irmãos restantes.
+        irmaos = (
+            session.exec(select(CompraSemen).where(CompraSemen.numero_lancamento_gerado == c.numero_lancamento_gerado)).all()
+            if c.numero_lancamento_gerado else [c]
+        )
+        if len(irmaos) > 1:
+            impacto.append(
+                f"Faz parte de uma compra com mais {len(irmaos) - 1} sêmen/touro(s) na mesma nota — o "
+                "lançamento financeiro continua intacto, pois ainda vale para os demais itens."
+            )
+        else:
+            contas = (
+                session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == c.numero_lancamento_gerado)).all()
+                if c.numero_lancamento_gerado else []
+            )
+            if contas:
+                impacto.append(f"Lançamento financeiro {c.numero_lancamento_gerado} (R$ {sum(x.valor_total or 0 for x in contas):,.2f})")
+            objetos += contas
         return impacto, objetos
 
     if tipo == "lote":

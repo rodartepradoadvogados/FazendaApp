@@ -2410,9 +2410,50 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   const [veterinario, setVeterinario] = useState("");
   const [vinculo, setVinculo] = useState<"animal" | "lote" | "categoria">("animal");
   const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
-  const [loteSel, setLoteSel] = useState("");
-  const [categoria, setCategoria] = useState("");
-  const [animaisCategoria, setAnimaisCategoria] = useState<string[] | null>(null);
+
+  // Lote: pode selecionar mais de um — janela suspensa mostra só os animais
+  // dos lotes escolhidos, com "selecionar todos" (mesmo padrão da Inseminação).
+  const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
+  const codigosLotesTodos = useMemo(
+    () => Array.from(new Set(animais.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [animais]
+  );
+  const animaisDosLotesSel = useMemo(() => {
+    const cods = new Set(lotesSelecionados);
+    return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [animais, lotesSelecionados]);
+  const [selDosLotes, setSelDosLotes] = useState<Set<string>>(new Set());
+  const toggleDosLotes = (n: string) => setSelDosLotes((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelDosLotes(new Set(animaisDosLotesSel.map((a) => a.numero)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lotesSelecionados.join("|")]);
+
+  // Categoria: pode escolher mais de uma — ao concluir, abre janela suspensa
+  // com a união dos animais de todas as categorias marcadas.
+  const [categoriasSel, setCategoriasSel] = useState<Set<string>>(new Set());
+  const toggleCategoria = (id: string) => setCategoriasSel((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const [animaisCategoriasUniao, setAnimaisCategoriasUniao] = useState<string[]>([]);
+  useEffect(() => {
+    if (!categoriasSel.size) { setAnimaisCategoriasUniao([]); return; }
+    Promise.all(Array.from(categoriasSel).map((id) => {
+      const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === id);
+      if (!cat) return Promise.resolve([] as string[]);
+      return previewCriteriosLote(cat.criterios).then((r: any) => r.animais || []).catch(() => [] as string[]);
+    })).then((listas) => setAnimaisCategoriasUniao(Array.from(new Set(listas.flat()))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Array.from(categoriasSel).sort().join("|")]);
+  const animaisDasCategoriasSel = useMemo(() => {
+    const nums = new Set(animaisCategoriasUniao);
+    return animais.filter((a) => nums.has(a.numero));
+  }, [animais, animaisCategoriasUniao]);
+  const [selDasCategorias, setSelDasCategorias] = useState<Set<string>>(new Set());
+  const toggleDasCategorias = (n: string) => setSelDasCategorias((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelDasCategorias(new Set(animaisCategoriasUniao));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [animaisCategoriasUniao.join("|")]);
+
   const [realizado, setRealizado] = useState(false);
   // "Já foi aplicado?" — só para vacina/tratamento (exame usa o checkbox "realizado" abaixo,
   // já que não existe uma aplicação de produto para exame). Não aplicado ainda vira
@@ -2462,27 +2503,36 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [usarSubstituto]);
 
-  useEffect(() => {
-    if (vinculo !== "categoria" || !categoria) { setAnimaisCategoria(null); return; }
-    const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === categoria);
-    if (!cat) return;
-    previewCriteriosLote(cat.criterios).then((r: any) => setAnimaisCategoria(r.animais || [])).catch(() => setAnimaisCategoria([]));
-  }, [vinculo, categoria]);
-
-  const animaisDoLote = useMemo(() => {
-    if (vinculo !== "lote" || !loteSel) return [];
-    const cod = codigoGrupo(loteSel);
-    return animais.filter((a) => codigoGrupo(a.grupo_primario) === cod).map((a) => a.numero);
-  }, [vinculo, loteSel, animais]);
-
   const numeros = useMemo(() => {
     if (vinculo === "animal") return Array.from(animaisSel);
-    if (vinculo === "lote") return animaisDoLote;
-    return animaisCategoria || [];
-  }, [vinculo, animaisSel, animaisDoLote, animaisCategoria]);
+    if (vinculo === "lote") return Array.from(selDosLotes);
+    return Array.from(selDasCategorias);
+  }, [vinculo, animaisSel, selDosLotes, selDasCategorias]);
 
-  const alvoLabel = vinculo === "lote" ? loteSel
-    : vinculo === "categoria" ? (CATEGORIAS_ANIMAIS.find((c) => c.id === categoria)?.label || "")
+  // Regra já existente no calendário sanitário para o mesmo evento preventivo
+  // — pergunta se o usuário quer lançar o próximo evento já agendado (puxa
+  // data/frequência dela) ou se é mesmo um lançamento avulso/novo.
+  const [regraExistente, setRegraExistente] = useState<any | null>(null);
+  const [decisaoRegra, setDecisaoRegra] = useState<"existente" | "novo" | null>(null);
+  useEffect(() => {
+    setRegraExistente(null);
+    setDecisaoRegra(null);
+    if (!eventoId || eventoAgenda) return;
+    fetchCalendarioSanitario({ eventoSanitarioId: Number(eventoId) })
+      .then((regras: any[]) => { if (regras.length) setRegraExistente(regras[0]); })
+      .catch(() => {});
+  }, [eventoId, eventoAgenda]);
+  const usarRegraExistente = () => {
+    if (!regraExistente) return;
+    setDataEvento(regraExistente.proxima_ocorrencia || regraExistente.data_evento);
+    setFreqValor(String(regraExistente.frequencia_valor));
+    setFreqUnidade(regraExistente.frequencia_unidade);
+    if (regraExistente.veterinario) setVeterinario(regraExistente.veterinario);
+    setDecisaoRegra("existente");
+  };
+
+  const alvoLabel = vinculo === "lote" ? lotesSelecionados.join(", ")
+    : vinculo === "categoria" ? Array.from(categoriasSel).map((id) => CATEGORIAS_ANIMAIS.find((c) => c.id === id)?.label).filter(Boolean).join(", ")
     : "";
 
   const toggle = (n: string) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
@@ -2492,12 +2542,16 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
     setMsg(null);
     if (!eventoId) { setMsg({ tipo: "erro", txt: "Escolha o evento preventivo." }); return; }
     if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
+    // "Repetir a cada" aceita 0 — 0 significa "não repetir", isto é, um
+    // lançamento avulso que não entra no calendário sanitário (cadastrar-
+    // Preventivo do backend já cuida disso quando frequencia_valor == 0).
+    const freqValorNum = freqValor.trim() === "" ? 1 : Number(freqValor);
     setSalvando(true);
     try {
       const substituto = usarSubstituto && produtoSubstituto ? estoquePorNome.get(produtoSubstituto) : undefined;
       const r = await cadastrarPreventivo({
         evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
-        frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
+        frequencia_valor: freqValorNum, frequencia_unidade: freqUnidade,
         animais: numeros, aplicar: !ehExame, aplicado, veterinario: veterinario || null,
         produto: substituto?.nome, unidade: substituto?.unidade,
       });
@@ -2516,7 +2570,7 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
       const nApl = r?.aplicacao ? (r.aplicacao.criados || r.aplicacao.agendadas || 0) : 0;
       const agendado = !ehExame && !aplicado && nApl > 0;
       setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)${agendado ? " programada(s) na Agenda" : ""}` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}.` });
-      setAnimaisSel(new Set());
+      setAnimaisSel(new Set()); setLotesSelecionados([]); setCategoriasSel(new Set());
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
     finally { setSalvando(false); }
   }
@@ -2534,11 +2588,12 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         <Campo label="Data de referência"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
         <Campo label="Repetir a cada">
           <div className="flex items-center gap-2">
-            <input type="number" min={1} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+            <input type="number" min={0} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
             <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
               {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
             </select>
           </div>
+          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>0 = não repetir — evento avulso, não entra no calendário sanitário.</p>
         </Campo>
         {ehExame && (
           <Campo label="Veterinário (exame)"><input style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" /></Campo>
@@ -2568,6 +2623,26 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         </div>
       )}
 
+      {regraExistente && decisaoRegra === null && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 75, padding: "1rem" }}>
+          <div className="card" style={{ width: "480px", maxWidth: "95vw" }}>
+            <div className="card-header mb-2">Já existe uma regra agendada para este evento</div>
+            <p style={{ fontSize: "0.82rem", color: "var(--text)", marginBottom: "0.5rem" }}>
+              O evento <strong>{evento?.nome}</strong> já tem uma regra no calendário sanitário
+              {regraExistente.categoria_alvo ? <> para <strong>{regraExistente.categoria_alvo}</strong></> : ""},
+              {" "}com próxima ocorrência em <strong>{new Date(regraExistente.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR")}</strong> (repete a cada {regraExistente.frequencia_valor} {regraExistente.frequencia_unidade}).
+            </p>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Deseja lançar o próximo evento já agendado (a data e a frequência abaixo serão preenchidas automaticamente) ou é um novo evento avulso?
+            </p>
+            <div className="flex items-center gap-3">
+              <button className="btn-primary" onClick={usarRegraExistente}>Usar o evento já agendado</button>
+              <button className="btn-ghost" onClick={() => setDecisaoRegra("novo")}>É um novo evento avulso</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ marginTop: "0.85rem" }}>
         <TabBar<"animal" | "lote" | "categoria">
           abas={[{ id: "animal", label: "Animais" }, { id: "lote", label: "Lote" }, { id: "categoria", label: "Categoria" }]}
@@ -2575,28 +2650,71 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         />
       </div>
 
-      {vinculo === "lote" && (
-        <div className="mt-2"><Campo label="Lote">
-          <select style={inputStyle} value={loteSel} onChange={(e) => setLoteSel(e.target.value)}>
-            <option value="">Selecione…</option>
-            {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-          </select>
-        </Campo>
-        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>{animaisDoLote.length} animal(is) no lote.</p></div>
-      )}
-      {vinculo === "categoria" && (
-        <div className="mt-2"><Campo label="Categoria de animais (período de vida)">
-          <select style={inputStyle} value={categoria} onChange={(e) => setCategoria(e.target.value)}>
-            <option value="">Selecione…</option>
-            {CATEGORIAS_ANIMAIS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
-          </select>
-        </Campo>
-        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>{animaisCategoria ? `${animaisCategoria.length} animal(is) na categoria.` : ""}</p></div>
-      )}
       {vinculo === "animal" && (
         <div className="mt-2">
-          <SelecaoAnimaisTabela animais={animais} selecionados={animaisSel} toggle={toggle} toggleTodos={toggleTodos}
-            colunas={[{ header: "Lote", render: (a) => a.grupo_primario || "—" }, { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" }]} />
+          <AnimalPickerModal
+            animais={animais} selecionados={animaisSel} onToggle={toggle}
+            titulo="Selecionar animal(is)"
+            colunas={[
+              { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+              { header: "Lote", render: (a) => a.grupo_primario || "—" },
+              { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+            ]}
+          />
+        </div>
+      )}
+      {vinculo === "lote" && (
+        <div className="mt-2">
+          <LotePicker opcoes={opcoesLoteDeAnimais(animais, codigosLotesTodos)} selecionados={lotesSelecionados} onChange={setLotesSelecionados} placeholder="Selecionar lote(s)…" />
+          {lotesSelecionados.length > 0 && (
+            <div style={{ marginTop: "0.6rem" }}>
+              <AnimalPickerModal
+                animais={animaisDosLotesSel} selecionados={selDosLotes} onToggle={toggleDosLotes}
+                titulo="Ajustar animais do(s) lote(s) selecionado(s)"
+                placeholder="Ajustar animais do(s) lote(s)…"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                ]}
+              />
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {selDosLotes.size} de {animaisDosLotesSel.length} animal(is) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir algum.
+              </p>
+            </div>
+          )}
+        </div>
+      )}
+      {vinculo === "categoria" && (
+        <div className="mt-2">
+          <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.4rem" }}>Selecione uma ou mais categorias:</p>
+          <div className="flex flex-wrap gap-3">
+            {CATEGORIAS_ANIMAIS.map((c) => (
+              <label key={c.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                <input type="checkbox" checked={categoriasSel.has(c.id)} onChange={() => toggleCategoria(c.id)} /> {c.label}
+              </label>
+            ))}
+          </div>
+          {categoriasSel.size > 0 && (
+            <div style={{ marginTop: "0.6rem" }}>
+              <AnimalPickerModal
+                animais={animaisDasCategoriasSel} selecionados={selDasCategorias} onToggle={toggleDasCategorias}
+                titulo="Ajustar animais das categorias selecionadas"
+                placeholder="Ajustar animais das categorias…"
+                colunas={[
+                  { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                  { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                  { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
+                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                ]}
+              />
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                {selDasCategorias.size} de {animaisDasCategoriasSel.length} animal(is) na(s) categoria(s) selecionada(s) — desmarque na janela acima para excluir algum.
+              </p>
+            </div>
+          )}
         </div>
       )}
 

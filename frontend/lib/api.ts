@@ -946,9 +946,13 @@ export async function fetchComprasSemen() {
   if (!res.ok) throw new Error(`Compras de sêmen error: ${res.status}`);
   return res.json();
 }
-export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
+export type ItemCompraSemen = {
   origem: "estoque" | "naab"; estoque_semen_id?: number; naab?: string; touro_nome?: string; central?: string;
-  vendedor: string; valor: number; tipo_valor: string; doses: number; data_compra: string;
+  valor: number; tipo_valor: string; doses: number;
+};
+export async function criarCompraSemen(dados: CompraVendaCamposComuns & {
+  itens: ItemCompraSemen[];
+  vendedor: string; data_compra: string;
   observacao?: string; responsavel?: string; data_prevista_entrada?: string;
 }) {
   const res = await authFetch(`${API}/compras-semen/`, {
