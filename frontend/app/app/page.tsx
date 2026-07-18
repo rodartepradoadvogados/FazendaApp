@@ -190,6 +190,27 @@ export default function AgendaMovel() {
   const atualizarCampoBaixa = (id: string, campo: keyof CampoBaixa, valor: string) =>
     setCamposBaixa((p) => ({ ...p, [id]: { ...(p[id] || camposIniciaisBaixa({} as Evento)), [campo]: valor } }));
 
+  // Descartar pendência sem aplicar (ex.: pendência antiga substituída por um
+  // lançamento retroativo feito por fora) — mesmo mecanismo do "Realizado"
+  // (POST direto em /agenda/realizados), sem passar por cadastrar-preventivo,
+  // então nunca cria Sanidade nem baixa estoque. Espelha o botão do site.
+  const [confirmandoDescarte, setConfirmandoDescarte] = useState<Set<string>>(new Set());
+  const [descartando, setDescartando] = useState<Set<string>>(new Set());
+  async function descartarPendencia(e: Evento) {
+    setDescartando((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/agenda/realizados", { evento_id: e.id }, `Descartar: ${resumo(e)}`, "POST");
+      setFeitos((p) => new Set(p).add(e.id));
+      setBaixaAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setConfirmandoDescarte((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso(r.enviado ? { tipo: "ok", msg: "Pendência descartada (nenhuma aplicação foi registrada)." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível descartar." });
+    } finally {
+      setDescartando((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+
   async function confirmarBaixaInline(e: Evento) {
     const c = camposBaixa[e.id] || camposIniciaisBaixa(e);
     setAviso(null);
@@ -682,6 +703,22 @@ export default function AgendaMovel() {
               <button type="button" className="mob-btn" disabled={resolvendoBaixa.has(e.id)} onClick={() => confirmarBaixaInline(e)}>
                 <Check size={14} style={{ marginRight: 6 }} /> {resolvendoBaixa.has(e.id) ? "Salvando…" : "Confirmar baixa"}
               </button>
+
+              {confirmandoDescarte.has(e.id) ? (
+                <div style={{ marginTop: "0.6rem", display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.8rem" }}>
+                  <span style={{ color: "var(--mob-muted)" }}>Descartar sem aplicar?</span>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ width: "auto", padding: "0.35rem 0.8rem", color: "var(--mob-vermelho)" }}
+                    disabled={descartando.has(e.id)} onClick={() => descartarPendencia(e)}>Sim</button>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ width: "auto", padding: "0.35rem 0.8rem" }}
+                    onClick={() => setConfirmandoDescarte((p) => { const n = new Set(p); n.delete(e.id); return n; })}>Não</button>
+                </div>
+              ) : (
+                <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.6rem", color: "var(--mob-muted)" }}
+                  disabled={descartando.has(e.id)} title="Remove esta pendência da Agenda sem registrar aplicação nem baixar estoque"
+                  onClick={() => setConfirmandoDescarte((p) => new Set(p).add(e.id))}>
+                  Descartar
+                </button>
+              )}
             </div>
           )}
         </MobCard>
