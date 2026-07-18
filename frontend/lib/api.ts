@@ -39,6 +39,12 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
+// Permissão específica para publicar/gerenciar matérias do blog (News) e
+// confirmar a revisão de publicação definitiva — independente de admin (ver
+// backend/fazenda/auth.py::exigir_pode_publicar). Todo usuário nasce sem ela.
+export function podePublicarMaterias(): boolean {
+  return getUsuario()?.pode_publicar_materias_blog === true;
+}
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
   if (!res.ok) throw new Error(`Usuários error: ${res.status}`);
@@ -50,7 +56,7 @@ export async function fetchAcessos(): Promise<UsuarioAcesso[]> {
   if (!res.ok) throw new Error(`Acessos error: ${res.status}`);
   return res.json();
 }
-export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[]; email?: string }) {
+export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
@@ -2636,6 +2642,7 @@ export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; tour
 export type NoticiaNews = {
   id: number; fonte_id: number; manchete: string; resumo?: string | null; link: string;
   data_publicacao?: string | null; capturado_em: string; materia?: string | null; fontes?: string[];
+  revisado_final: boolean; revisado_final_em?: string | null; revisado_final_por?: string | null;
 };
 export type NewsFeed = { janela_dias: number; fontes: { fonte: { id: number; nome: string; url: string; erro?: string | null }; noticias: NoticiaNews[] }[] };
 
@@ -2644,6 +2651,7 @@ export const fetchNoticias = (verTudo = false): Promise<NewsFeed> => _rGet(`/new
 export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[] };
 export const criarMateriaBlog = (d: MateriaBlogIn): Promise<NoticiaNews> => _rSend(`/news/materias`, "POST", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
+export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");
 
 // ── Assistente Claude (protótipo, admin-only) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };

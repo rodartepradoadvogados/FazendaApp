@@ -30,6 +30,7 @@ class NovoUsuario(BaseModel):
     papel: str = "operador"
     permissoes: list[str] = []
     email: str | None = None
+    pode_publicar_materias_blog: bool = False
 
 
 class EditarUsuario(BaseModel):
@@ -40,6 +41,7 @@ class EditarUsuario(BaseModel):
     ativo: bool | None = None
     senha: str | None = None
     email: str | None = None
+    pode_publicar_materias_blog: bool | None = None
 
 
 class PreferenciasIn(BaseModel):
@@ -51,7 +53,8 @@ def _publico(u: Usuario) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
             "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
-            "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO}
+            "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO,
+            "pode_publicar_materias_blog": u.pode_publicar_materias_blog}
 
 
 @router.post("/login")
@@ -97,7 +100,8 @@ def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_admin), sessio
         raise HTTPException(status_code=400, detail="Usuário já existe")
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
     novo = Usuario(username=dados.username, nome=dados.nome, senha_hash=hash_senha(dados.senha),
-                   papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None)
+                   papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
+                   pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
     session.add(novo)
     session.commit()
     session.refresh(novo)
@@ -128,6 +132,8 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
         u.senha_hash = hash_senha(dados.senha)
     if dados.email is not None:
         u.email = dados.email.strip() or None
+    if dados.pode_publicar_materias_blog is not None:
+        u.pode_publicar_materias_blog = dados.pode_publicar_materias_blog
     session.add(u)
     session.commit()
     session.refresh(u)

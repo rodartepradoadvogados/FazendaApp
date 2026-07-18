@@ -14,12 +14,17 @@ mesma fila de aprovação do Telegram, aparece no sininho de notificações, e s
 gera a NoticiaNews de verdade quando o administrador aprova em /aprovacoes
 (ver fazenda.rules.telegram_fluxos.criar_registro).
 
-POST /news/materias (só administrador — "Adicionar matéria ao blog", em
-Configurações > News) publica DIRETO: manchete, corpo do texto (materia) e 0-N
-fontes/URLs de referência, todas guardadas em NoticiaNews sob a fonte fixa
-"Blog CowData". A tela News em si (botão do topo + Configurações > News) só
-aparece para administradores — quem publica pelo robô também precisa
-autenticar com uma conta admin.
+POST /news/materias (exige a permissão pode_publicar_materias_blog —
+"Adicionar matéria ao blog", em Configurações > News) publica DIRETO:
+manchete, corpo do texto (materia) e 0-N fontes/URLs de referência, todas
+guardadas em NoticiaNews sob a fonte fixa "Blog CowData". A tela News em si
+(botão do topo + Configurações > News) só aparece para administradores, mas
+publicar/excluir/revisar exige a permissão específica.
+
+Toda matéria nasce com revisado_final=False (aba "Revisão de publicação
+definitiva" em Configurações > News) — não importa quem/o que a publicou
+(robô /milknews, "Adicionar matéria ao blog" ou aprovação de pendente). É uma
+etapa humana que o robô nunca realiza; ver POST /news/materias/{id}/revisar-final.
 """
 from __future__ import annotations
 
@@ -32,7 +37,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user
+from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user
 from fazenda.database import get_session
 from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews, SeedFlag, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
@@ -111,6 +116,64 @@ def desligar_fontes_rss_e_apagar_noticias_202607(session: Session) -> None:
         session.add(fonte)
     session.add(SeedFlag(chave=chave))
     session.commit()
+
+
+NOME_FONTE_MILKNEWS = "robô Milknews"
+
+# Lotes de matérias próprias do robô agendado /milknews — cada chave roda uma
+# única vez (SeedFlag em publicar_lotes_milknews), sob a fonte manual
+# "robô Milknews". A rotina agendada só precisa acrescentar uma chave nova
+# "milknews_<AAAAMMDD>" com uma lista de 1 matéria (manchete, resumo, link,
+# data_publicacao); nunca altera lotes já existentes.
+MILKNEWS_LOTES: dict[str, list[dict]] = {}
+
+
+def _fonte_milknews(session: Session) -> FonteNews:
+    """Get-or-create a fonte fixa do robô Milknews (manual — nunca busca RSS)."""
+    fonte = session.exec(select(FonteNews).where(FonteNews.nome == NOME_FONTE_MILKNEWS)).first()
+    if fonte:
+        return fonte
+    fonte = FonteNews(nome=NOME_FONTE_MILKNEWS, url="", manual=True, ativo=True)
+    session.add(fonte)
+    session.commit()
+    session.refresh(fonte)
+    return fonte
+
+
+def publicar_lotes_milknews(session: Session) -> None:
+    """Publica cada lote de MILKNEWS_LOTES como matérias já aprovadas (sem
+    passar pela fila de aprovação), sob a fonte manual "robô Milknews". Cada
+    lote roda uma única vez, guardado por SeedFlag — a rotina agendada só
+    precisa acrescentar uma chave nova ao dict; lotes antigos nunca são
+    reaplicados nem sobrescrevem edição manual. Como qualquer outra matéria,
+    nasce com revisado_final=False (o robô nunca faz essa revisão)."""
+    for lote_chave, itens in MILKNEWS_LOTES.items():
+        chave = f"milknews_lote_{lote_chave}"
+        if session.get(SeedFlag, chave):
+            continue
+        fonte = _fonte_milknews(session)
+        for item in itens:
+            link = (item.get("link") or "").strip()
+            manchete = (item.get("manchete") or "").strip()
+            if not link or not manchete:
+                continue
+            if session.exec(select(NoticiaNews).where(NoticiaNews.link == link)).first():
+                continue
+            data_publicacao = None
+            if item.get("data_publicacao"):
+                try:
+                    data_publicacao = datetime.strptime(str(item["data_publicacao"]).strip(), "%Y-%m-%d")
+                except ValueError:
+                    pass
+            resumo = (item.get("resumo") or "").strip() or None
+            if resumo and len(resumo) > RESUMO_MAX:
+                resumo = resumo[: RESUMO_MAX - 1].rstrip() + "…"
+            session.add(NoticiaNews(
+                fonte_id=fonte.id, manchete=manchete, resumo=resumo,
+                link=link, data_publicacao=data_publicacao,
+            ))
+        session.add(SeedFlag(chave=chave))
+        session.commit()
 
 
 @router.get("/fontes")
@@ -339,13 +402,13 @@ def _serializar_noticia(n: NoticiaNews) -> dict:
 
 @router.post("/materias")
 def criar_materia_blog(
-    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
 ) -> dict:
-    """Publica direto uma matéria escrita por nós (admin ou robô agendado) em
-    Configurações > News > Adicionar matéria ao blog — sem passar pela fila de
-    aprovação (só administradores chegam a este endpoint). A data de
-    publicação exibida é sempre a de agora (quando publicamos no nosso blog),
-    não a de nenhuma fonte externa."""
+    """Publica direto uma matéria escrita por nós em Configurações > News >
+    Adicionar matéria ao blog — sem passar pela fila de aprovação (exige a
+    permissão pode_publicar_materias_blog). A data de publicação exibida é
+    sempre a de agora (quando publicamos no nosso blog), não a de nenhuma
+    fonte externa. Nasce com revisado_final=False (ver /revisar-final)."""
     manchete = dados.manchete.strip()
     materia = dados.materia.strip()
     if not manchete or not materia:
@@ -366,13 +429,34 @@ def criar_materia_blog(
 
 
 @router.delete("/materias/{noticia_id}")
-def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar)) -> dict:
     noticia = session.get(NoticiaNews, noticia_id)
     if not noticia:
         raise HTTPException(status_code=404, detail="Matéria não encontrada")
     session.delete(noticia)
     session.commit()
     return {"excluido": True, "id": noticia_id}
+
+
+@router.post("/materias/{noticia_id}/revisar-final")
+def revisar_publicacao_final(
+    noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
+) -> dict:
+    """Confirma a revisão de publicação definitiva de UMA matéria (aba própria
+    em Configurações > News) — vale para qualquer matéria já publicada,
+    não importa a origem (robô /milknews, "Adicionar matéria ao blog" ou
+    aprovação de pendente). Etapa exclusivamente humana: o robô nunca chama
+    este endpoint."""
+    noticia = session.get(NoticiaNews, noticia_id)
+    if not noticia:
+        raise HTTPException(status_code=404, detail="Matéria não encontrada")
+    noticia.revisado_final = True
+    noticia.revisado_final_em = datetime.utcnow()
+    noticia.revisado_final_por = user.username
+    session.add(noticia)
+    session.commit()
+    session.refresh(noticia)
+    return _serializar_noticia(noticia)
 
 
 @router.get("/")

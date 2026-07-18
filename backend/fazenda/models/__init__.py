@@ -2066,6 +2066,11 @@ class Usuario(SQLModel, table=True):
     # fazenda e liberar o relatório de acessos (ver fazenda.auth.exigir_dono).
     email: Optional[str] = None
     ultimo_login: Optional[datetime] = None
+    # Permissão específica para publicar matérias no blog (News) — independente
+    # de papel/admin (ver fazenda.auth.exigir_pode_publicar). Todo usuário
+    # nasce sem essa permissão; o proprietário recebe uma única vez via seed
+    # (ver fazenda.auth.seed_permissao_publicar_dono).
+    pode_publicar_materias_blog: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -2418,3 +2423,10 @@ class NoticiaNews(SQLModel, table=True):
     # strings) — 0 a N links, diferente do `link` único usado no fluxo antigo de
     # importação RSS.
     fontes: Optional[str] = None
+    # Revisão de publicação definitiva (aba própria em Configurações > News) —
+    # etapa humana que o robô nunca faz, independente de quem/o que publicou a
+    # matéria (robô /milknews, "Adicionar matéria ao blog" ou aprovação de
+    # pendente). Toda matéria nasce não revisada.
+    revisado_final: bool = False
+    revisado_final_em: Optional[datetime] = None
+    revisado_final_por: Optional[str] = None
