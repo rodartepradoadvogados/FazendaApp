@@ -161,7 +161,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
             <MultiFiltro label="Ordem de tentativa" opcoes={opc((s) => s.ordem_tentativa === null ? null : String(s.ordem_tentativa))} selecionados={ordemTentativa} onChange={setOrdemTentativa} />
             {foco !== "ias" && <MultiFiltro label="Método" opcoes={opc((s) => s.metodo_ia || null)} selecionados={metodo} onChange={setMetodo} />}
             {foco === "diagnosticos" && <MultiFiltro label="Diagnóstico" opcoes={["POSITIVO", "NEGATIVO"]} selecionados={diag} onChange={setDiag} />}
-            {foco === "perdas" && <MultiFiltro label="Motivo" opcoes={opc((s) => s.motivo_perda || "(sem motivo)")} selecionados={motivo} onChange={setMotivo} />}
+            {foco === "perdas" && <MultiFiltro label="Motivo" opcoes={opc((s) => s.motivo_perda || "(sem motivo)")} selecionados={motivo} onChange={setMotivo} formatar={(m) => MOTIVO_LABEL[m] || m} />}
           </div>
         </div>
 
