@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE } from "@/lib/api";
+import { criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
@@ -29,11 +29,16 @@ const vazio = {
   gera_receita: false,
   exibir_necessidade_compra_agenda: false, estocavel: true, data_inicio_controle: "",
   principio_ativo: "", principio_ativo_id: "", classificacao_medicamento: "",
+  tipo_semen: "",
 };
 
 type PrincipioAtivo = { id: number; nome: string; ativo?: boolean };
 
-export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onCriado: (item?: any) => void; onCancelar: () => void; prefill?: PrefillNovoEstoque | null }) {
+/** Item já cadastrado, para editar em vez de criar — mesmo formato do
+ * model_dump() de Estoque (GET /estoque/). */
+export type ItemEstoqueEditando = { id: number } & Record<string, any>;
+
+export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editando }: { onCriado: (item?: any) => void; onCancelar: () => void; prefill?: PrefillNovoEstoque | null; editando?: ItemEstoqueEditando | null }) {
   const [form, setForm] = useState(vazio);
   const [fornecedores, setFornecedores] = useState<Fornecedor[]>([]);
   const [centrosCusto, setCentrosCusto] = useState<string[]>([]);
@@ -56,13 +61,52 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onC
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [prefill]);
 
+  // Pré-preenche todos os campos ao editar um item já cadastrado — os nomes
+  // das contas gerenciais são resolvidos abaixo assim que o plano de contas carregar.
+  useEffect(() => {
+    if (!editando) return;
+    const s = (v: any) => (v == null ? "" : String(v));
+    set({
+      nome: s(editando.nome), numero_produto: s(editando.numero_produto), categoria: s(editando.categoria),
+      finalidade: s(editando.finalidade), unidade: s(editando.unidade), quantidade: s(editando.quantidade),
+      estoque_minimo: s(editando.estoque_minimo), valor_unitario: s(editando.valor_unitario),
+      local_armazenamento: s(editando.local_armazenamento), fornecedor_id: s(editando.fornecedor_id),
+      unidade_embalagem: s(editando.unidade_embalagem), medida_embalagem: s(editando.medida_embalagem),
+      quantidade_embalagem: s(editando.quantidade_embalagem), ativo: editando.ativo !== false,
+      observacao: s(editando.observacao), carencia_dias: s(editando.carencia_dias),
+      centro_custo_padrao: s(editando.centro_custo_padrao),
+      conta_gerencial_despesa_padrao: s(editando.conta_gerencial_despesa_padrao),
+      conta_gerencial_receita_padrao: s(editando.conta_gerencial_receita_padrao),
+      gera_receita: editando.gera_receita === true,
+      exibir_necessidade_compra_agenda: editando.exibir_necessidade_compra_agenda === true,
+      estocavel: editando.estocavel !== false, data_inicio_controle: s(editando.data_inicio_controle),
+      principio_ativo: s(editando.principio_ativo), principio_ativo_id: s(editando.principio_ativo_id),
+      classificacao_medicamento: s(editando.classificacao_medicamento), tipo_semen: s(editando.tipo_semen) || "convencional",
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editando]);
+
+  // Resolve o nome de exibição das contas gerenciais já salvas assim que o
+  // plano de contas carrega (o cadastro só guarda o código).
+  useEffect(() => {
+    if (!editando || !planoContas.length) return;
+    const acharNome = (codigo: string) => planoContas.find((c) => c.codigo === codigo)?.nome || "";
+    if (form.conta_gerencial_despesa_padrao && !form.conta_gerencial_despesa_nome) {
+      set({ conta_gerencial_despesa_nome: acharNome(form.conta_gerencial_despesa_padrao) });
+    }
+    if (form.conta_gerencial_receita_padrao && !form.conta_gerencial_receita_nome) {
+      set({ conta_gerencial_receita_nome: acharNome(form.conta_gerencial_receita_padrao) });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editando, planoContas]);
+
   async function salvar() {
     if (!form.nome.trim()) { setErro("Nome é obrigatório."); return; }
     setErro(null); setSalvando(true);
     try {
       const num = (v: string) => (v.trim() === "" ? undefined : Number(v));
       const str = (v: string) => (v.trim() === "" ? undefined : v.trim());
-      const criado = await criarItemEstoque({
+      const payload = {
         nome: form.nome.trim(),
         numero_produto: str(form.numero_produto),
         categoria: str(form.categoria),
@@ -89,8 +133,15 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onC
         principio_ativo: str(form.principio_ativo),
         principio_ativo_id: form.principio_ativo_id ? Number(form.principio_ativo_id) : undefined,
         classificacao_medicamento: str(form.classificacao_medicamento),
+        tipo_semen: form.categoria === "Sêmen e genética" ? str(form.tipo_semen) : undefined,
         alimento_id: prefill?.alimentoId,
-      });
+      };
+      if (editando) {
+        const atualizado = await atualizarItemEstoque(editando.id, payload);
+        onCriado(atualizado);
+        return;
+      }
+      const criado = await criarItemEstoque(payload);
       setForm(vazio);
       // Se o item é ração/alimento e ainda não veio de um Alimento já
       // cadastrado (prefill.alimentoId), pergunta se quer criar o Alimento
@@ -146,6 +197,14 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onC
             <select style={inputStyle} value={form.classificacao_medicamento} onChange={(e) => set({ classificacao_medicamento: e.target.value })}>
               <option value="">—</option>{CLASSIFICACOES_MEDICAMENTO.map((c) => <option key={c} value={c}>{c}</option>)}
             </select></div>
+        )}
+        {form.categoria === "Sêmen e genética" && (
+          <div><label style={labelStyle}>Sêmen sexado ou convencional?</label>
+            <select style={inputStyle} value={form.tipo_semen || "convencional"} onChange={(e) => set({ tipo_semen: e.target.value })}>
+              <option value="convencional">Convencional</option>
+              <option value="sexado">Sexado</option>
+            </select>
+          </div>
         )}
         <div><label style={labelStyle}>Unidade</label>
           <select style={inputStyle} value={form.unidade} onChange={(e) => set({ unidade: e.target.value })}>
@@ -261,7 +320,7 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill }: { onC
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{erro}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={salvar} disabled={salvando}>
-          <Check size={14} /> {salvando ? "Salvando…" : "Salvar"}
+          <Check size={14} /> {salvando ? "Salvando…" : editando ? "Salvar alterações" : "Salvar"}
         </button>
         <button className="btn-ghost" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onCancelar}>
           <X size={14} /> Cancelar

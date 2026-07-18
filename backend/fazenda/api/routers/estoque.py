@@ -112,6 +112,7 @@ class EstoqueIn(BaseModel):
     classificacao_medicamento: str | None = None
     alimento_id: int | None = None
     estoque_semen_id: int | None = None
+    tipo_semen: str | None = None
 
 
 def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | None) -> None:
@@ -161,7 +162,60 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         classificacao_medicamento=dados.classificacao_medicamento,
         alimento_id=dados.alimento_id,
         estoque_semen_id=dados.estoque_semen_id or (t.id if (t := _casar_estoque_semen(dados.nome, session)) else None),
+        tipo_semen=dados.tipo_semen,
     )
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    return item.model_dump()
+
+
+@router.put("/{item_id}")
+def atualizar_item_estoque(item_id: int, dados: EstoqueIn, session: Session = Depends(get_session)) -> dict:
+    """Edita o cadastro completo de um item de estoque já existente — mesmos
+    campos do cadastro (POST /), usado pelo botão "editar" da tabela filtrada
+    de Estoque (site)."""
+    item = session.get(Estoque, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
+    existente = session.exec(select(Estoque).where(Estoque.nome == dados.nome, Estoque.id != item_id)).first()
+    if existente:
+        raise HTTPException(status_code=409, detail=f'Já existe outro item de estoque chamado "{dados.nome}"')
+    _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
+
+    item.nome = dados.nome
+    item.categoria = dados.categoria
+    item.finalidade = dados.finalidade
+    item.numero_produto = dados.numero_produto
+    item.unidade = dados.unidade
+    item.quantidade = dados.quantidade
+    item.estoque_minimo = dados.estoque_minimo
+    item.valor_unitario = dados.valor_unitario
+    item.valor_total = (dados.quantidade or 0) * (dados.valor_unitario or 0) if dados.quantidade and dados.valor_unitario else None
+    item.abaixo_minimo = dados.quantidade is not None and dados.estoque_minimo is not None and dados.quantidade < dados.estoque_minimo
+    item.local_armazenamento = dados.local_armazenamento
+    item.unidade_embalagem = dados.unidade_embalagem
+    item.medida_embalagem = dados.medida_embalagem
+    item.quantidade_embalagem = dados.quantidade_embalagem
+    item.fornecedor_id = dados.fornecedor_id
+    item.ativo = dados.ativo
+    item.observacao = dados.observacao
+    item.carencia_dias = dados.carencia_dias
+    item.centro_custo_padrao = dados.centro_custo_padrao
+    item.conta_gerencial_despesa_padrao = dados.conta_gerencial_despesa_padrao
+    item.conta_gerencial_receita_padrao = dados.conta_gerencial_receita_padrao
+    item.gera_receita = dados.gera_receita
+    item.exibir_necessidade_compra_agenda = dados.exibir_necessidade_compra_agenda
+    item.estocavel = dados.estocavel
+    item.data_inicio_controle = dados.data_inicio_controle if dados.estocavel else None
+    item.principio_ativo = dados.principio_ativo
+    item.principio_ativo_id = dados.principio_ativo_id
+    item.classificacao_medicamento = dados.classificacao_medicamento
+    item.alimento_id = dados.alimento_id
+    if dados.estoque_semen_id is not None:
+        item.estoque_semen_id = dados.estoque_semen_id
+    item.tipo_semen = dados.tipo_semen
+    item.atualizado_em = datetime.utcnow()
     session.add(item)
     session.commit()
     session.refresh(item)

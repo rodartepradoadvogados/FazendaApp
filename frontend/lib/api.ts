@@ -315,7 +315,7 @@ export async function criarServicoLote(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar inseminação"); }
   return res.json() as Promise<{ criados: number; incompativeis: string[]; tipo: string }>;
 }
-type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; observacao?: string | null; ativo?: boolean };
+type EstoqueSemenDados = { touro_nome: string; codigo?: string | null; naab?: string | null; central?: string | null; tipo: string; doses: number; valor_unitario?: number | null; local_armazenamento?: string | null; observacao?: string | null; ativo?: boolean };
 export async function criarEstoqueSemen(dados: EstoqueSemenDados) {
   const res = await authFetch(`${API}/cadastro/estoque-semen`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -579,6 +579,13 @@ export async function criarItemEstoque(dados: Record<string, unknown>) {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar item de estoque"); }
+  return res.json();
+}
+export async function atualizarItemEstoque(id: number, dados: Record<string, unknown>) {
+  const res = await authFetch(`${API}/estoque/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de estoque"); }
   return res.json();
 }
 export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {

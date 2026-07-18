@@ -18,7 +18,7 @@ import {
   fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos,
   baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
   fetchPedidos, fetchPedido,
-  fetchCategoriasManejo, fetchPlanoContas,
+  fetchCategoriasManejo, fetchPlanoContas, FINALIDADES_ESTOQUE,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
@@ -54,6 +54,7 @@ type EstoqueItem = {
   nome: string; quantidade?: number | null; unidade?: string | null; categoria?: string | null; estocavel?: boolean | null;
   estoque_minimo?: number | null; classificacao_medicamento?: string | null; principio_ativo?: string | null;
   finalidade?: string | null; conta_gerencial_despesa_padrao?: string | null; conta_gerencial_receita_padrao?: string | null;
+  estoque_semen_id?: number | null; tipo_semen?: string | null;
 };
 
 /**
@@ -3784,10 +3785,12 @@ function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; 
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
-  // Filtros para achar o produto certo mais rápido, restritos a itens
-  // estocáveis (itens não estocáveis existem só para lançamento financeiro,
-  // sem controle de quantidade).
+  // Filtros para achar o produto certo mais rápido. Por padrão só mostra
+  // itens estocáveis (itens não estocáveis existem só para lançamento
+  // financeiro, sem controle de quantidade) — "Somente itens em estoque"
+  // deixa de ser um filtro fixo e vira uma opção que dá para desmarcar.
   const [busca, setBusca] = useState("");
+  const [somenteEstocaveis, setSomenteEstocaveis] = useState(true);
   const [fCategoria, setFCategoria] = useState("");
   const [fFinalidade, setFFinalidade] = useState("");
   const [fPrincipioAtivo, setFPrincipioAtivo] = useState("");
@@ -3795,21 +3798,29 @@ function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; 
   const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string }[]>([]);
   useEffect(() => { fetchPlanoContas().then(setPlanoContas).catch(() => {}); }, []);
 
-  const estocaveis = useMemo(() => estoque.filter((e) => e.estocavel !== false), [estoque]);
-  const listaOpcoes = (campo: keyof EstoqueItem) => Array.from(new Set(estocaveis.map((e) => e[campo]).filter(Boolean))).sort() as string[];
-  const categorias = useMemo(() => listaOpcoes("categoria"), [estocaveis]);
-  const finalidades = useMemo(() => listaOpcoes("finalidade"), [estocaveis]);
-  const principiosAtivos = useMemo(() => listaOpcoes("principio_ativo"), [estocaveis]);
-  const contasUsadas = useMemo(() => listaOpcoes("conta_gerencial_despesa_padrao"), [estocaveis]);
+  const itensBase = useMemo(() => somenteEstocaveis ? estoque.filter((e) => e.estocavel !== false) : estoque, [estoque, somenteEstocaveis]);
   const nomeConta = (codigo: string) => planoContas.find((c) => c.codigo === codigo)?.nome || codigo;
 
-  const itensFiltrados = useMemo(() => estocaveis.filter((e) =>
-    (!fCategoria || e.categoria === fCategoria) &&
-    (!fFinalidade || e.finalidade === fFinalidade) &&
-    (!fPrincipioAtivo || e.principio_ativo === fPrincipioAtivo) &&
-    (!fContaGerencial || e.conta_gerencial_despesa_padrao === fContaGerencial) &&
-    (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase()))
-  ), [estocaveis, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
+  // Cada filtro se aplica sobre os outros três (nunca sobre si mesmo) — assim
+  // as OPÇÕES de cada seletor também se restringem conforme os demais já
+  // escolhidos ("os filtros se comunicam"), não só a lista final de itens.
+  const passaFiltros = (e: EstoqueItem, exceto?: keyof EstoqueItem) =>
+    (exceto === "categoria" || !fCategoria || e.categoria === fCategoria) &&
+    (exceto === "finalidade" || !fFinalidade || e.finalidade === fFinalidade) &&
+    (exceto === "principio_ativo" || !fPrincipioAtivo || e.principio_ativo === fPrincipioAtivo) &&
+    (exceto === "conta_gerencial_despesa_padrao" || !fContaGerencial || e.conta_gerencial_despesa_padrao === fContaGerencial);
+
+  const opcoesPara = (campo: keyof EstoqueItem) =>
+    Array.from(new Set(itensBase.filter((e) => passaFiltros(e, campo)).map((e) => e[campo]).filter(Boolean))).sort() as string[];
+
+  const categorias = useMemo(() => opcoesPara("categoria"), [itensBase, fFinalidade, fPrincipioAtivo, fContaGerencial]);
+  const finalidades = useMemo(() => opcoesPara("finalidade"), [itensBase, fCategoria, fPrincipioAtivo, fContaGerencial]);
+  const principiosAtivos = useMemo(() => opcoesPara("principio_ativo"), [itensBase, fCategoria, fFinalidade, fContaGerencial]);
+  const contasUsadas = useMemo(() => opcoesPara("conta_gerencial_despesa_padrao"), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo]);
+
+  const itensFiltrados = useMemo(() => itensBase.filter((e) =>
+    passaFiltros(e) && (!busca.trim() || e.nome.toLowerCase().includes(busca.trim().toLowerCase()))
+  ), [itensBase, fCategoria, fFinalidade, fPrincipioAtivo, fContaGerencial, busca]);
 
   // Vínculo opcional a um item de Pedido de compra — só entrada de estoque faz
   // sentido vincular (uma saída não "atende" um pedido de compra). É só a
@@ -3878,7 +3889,6 @@ function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; 
   return (
     <>
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
-        <Campo label="Buscar item"><input style={inputStyle} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do item…" /></Campo>
         <Campo label="Categoria">
           <select style={inputStyle} value={fCategoria} onChange={(e) => setFCategoria(e.target.value)}>
             <option value="">Todas</option>
@@ -3897,22 +3907,34 @@ function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueItem[]; 
             {principiosAtivos.map((p) => <option key={p} value={p}>{p}</option>)}
           </select>
         </Campo>
-        <Campo label="Conta gerencial" full>
+        <Campo label="Conta gerencial">
           <select style={inputStyle} value={fContaGerencial} onChange={(e) => setFContaGerencial(e.target.value)}>
             <option value="">Todas</option>
             {contasUsadas.map((c) => <option key={c} value={c}>{nomeConta(c)}</option>)}
           </select>
         </Campo>
       </div>
+      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", marginBottom: "0.9rem", cursor: "pointer" }}>
+        <input type="checkbox" checked={somenteEstocaveis} onChange={(e) => setSomenteEstocaveis(e.target.checked)} /> Somente itens em estoque
+      </label>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Campo label="Produto / medicamento">
-          <select style={inputStyle} value={produto} onChange={(e) => setProduto(e.target.value)}>
-            <option value="" disabled>Selecione…</option>
-            {itensFiltrados.map((e) => <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>)}
-          </select>
-          {itensFiltrados.length !== estocaveis.length && (
-            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{itensFiltrados.length} de {estocaveis.length} itens no filtro atual</span>
+        <Campo label="Buscar / selecionar item">
+          <EstoquePicker
+            itens={itensFiltrados}
+            value={produto}
+            onChange={setProduto}
+            placeholder="Buscar item…"
+            finalidades={FINALIDADES_ESTOQUE}
+            incluirNaoEstocaveis={!somenteEstocaveis}
+          />
+          {itensFiltrados.length !== itensBase.length && (
+            <span style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{itensFiltrados.length} de {itensBase.length} itens no filtro atual</span>
+          )}
+          {item?.estoque_semen_id != null && (
+            <span style={{ fontSize: "0.68rem", color: "var(--dourado-light)", display: "flex", alignItems: "center", gap: "0.25rem", marginTop: "0.2rem" }}>
+              <Dna size={11} /> Vinculado ao Estoque de sêmen — este movimento também ajusta as doses do touro.
+            </span>
           )}
         </Campo>
         <Campo label="Tipo de movimento">
@@ -4095,6 +4117,10 @@ const TIPOS_LEAFS = TIPOS_GRUPOS.flatMap((g) =>
 export default function LancamentosPage() {
   const [sel, setSel] = useState("protocolo_iatf");
   const [sujo, setSujo] = useState(false);
+  // Contas a pagar também permite compra de sêmen — em vez de duplicar o
+  // fluxo, reusa o mesmo formulário/endpoint de Lançamentos > Animais >
+  // Compra/Venda > Comprar sêmen (mesma CompraSemen + baixa/soma de doses).
+  const [despesaCompraSemen, setDespesaCompraSemen] = useState(false);
   // Atalho vindo da Agenda (ex.: "Ir para Inseminação" de um lembrete D11 de protocolo IATF).
   useEffect(() => {
     const ir = new URLSearchParams(window.location.search).get("ir");
@@ -4236,7 +4262,31 @@ export default function LancamentosPage() {
         {sel === "calendario_sanitario" && <FormCalendarioSanitario estoque={estoque} />}
         {sel === "bst" && <BstLancamentoView />}
         {sel === "protocolo_sanitario" && <FormProtocoloSanitario animais={animais} estoque={estoque} />}
-        {sel === "financeiro_despesa" && <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
+        {sel === "financeiro_despesa" && (
+          <>
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button type="button" className={despesaCompraSemen ? "btn-secondary" : "btn-primary"} style={{ fontSize: "0.8rem" }}
+                onClick={() => setDespesaCompraSemen(false)}>
+                Lançamento genérico
+              </button>
+              <button type="button" className={despesaCompraSemen ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.8rem" }}
+                onClick={() => setDespesaCompraSemen(true)}>
+                Compra de sêmen
+              </button>
+            </div>
+            {despesaCompraSemen ? (
+              <>
+                <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "1rem" }}>
+                  Mesmo formulário de Lançamentos &gt; Animais &gt; Compra/Venda &gt; Comprar sêmen — a compra soma as
+                  doses no Estoque de sêmen e gera a conta a pagar (3.01.02.01 — Sêmen) automaticamente.
+                </p>
+                <CompraSemenForm />
+              </>
+            ) : (
+              <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSujo={setSujo} />
+            )}
+          </>
+        )}
         {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
         {sel === "estoque" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}

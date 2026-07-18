@@ -6,7 +6,7 @@ import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, recarregarCatalo
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
 
-const CAMPO_VAZIO: TouroIn = {
+export const CAMPO_VAZIO: TouroIn = {
   naab: "", nome: "", nome_completo: "", raca: "", central: "",
   leite_kg: null, gordura_kg: null, gordura_pct: null, proteina_kg: null, proteina_pct: null,
   tpi: null, nm_dolar: null, tipo_composto: null, ubere_composto: null, pernas_composto: null,
@@ -40,7 +40,7 @@ export function parseDadosExtra(json?: string | null): [string, string][] {
   }
 }
 
-function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn; onSalvar: (d: TouroIn) => Promise<void>; onCancelar: () => void }) {
+export function FormTouro({ inicial, onSalvar, onCancelar }: { inicial: TouroIn; onSalvar: (d: TouroIn) => Promise<void>; onCancelar: () => void }) {
   const [dados, setDados] = useState<TouroIn>(inicial);
   const [extra, setExtra] = useState<[string, string][]>(inicial.dados_extra || []);
   const [salvando, setSalvando] = useState(false);

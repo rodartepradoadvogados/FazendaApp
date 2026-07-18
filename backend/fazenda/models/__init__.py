@@ -863,6 +863,11 @@ class Estoque(SQLModel, table=True):
     # atualizar `EstoqueSemen.doses` (ver `_criar_movimento_estoque`), casado
     # automaticamente por nome do touro/NAAB quando possível.
     estoque_semen_id: Optional[int] = Field(default=None, foreign_key="estoque_semen.id")
+    # Sexado/convencional do item de estoque quando ele representa doses de
+    # sêmen (categoria "Sêmen e genética") — mesmo vocabulário de
+    # EstoqueSemen.tipo/CompraSemen.tipo, mas cadastrável aqui direto (antes só
+    # existia na compra de sêmen). None = não é sêmen ou ainda não informado.
+    tipo_semen: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
