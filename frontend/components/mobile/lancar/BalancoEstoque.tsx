@@ -25,6 +25,7 @@ export default function BalancoEstoque({ onVoltar, onIrParaFinanceiro }: { onVol
   const [fCat, setFCat] = useState("");
   const [busca, setBusca] = useState("");
   const [soAbaixo, setSoAbaixo] = useState(false);
+  const [soPositivo, setSoPositivo] = useState(false);
   const [drill, setDrill] = useState<Drill>(null);
 
   const itens = dados?.itens || [];
@@ -38,8 +39,9 @@ export default function BalancoEstoque({ onVoltar, onIrParaFinanceiro }: { onVol
   const filtrados = useMemo(() => itens.filter((i) =>
     (!fCat || i.categoria === fCat) &&
     (!busca || i.nome.toLowerCase().includes(busca.toLowerCase())) &&
-    (!soAbaixo || i.abaixo_minimo === true)
-  ), [itens, fCat, busca, soAbaixo]);
+    (!soAbaixo || i.abaixo_minimo === true) &&
+    (!soPositivo || (i.quantidade ?? 0) > 0)
+  ), [itens, fCat, busca, soAbaixo, soPositivo]);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
   const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
@@ -121,10 +123,16 @@ export default function BalancoEstoque({ onVoltar, onIrParaFinanceiro }: { onVol
         </select>
       )}
 
-      <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", marginBottom: "0.9rem" }}>
-        <input type="checkbox" checked={soAbaixo} onChange={(e) => setSoAbaixo(e.target.checked)} style={{ width: 18, height: 18 }} />
-        Só abaixo do mínimo
-      </label>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: "0.6rem 1.2rem", marginBottom: "0.9rem" }}>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
+          <input type="checkbox" checked={soAbaixo} onChange={(e) => setSoAbaixo(e.target.checked)} style={{ width: 18, height: 18 }} />
+          Só abaixo do mínimo
+        </label>
+        <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem" }}>
+          <input type="checkbox" checked={soPositivo} onChange={(e) => setSoPositivo(e.target.checked)} style={{ width: 18, height: 18 }} />
+          Somente itens com saldo positivo
+        </label>
+      </div>
 
       {carregando && !dados ? (
         <Carregando />
