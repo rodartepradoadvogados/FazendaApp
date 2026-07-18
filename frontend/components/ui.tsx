@@ -2,7 +2,73 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, ChevronRight, Check } from "lucide-react";
+import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syringe, BarChart3 } from "lucide-react";
+
+/**
+ * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
+ * ecoando os ícones circulares já usados no Menu do app. Uma única cor por
+ * categoria em todo o site, no lugar da barra de topo com cor decidida
+ * caso a caso: geral = dourado, reprodutivo = verde, produção = azul,
+ * financeiro = vinho, sanidade = também dourado (mesma família da marca).
+ */
+export type CategoriaIndicador = "geral" | "reprodutivo" | "producao" | "financeiro" | "sanidade";
+
+const CATEGORIA_COR: Record<CategoriaIndicador, string> = {
+  geral: "var(--dourado)",
+  reprodutivo: "var(--green-light)",
+  producao: "var(--blue)",
+  financeiro: "var(--vinho-light)",
+  sanidade: "var(--dourado)",
+};
+const CATEGORIA_ICONE: Record<CategoriaIndicador, any> = {
+  geral: Cog,
+  reprodutivo: HeartPulse,
+  producao: Milk,
+  financeiro: Wallet,
+  sanidade: Syringe,
+};
+
+export function Indicador({
+  valor, rotulo, categoria = "geral", icon, cor, onClick, podeClicar, extra,
+}: {
+  valor: React.ReactNode;
+  rotulo: React.ReactNode;
+  categoria?: CategoriaIndicador;
+  icon?: any;
+  /** Sobrescreve a cor da categoria quando o indicador precisa de destaque próprio (ex.: alerta). */
+  cor?: string;
+  onClick?: () => void;
+  podeClicar?: boolean;
+  extra?: React.ReactNode;
+}) {
+  const clicavel = !!onClick && (podeClicar ?? true);
+  const corFinal = cor || CATEGORIA_COR[categoria];
+  const Icon = icon || CATEGORIA_ICONE[categoria];
+  return (
+    <div
+      className={clicavel ? "kpi-card row-clickable" : "kpi-card"}
+      onClick={clicavel ? onClick : undefined}
+      title={clicavel ? "Clique para ver os detalhes" : undefined}
+      style={{ ["--kpi-c" as any]: corFinal, cursor: clicavel ? "pointer" : undefined }}
+    >
+      <div className="kpi-chip"><Icon size={15} /></div>
+      <p className="kpi-value" style={{ fontSize: "1.4rem", color: corFinal }}>{valor}</p>
+      <p className="kpi-label flex items-center gap-1 flex-wrap">{rotulo}{extra}</p>
+    </div>
+  );
+}
+
+/** Estado vazio com ícone — substitui o texto solto usado hoje quando um
+ * gráfico ou lista não tem dados, deixando claro que a tela está correta. */
+export function EstadoVazio({ icon, children }: { icon?: any; children: React.ReactNode }) {
+  const Icon = icon || BarChart3;
+  return (
+    <div className="empty-state">
+      <Icon size={22} />
+      <div>{children}</div>
+    </div>
+  );
+}
 
 /**
  * MultiFiltro — filtro de seleção múltipla em formato de menu suspenso com

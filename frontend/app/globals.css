@@ -269,11 +269,20 @@ textarea:focus-visible, [tabindex]:focus-visible {
 ::-webkit-scrollbar-thumb { background: var(--vinho); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--vinho-light); }
 
+/* ── Escala única de cantos (proposta de refinamento visual) — substitui as
+   5-6 medidas ad hoc que conviviam sem regra (4/6/8/12/14px). Cartão do app
+   já usava 16px; --r-lg alinha o site a essa mesma medida. */
+:root {
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 16px;
+}
+
 /* ── Cards ── */
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-md);
   padding: 1.25rem;
 }
 
@@ -362,7 +371,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
 .kpi-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--r-lg);
   padding: 1.25rem;
   position: relative;
   overflow: hidden;
@@ -381,6 +390,7 @@ textarea:focus-visible, [tabindex]:focus-visible {
   font-weight: 800;
   color: var(--dourado-light);
   line-height: 1;
+  font-variant-numeric: tabular-nums;
 }
 .kpi-label {
   font-size: 0.8rem;
@@ -389,6 +399,30 @@ textarea:focus-visible, [tabindex]:focus-visible {
   letter-spacing: 0.06em;
   margin-top: 0.25rem;
 }
+
+/* Círculo de ícone colorido por categoria (Reprodutivo/Produção/Financeiro/
+   Sanidade/Geral) no canto do indicador — mesma linguagem visual dos ícones
+   circulares já usados no Menu do app, agora também no site. A cor some
+   dependendo da categoria via --kpi-c, definida inline por indicador. */
+.kpi-chip {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: color-mix(in srgb, var(--kpi-c, var(--dourado)) 16%, transparent);
+  color: var(--kpi-c, var(--dourado));
+  margin-bottom: 0.5rem;
+}
+
+/* ── Estado vazio (gráfico/lista sem dados) ── */
+.empty-state {
+  border: 1.5px dashed var(--border);
+  border-radius: var(--r-md);
+  padding: 1.5rem 1rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  background: var(--surface-2);
+}
+.empty-state svg { margin: 0 auto 0.4rem; opacity: 0.7; }
 
 /* ── Alerta crítico ── */
 .alert-critico {
