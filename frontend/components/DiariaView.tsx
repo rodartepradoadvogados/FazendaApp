@@ -4,12 +4,15 @@ import { Plus, DollarSign } from "lucide-react";
 import { fetchPessoas, fetchDiarias, criarDiaria, registrarPagamentoDiaria, formatBRL } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
+import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
+type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type Diaria = {
   id: number; pessoa_id: number; pessoa_nome: string; valor_diaria: number; data_inicio: string; status: string;
-  numero_diarias: number; total_ate_hoje: number; valor_pago: number; saldo_devedor: number; pagamentos: Pagamento[];
+  numero_diarias: number; total_ate_hoje: number; valor_pago: number; valor_vale: number; saldo_devedor: number;
+  pagamentos: Pagamento[]; vales: ValeAvulso[];
 };
 
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
@@ -98,6 +101,14 @@ export default function DiariaView() {
         </button>
       </SecaoRecolhivel>
 
+      <SecaoRecolhivel titulo="Vale de diária" icon={Plus} defaultAberta={false} descricao="Adiantamento abatido do saldo devedor acumulado">
+        <ValeAvulsoSection
+          origemTipo="diaria"
+          origens={(itens ?? []).filter((d) => d.status !== "encerrado").map((d) => ({ id: d.id, label: d.pessoa_nome }))}
+          onLancado={carregar}
+        />
+      </SecaoRecolhivel>
+
       <div className="card mt-4">
         <div className="card-header mb-3">Controle de diárias</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -108,7 +119,7 @@ export default function DiariaView() {
               <thead>
                 <tr>
                   <th>Nome</th><th>Início</th><th>Nº diárias</th><th>Valor diária</th>
-                  <th>Total até hoje</th><th>Pago</th><th>Saldo devedor</th><th></th>
+                  <th>Total até hoje</th><th>Pago</th><th>Vale</th><th>Saldo devedor</th><th></th>
                 </tr>
               </thead>
               <tbody>
@@ -120,6 +131,7 @@ export default function DiariaView() {
                     <td>{formatBRL(d.valor_diaria)}</td>
                     <td>{formatBRL(d.total_ate_hoje)}</td>
                     <td>{formatBRL(d.valor_pago)}</td>
+                    <td>{formatBRL(d.valor_vale)}</td>
                     <td style={{ fontWeight: 700, color: d.saldo_devedor > 0 ? "var(--amber)" : "var(--green-light)" }}>{formatBRL(d.saldo_devedor)}</td>
                     <td>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}

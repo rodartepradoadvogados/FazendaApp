@@ -4,6 +4,7 @@ import { Plus, Trash2, CheckCircle2 } from "lucide-react";
 import { fetchPessoas, fetchEmpreitadas, criarEmpreitada, concluirEtapaEmpreitada, formatBRL } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
+import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Etapa = {
@@ -11,10 +12,11 @@ type Etapa = {
   data_conclusao: string | null; numero_lancamento_gerado: string | null; status_pagamento: string;
 };
 type ParcelaEmpreitada = { id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado: string | null };
+type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type Empreitada = {
   id: number; pessoa_id: number; pessoa_nome: string; descricao: string; valor_total: number;
   tipo_pagamento: string; status: string; observacao: string | null;
-  parcelas: ParcelaEmpreitada[]; etapas: Etapa[];
+  parcelas: ParcelaEmpreitada[]; etapas: Etapa[]; vales: ValeAvulso[];
 };
 
 const FREQUENCIAS = [
@@ -195,6 +197,14 @@ export default function EmpreitadaView() {
         </button>
       </SecaoRecolhivel>
 
+      <SecaoRecolhivel titulo="Vale de empreita" icon={Plus} defaultAberta={false} descricao="Adiantamento abatido da próxima parcela/etapa pendente">
+        <ValeAvulsoSection
+          origemTipo="empreitada"
+          origens={(itens ?? []).filter((e) => e.status !== "concluida").map((e) => ({ id: e.id, label: `${e.pessoa_nome} — ${e.descricao}` }))}
+          onLancado={carregar}
+        />
+      </SecaoRecolhivel>
+
       <div className="card mt-4">
         <div className="card-header mb-3">Empreitas lançadas</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -237,6 +247,16 @@ export default function EmpreitadaView() {
                         )}
                       </td>
                     </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+            {e.vales.length > 0 && (
+              <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
+                <thead><tr><th>Vale</th><th>Data</th><th>Forma</th></tr></thead>
+                <tbody>
+                  {e.vales.map((v) => (
+                    <tr key={v.id}><td>{formatBRL(v.valor)}</td><td>{v.data_pagamento}</td><td>{v.forma_pagamento}</td></tr>
                   ))}
                 </tbody>
               </table>

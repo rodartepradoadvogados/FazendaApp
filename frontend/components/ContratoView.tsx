@@ -4,13 +4,15 @@ import { Plus, XCircle } from "lucide-react";
 import { fetchPessoas, fetchContratos, criarContrato, encerrarContrato, formatBRL } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
+import ValeAvulsoSection from "@/components/ValeAvulsoSection";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type ParcelaContrato = { id: number; data_vencimento: string; valor: number; status: string; numero_lancamento_gerado: string | null };
+type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type Contrato = {
   id: number; pessoa_id: number; pessoa_nome: string; descricao: string; valor_total: number;
   forma_pagamento: string | null; status: string; observacao: string | null;
-  origem_lembrete_agenda_id: number | null; parcelas: ParcelaContrato[];
+  origem_lembrete_agenda_id: number | null; parcelas: ParcelaContrato[]; vales: ValeAvulso[];
 };
 
 const FORMAS = [
@@ -138,6 +140,14 @@ export default function ContratoView() {
         </button>
       </SecaoRecolhivel>
 
+      <SecaoRecolhivel titulo="Vale de contrato" icon={Plus} defaultAberta={false} descricao="Adiantamento abatido da próxima parcela pendente">
+        <ValeAvulsoSection
+          origemTipo="contrato"
+          origens={(itens ?? []).filter((c) => c.status !== "encerrado").map((c) => ({ id: c.id, label: `${c.pessoa_nome} — ${c.descricao}` }))}
+          onLancado={carregar}
+        />
+      </SecaoRecolhivel>
+
       <div className="card mt-4">
         <div className="card-header mb-3">Contratos lançados</div>
         {!itens && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -171,6 +181,16 @@ export default function ContratoView() {
               <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.3rem" }}>
                 Sem frequência definida — alerta mensal na Agenda todo dia 1º.
               </p>
+            )}
+            {c.vales.length > 0 && (
+              <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
+                <thead><tr><th>Vale</th><th>Data</th><th>Forma</th></tr></thead>
+                <tbody>
+                  {c.vales.map((v) => (
+                    <tr key={v.id}><td>{formatBRL(v.valor)}</td><td>{v.data_pagamento}</td><td>{v.forma_pagamento}</td></tr>
+                  ))}
+                </tbody>
+              </table>
             )}
           </div>
         ))}
