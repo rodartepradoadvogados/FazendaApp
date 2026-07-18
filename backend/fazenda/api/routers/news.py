@@ -138,6 +138,19 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
         "link": "/news#milknews-2026-07-18-01",
         "data_publicacao": "2026-07-18",
     }],
+    "milknews_20260718b": [{
+        "manchete": "Preço-base do leite Classe I recua nos EUA em julho, aponta USDA",
+        "resumo": (
+            "Segundo o USDA (Agricultural Marketing Service), o preço-base do leite Classe I nos "
+            "Estados Unidos caiu para US$ 21,33 por quintal (cwt) em julho, queda de US$ 0,85 frente "
+            "a junho. O recuo ocorre em meio à expansão da produção americana, prevista 1,2% maior "
+            "em 2026, com rebanhos crescendo para suprir a capacidade extra de processamento. O USDA "
+            "também revisou para baixo a projeção do all-milk price de 2026. "
+            "Dados: USDA/AMS (17/07/2026)."
+        ),
+        "link": "/news#milknews-2026-07-18-02",
+        "data_publicacao": "2026-07-18",
+    }],
 }
 
 
