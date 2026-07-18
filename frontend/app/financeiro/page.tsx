@@ -249,14 +249,17 @@ export default function FinanceiroPage() {
   const nomePorCodigo = useMemo(() => new Map(planoContas.map((p) => [p.codigo, p.nome])), [planoContas]);
 
   useEffect(() => {
-    if (regs && !inicio) {
-      // Filtro padrão: hoje até hoje (não o histórico inteiro) — o usuário
-      // ajusta o período manualmente quando quiser ver mais.
+    // Contas em aberto/pagas (CONTAS_IDS) não ganham período padrão: a lista
+    // "filtrados" já trata ausência de período como "mostra tudo" — contas
+    // vencidas ou a vencer não podem sumir por um filtro implícito de hoje.
+    // O padrão hoje-hoje vale só para os relatórios (Fluxo, DRE, Livro Caixa
+    // etc.), que precisam de algum período para não ficar vazios.
+    if (regs && !inicio && !CONTAS_IDS.has(rel)) {
       const hoje = new Date().toISOString().slice(0, 10);
       setInicio(hoje);
       setFim(hoje);
     }
-  }, [regs, inicio]);
+  }, [regs, inicio, rel]);
 
   useEffect(() => {
     if (regs && !centro) setCentro("Pecuária Leiteira");
