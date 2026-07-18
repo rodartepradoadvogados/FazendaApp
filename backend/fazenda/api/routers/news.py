@@ -125,7 +125,20 @@ NOME_FONTE_MILKNEWS = "robô Milknews"
 # "robô Milknews". A rotina agendada só precisa acrescentar uma chave nova
 # "milknews_<AAAAMMDD>" com uma lista de 1 matéria (manchete, resumo, link,
 # data_publicacao); nunca altera lotes já existentes.
-MILKNEWS_LOTES: dict[str, list[dict]] = {}
+MILKNEWS_LOTES: dict[str, list[dict]] = {
+    "milknews_20260718": [{
+        "manchete": "Preço do leite recua em junho após alta do 1º semestre, aponta Cepea",
+        "resumo": (
+            "A Média Brasil do leite ao produtor, calculada pelo Cepea/Esalq, fechou junho em "
+            "R$ 2,6474 por litro, leve recuo frente aos meses anteriores após a forte recuperação "
+            "do início de 2026 — que havia levado o indicador a R$ 2,6584/L em abril, maior patamar "
+            "do ano. A pressão agora vem do aumento das importações, 28% acima do mesmo período de "
+            "2025, e da retomada da oferta interna no Sul do país. Dados: Cepea/Esalq (30/06/2026)."
+        ),
+        "link": "/news#milknews-2026-07-18-01",
+        "data_publicacao": "2026-07-18",
+    }],
+}
 
 
 def _fonte_milknews(session: Session) -> FonteNews:
