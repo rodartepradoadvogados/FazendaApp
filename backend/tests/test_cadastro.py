@@ -986,3 +986,129 @@ class TestDiaria:
             "pessoa_id": pessoa_id, "valor_diaria": 0, "data_inicio": date.today().isoformat(),
         })
         assert r.status_code == 400
+
+
+class TestValeAvulso:
+    def test_abate_proxima_parcela_de_empreitada(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro X", "tipos": ["Empreiteiro"]}).json()["id"]
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem", "valor_total": 3000.0, "tipo_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-05", "valor": 1500.0},
+                {"data_vencimento": "2026-09-05", "valor": 1500.0},
+            ],
+        }).json()
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20",
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["vale"]["valor"] == 500.0
+        parcelas = sorted(dados["origem"]["parcelas"], key=lambda p: p["data_vencimento"])
+        assert parcelas[0]["valor"] == 1000.0  # 1500 - 500
+        assert parcelas[1]["valor"] == 1500.0  # intacta
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == parcelas[0]["numero_lancamento_gerado"]
+            )).first()
+            assert conta.valor_total == 1000.0
+
+    def test_abate_etapa_pendente_de_empreitada_por_etapa(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Y", "tipos": ["Empreiteiro"]}).json()["id"]
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Cerca", "valor_total": 4000.0, "tipo_pagamento": "por_etapa",
+            "etapas": [
+                {"nome": "Etapa 1", "valor": 2000.0},
+                {"nome": "Etapa 2", "valor": 2000.0},
+            ],
+        }).json()
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 800.0,
+            "forma_pagamento": "pix", "data_pagamento": "2026-07-20",
+        })
+        assert r.status_code == 200
+        etapas = sorted(r.json()["origem"]["etapas"], key=lambda e: e["ordem"])
+        assert etapas[0]["valor"] == 1200.0  # 2000 - 800
+        assert etapas[1]["valor"] == 2000.0
+
+    def test_abate_proxima_parcela_de_contrato(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Prestador Z", "tipos": ["Prestador de serviços"]}).json()["id"]
+        contrato = c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "Consultoria", "valor_total": 4000.0, "forma_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-10", "valor": 2000.0},
+                {"data_vencimento": "2026-09-10", "valor": 2000.0},
+            ],
+        }).json()
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "contrato", "origem_id": contrato["id"], "valor": 500.0,
+            "forma_pagamento": "transferencia", "data_pagamento": "2026-07-20",
+        })
+        assert r.status_code == 200
+        parcelas = sorted(r.json()["origem"]["parcelas"], key=lambda p: p["data_vencimento"])
+        assert parcelas[0]["valor"] == 1500.0
+
+    def test_reduz_saldo_devedor_de_diaria(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista W", "tipos": ["Diarista"]}).json()["id"]
+        inicio = date.today() - timedelta(days=4)  # 5 diárias
+        diaria = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(),
+        }).json()
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "diaria", "origem_id": diaria["id"], "valor": 200.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+        })
+        assert r.status_code == 200
+        dados = r.json()["origem"]
+        assert dados["total_ate_hoje"] == 500.0
+        assert dados["valor_vale"] == 200.0
+        assert dados["saldo_devedor"] == 300.0
+
+    def test_listar_vales_por_origem(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista V", "tipos": ["Diarista"]}).json()["id"]
+        diaria = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": date.today().isoformat(),
+        }).json()
+        c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "diaria", "origem_id": diaria["id"], "valor": 50.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+        })
+        r = c.get(f"/cadastro/vale-avulso?origem_tipo=diaria&origem_id={diaria['id']}")
+        assert r.status_code == 200
+        assert len(r.json()) == 1
+        assert r.json()[0]["valor"] == 50.0
+
+    def test_rejeita_origem_tipo_invalido(self, client):
+        c, engine = client
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "funcionario", "origem_id": 1, "valor": 100.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+        })
+        assert r.status_code == 400
+
+    def test_rejeita_origem_inexistente(self, client):
+        c, engine = client
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "diaria", "origem_id": 999999, "valor": 100.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+        })
+        assert r.status_code == 404
+
+    def test_rejeita_valor_nao_positivo(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista U", "tipos": ["Diarista"]}).json()["id"]
+        diaria = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": date.today().isoformat(),
+        }).json()
+        r = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "diaria", "origem_id": diaria["id"], "valor": 0,
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+        })
+        assert r.status_code == 400

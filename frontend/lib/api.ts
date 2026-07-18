@@ -576,6 +576,17 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: { data_p
   return res.json();
 }
 
+export async function criarValeAvulso(dados: {
+  origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
+  forma_pagamento: string; data_pagamento: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/cadastro/vale-avulso`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar vale"); }
+  return res.json();
+}
+
 export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

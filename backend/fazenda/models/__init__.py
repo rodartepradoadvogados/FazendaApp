@@ -1011,6 +1011,27 @@ class ValeParcela(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class ValeAvulso(SQLModel, table=True):
+    """Vale (adiantamento) para Empreitada/Contrato/Diária — mesma ideia do
+    Vale de funcionário, mas sem um documento mensal (`FolhaPagamento`) para
+    descontar: aqui o valor é abatido diretamente da(s) próxima(s) parcela(s)/
+    etapa(s) pendente(s) (Empreitada/Contrato) ou do saldo devedor acumulado
+    (Diária). Ver `_aplicar_vale_avulso` em `routers/cadastro.py`."""
+
+    __tablename__ = "vale_avulso"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    origem_tipo: str = Field(index=True)  # empreitada | contrato | diaria
+    origem_id: int = Field(index=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    valor: float
+    forma_pagamento: str  # dinheiro | pix | transferencia | desconto_proximo_pagamento
+    data_pagamento: date
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
 # ---------------------------------------------------------------------------
 # Empreitada — trabalho contratado com um empreiteiro (Pessoa do tipo
 # "Empreiteiro"), pago por frequência fixa (mensal/semanal/quinzenal, parcelas

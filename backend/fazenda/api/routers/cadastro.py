@@ -29,7 +29,7 @@ from fazenda.models import (
     Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, ExameDefinicao, FolhaPagamento, Fornecedor,
     GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
     ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro,
-    TipoPessoa, TipoServicoReprodutivo, Touro, Usuario, ValeFuncionario, ValeParcela,
+    TipoPessoa, TipoServicoReprodutivo, Touro, Usuario, ValeAvulso, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
@@ -801,6 +801,7 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
             {**et.model_dump(), "status_pagamento": "pago" if et.numero_lancamento_gerado in pagos else "pendente"}
             for et in etapas
         ],
+        "vales": _listar_vales_avulsos(session, "empreitada", e.id),
     }
 
 
@@ -946,6 +947,7 @@ def _serializar_contrato(session: Session, c: Contrato) -> dict:
         "parcelas": [
             {**p.model_dump(), "status": "pago" if p.numero_lancamento_gerado in pagos else "pendente"} for p in parcelas
         ],
+        "vales": _listar_vales_avulsos(session, "contrato", c.id),
     }
 
 
@@ -1059,14 +1061,18 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         key=lambda p: p.data_pagamento,
     )
     valor_pago = round(sum(p.valor for p in pagamentos), 2)
+    vales = _listar_vales_avulsos(session, "diaria", d.id)
+    valor_vale = round(sum(v["valor"] for v in vales), 2)
     return {
         **d.model_dump(),
         "pessoa_nome": pessoa_nome,
         "numero_diarias": numero_diarias,
         "total_ate_hoje": total_ate_hoje,
         "valor_pago": valor_pago,
-        "saldo_devedor": round(total_ate_hoje - valor_pago, 2),
+        "valor_vale": valor_vale,
+        "saldo_devedor": round(total_ate_hoje - valor_pago - valor_vale, 2),
         "pagamentos": [p.model_dump() for p in pagamentos],
+        "vales": vales,
     }
 
 
@@ -1125,6 +1131,147 @@ def registrar_pagamento_diaria(
     ))
     session.commit()
     return _resumo_diaria(session, diaria, pessoa.nome)
+
+
+# ---------------------------------------------------------------------------
+# Vale (adiantamento) para Empreitada/Contrato/Diária — mesma ideia do Vale de
+# funcionário, mas sem competência/folha mensal para descontar: o valor é
+# abatido direto da(s) próxima(s) parcela(s)/etapa(s) pendente(s) (Empreitada/
+# Contrato) ou do saldo devedor acumulado (Diária).
+# ---------------------------------------------------------------------------
+ORIGENS_VALE_AVULSO = ["empreitada", "contrato", "diaria"]
+FORMAS_PAGAMENTO_VALE_AVULSO = ["dinheiro", "pix", "transferencia", "desconto_proximo_pagamento"]
+
+
+class ValeAvulsoIn(BaseModel):
+    origem_tipo: str  # empreitada | contrato | diaria
+    origem_id: int
+    valor: float
+    forma_pagamento: str  # dinheiro | pix | transferencia | desconto_proximo_pagamento
+    data_pagamento: date
+    observacao: str | None = None
+
+
+def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) -> list[dict]:
+    vales = session.exec(
+        select(ValeAvulso)
+        .where(ValeAvulso.origem_tipo == origem_tipo, ValeAvulso.origem_id == origem_id)
+        .order_by(ValeAvulso.data_pagamento)
+    ).all()
+    return [v.model_dump() for v in vales]
+
+
+def _numeros_pagos(session: Session, numeros: list[str]) -> set[str]:
+    if not numeros:
+        return set()
+    contas = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros))).all()
+    return {c.numero_lancamento for c in contas if c.valor_pago is not None}
+
+
+def _aplicar_vale_avulso(session: Session, origem_tipo: str, origem_id: int, valor: float) -> None:
+    """
+    Abate `valor` da(s) próxima(s) parcela(s)/etapa(s) PENDENTE(S), na ordem em
+    que vencem — mesmo efeito do vale de funcionário (reduzir o valor líquido
+    a receber), só que aqui não há um documento mensal (folha) para descontar,
+    então o alvo é o próprio saldo em aberto de cada entidade:
+    - Empreitada: reduz as próximas EmpreitadaParcela (ou EmpreitadaEtapa, se
+      "por_etapa") ainda não pagas, e sincroniza a ContaGerencial vinculada
+      (só quando ela já existe e ainda não foi paga).
+    - Contrato: mesma lógica com ContratoParcela.
+    - Diária: não há parcela agendada (o pagamento é sob demanda) — o valor só
+      soma ao "saldo abatido", já calculado em `_resumo_diaria`.
+    """
+    restante = round(valor, 2)
+    if restante <= 0 or origem_tipo == "diaria":
+        return
+
+    if origem_tipo == "empreitada":
+        empreitada = session.get(Empreitada, origem_id)
+        if empreitada and empreitada.tipo_pagamento == "por_etapa":
+            itens = session.exec(
+                select(EmpreitadaEtapa)
+                .where(EmpreitadaEtapa.empreitada_id == origem_id, EmpreitadaEtapa.concluida == False)  # noqa: E712
+                .order_by(EmpreitadaEtapa.ordem, EmpreitadaEtapa.id)
+            ).all()
+        else:
+            todas = session.exec(
+                select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == origem_id).order_by(EmpreitadaParcela.data_vencimento)
+            ).all()
+            pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+            itens = [p for p in todas if p.numero_lancamento_gerado not in pagos]
+    elif origem_tipo == "contrato":
+        todas = session.exec(
+            select(ContratoParcela).where(ContratoParcela.contrato_id == origem_id).order_by(ContratoParcela.data_vencimento)
+        ).all()
+        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+        itens = [p for p in todas if p.numero_lancamento_gerado not in pagos]
+    else:
+        return
+
+    for item in itens:
+        if restante <= 0:
+            break
+        abatido = min(item.valor, restante)
+        item.valor = round(item.valor - abatido, 2)
+        restante = round(restante - abatido, 2)
+        session.add(item)
+        numero = getattr(item, "numero_lancamento_gerado", None)
+        if numero:
+            conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+            if conta and conta.valor_pago is None:
+                conta.valor_total = item.valor
+                session.add(conta)
+
+
+@router.get("/vale-avulso")
+def listar_vales_avulsos_endpoint(origem_tipo: str, origem_id: int, session: Session = Depends(get_session)) -> list[dict]:
+    if origem_tipo not in ORIGENS_VALE_AVULSO:
+        raise HTTPException(status_code=400, detail="Tipo de origem inválido")
+    return _listar_vales_avulsos(session, origem_tipo, origem_id)
+
+
+@router.post("/vale-avulso")
+def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    """
+    Lança um vale (adiantamento) para Empreitada/Contrato/Diária — análogo ao
+    Vale de funcionário, permitindo controlar o que já foi adiantado a
+    empreiteiros/contratados/diaristas antes do pagamento final.
+    """
+    if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
+        raise HTTPException(status_code=400, detail="Tipo de origem inválido")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
+    if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE_AVULSO:
+        raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
+
+    if dados.origem_tipo == "empreitada":
+        origem = session.get(Empreitada, dados.origem_id)
+    elif dados.origem_tipo == "contrato":
+        origem = session.get(Contrato, dados.origem_id)
+    else:
+        origem = session.get(Diaria, dados.origem_id)
+    if not origem:
+        raise HTTPException(status_code=404, detail=f"{dados.origem_tipo.capitalize()} não encontrado(a)")
+
+    vale = ValeAvulso(
+        origem_tipo=dados.origem_tipo, origem_id=dados.origem_id, pessoa_id=origem.pessoa_id,
+        valor=dados.valor, forma_pagamento=dados.forma_pagamento, data_pagamento=dados.data_pagamento,
+        observacao=dados.observacao, usuario_id=user.id,
+    )
+    session.add(vale)
+    session.commit()
+
+    _aplicar_vale_avulso(session, dados.origem_tipo, dados.origem_id, dados.valor)
+    session.commit()
+
+    if dados.origem_tipo == "empreitada":
+        resultado = _serializar_empreitada(session, origem)
+    elif dados.origem_tipo == "contrato":
+        resultado = _serializar_contrato(session, origem)
+    else:
+        pessoa = session.get(Pessoa, origem.pessoa_id)
+        resultado = _resumo_diaria(session, origem, pessoa.nome if pessoa else "—")
+    return {"vale": vale.model_dump(), "origem": resultado}
 
 
 # ---------------------------------------------------------------------------
