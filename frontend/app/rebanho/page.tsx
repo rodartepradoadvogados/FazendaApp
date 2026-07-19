@@ -11,7 +11,7 @@ import BaixarAnimal from "@/components/BaixarAnimal";
 import FichaAnimal from "@/components/FichaAnimal";
 import RebanhoTouros from "@/components/RebanhoTouros";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro } from "@/components/ui";
+import { MultiFiltro, Indicador } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
@@ -59,10 +59,10 @@ function EstratificacaoRebanho() {
     <div className="card mb-4">
       <div className="card-header mb-3 flex items-center gap-2"><Beef size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{d.pct_lactacao_sobre_vacas}%</p><p className="kpi-label">% de vacas em lactação</p></div>
-        <div className="kpi-card"><p className="kpi-value">{d.pct_lactacao_sobre_total}%</p><p className="kpi-label">% de vacas em lactação em relação ao rebanho</p></div>
-        <div className="kpi-card"><p className="kpi-value">{d.estratos.vacas_lactacao}</p><p className="kpi-label">Vacas em lactação</p></div>
-        <div className="kpi-card"><p className="kpi-value">{d.vacas_total}</p><p className="kpi-label">Vacas (adultas)</p></div>
+        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação" />
+        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho" />
+        <Indicador categoria="geral" valor={d.estratos.vacas_lactacao} rotulo="Vacas em lactação" />
+        <Indicador categoria="geral" valor={d.vacas_total} rotulo="Vacas (adultas)" />
       </div>
       {/* Barra empilhada 100% */}
       <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
@@ -250,13 +250,13 @@ function RebanhoVisaoGeral() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value">{total}</p><p className="kpi-label">{femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"}</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{gestantes}</p><p className="kpi-label">Gestantes</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{vazias}</p><p className="kpi-label">Vazias</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--dourado-light)" }}>{inseminadas}</p><p className="kpi-label">Inseminadas</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{vacasPev}</p><p className="kpi-label">Vacas no PEV</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--red)" }}>{aDescartar}</p><p className="kpi-label">A descartar</p></div>
-            <div className="kpi-card"><p className="kpi-value">{delMedio ?? "—"}</p><p className="kpi-label">DEL médio (lactação)</p></div>
+            <Indicador categoria="geral" valor={total} rotulo={femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"} />
+            <Indicador categoria="reprodutivo" valor={gestantes} cor="var(--green-light)" rotulo="Gestantes" />
+            <Indicador categoria="reprodutivo" valor={vazias} cor="var(--amber)" rotulo="Vazias" />
+            <Indicador categoria="reprodutivo" valor={inseminadas} cor="var(--dourado-light)" rotulo="Inseminadas" />
+            <Indicador categoria="reprodutivo" valor={vacasPev} cor="var(--blue)" rotulo="Vacas no PEV" />
+            <Indicador categoria="geral" icon={Skull} valor={aDescartar} cor="var(--red)" rotulo="A descartar" />
+            <Indicador categoria="producao" valor={delMedio ?? "—"} rotulo="DEL médio (lactação)" />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
