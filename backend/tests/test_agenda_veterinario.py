@@ -330,3 +330,43 @@ class TestUltimoDiagnostico:
         r = c.post("/reproducao/animais/64/diagnostico/enviar", json={"destinatario": "vet@exemplo.com"})
         assert r.status_code == 200 and r.json() == {"enviado": True}
         assert chamadas == ["vet@exemplo.com"]
+
+
+class TestDataReferenciaProjetada:
+    """#490 — data de referência opcional (?data=) simula um cenário
+    projetado (ex.: a data da próxima visita do veterinário), recalculando a
+    classificação como se aquela fosse "hoje"."""
+
+    def test_sem_parametro_usa_hoje_real_e_nao_marca_projetado(self, client):
+        c, engine = client
+        r = c.get("/reproducao/agenda-veterinario")
+        corpo = r.json()
+        assert corpo["data_referencia"] == date.today().isoformat()
+        assert corpo["projetado"] is False
+
+    def test_com_data_futura_marca_projetado_e_usa_a_data_informada(self, client):
+        c, engine = client
+        futura = date.today() + timedelta(days=15)
+        r = c.get(f"/reproducao/agenda-veterinario?data={futura.isoformat()}")
+        corpo = r.json()
+        assert corpo["data_referencia"] == futura.isoformat()
+        assert corpo["projetado"] is True
+
+    def test_data_projetada_recalcula_a_classificacao(self, client):
+        c, engine = client
+        _add_animal(engine, "70", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "70", PESO_APTO)
+        base = date(2026, 1, 1)
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="70", data_servico=base))
+            s.commit()
+
+        r10 = c.get(f"/reproducao/agenda-veterinario?data={(base + timedelta(days=10)).isoformat()}")
+        listas10 = r10.json()["listas"]
+        assert any(a["numero_matriz"] == "70" for a in listas10["inseminadas_1_29"])
+        assert not any(a["numero_matriz"] == "70" for a in listas10["inseminadas_30_59"])
+
+        r40 = c.get(f"/reproducao/agenda-veterinario?data={(base + timedelta(days=40)).isoformat()}")
+        listas40 = r40.json()["listas"]
+        assert any(a["numero_matriz"] == "70" for a in listas40["inseminadas_30_59"])
+        assert not any(a["numero_matriz"] == "70" for a in listas40["inseminadas_1_29"])

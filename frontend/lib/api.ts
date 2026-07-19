@@ -379,10 +379,13 @@ export type AgendaVetItem = {
   diagnostico: string | null; diagnostico_reconfirmacao: string | null;
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
 };
-export type AgendaVetResposta = { data_referencia: string; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number> };
+export type AgendaVetResposta = { data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number> };
 
-export async function fetchAgendaVeterinario(): Promise<AgendaVetResposta> {
-  const res = await authFetch(`${API}/reproducao/agenda-veterinario`, { cache: "no-store" });
+// data (opcional, AAAA-MM-DD): simula um cenário projetado numa data futura
+// (ex.: a próxima visita do veterinário) — ver #490.
+export async function fetchAgendaVeterinario(data?: string): Promise<AgendaVetResposta> {
+  const qs = data ? `?data=${encodeURIComponent(data)}` : "";
+  const res = await authFetch(`${API}/reproducao/agenda-veterinario${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Agenda do veterinário error: ${res.status}`);
   return res.json();
 }
