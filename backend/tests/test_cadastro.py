@@ -650,6 +650,110 @@ class TestValeFuncionario:
         assert r2.json()["valor_vale"] == 0.0
         assert r2.json()["descontos"] == 0.0
 
+    def test_atualiza_vale_recalcula_parcelas_e_folha(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        assert folha["valor_vale"] == 300.0
+
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 600.0, "forma_pagamento": "pix",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 200
+        assert r.json()["valor_total"] == 600.0
+        assert r.json()["forma_pagamento"] == "pix"
+        assert [p["valor"] for p in r.json()["parcelas_detalhe"]] == [600.0]
+
+        folha2 = c.get("/cadastro/folha-pagamento").json()
+        alvo = next(f for f in folha2 if f["id"] == folha["id"])
+        assert alvo["valor_vale"] == 600.0
+        assert alvo["valor_liquido"] == 1400.0
+
+    def test_atualiza_vale_inexistente_404(self, client):
+        c, engine = client
+        r = c.put("/cadastro/vales/9999", json={
+            "pessoa_id": 1, "valor_total": 100.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 404
+
+    def test_atualiza_vale_reaplica_alerta_quarenta_por_cento(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=1000.0)  # limite = 400
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 409
+        r2 = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02", "confirmar": True,
+        })
+        assert r2.status_code == 200
+
+    def test_bloqueia_edicao_e_exclusao_de_vale_ja_pago(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        c.put(f"/cadastro/folha-pagamento/{folha['id']}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+            "status": "pago", "data_pagamento": "2026-02-05",
+        })
+
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 400.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 400
+
+        r2 = c.delete(f"/cadastro/vales/{vale['id']}")
+        assert r2.status_code == 400
+
+    def test_exclui_vale_reverte_desconto_na_folha_nao_paga(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        assert folha["valor_vale"] == 300.0
+
+        r = c.delete(f"/cadastro/vales/{vale['id']}")
+        assert r.status_code == 200
+
+        vales = c.get("/cadastro/vales").json()
+        assert not any(v["id"] == vale["id"] for v in vales)
+
+        folha2 = c.get("/cadastro/folha-pagamento").json()
+        alvo = next(f for f in folha2 if f["id"] == folha["id"])
+        assert alvo["valor_vale"] == 0.0
+        assert alvo["valor_liquido"] == 2000.0
+
+    def test_exclui_vale_inexistente_404(self, client):
+        c, engine = client
+        r = c.delete("/cadastro/vales/9999")
+        assert r.status_code == 404
+
 
 class TestCadastroSanitario:
     """Princípio ativo / Doença / Evento sanitário — cadastros simples nome+ativo."""

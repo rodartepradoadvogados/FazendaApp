@@ -597,6 +597,27 @@ export async function criarVale(dados: {
   }
   return res.json();
 }
+export async function atualizarVale(valeId: number, dados: {
+  pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
+}) {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao editar vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
+export async function excluirVale(valeId: number) {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  return res.json();
+}
 
 // ── Empreitada (Financeiro > Ações > Folha de Pagamento) ──
 export async function fetchEmpreitadas() {

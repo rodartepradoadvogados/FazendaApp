@@ -784,6 +784,52 @@ def _competencias_do_vale(competencia_inicio: str, parcelas: int) -> list[str]:
     return competencias
 
 
+def _reconciliar_vale_competencias(session: Session, pessoa_id: int, competencias: list[str]) -> None:
+    """Recomputa valor_vale/valor_liquido da folha (não paga) e sincroniza a
+    conta a pagar vinculada (não paga), para cada competência afetada por uma
+    alteração (criação/edição/exclusão) de vale."""
+    for competencia in competencias:
+        folha = session.exec(
+            select(FolhaPagamento).where(
+                FolhaPagamento.pessoa_id == pessoa_id,
+                FolhaPagamento.competencia == competencia,
+                FolhaPagamento.status != "pago",
+            )
+        ).first()
+        if not folha:
+            continue
+        folha.valor_vale = _valor_vale(session, pessoa_id, competencia)
+        folha.valor_liquido = round(
+            folha.valor_bruto - folha.descontos - folha.valor_inss - folha.valor_ir - folha.valor_vale, 2
+        )
+        _marcar_vale_aplicado(session, pessoa_id, competencia)
+        session.add(folha)
+        if folha.numero_lancamento_gerado:
+            conta = session.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado)
+            ).first()
+            if conta and conta.valor_pago is None:
+                conta.valor_total = folha.valor_liquido
+                session.add(conta)
+
+
+def _vale_competencia_paga(session: Session, pessoa_id: int, competencias: list[str]) -> str | None:
+    """Retorna a primeira competência, entre as informadas, cuja folha já
+    esteja paga — usado para bloquear edição/exclusão de um vale já
+    absorvido por um pagamento que já saiu."""
+    for competencia in competencias:
+        folha = session.exec(
+            select(FolhaPagamento).where(
+                FolhaPagamento.pessoa_id == pessoa_id,
+                FolhaPagamento.competencia == competencia,
+                FolhaPagamento.status == "pago",
+            )
+        ).first()
+        if folha:
+            return competencia
+    return None
+
+
 @router.get("/vales")
 def listar_vales(session: Session = Depends(get_session)) -> list[dict]:
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
@@ -858,36 +904,125 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
     # Efeito imediato: se já existir uma folha (não paga) para alguma das
     # competências afetadas, recomputa o valor_vale/líquido e sincroniza a
     # conta a pagar vinculada — sem depender do self-heal no próximo GET.
-    for competencia in competencias:
-        folha = session.exec(
-            select(FolhaPagamento).where(
-                FolhaPagamento.pessoa_id == dados.pessoa_id,
-                FolhaPagamento.competencia == competencia,
-                FolhaPagamento.status != "pago",
-            )
-        ).first()
-        if not folha:
-            continue
-        folha.valor_vale = _valor_vale(session, dados.pessoa_id, competencia)
-        folha.valor_liquido = round(
-            folha.valor_bruto - folha.descontos - folha.valor_inss - folha.valor_ir - folha.valor_vale, 2
-        )
-        _marcar_vale_aplicado(session, dados.pessoa_id, competencia)
-        session.add(folha)
-        if folha.numero_lancamento_gerado:
-            conta = session.exec(
-                select(ContaGerencial).where(
-                    ContaGerencial.numero_lancamento == folha.numero_lancamento_gerado
-                )
-            ).first()
-            if conta and conta.valor_pago is None:
-                conta.valor_total = folha.valor_liquido
-                session.add(conta)
+    _reconciliar_vale_competencias(session, dados.pessoa_id, competencias)
     session.commit()
+    session.refresh(vale)
 
     return {**vale.model_dump(), "parcelas_detalhe": [
         {"competencia": c, "valor": v} for c, v in zip(competencias, valores_parcela)
     ]}
+
+
+@router.put("/vales/{vale_id}")
+def atualizar_vale(vale_id: int, dados: ValeIn, session: Session = Depends(get_session)) -> dict:
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale:
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE:
+        raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
+    if dados.valor_total <= 0:
+        raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
+    if dados.parcelas < 1:
+        raise HTTPException(status_code=400, detail="Informe ao menos 1 parcela")
+    if not pessoa.salario_base:
+        raise HTTPException(
+            status_code=400,
+            detail="Cadastre o salário base da pessoa (Configurações > Cadastro > Pessoas) antes de editar um vale.",
+        )
+
+    pessoa_id_antigo = vale.pessoa_id
+    parcelas_atuais = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    competencias_atuais = [p.competencia for p in parcelas_atuais]
+    competencia_paga = _vale_competencia_paga(session, pessoa_id_antigo, competencias_atuais)
+    if competencia_paga:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Vale já aplicado na folha paga de {competencia_paga} não pode ser editado.",
+        )
+
+    competencias_novas = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
+    valor_parcela = round(dados.valor_total / dados.parcelas, 2)
+    valores_parcela = [valor_parcela] * (dados.parcelas - 1)
+    valores_parcela.append(round(dados.valor_total - valor_parcela * (dados.parcelas - 1), 2))
+
+    limite = round(pessoa.salario_base * 0.4, 2)
+    competencias_excedidas = []
+    for competencia, valor in zip(competencias_novas, valores_parcela):
+        # exclui as parcelas do próprio vale (serão substituídas) do total já lançado nessa competência
+        ja_lancado = session.exec(
+            select(ValeParcela).where(
+                ValeParcela.pessoa_id == dados.pessoa_id,
+                ValeParcela.competencia == competencia,
+                ValeParcela.vale_id != vale_id,
+            )
+        ).all()
+        total_competencia = round(sum(p.valor for p in ja_lancado) + valor, 2)
+        if total_competencia > limite:
+            competencias_excedidas.append({"competencia": competencia, "total": total_competencia, "limite": limite})
+
+    if competencias_excedidas and not dados.confirmar:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": (
+                f"O desconto de vale ultrapassa 40% do salário (limite de R$ {limite:.2f}) em "
+                f"{len(competencias_excedidas)} competência(s). Confirme para salvar mesmo assim."
+            ),
+            "competencias_excedidas": competencias_excedidas,
+        })
+
+    vale.pessoa_id = dados.pessoa_id
+    vale.valor_total = dados.valor_total
+    vale.forma_pagamento = dados.forma_pagamento
+    vale.data_pagamento = dados.data_pagamento
+    vale.parcelas = dados.parcelas
+    vale.competencia_inicio = dados.competencia_inicio
+    vale.observacao = dados.observacao
+    vale.numero_documento_pagamento = dados.numero_documento_pagamento
+    session.add(vale)
+    for p in parcelas_atuais:
+        session.delete(p)
+    session.commit()
+
+    for competencia, valor in zip(competencias_novas, valores_parcela):
+        session.add(ValeParcela(vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor))
+    session.commit()
+
+    if dados.pessoa_id == pessoa_id_antigo:
+        _reconciliar_vale_competencias(session, pessoa_id_antigo, sorted(set(competencias_atuais) | set(competencias_novas)))
+    else:
+        _reconciliar_vale_competencias(session, pessoa_id_antigo, competencias_atuais)
+        _reconciliar_vale_competencias(session, dados.pessoa_id, competencias_novas)
+    session.commit()
+    session.refresh(vale)
+
+    return {**vale.model_dump(), "parcelas_detalhe": [
+        {"competencia": c, "valor": v} for c, v in zip(competencias_novas, valores_parcela)
+    ]}
+
+
+@router.delete("/vales/{vale_id}")
+def excluir_vale(vale_id: int, session: Session = Depends(get_session)) -> dict:
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale:
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    pessoa_id = vale.pessoa_id
+    parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    competencias = [p.competencia for p in parcelas]
+    competencia_paga = _vale_competencia_paga(session, pessoa_id, competencias)
+    if competencia_paga:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Vale já aplicado na folha paga de {competencia_paga} não pode ser excluído.",
+        )
+    for p in parcelas:
+        session.delete(p)
+    session.delete(vale)
+    session.commit()
+    _reconciliar_vale_competencias(session, pessoa_id, competencias)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
