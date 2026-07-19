@@ -346,11 +346,37 @@ export async function salvarDiagnostico(dados: {
   return res.json();
 }
 
-export async function fetchAgendaVeterinario() {
+export type AgendaVetItem = {
+  numero_matriz: string; categoria: string; peso: number | null;
+  dias_inseminada: number | null; data_servico: string | null;
+  tocada: boolean; reconfirmada: boolean;
+  diagnostico: string | null; diagnostico_reconfirmacao: string | null;
+  atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
+};
+export type AgendaVetResposta = { data_referencia: string; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number> };
+
+export async function fetchAgendaVeterinario(): Promise<AgendaVetResposta> {
   const res = await authFetch(`${API}/reproducao/agenda-veterinario`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Agenda do veterinário error: ${res.status}`);
   return res.json();
 }
+
+// Rótulos amigáveis das listas da Agenda do veterinário — usados tanto na
+// própria tela quanto em seletores que semeiam animais a partir dela (ex.:
+// Diagnóstico de gestação "por Agenda do veterinário").
+export const LISTAS_AGENDA_VETERINARIO: { chave: string; rotulo: string }[] = [
+  { chave: "inseminadas_1_29", rotulo: "Inseminadas 1–29 dias" },
+  { chave: "inseminadas_30_59", rotulo: "Inseminadas 30–59 dias — toque" },
+  { chave: "inseminadas_60_mais", rotulo: "Inseminadas 60+ dias — reconfirmação" },
+  { chave: "novilhas_aptas_vazias", rotulo: "Novilhas aptas vazias" },
+  { chave: "verificar_aptidao", rotulo: "Verificar aptidão" },
+  { chave: "novilhas_gestantes", rotulo: "Novilhas gestantes" },
+  { chave: "vacas_gestantes", rotulo: "Vacas gestantes" },
+  { chave: "verificar_pre_parto", rotulo: "Verificar pré-parto" },
+  { chave: "vazias_por_diagnostico", rotulo: "Vazias por diagnóstico" },
+  { chave: "pendentes_classificacao", rotulo: "Pendentes de classificação" },
+  { chave: "observacao_cio", rotulo: "Observação de cio" },
+];
 
 export async function registrarReconfirmacao(dados: {
   numero_matriz: string; data_reconfirmacao: string; resultado: "positivo" | "negativo";

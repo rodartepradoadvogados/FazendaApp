@@ -21,8 +21,9 @@ import {
   baixarModeloControleLeiteiro, importarControleLeiteiroPlanilha, baixarModeloQualidadeLeite, importarQualidadeLeitePlanilha,
   fetchPedidos, fetchPedido,
   fetchCategoriasManejo, fetchPlanoContas, FINALIDADES_ESTOQUE,
+  fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO,
 } from "@/lib/api";
-import type { ApresentacaoFarmacia, Touro } from "@/lib/api";
+import type { ApresentacaoFarmacia, Touro, AgendaVetResposta } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -674,9 +675,10 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
 
-  // Animal(is) ou lote(s) — dentro de lote, pode escolher mais de um; a lista de
-  // animais mostrada é sempre a das servidas dentro do(s) lote(s) escolhido(s).
-  const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
+  // Animal(is), lote(s) ou Agenda do veterinário — dentro de lote/agenda, pode
+  // escolher mais de um; a lista de animais mostrada é sempre a das servidas
+  // dentro do(s) lote(s)/categoria(s) escolhido(s).
+  const [vinculo, setVinculo] = useState<"animal" | "lote" | "agenda">("animal");
   const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
   const codigosLotesServidas = useMemo(
     () => Array.from(new Set(servidas.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
@@ -693,9 +695,38 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
   useEffect(() => {
     setSelLote(new Set(animaisDoLote.map((a) => a.numero)));
   }, [lotesSelecionados.join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Agenda do veterinário: busca as listas sob demanda (1ª vez que o modo é
+  // aberto) e deixa marcar uma ou mais categorias — a lista de animais é a
+  // exata que aparece na agenda, com a janela suspensa permitindo ajustar.
+  const [agendaVet, setAgendaVet] = useState<AgendaVetResposta | null>(null);
+  const [agendaCarregando, setAgendaCarregando] = useState(false);
+  const [categoriasAgenda, setCategoriasAgenda] = useState<string[]>([]);
+  useEffect(() => {
+    if (vinculo === "agenda" && !agendaVet && !agendaCarregando) {
+      setAgendaCarregando(true);
+      fetchAgendaVeterinario().then(setAgendaVet).catch(() => {}).finally(() => setAgendaCarregando(false));
+    }
+  }, [vinculo, agendaVet, agendaCarregando]);
+  const numerosDaAgenda = useMemo(() => {
+    if (!agendaVet) return new Set<string>();
+    const s = new Set<string>();
+    categoriasAgenda.forEach((cat) => (agendaVet.listas[cat] || []).forEach((item) => s.add(item.numero_matriz)));
+    return s;
+  }, [agendaVet, categoriasAgenda]);
+  const animaisDaAgenda = useMemo(() => {
+    const nums = numerosDaAgenda;
+    return animais.filter((a) => nums.has(a.numero));
+  }, [animais, numerosDaAgenda]);
+  const [selAgenda, setSelAgenda] = useState<Set<string>>(new Set());
+  const toggleAgenda = (n: string) => setSelAgenda((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
+  useEffect(() => {
+    setSelAgenda(new Set(animaisDaAgenda.map((a) => a.numero)));
+  }, [Array.from(numerosDaAgenda).sort().join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const numerosAlvo = useMemo(
-    () => (vinculo === "lote" ? selLote : selecionados),
-    [vinculo, selLote, selecionados]
+    () => (vinculo === "lote" ? selLote : vinculo === "agenda" ? selAgenda : selecionados),
+    [vinculo, selLote, selAgenda, selecionados]
   );
 
   const [data, setData] = useState("");
@@ -735,7 +766,7 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
       }
       if (falhados.length) {
         // Sucesso parcial: passa para seleção individual só com quem falhou, para reenviar.
-        setVinculo("animal"); setLotesSelecionados([]); setSelecionados(new Set(falhados));
+        setVinculo("animal"); setLotesSelecionados([]); setCategoriasAgenda([]); setSelecionados(new Set(falhados));
         if (salvos.length) {
           setSucesso(`Salvos: ${salvos.length}.`);
           setErro(`Falharam: ${falhados.join(", ")} — tente novamente só esses.`);
@@ -748,7 +779,7 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
             ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
             : `Diagnóstico salvo para ${salvos.length} animal(is).`
         );
-        setSelecionados(new Set()); setLotesSelecionados([]); setData(""); setMetodo(""); setResultado("");
+        setSelecionados(new Set()); setLotesSelecionados([]); setCategoriasAgenda([]); setData(""); setMetodo(""); setResultado("");
       }
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar diagnóstico");
@@ -759,16 +790,17 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
 
   return (
     <>
-      <Campo label="Matriz / novilha (servidas) — animal(is) ou lote(s)" full>
-        <TabBar<"animal" | "lote">
+      <Campo label="Matriz / novilha (servidas) — animal(is), lote(s) ou Agenda do veterinário" full>
+        <TabBar<"animal" | "lote" | "agenda">
           abas={[
             { id: "animal", label: "Animal(is)", title: "Selecionar matrizes/novilhas individualmente" },
             { id: "lote", label: "Lote(s)", title: "Selecionar um ou mais lotes — mostra as servidas de cada lote escolhido" },
+            { id: "agenda", label: "Agenda do veterinário", title: "Selecionar a partir das listas da Agenda do veterinário — mesma classificação usada no roteiro do dia" },
           ]}
           ativa={vinculo}
           onChange={setVinculo}
         />
-        {vinculo === "animal" ? (
+        {vinculo === "animal" && (
           <AnimalPickerModal
             animais={servidas} selecionados={selecionados} onToggle={toggle}
             titulo="Escolher matriz / novilha servida"
@@ -779,7 +811,8 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
               { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
             ]}
           />
-        ) : (
+        )}
+        {vinculo === "lote" && (
           <div style={{ marginTop: "0.5rem" }}>
             <LotePicker
               opcoes={opcoesLoteDeAnimais(servidas, codigosLotesServidas)}
@@ -804,6 +837,50 @@ function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultSer
                   {selLote.size} de {animaisDoLote.length} servida(s) no(s) lote(s) selecionado(s) — desmarque na janela acima para excluir alguma.
                 </p>
               </div>
+            )}
+          </div>
+        )}
+        {vinculo === "agenda" && (
+          <div style={{ marginTop: "0.5rem" }}>
+            {agendaCarregando && <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando agenda do veterinário…</p>}
+            {agendaVet && (
+              <>
+                <div className="flex flex-wrap gap-2">
+                  {LISTAS_AGENDA_VETERINARIO.filter((l) => (agendaVet.totais[l.chave] || 0) > 0).map((l) => {
+                    const ativa = categoriasAgenda.includes(l.chave);
+                    return (
+                      <button key={l.chave} type="button"
+                        onClick={() => setCategoriasAgenda((p) => ativa ? p.filter((c) => c !== l.chave) : [...p, l.chave])}
+                        style={{
+                          fontSize: "0.75rem", padding: "0.3rem 0.65rem", borderRadius: "999px", cursor: "pointer",
+                          border: "1px solid " + (ativa ? "var(--dourado)" : "var(--border)"),
+                          background: ativa ? "var(--dourado)" : "transparent",
+                          color: ativa ? "#1a1a1a" : "var(--text-muted)", fontWeight: ativa ? 700 : 400,
+                        }}>
+                        {l.rotulo} ({agendaVet.totais[l.chave]})
+                      </button>
+                    );
+                  })}
+                </div>
+                {categoriasAgenda.length > 0 && (
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <AnimalPickerModal
+                      animais={animaisDaAgenda} selecionados={selAgenda} onToggle={toggleAgenda}
+                      titulo="Ajustar animais da(s) categoria(s) selecionada(s)"
+                      placeholder="Ajustar animais da agenda do veterinário…"
+                      colunas={[
+                        { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
+                        { header: "Lote", render: (a) => a.grupo_primario || "—" },
+                        { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                        { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
+                      ]}
+                    />
+                    <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+                      {selAgenda.size} de {animaisDaAgenda.length} animal(is) na(s) categoria(s) selecionada(s) — desmarque na janela acima para excluir algum.
+                    </p>
+                  </div>
+                )}
+              </>
             )}
           </div>
         )}
