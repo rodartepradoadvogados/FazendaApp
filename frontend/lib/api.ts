@@ -2912,3 +2912,45 @@ export type AssistenteResposta = { resposta: string; historico: any[] };
 export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {
   return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico });
 }
+
+// ── Portal (Administração > Portal > Comunicação) ──
+export const ABAS_PORTAL = [
+  { id: "sanidade", label: "Sanidade" },
+  { id: "alimentacao", label: "Alimentação" },
+  { id: "estoque", label: "Estoque" },
+  { id: "indicadores", label: "Indicadores" },
+  { id: "financeiro", label: "Financeiro" },
+  { id: "pedidos", label: "Pedidos" },
+  { id: "listas", label: "Listas" },
+  { id: "lancamentos", label: "Lançamentos" },
+  { id: "agenda", label: "Agenda" },
+];
+
+export type PortalDestinatario = { id: number; nome: string; username: string };
+export type PortalMensagem = {
+  id: number; tipo: "mensagem" | "tarefa";
+  remetente: string | null; remetente_usuario_id: number;
+  destinatario: string | null; destinatario_usuario_id: number;
+  aba: string | null; corpo: string; pede_retorno: boolean;
+  lida: boolean; resolvida: boolean; resposta_de_id: number | null; criado_em: string;
+};
+
+export const fetchPortalPermissoes = (): Promise<{ pode_delegar_tarefa: boolean }> => _rGet(`/portal/permissoes`);
+export const fetchPortalDestinatarios = (): Promise<PortalDestinatario[]> => _rGet(`/portal/destinatarios`);
+export const fetchPortalMensagensPendentes = (): Promise<PortalMensagem[]> => _rGet(`/portal/mensagens/pendentes`);
+
+export const enviarPortalMensagem = (d: { destinatarios_usuario_id: number[]; aba?: string | null; corpo: string; pede_retorno: boolean }) =>
+  _rSend(`/portal/mensagens`, "POST", d);
+export const marcarPortalMensagemLida = (id: number) => _rSend(`/portal/mensagens/${id}/marcar-lida`, "POST");
+export const resolverPortalMensagem = (id: number) => _rSend(`/portal/mensagens/${id}/resolver`, "POST");
+export const responderPortalMensagem = (id: number, d: { corpo: string; aba?: string | null }) =>
+  _rSend(`/portal/mensagens/${id}/responder`, "POST", d);
+
+export const fetchPortalRelatoriosDisponiveis = (): Promise<Record<string, string>> => _rGet(`/portal/relatorios-disponiveis`);
+export const enviarPortalEmail = (d: {
+  destinatarios_usuario_id: number[]; assunto: string; corpo?: string;
+  relatorio?: string; data_inicio?: string; data_fim?: string;
+}) => _rSend(`/portal/email`, "POST", d);
+
+export const delegarPortalTarefa = (d: { destinatarios_usuario_id: number[]; corpo: string; data_evento?: string }) =>
+  _rSend(`/portal/tarefas`, "POST", d);

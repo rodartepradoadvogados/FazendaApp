@@ -11,6 +11,7 @@ type Item = { tipo: string; categoria: string; descricao: string; numero_animal:
 function destino(i: Item): string {
   const chave = `${i.categoria || ""} ${i.tipo || ""}`.toLowerCase();
   if (chave.includes("aprova")) return "/aprovacoes";
+  if (chave.includes("portal")) return "/portal";
   if (chave.includes("financ")) return "/financeiro";
   if (chave.includes("estoque")) return "/estoque";
   // reprodutivo, sanidade e o restante são resolvidos na Agenda.

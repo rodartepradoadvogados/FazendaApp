@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.api.routers.agenda import calcular_agenda
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import SolicitacaoExclusao, Usuario
+from fazenda.models import PortalMensagem, SolicitacaoExclusao, Usuario
 
 router = APIRouter(prefix="/notificacoes", tags=["notificacoes"])
 
@@ -52,5 +52,32 @@ def notificacoes_hoje(
                 "numero_animal": None,
                 "cor": "var(--amber)",
             })
+
+    # Portal > Comunicação: mensagens/tarefas recebidas que ainda não
+    # desapareceram (ver regra de permanência em PortalMensagem).
+    portal_pendentes = session.exec(
+        select(PortalMensagem).where(
+            PortalMensagem.destinatario_usuario_id == user.id,
+            PortalMensagem.resolvida == False,  # noqa: E712
+        )
+    ).all()
+    for m in portal_pendentes:
+        if m.lida and not m.pede_retorno:
+            continue
+        remetente = session.get(Usuario, m.remetente_usuario_id)
+        remetente_nome = (remetente.nome or remetente.username) if remetente else "—"
+        if m.tipo == "tarefa":
+            descricao = f"Tarefa de {remetente_nome}: {m.corpo}"
+        else:
+            descricao = f"Mensagem de {remetente_nome}" + (f" ({m.aba})" if m.aba else "") + f": {m.corpo}"
+        itens.append({
+            "tipo": "portal_mensagem",
+            "categoria": "Portal",
+            "descricao": descricao,
+            "numero_animal": None,
+            "cor": "var(--mob-vinho-fixo)" if m.tipo == "tarefa" else "var(--blue)",
+            "portal_mensagem_id": m.id,
+            "pede_retorno": m.pede_retorno,
+        })
 
     return {"itens": itens, "total": len(itens)}
