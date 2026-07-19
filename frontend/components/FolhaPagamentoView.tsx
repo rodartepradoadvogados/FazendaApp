@@ -7,7 +7,7 @@ import {
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
-import { TabBar, SecaoRecolhivel } from "@/components/ui";
+import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { RESPONSAVEIS } from "@/lib/constants";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
@@ -22,7 +22,7 @@ const mesCompLabel = (comp: string) => {
 };
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
+  return <Indicador categoria="financeiro" valor={v} rotulo={l} cor={c || "var(--dourado-light)"} />;
 }
 
 const selStyleLote: React.CSSProperties = {
