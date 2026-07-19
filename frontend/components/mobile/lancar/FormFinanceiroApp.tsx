@@ -6,13 +6,17 @@
 // fornecedor/cliente, conta bancária…), deixando só a "Descrição" de cada item
 // como texto livre — exatamente o que a importação deve preservar.
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { MobVoltar } from "@/components/mobile/ui";
 import { LinhaPills, MobPill, type Animal } from "@/components/mobile/lancar/comum";
-import { FormFinanceiro } from "@/components/FormFinanceiro";
-import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
-import CompraSemenForm from "@/components/CompraSemenForm";
-import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import { RESPONSAVEIS } from "@/lib/constants";
+
+// Cada pílula só baixa seu próprio formulário quando aberta pela 1ª vez —
+// importante em conexão de campo, onde o app roda mais.
+const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
+const CompraVendaAnimalForm = dynamic(() => import("@/components/CompraVendaAnimalForm"), { ssr: false });
+const CompraSemenForm = dynamic(() => import("@/components/CompraSemenForm"), { ssr: false });
+const FolhaPagamentoView = dynamic(() => import("@/components/FolhaPagamentoView"), { ssr: false });
 
 type TipoLancamento = "despesa" | "receita" | "compra_animal" | "venda_animal" | "compra_semen" | "folha";
 

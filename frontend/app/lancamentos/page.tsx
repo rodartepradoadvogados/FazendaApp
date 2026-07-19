@@ -1,5 +1,6 @@
 "use client";
 import React, { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
   Search, ExternalLink, BookOpen, X, Plus, AlertTriangle, Trash2, Droplet, CalendarClock, Wheat,
@@ -32,14 +33,16 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EstoquePicker } from "@/components/EstoquePicker";
-import { FormFinanceiro } from "@/components/FormFinanceiro";
-import { FormExclusao } from "@/components/FormExclusao";
-import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
-import { UploadPlanilha } from "@/components/UploadPlanilha";
-import MovimentarAnimais from "@/components/MovimentarAnimais";
-import CompraVendaAnimalForm from "@/components/CompraVendaAnimalForm";
-import CompraSemenForm from "@/components/CompraSemenForm";
-import BaixarAnimal from "@/components/BaixarAnimal";
+// Formulários grandes de cada sub-aba: dynamic() para que o navegador só baixe
+// o código da sub-aba realmente aberta, em vez de tudo de uma vez com a página.
+const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then((m) => m.FormFinanceiro), { ssr: false });
+const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
+const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
+const UploadPlanilha = dynamic(() => import("@/components/UploadPlanilha").then((m) => m.UploadPlanilha), { ssr: false });
+const MovimentarAnimais = dynamic(() => import("@/components/MovimentarAnimais"), { ssr: false });
+const CompraVendaAnimalForm = dynamic(() => import("@/components/CompraVendaAnimalForm"), { ssr: false });
+const CompraSemenForm = dynamic(() => import("@/components/CompraSemenForm"), { ssr: false });
+const BaixarAnimal = dynamic(() => import("@/components/BaixarAnimal"), { ssr: false });
 import { EditorHormoniosIatf } from "@/components/EditorHormoniosIatf";
 import { TabelaNutricionalBotao } from "@/components/TabelaNutricional";
 import type { HormonioIatf, SemenDisponivel } from "@/lib/api";
@@ -47,13 +50,14 @@ import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { TabBar, SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Modal } from "@/components/Modal";
-import { PainelLancarBst } from "@/components/PainelLancarBst";
-import { CadastroProtocolosSanitarios, CadastroEventosSanitarios } from "@/components/CadastroSanitario";
-import { CadastrarNovaDieta } from "@/components/CadastroAlimentacao";
-import { FormSecagem } from "@/components/FormSecagem";
-import { FormQualidadeLeite } from "@/components/FormQualidadeLeite";
-import { FormEntregaLeite } from "@/components/FormEntregaLeite";
-import { FormInducaoLactacao } from "@/components/FormInducaoLactacao";
+const PainelLancarBst = dynamic(() => import("@/components/PainelLancarBst").then((m) => m.PainelLancarBst), { ssr: false });
+const CadastroProtocolosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroProtocolosSanitarios), { ssr: false });
+const CadastroEventosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroEventosSanitarios), { ssr: false });
+const CadastrarNovaDieta = dynamic(() => import("@/components/CadastroAlimentacao").then((m) => m.CadastrarNovaDieta), { ssr: false });
+const FormSecagem = dynamic(() => import("@/components/FormSecagem").then((m) => m.FormSecagem), { ssr: false });
+const FormQualidadeLeite = dynamic(() => import("@/components/FormQualidadeLeite").then((m) => m.FormQualidadeLeite), { ssr: false });
+const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").then((m) => m.FormEntregaLeite), { ssr: false });
+const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 import {
   Campo, Secao, inputStyle, lbl, nota,
   type EstoqueItem, type ItemSanidade, itemSanidadeVazio, unidadesCompativeis, EstoqueRestante, codigoGrupo, MOTIVOS_SECAGEM,

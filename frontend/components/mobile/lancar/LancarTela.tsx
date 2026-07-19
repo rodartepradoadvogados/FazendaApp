@@ -3,19 +3,23 @@
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2 } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
 import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
-import { FormReprodutivo } from "./FormReprodutivo";
-import { FormProducao } from "./FormProducao";
-import { FormSanidade } from "./FormSanidade";
-import { FormAlimentacao } from "./FormAlimentacao";
-import Movimentar from "@/components/mobile/rebanho/Movimentar";
-import Baixar from "@/components/mobile/rebanho/Baixar";
-import FormFinanceiroApp from "./FormFinanceiroApp";
-import BalancoEstoque from "./BalancoEstoque";
-import { FormExclusao } from "@/components/FormExclusao";
+
+// Cada bloco grande só baixa a sub-tela que abre quando o usuário toca nela —
+// importante em conexão de campo, onde o app roda mais.
+const FormReprodutivo = dynamic(() => import("./FormReprodutivo").then((m) => m.FormReprodutivo), { ssr: false });
+const FormProducao = dynamic(() => import("./FormProducao").then((m) => m.FormProducao), { ssr: false });
+const FormSanidade = dynamic(() => import("./FormSanidade").then((m) => m.FormSanidade), { ssr: false });
+const FormAlimentacao = dynamic(() => import("./FormAlimentacao").then((m) => m.FormAlimentacao), { ssr: false });
+const Movimentar = dynamic(() => import("@/components/mobile/rebanho/Movimentar"), { ssr: false });
+const Baixar = dynamic(() => import("@/components/mobile/rebanho/Baixar"), { ssr: false });
+const FormFinanceiroApp = dynamic(() => import("./FormFinanceiroApp"), { ssr: false });
+const BalancoEstoque = dynamic(() => import("./BalancoEstoque"), { ssr: false });
+const FormExclusao = dynamic(() => import("@/components/FormExclusao").then((m) => m.FormExclusao), { ssr: false });
 
 type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
 
