@@ -89,7 +89,7 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   const [pessoas, setPessoas] = useState<any[]>([]);
 
   useEffect(() => {
-    fetchEstoque().then(setEstoqueItens).catch(() => setEstoqueItens([]));
+    fetchEstoque().then((d) => setEstoqueItens(d.itens || [])).catch(() => setEstoqueItens([]));
     fetchPessoas().then(setPessoas).catch(() => setPessoas([]));
   }, []);
 

@@ -1,12 +1,51 @@
 "use client";
 // Sub-tela PRODUÇÃO (LEITE): controle leiteiro por vaca (individual) ou por
-// lote (pesagem de todas as vacas do lote de uma vez, salvando tudo junto).
+// lote (pesagem de todas as vacas do lote de uma vez, salvando tudo junto),
+// mais Pesagem corporal e BST — reaproveitando os mesmos componentes ricos
+// do site (FormPesagemCorporal, PainelLancarBst) dentro do envoltório
+// ".mob-form-embutido", igual ao já feito em Financeiro (compra/venda de
+// animal, folha de pagamento).
 // Endpoint do desktop: POST /producao/controles (já aceita lista de entradas).
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { BotoesEscolha, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
+import { BotoesEscolha, LinhaPills, MobPill, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
+import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
+import { PainelLancarBst } from "@/components/PainelLancarBst";
+import { fetchAgenda } from "@/lib/api";
 
 export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+  const [sub, setSub] = useState<"controle" | "pesagem" | "bst">("controle");
+  const [agenda, setAgenda] = useState<any>(null);
+  const carregarAgenda = () => { fetchAgenda().then(setAgenda).catch(() => {}); };
+  useEffect(() => { if (sub === "bst" && !agenda) carregarAgenda(); }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <>
+      <LinhaPills>
+        <MobPill ativa={sub === "controle"} onClick={() => setSub("controle")}>Controle leiteiro</MobPill>
+        <MobPill ativa={sub === "pesagem"} onClick={() => setSub("pesagem")}>Pesagem corporal</MobPill>
+        <MobPill ativa={sub === "bst"} onClick={() => setSub("bst")}>BST</MobPill>
+      </LinhaPills>
+      {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
+      {sub === "pesagem" && (
+        <div className="mob-form-embutido">
+          <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} />
+        </div>
+      )}
+      {sub === "bst" && (
+        <div className="mob-form-embutido">
+          {agenda ? <PainelLancarBst agenda={agenda} onAtualizado={carregarAgenda} /> : <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem" }}>Carregando…</p>}
+        </div>
+      )}
+    </>
+  );
+}
+
+function lotesDe(animais: Animal[]): string[] {
+  return Array.from(new Set(animais.map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+}
+
+function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [modo, setModo] = useState<"vaca" | "lote">("vaca");
   const [animal, setAnimal] = useState(animalFixado || "");
