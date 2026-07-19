@@ -219,3 +219,23 @@ class TestDiagnosticoExamePositivoNegativoIndefinido:
         r = c.get("/sanidade/exames/resultados", params={"resultado": "positivo"})
         assert len(r.json()) == 1
         assert r.json()[0]["numero_matriz"] == "101"
+
+    def test_filtro_por_periodo(self, client):
+        """#517 — resultados de exame filtráveis por data_de/data_ate."""
+        c, _ = client
+        ev_id = _criar_evento_exame(c)
+        c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": "2026-01-10", "animais": ["101"],
+            "frequencia_valor": 0, "resultado_exame": "positivo",
+        })
+        c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": "2026-03-10", "animais": ["102"],
+            "frequencia_valor": 0, "resultado_exame": "negativo",
+        })
+        r = c.get("/sanidade/exames/resultados", params={"data_de": "2026-02-01", "data_ate": "2026-04-01"})
+        assert len(r.json()) == 1
+        assert r.json()[0]["numero_matriz"] == "102"
+
+        r2 = c.get("/sanidade/exames/resultados", params={"data_de": "2026-01-01", "data_ate": "2026-01-31"})
+        assert len(r2.json()) == 1
+        assert r2.json()[0]["numero_matriz"] == "101"

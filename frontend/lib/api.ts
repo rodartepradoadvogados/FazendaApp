@@ -1347,10 +1347,12 @@ export type ExameResultado = {
   valor_numerico: number | null; banda: "abaixo" | "dentro" | "acima" | null;
   veterinario: string | null; observacao: string | null;
 };
-export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: number; resultado?: string }) {
+export async function fetchResultadosExame(filtros?: { eventoSanitarioId?: number; resultado?: string; dataDe?: string; dataAte?: string }) {
   const qs = new URLSearchParams();
   if (filtros?.eventoSanitarioId) qs.set("evento_sanitario_id", String(filtros.eventoSanitarioId));
   if (filtros?.resultado) qs.set("resultado", filtros.resultado);
+  if (filtros?.dataDe) qs.set("data_de", filtros.dataDe);
+  if (filtros?.dataAte) qs.set("data_ate", filtros.dataAte);
   const res = await authFetch(`${API}/sanidade/exames/resultados${qs.toString() ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Resultados de exame error: ${res.status}`);
   return res.json() as Promise<ExameResultado[]>;

@@ -212,6 +212,8 @@ const COR_RESULTADO_EXAME: Record<string, string> = { positivo: "var(--red)", ne
 function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
   const [eventoId, setEventoId] = useState("");
   const [resultadoFiltro, setResultadoFiltro] = useState("");
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
   const [linhas, setLinhas] = useState<ExameResultado[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -221,8 +223,10 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
     fetchResultadosExame({
       eventoSanitarioId: eventoId ? Number(eventoId) : undefined,
       resultado: resultadoFiltro || undefined,
+      dataDe: dataDe || undefined,
+      dataAte: dataAte || undefined,
     }).then(setLinhas).catch((e) => setErro(e.message));
-  }, [eventoId, resultadoFiltro]);
+  }, [eventoId, resultadoFiltro, dataDe, dataAte]);
 
   return (
     <div className="card">
@@ -246,6 +250,12 @@ function RelatorioResultadosExameView({ eventos }: { eventos: EventoPrev[] }) {
             <option value="negativo">Negativo</option>
             <option value="indefinido">Indefinido</option>
           </select></div>
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+            value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
+        <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+          <input type="date" style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" }}
+            value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
       </div>
 
       {erro && <div className="alert-critico mb-3"><AlertTriangle size={18} /><span>Sem dados: {erro}.</span></div>}

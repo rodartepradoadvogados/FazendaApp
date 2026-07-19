@@ -2352,6 +2352,14 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   const [vinculo, setVinculo] = useState<"animal" | "lote" | "categoria">("animal");
   const [animaisSel, setAnimaisSel] = useState<Set<string>>(new Set());
 
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
+  const veterinariosZootecnistas = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false && (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista", "Vet/Zootec."].includes(t)))
+      .sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
+
   // Lote: pode selecionar mais de um — janela suspensa mostra só os animais
   // dos lotes escolhidos, com "selecionar todos" (mesmo padrão da Inseminação).
   const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
@@ -2557,7 +2565,12 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
           <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>0 = não repetir — evento avulso, não entra no calendário sanitário.</p>
         </Campo>
         {ehExame && (
-          <Campo label="Veterinário (exame)"><input style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" /></Campo>
+          <Campo label="Veterinário (exame)">
+            <select style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)}>
+              <option value="">Opcional</option>
+              {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+            </select>
+          </Campo>
         )}
       </div>
 
