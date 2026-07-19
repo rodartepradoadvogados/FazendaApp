@@ -488,6 +488,7 @@ class TestFolhaPagamentoRecorrente:
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["numero_lancamento_gerado"]
+        assert corpo["competencia"] == "2026-07"
 
         with Session(engine) as s:
             from fazenda.models import ContaGerencial
@@ -495,15 +496,33 @@ class TestFolhaPagamentoRecorrente:
         assert conta is not None
         assert conta.valor_total == 2700.0
         assert conta.tipo == "despesa"
-        assert conta.data_vencimento == date(2026, 7, 5)
+        # Competência = mês trabalhado (07/2026); pagamento cai no mês seguinte, dia 5.
+        assert conta.data_competencia == date(2026, 7, 1)
+        assert conta.data_vencimento == date(2026, 8, 5)
 
         # Aparece em Contas a Pagar...
         lancamentos = c.get("/financeiro/lancamentos").json()["lancamentos"]
         assert any(l["numero_lancamento"] == corpo["numero_lancamento_gerado"] for l in lancamentos)
 
-        # ...e na Agenda, dentro da janela de vencimento.
-        eventos = c.get("/agenda/", params={"data": "2026-07-01", "dias": 10}).json()["eventos"]
+        # ...e na Agenda, dentro da janela de vencimento (mês seguinte à competência).
+        eventos = c.get("/agenda/", params={"data": "2026-08-01", "dias": 10}).json()["eventos"]
         assert any("Folha de pagamento" in e["descricao"] for e in eventos)
+
+    def test_dia_vencimento_customizado_aplica_no_mes_seguinte(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-12", "valor_bruto": 2000.0,
+            "recorrente": True, "dia_vencimento": 15,
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == corpo["numero_lancamento_gerado"])).first()
+        # Competência de dezembro vira pagamento em janeiro do ano seguinte, dia 15.
+        assert conta.data_vencimento == date(2027, 1, 15)
+        assert conta.data_competencia == date(2026, 12, 1)
 
     def test_gera_competencias_seguintes_ate_o_mes_atual(self, client):
         c, engine = client

@@ -284,6 +284,15 @@ def _competencia_seguinte(competencia: str) -> str:
     return f"{ano:04d}-{mes:02d}"
 
 
+def _data_vencimento_folha(competencia: str, dia_vencimento: Optional[int]) -> date:
+    """Vencimento da folha: dia 5 (ou o dia escolhido) do mês SEGUINTE ao mês
+    trabalhado — a competência é sempre o mês trabalhado; o pagamento cai no
+    mês seguinte (ex.: competência 07/2026 é paga em 05/08/2026)."""
+    ano_pgto, mes_pgto = (int(x) for x in _competencia_seguinte(competencia).split("-"))
+    dia = min(max(dia_vencimento or 5, 1), 28)
+    return date(ano_pgto, mes_pgto, dia)
+
+
 def _proporcional_admissao(pessoa: Pessoa, competencia: str) -> Optional[dict]:
     """
     Quando a competência lançada é o mês de admissão da pessoa, calcula a
@@ -371,7 +380,6 @@ def _gerar_folha_recorrente(session: Session) -> None:
             ).first()
             if not existe:
                 ano, mes = (int(x) for x in competencia.split("-"))
-                dia = min(max(modelo.dia_vencimento or 5, 1), 28)
                 descontos = round(modelo.descontos, 2)
                 valor_vale = _valor_vale(session, modelo.pessoa_id, competencia)
                 _marcar_vale_aplicado(session, modelo.pessoa_id, competencia)
@@ -388,7 +396,7 @@ def _gerar_folha_recorrente(session: Session) -> None:
                 session.add(ContaGerencial(
                     numero_lancamento=numero_lancamento,
                     descricao=f"Folha de pagamento — {pessoa.nome} ({competencia})",
-                    data_vencimento=date(ano, mes, dia),
+                    data_vencimento=_data_vencimento_folha(competencia, modelo.dia_vencimento),
                     data_competencia=date(ano, mes, 1),
                     fornecedor_cliente=pessoa.nome,
                     tipo_documento="Folha de pagamento",
@@ -520,7 +528,6 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     # aparecia em Contas a Pagar nem na Agenda (só as competências seguintes,
     # geradas por _gerar_folha_recorrente, tinham essa conta criada).
     ano, mes = (int(x) for x in dados.competencia.split("-"))
-    dia = min(max(dados.dia_vencimento or 5, 1), 28)
     numero_lancamento = _proximo_numero_lancamento(session, ano)
 
     registro = FolhaPagamento(
@@ -537,7 +544,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     session.add(ContaGerencial(
         numero_lancamento=numero_lancamento,
         descricao=f"Folha de pagamento — {pessoa.nome} ({dados.competencia})",
-        data_vencimento=date(ano, mes, dia),
+        data_vencimento=_data_vencimento_folha(dados.competencia, dados.dia_vencimento),
         data_competencia=date(ano, mes, 1),
         fornecedor_cliente=pessoa.nome,
         tipo_documento="Folha de pagamento",
@@ -600,10 +607,9 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
         if conta and conta.valor_pago is None:
             pessoa = session.get(Pessoa, dados.pessoa_id)
             ano, mes = (int(x) for x in dados.competencia.split("-"))
-            dia = min(max(dados.dia_vencimento or 5, 1), 28)
             conta.descricao = f"Folha de pagamento — {pessoa.nome} ({dados.competencia})"
             conta.fornecedor_cliente = pessoa.nome
-            conta.data_vencimento = date(ano, mes, dia)
+            conta.data_vencimento = _data_vencimento_folha(dados.competencia, dados.dia_vencimento)
             conta.data_competencia = date(ano, mes, 1)
             conta.centro_custo = dados.centro_custo
             conta.valor_total = valor_liquido

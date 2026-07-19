@@ -446,6 +446,10 @@ export default function FolhaPagamentoView() {
           <div><label style={labelStyleLote}>Outros descontos (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
         </div>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
+          Competência = mês trabalhado. O pagamento (conta a pagar) é lançado no dia 5 do mês seguinte
+          {recorrente ? " (ou no dia escolhido abaixo)" : ""}.
+        </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <CampoRetencao
             label="INSS" percentual={percentualInss} valor={valorInss}
@@ -469,7 +473,7 @@ export default function FolhaPagamentoView() {
             <label htmlFor="folha-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente (lançar em Contas a Pagar todo mês)</label>
           </div>
           {recorrente && (
-            <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+            <div><label style={labelStyleLote}>Dia de vencimento no mês seguinte (1–28)</label>
               <input type="number" min={1} max={28} style={selStyleLote} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
           )}
         </div>
@@ -740,7 +744,7 @@ export default function FolhaPagamentoView() {
                               <label htmlFor="folha-edit-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente</label>
                             </div>
                             {editRecorrente && (
-                              <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+                              <div><label style={labelStyleLote}>Dia de vencimento no mês seguinte (1–28)</label>
                                 <input type="number" min={1} max={28} style={selStyleLote} value={editDiaVencimento} onChange={(e) => setEditDiaVencimento(e.target.value)} /></div>
                             )}
                           </div>
