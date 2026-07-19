@@ -25,8 +25,9 @@ from sqlalchemy import func
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaPagamento, Doenca,
-    Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, ExameDefinicao, FolhaPagamento, Fornecedor,
+    AgendaManual, AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria,
+    DiariaPagamento, Doenca, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, ExameDefinicao,
+    FeriasFuncionario, FolhaPagamento, Fornecedor,
     GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
     ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Raca, SeedFlag, ServicoCadastro,
     TipoPessoa, TipoServicoReprodutivo, Touro, Usuario, ValeAvulso, ValeFuncionario, ValeParcela,
@@ -35,7 +36,8 @@ from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.parametros import minimos_semen_por_tipo
+from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias
+from fazenda.rules.parametros import dias_ferias_padrao, minimos_semen_por_tipo, percentual_terco_constitucional_ferias
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
@@ -820,6 +822,327 @@ def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) ->
 
     linhas.sort(key=_chave_prioridade)
     return linhas
+
+
+# ---------------------------------------------------------------------------
+# Férias — cálculo (dias gozados + 1/3 constitucional + abono pecuniário
+# opcional) e lançamento em Contas a Pagar. Sem envio ao eSocial (fora de
+# escopo) — só o controle interno do que a fazenda já paga hoje.
+# ---------------------------------------------------------------------------
+class FeriasIn(BaseModel):
+    pessoa_id: int
+    periodo_aquisitivo_inicio: date
+    periodo_aquisitivo_fim: date
+    dias_direito: int = 30
+    dias_gozados: int
+    data_inicio_gozo: date
+    data_fim_gozo: date
+    abono_pecuniario_dias: int = 0
+    data_pagamento: date | None = None
+    status: str = "pendente"
+    observacao: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
+
+
+def _validar_ferias(dados: FeriasIn) -> None:
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    if dados.dias_gozados <= 0 or dados.dias_gozados > dados.dias_direito:
+        raise HTTPException(status_code=400, detail="Dias gozados deve ser maior que zero e não pode exceder os dias de direito")
+    if dados.data_fim_gozo < dados.data_inicio_gozo:
+        raise HTTPException(status_code=400, detail="Data de fim do gozo não pode ser anterior à data de início")
+    # Abono pecuniário (art. 143 CLT) — no máximo 1/3 dos dias de direito.
+    if dados.abono_pecuniario_dias < 0 or dados.abono_pecuniario_dias > dados.dias_direito // 3:
+        raise HTTPException(status_code=400, detail=f"Abono pecuniário não pode exceder {dados.dias_direito // 3} dias (1/3 dos dias de direito)")
+
+
+@router.get("/ferias")
+def listar_ferias(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    registros = session.exec(select(FeriasFuncionario).order_by(FeriasFuncionario.data_inicio_gozo.desc())).all()
+    nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
+    return [
+        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
+        for r in registros
+    ]
+
+
+@router.post("/ferias")
+def criar_ferias(dados: FeriasIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    _validar_ferias(dados)
+
+    calculo = calcular_ferias(
+        pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+    )
+    numero_lancamento = _proximo_numero_lancamento(session, dados.data_fim_gozo.year)
+
+    registro = FeriasFuncionario(
+        pessoa_id=dados.pessoa_id,
+        periodo_aquisitivo_inicio=dados.periodo_aquisitivo_inicio, periodo_aquisitivo_fim=dados.periodo_aquisitivo_fim,
+        dias_direito=dados.dias_direito, dias_gozados=dados.dias_gozados,
+        data_inicio_gozo=dados.data_inicio_gozo, data_fim_gozo=dados.data_fim_gozo,
+        abono_pecuniario_dias=dados.abono_pecuniario_dias,
+        valor_ferias=calculo["valor_ferias"], valor_terco_constitucional=calculo["valor_terco_constitucional"],
+        valor_total=calculo["valor_total"],
+        data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
+        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+    )
+    session.add(registro)
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})",
+        data_vencimento=dados.data_pagamento or dados.data_fim_gozo,
+        data_competencia=dados.data_fim_gozo,
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Férias",
+        centro_custo=dados.centro_custo,
+        valor_total=calculo["valor_total"],
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+        valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+    ))
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.put("/ferias/{registro_id}")
+def atualizar_ferias(registro_id: int, dados: FeriasIn, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(FeriasFuncionario, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="Férias já pagas não podem ser editadas.")
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    _validar_ferias(dados)
+
+    calculo = calcular_ferias(
+        pessoa.salario_base, dados.dias_gozados, dados.abono_pecuniario_dias, percentual_terco_constitucional_ferias(),
+    )
+    registro.pessoa_id = dados.pessoa_id
+    registro.periodo_aquisitivo_inicio = dados.periodo_aquisitivo_inicio
+    registro.periodo_aquisitivo_fim = dados.periodo_aquisitivo_fim
+    registro.dias_direito = dados.dias_direito
+    registro.dias_gozados = dados.dias_gozados
+    registro.data_inicio_gozo = dados.data_inicio_gozo
+    registro.data_fim_gozo = dados.data_fim_gozo
+    registro.abono_pecuniario_dias = dados.abono_pecuniario_dias
+    registro.valor_ferias = calculo["valor_ferias"]
+    registro.valor_terco_constitucional = calculo["valor_terco_constitucional"]
+    registro.valor_total = calculo["valor_total"]
+    registro.data_pagamento = dados.data_pagamento
+    registro.status = dados.status
+    registro.observacao = dados.observacao
+    registro.centro_custo = dados.centro_custo
+    session.add(registro)
+
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta and conta.valor_pago is None:
+            conta.descricao = f"Férias — {pessoa.nome} ({dados.data_inicio_gozo.isoformat()} a {dados.data_fim_gozo.isoformat()})"
+            conta.fornecedor_cliente = pessoa.nome
+            conta.data_vencimento = dados.data_pagamento or dados.data_fim_gozo
+            conta.data_competencia = dados.data_fim_gozo
+            conta.centro_custo = dados.centro_custo
+            conta.valor_total = calculo["valor_total"]
+            if dados.status == "pago":
+                conta.data_pagamento = dados.data_pagamento
+                conta.valor_pago = calculo["valor_total"]
+            session.add(conta)
+
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.delete("/ferias/{registro_id}")
+def excluir_ferias(registro_id: int, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(FeriasFuncionario, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="Férias já pagas não podem ser excluídas aqui — exclua em Lançamentos > Excluir lançamento.")
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta:
+            session.delete(conta)
+    session.delete(registro)
+    session.commit()
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# 13º salário — cálculo proporcional aos meses trabalhados no ano (única ou
+# em duas parcelas) e lançamento em Contas a Pagar.
+# ---------------------------------------------------------------------------
+class DecimoTerceiroIn(BaseModel):
+    pessoa_id: int
+    ano: int
+    parcela: str = "unica"  # unica | primeira | segunda
+    meses_trabalhados: int
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
+    data_pagamento: date | None = None
+    status: str = "pendente"
+    observacao: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
+
+
+PARCELAS_DECIMO_TERCEIRO = ("unica", "primeira", "segunda")
+
+
+def _validar_decimo_terceiro(dados: DecimoTerceiroIn) -> None:
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    if dados.parcela not in PARCELAS_DECIMO_TERCEIRO:
+        raise HTTPException(status_code=400, detail="Parcela inválida")
+    if dados.meses_trabalhados < 1 or dados.meses_trabalhados > 12:
+        raise HTTPException(status_code=400, detail="Meses trabalhados deve estar entre 1 e 12")
+
+
+@router.get("/decimo-terceiro")
+def listar_decimo_terceiro(session: Session = Depends(get_session)) -> list[dict]:
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    registros = session.exec(select(DecimoTerceiro).order_by(DecimoTerceiro.ano.desc())).all()
+    nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
+    return [
+        {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
+        for r in registros
+    ]
+
+
+@router.post("/decimo-terceiro")
+def criar_decimo_terceiro(dados: DecimoTerceiroIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    _validar_decimo_terceiro(dados)
+
+    valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
+    valor_inss = round(dados.valor_inss, 2)
+    valor_ir = round(dados.valor_ir, 2)
+    valor_liquido = round(valor_bruto - valor_inss - valor_ir, 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+
+    numero_lancamento = _proximo_numero_lancamento(session, dados.ano)
+    vencimento_padrao = date(dados.ano, 12, 20) if dados.parcela in ("unica", "segunda") else date(dados.ano, 11, 30)
+
+    registro = DecimoTerceiro(
+        pessoa_id=dados.pessoa_id, ano=dados.ano, parcela=dados.parcela, meses_trabalhados=dados.meses_trabalhados,
+        valor_bruto=valor_bruto, valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
+        data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
+        numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+    )
+    session.add(registro)
+    session.add(ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"13º salário ({dados.parcela}) — {pessoa.nome} ({dados.ano})",
+        data_vencimento=dados.data_pagamento or vencimento_padrao,
+        data_competencia=date(dados.ano, 12, 1),
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="13º salário",
+        centro_custo=dados.centro_custo,
+        valor_total=valor_liquido,
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+        valor_pago=valor_liquido if dados.status == "pago" else None,
+    ))
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.put("/decimo-terceiro/{registro_id}")
+def atualizar_decimo_terceiro(registro_id: int, dados: DecimoTerceiroIn, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(DecimoTerceiro, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="13º salário já pago não pode ser editado.")
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    _validar_decimo_terceiro(dados)
+
+    valor_bruto = calcular_decimo_terceiro(pessoa.salario_base, dados.meses_trabalhados)
+    valor_inss = round(dados.valor_inss, 2)
+    valor_ir = round(dados.valor_ir, 2)
+    valor_liquido = round(valor_bruto - valor_inss - valor_ir, 2)
+    if valor_liquido <= 0:
+        raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+
+    registro.pessoa_id = dados.pessoa_id
+    registro.ano = dados.ano
+    registro.parcela = dados.parcela
+    registro.meses_trabalhados = dados.meses_trabalhados
+    registro.valor_bruto = valor_bruto
+    registro.valor_inss = valor_inss
+    registro.valor_ir = valor_ir
+    registro.valor_liquido = valor_liquido
+    registro.data_pagamento = dados.data_pagamento
+    registro.status = dados.status
+    registro.observacao = dados.observacao
+    registro.centro_custo = dados.centro_custo
+    session.add(registro)
+
+    vencimento_padrao = date(dados.ano, 12, 20) if dados.parcela in ("unica", "segunda") else date(dados.ano, 11, 30)
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta and conta.valor_pago is None:
+            conta.descricao = f"13º salário ({dados.parcela}) — {pessoa.nome} ({dados.ano})"
+            conta.fornecedor_cliente = pessoa.nome
+            conta.data_vencimento = dados.data_pagamento or vencimento_padrao
+            conta.data_competencia = date(dados.ano, 12, 1)
+            conta.centro_custo = dados.centro_custo
+            conta.valor_total = valor_liquido
+            if dados.status == "pago":
+                conta.data_pagamento = dados.data_pagamento
+                conta.valor_pago = valor_liquido
+            session.add(conta)
+
+    session.commit()
+    session.refresh(registro)
+    return registro.model_dump()
+
+
+@router.delete("/decimo-terceiro/{registro_id}")
+def excluir_decimo_terceiro(registro_id: int, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(DecimoTerceiro, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="13º salário já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta:
+            session.delete(conta)
+    session.delete(registro)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

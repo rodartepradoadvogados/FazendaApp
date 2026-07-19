@@ -10,7 +10,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import {
-  fetchAnimais, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
+  fetchAnimais, fetchRecriaDoencas, fetchDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
   fetchRecriaIdadeParto, fetchRecriaTaxaPrenhez, fetchRecriaCocho, criarRecriaCocho, excluirRecriaCocho,
   fetchRecriaDossie, ehAdmin, baixarModeloCocho, importarCochoPlanilha,
@@ -547,7 +547,7 @@ function AbaNutricao() {
 // ─────────────────────────── REGISTRAR ───────────────────────────
 function AbaRegistrar() {
   const [numeros, setNumeros] = useState<string[]>([]);
-  const [doencasConhecidas, setDoencasConhecidas] = useState<string[]>([]);
+  const [doencasCadastro, setDoencasCadastro] = useState<string[]>([]);
   const [numero, setNumero] = useState("");
   const [doenca, setDoenca] = useState("");
   const [data, setData] = useState(hoje());
@@ -560,7 +560,7 @@ function AbaRegistrar() {
   const carregar = () => fetchRecriaOcorrencias().then(setLista).catch(() => setLista([]));
   useEffect(() => {
     fetchAnimais({ incluirMachos: true }).then((d: any) => setNumeros((d.animais || d || []).map((a: any) => a.numero).filter(Boolean))).catch(() => {});
-    fetchRecriaDoencas().then((d) => setDoencasConhecidas(d.map((x) => x.doenca))).catch(() => {});
+    fetchDoencas().then((d: any[]) => setDoencasCadastro(d.map((x) => x.nome))).catch(() => setDoencasCadastro([]));
     carregar();
   }, []);
 
@@ -573,7 +573,6 @@ function AbaRegistrar() {
       await criarRecriaOcorrencia({ numero_matriz: numero.trim(), doenca: doenca.trim(), data_ocorrencia: data, observacao: obs.trim() || undefined });
       setMsg({ tipo: "ok", txt: `Caso de ${doenca} no animal ${numero} registrado.` });
       setNumero(""); setObs(""); carregar();
-      fetchRecriaDoencas().then((d) => setDoencasConhecidas(d.map((x) => x.doenca))).catch(() => {});
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); } finally { setSalvando(false); }
   }
   async function excluir(id: number) {
@@ -581,7 +580,6 @@ function AbaRegistrar() {
     try { await excluirRecriaOcorrencia(id); carregar(); } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
   }
 
-  const SUGESTOES = Array.from(new Set(["Diarreia", "Pneumonia", "TPB", "Infecção umbilical", ...doencasConhecidas]));
   return (
     <div style={{ display: "grid", gap: "1rem", maxWidth: 760 }}>
       <div style={card}>
@@ -591,8 +589,10 @@ function AbaRegistrar() {
             <input style={input} list="recria-animais" value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 145" />
             <datalist id="recria-animais">{numeros.map((n) => <option key={n} value={n} />)}</datalist></div>
           <div><label style={lbl}>Doença</label>
-            <input style={input} list="recria-doencas" value={doenca} onChange={(e) => setDoenca(e.target.value)} placeholder="ex.: Diarreia" />
-            <datalist id="recria-doencas">{SUGESTOES.map((d) => <option key={d} value={d} />)}</datalist></div>
+            <select style={input} value={doenca} onChange={(e) => setDoenca(e.target.value)}>
+              <option value="">Selecione...</option>
+              {doencasCadastro.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select></div>
           <div><label style={lbl}>Data do caso</label><input type="date" style={input} value={data} onChange={(e) => setData(e.target.value)} /></div>
           <div><label style={lbl}>Observação (opcional)</label><input style={input} value={obs} onChange={(e) => setObs(e.target.value)} /></div>
         </div>

@@ -3,11 +3,11 @@
 // Diferente das outras sub-telas do Menu (só leitura), esta PERMITE editar e
 // excluir a aplicação direto na lista — só para a conta principal (admin).
 // A leitura usa cache offline; editar/excluir são ações online.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Pencil, Trash2, Check, X, Search } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import {
-  fetchSanidade, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate,
+  fetchSanidade, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate, fetchMedicamentos,
 } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
@@ -37,6 +37,11 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
   const [vals, setVals] = useState({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<string[]>([]);
+
+  useEffect(() => {
+    fetchMedicamentos({ incluir_sem_estoque: true }).then((m: any[]) => setProdutosCatalogo(m.map((x) => x.nome))).catch(() => setProdutosCatalogo([]));
+  }, []);
 
   const lista = useMemo(() => {
     const todas = (dados?.aplicacoes || []).slice();
@@ -144,7 +149,11 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                       <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Data</label>
                         <input type="date" style={inp} value={vals.data} onChange={(e) => setVals((s) => ({ ...s, data: e.target.value }))} /></div>
                       <div style={{ marginBottom: "0.6rem" }}><label style={rotulo}>Produto</label>
-                        <input style={inp} value={vals.produto} onChange={(e) => setVals((s) => ({ ...s, produto: e.target.value }))} /></div>
+                        <select style={inp} value={vals.produto} onChange={(e) => setVals((s) => ({ ...s, produto: e.target.value }))}>
+                          <option value="">Selecione...</option>
+                          {!produtosCatalogo.includes(vals.produto) && vals.produto && <option value={vals.produto}>{vals.produto}</option>}
+                          {produtosCatalogo.map((p) => <option key={p} value={p}>{p}</option>)}
+                        </select></div>
                       <div style={{ display: "flex", gap: "0.6rem", marginBottom: "0.6rem" }}>
                         <div style={{ flex: 1 }}><label style={rotulo}>Dose</label>
                           <input type="number" inputMode="decimal" style={inp} value={vals.dose} onChange={(e) => setVals((s) => ({ ...s, dose: e.target.value }))} /></div>

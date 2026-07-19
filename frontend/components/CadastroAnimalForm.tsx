@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Beef, Check, Eye } from "lucide-react";
 import {
   fetchAnimais, criarAnimalFicha, atualizarAnimalFicha, fetchRacas, fetchGrausSangue,
-  fetchEstoqueSemen, fetchTouros, type Touro,
+  fetchEstoqueSemen, fetchTouros, fetchMotivosBaixaCadastro, type Touro,
 } from "@/lib/api";
 import { AnimalRow } from "./AnimalModal";
 import { AnimalPicker } from "./AnimalPicker";
@@ -79,6 +79,7 @@ export default function CadastroAnimalForm() {
   const [grausSangue, setGrausSangue] = useState<string[]>(GRAUS_SANGUE_FALLBACK);
   const [naab, setNaab] = useState<Touro[]>([]);
   const [estoqueSemen, setEstoqueSemen] = useState<TouroPickerItem[]>([]);
+  const [motivosBaixa, setMotivosBaixa] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const [detalheTouro, setDetalheTouro] = useState<{ titulo: string; campos: [string, string][] } | null>(null);
 
   useEffect(() => {
@@ -99,7 +100,12 @@ export default function CadastroAnimalForm() {
     fetchEstoqueSemen().then((d) => setEstoqueSemen(
       d.map((e: any): TouroPickerItem => ({ naab: e.naab, nome: e.touro_nome, central: e.central, doses: e.doses }))
     )).catch(() => {});
+    fetchMotivosBaixaCadastro().then(setMotivosBaixa).catch(() => setMotivosBaixa([]));
   }, []);
+  const motivosBaixaAtivos = useMemo(
+    () => motivosBaixa.filter((m) => m.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [motivosBaixa]
+  );
 
   // Touros da fazenda (monta natural) + sêmen em estoque + catálogo NAAB, numa
   // única lista de busca — a genealogia (pai/avô/bisavô) pode vir de qualquer
@@ -256,7 +262,12 @@ export default function CadastroAnimalForm() {
             <Campo label="Proprietário"><input style={inputStyle} value={form.proprietario} onChange={(e) => setForm({ ...form, proprietario: e.target.value })} /></Campo>
             <Campo label="Valor (R$)"><input type="number" inputMode="decimal" style={inputStyle} value={form.valor} onChange={(e) => setForm({ ...form, valor: e.target.value })} placeholder="ex.: 7000" /></Campo>
             <Campo label="Data de baixa (se houver)"><input type="date" style={inputStyle} value={form.data_baixa} onChange={(e) => setForm({ ...form, data_baixa: e.target.value })} /></Campo>
-            <Campo label="Motivo de baixa"><input style={inputStyle} value={form.motivo_baixa} onChange={(e) => setForm({ ...form, motivo_baixa: e.target.value })} placeholder="venda, morte, descarte…" /></Campo>
+            <Campo label="Motivo de baixa">
+              <select style={inputStyle} value={form.motivo_baixa} onChange={(e) => setForm({ ...form, motivo_baixa: e.target.value })}>
+                <option value="">Selecione...</option>
+                {motivosBaixaAtivos.map((m) => <option key={m.id} value={m.nome}>{m.nome}</option>)}
+              </select>
+            </Campo>
           </div>
           {form.data_baixa && (
             <p style={{ fontSize: "0.76rem", color: "var(--amber)", marginTop: "0.4rem" }}>

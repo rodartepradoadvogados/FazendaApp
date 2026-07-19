@@ -721,6 +721,80 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: { data_p
   return res.json();
 }
 
+// ── Férias (Financeiro > Ações > Folha de Pagamento > Férias / 13º) ──
+// Controle DENTRO do app (cálculo, lançamento e acompanhamento) — sem envio
+// ao eSocial (fora de escopo).
+export type FeriasDados = {
+  pessoa_id: number; periodo_aquisitivo_inicio: string; periodo_aquisitivo_fim: string;
+  dias_direito?: number; dias_gozados: number; data_inicio_gozo: string; data_fim_gozo: string;
+  abono_pecuniario_dias?: number; data_pagamento?: string; status?: string; observacao?: string;
+  centro_custo?: string;
+};
+export type RegistroFerias = FeriasDados & {
+  id: number; pessoa_nome: string; valor_ferias: number; valor_terco_constitucional: number;
+  valor_total: number; numero_lancamento_gerado: string | null; usuario_nome?: string | null;
+  status: string;
+};
+export async function fetchFerias(): Promise<RegistroFerias[]> {
+  const res = await authFetch(`${API}/cadastro/ferias`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Férias error: ${res.status}`);
+  return res.json();
+}
+export async function criarFerias(dados: FeriasDados) {
+  const res = await authFetch(`${API}/cadastro/ferias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar férias"); }
+  return res.json();
+}
+export async function atualizarFerias(id: number, dados: FeriasDados) {
+  const res = await authFetch(`${API}/cadastro/ferias/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar férias"); }
+  return res.json();
+}
+export async function excluirFerias(id: number) {
+  const res = await authFetch(`${API}/cadastro/ferias/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir férias"); }
+  return res.json();
+}
+
+// ── 13º salário (Financeiro > Ações > Folha de Pagamento > Férias / 13º) ──
+export type DecimoTerceiroDados = {
+  pessoa_id: number; ano: number; parcela?: string; meses_trabalhados: number;
+  valor_inss?: number; valor_ir?: number; data_pagamento?: string; status?: string;
+  observacao?: string; centro_custo?: string;
+};
+export type RegistroDecimoTerceiro = DecimoTerceiroDados & {
+  id: number; pessoa_nome: string; valor_bruto: number; valor_liquido: number;
+  numero_lancamento_gerado: string | null; usuario_nome?: string | null; status: string;
+};
+export async function fetchDecimoTerceiro(): Promise<RegistroDecimoTerceiro[]> {
+  const res = await authFetch(`${API}/cadastro/decimo-terceiro`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`13º salário error: ${res.status}`);
+  return res.json();
+}
+export async function criarDecimoTerceiro(dados: DecimoTerceiroDados) {
+  const res = await authFetch(`${API}/cadastro/decimo-terceiro`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar 13º salário"); }
+  return res.json();
+}
+export async function atualizarDecimoTerceiro(id: number, dados: DecimoTerceiroDados) {
+  const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar 13º salário"); }
+  return res.json();
+}
+export async function excluirDecimoTerceiro(id: number) {
+  const res = await authFetch(`${API}/cadastro/decimo-terceiro/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir 13º salário"); }
+  return res.json();
+}
+
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;

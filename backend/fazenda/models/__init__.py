@@ -984,6 +984,72 @@ class FolhaPagamento(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Férias e 13º salário — controle DENTRO do app (cálculo, lançamento em Contas
+# a Pagar e acompanhamento). Item de auditoria "RH ampliado (férias/13º/
+# eSocial)" — a integração com o eSocial (envio ao governo) fica FORA de
+# escopo: inviável sem certificado digital/infraestrutura própria; aqui só
+# organizamos o que já é feito manualmente pela fazenda.
+# ---------------------------------------------------------------------------
+class FeriasFuncionario(SQLModel, table=True):
+    """Um período de férias gozado (ou a gozar) por uma pessoa, com o valor
+    calculado (dias gozados + 1/3 constitucional + abono pecuniário opcional)
+    e o respectivo lançamento em Contas a Pagar."""
+
+    __tablename__ = "ferias_funcionario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    periodo_aquisitivo_inicio: date
+    periodo_aquisitivo_fim: date
+    dias_direito: int = 30  # dias de férias a que a pessoa tem direito no período aquisitivo
+    dias_gozados: int
+    data_inicio_gozo: date
+    data_fim_gozo: date
+    # Dias "vendidos" (abono pecuniário, art. 143 CLT — até 1/3 de dias_direito),
+    # opcional — 0 quando a pessoa goza integralmente os dias.
+    abono_pecuniario_dias: int = 0
+    valor_ferias: float
+    valor_terco_constitucional: float
+    valor_total: float
+    data_pagamento: Optional[date] = None
+    status: str = "pendente"  # pendente | pago
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # nº do lançamento (LC-...) criado em Contas a Pagar — mesmo padrão de
+    # sincronização usado por FolhaPagamento/EmpreitadaParcela/DiariaPagamento.
+    numero_lancamento_gerado: Optional[str] = None
+    # Centro de custo da conta a pagar gerada — nasce em "Pecuária Leiteira",
+    # mas é editável (mesmo padrão de FolhaPagamento).
+    centro_custo: str = "Pecuária Leiteira"
+
+
+class DecimoTerceiro(SQLModel, table=True):
+    """Um lançamento de 13º salário (parcela única, 1ª ou 2ª parcela) de uma
+    pessoa, proporcional aos meses trabalhados no ano — com o respectivo
+    lançamento em Contas a Pagar."""
+
+    __tablename__ = "decimo_terceiro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pessoa_id: int = Field(foreign_key="pessoa.id")
+    ano: int
+    parcela: str = "unica"  # unica | primeira | segunda
+    meses_trabalhados: int  # 1 a 12 — proporcional ao ano de admissão/desligamento
+    valor_bruto: float
+    valor_inss: float = 0.0
+    valor_ir: float = 0.0
+    valor_liquido: float
+    data_pagamento: Optional[date] = None
+    status: str = "pendente"  # pendente | pago
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    numero_lancamento_gerado: Optional[str] = None
+    centro_custo: str = "Pecuária Leiteira"
+
+
+# ---------------------------------------------------------------------------
 # Vale de funcionário — adiantamento pago à parte, descontado da folha em uma
 # ou mais competências futuras (ver ValeParcela).
 # ---------------------------------------------------------------------------

@@ -13,7 +13,7 @@ import {
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
   fetchExames,
   atualizarEventoSanitario, criarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
-  fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
+  fetchAlimentos, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
   fetchApresentacoesFarmacia, fetchTouros,
@@ -3156,7 +3156,7 @@ type ItemComparativo = { alimento: string; unidade: string; programado: number; 
 
 function FormAlimentacaoDieta() {
   const [dietas, setDietas] = useState<DietaLote[] | null>(null);
-  const [alimentosPadrao, setAlimentosPadrao] = useState<string[]>([]);
+  const [alimentosCadastro, setAlimentosCadastro] = useState<string[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
@@ -3172,7 +3172,7 @@ function FormAlimentacaoDieta() {
   const carregar = () => fetchDietas().then(setDietas).catch((e) => setErro(e.message));
   useEffect(() => {
     carregar();
-    fetchAlimentosPadrao().then(setAlimentosPadrao).catch(() => {});
+    fetchAlimentos().then((d) => setAlimentosCadastro(d.filter((a) => a.ativo !== false).map((a) => a.nome))).catch(() => {});
   }, []);
 
   // Vindo da Agenda (link "Ir para Dieta" do evento de análise de encerramento)
@@ -3231,7 +3231,6 @@ function FormAlimentacaoDieta() {
           explicativa dentro do próprio componente). */}
       <div className="flex justify-end mb-2"><TabelaNutricionalBotao /></div>
       <CadastrarNovaDieta onSalvo={carregar} />
-      <datalist id="alimentos-padrao-dieta">{alimentosPadrao.map((a) => <option key={a} value={a} />)}</datalist>
 
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
@@ -3285,7 +3284,12 @@ function FormAlimentacaoDieta() {
                           </div>
                           {itensReal.map((item, idx) => (
                             <div key={idx} className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-2" style={{ alignItems: "end" }}>
-                              <Campo label="Alimento"><input style={inputStyle} list="alimentos-padrao-dieta" value={item.alimento} onChange={(e) => atualizarItemReal(idx, { alimento: e.target.value })} /></Campo>
+                              <Campo label="Alimento">
+                                <select style={inputStyle} value={item.alimento} onChange={(e) => atualizarItemReal(idx, { alimento: e.target.value })}>
+                                  <option value="">Selecione...</option>
+                                  {alimentosCadastro.map((a) => <option key={a} value={a}>{a}</option>)}
+                                </select>
+                              </Campo>
                               <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={item.quantidade} onChange={(e) => atualizarItemReal(idx, { quantidade: e.target.value })} /></Campo>
                               <Campo label="Unidade">
                                 <select style={inputStyle} value={item.unidade} onChange={(e) => atualizarItemReal(idx, { unidade: e.target.value })}>{UNIDADES.map((u) => <option key={u}>{u}</option>)}</select>

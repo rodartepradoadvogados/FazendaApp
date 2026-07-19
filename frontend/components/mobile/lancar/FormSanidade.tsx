@@ -8,7 +8,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
-import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, formatDate } from "@/lib/api";
+import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
@@ -18,6 +18,9 @@ import {
 type Protocolo = { id: number; nome: string; eh_mastite?: boolean };
 type EventoPrev = { id: number; nome: string; categoria_preventiva: string | null };
 const CLASSIF_MASTITE = ["clinica", "subclinica", "ambiental"];
+// Separador usado para guardar mais de uma categoria-alvo no mesmo campo de
+// texto único do banco — mesmo padrão do site (ver SEP_CATEGORIAS em app/lancamentos/page.tsx).
+const SEP_CATEGORIAS = ", ";
 
 type Modalidade = "curativa" | "preventiva";
 type TipoCurativa = "aplicacao" | "protocolo";
@@ -403,7 +406,8 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
-  const [categoriaAlvo, setCategoriaAlvo] = useState("");
+  const [categoriasVida, setCategoriasVida] = useState<string[]>([]);
+  const [categoriaAlvoSel, setCategoriaAlvoSel] = useState<string[]>([]);
   const [produto, setProduto] = useState("");
   const [dosagem, setDosagem] = useState("");
   const [unidade, setUnidade] = useState("");
@@ -414,6 +418,7 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   const [obs, setObs] = useState("");
 
   useEffect(() => { fetchEventosSanitarios().then((d: any[]) => setEventos(d.filter((e) => e.ativo))).catch(() => {}); }, []);
+  useEffect(() => { fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {}); }, []);
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
   const compativeis = useMemo(() => unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade), [estoque, produto]);
@@ -424,13 +429,13 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
     enviar(
       "/sanidade/calendario",
       {
-        evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvo || undefined,
+        evento_sanitario_id: Number(eventoId), categoria_alvo: categoriaAlvoSel.length ? categoriaAlvoSel.join(SEP_CATEGORIAS) : undefined,
         produto: ehExame ? undefined : (produto || undefined), dosagem: ehExame ? undefined : (dosagem || undefined),
         unidade: ehExame ? undefined : (unidade || undefined), veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade, data_evento: data, observacao: obs || undefined,
       },
       `Regra do calendário — ${evento?.nome || ""}`,
-      () => { setEventoId(""); setCategoriaAlvo(""); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); },
+      () => { setEventoId(""); setCategoriaAlvoSel([]); setProduto(""); setDosagem(""); setUnidade(""); setVeterinario(""); setObs(""); },
     );
   }
 
@@ -443,7 +448,11 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
         </select>
       </MobCampo>
       <MobCampo label="Categoria alvo (opcional)">
-        <input className="mob-input" value={categoriaAlvo} onChange={(e) => setCategoriaAlvo(e.target.value)} placeholder="ex.: Bezerras (3 a 8 meses)" />
+        <select className="mob-input" multiple value={categoriaAlvoSel}
+          onChange={(e) => setCategoriaAlvoSel(Array.from(e.target.selectedOptions).map((o) => o.value))}
+          style={{ height: "auto", minHeight: "6rem" }}>
+          {categoriasVida.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
       </MobCampo>
       {ehExame ? (
         <MobCampo label="Veterinário (exame)">
@@ -452,8 +461,10 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
       ) : (
         <>
           <MobCampo label="Produto">
-            <input className="mob-input" list="produtos-calendario-mob" value={produto} onChange={(e) => setProduto(e.target.value)} placeholder="ex.: VACINA RB 51 - FR 25 DS" />
-            <datalist id="produtos-calendario-mob">{estoque.map((e) => <option key={e.nome} value={e.nome} />)}</datalist>
+            <select className="mob-input" value={produto} onChange={(e) => setProduto(e.target.value)}>
+              <option value="">Selecione...</option>
+              {estoque.map((e) => <option key={e.nome} value={e.nome}>{e.nome}</option>)}
+            </select>
           </MobCampo>
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
             <MobCampo label="Dosagem">

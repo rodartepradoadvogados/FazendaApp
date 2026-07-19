@@ -21,6 +21,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
+import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
@@ -476,8 +477,8 @@ export default function FinanceiroPage() {
           : rel === "folha_relatorio" ? <RelatorioFolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
-          : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} />
-          : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} /> : <>
+          : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
+          : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -799,6 +800,7 @@ export default function FinanceiroPage() {
       {editando && (
         <Modal title={`Editar lançamento${editando.numero_lancamento ? ` ${editando.numero_lancamento}` : ""}`} onClose={() => setEditando(null)} width="720px">
           <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas} produtos={opcoesProdutoRel}
+            fornecedores={opcoesRel.fornecedores}
             onCancelar={() => setEditando(null)}
             onSalvo={() => { setEditando(null); recarregar(); }} />
         </Modal>
@@ -1358,8 +1360,8 @@ function RelatorioCompraVendaAnimaisView() {
  * fornecedor/cliente, centro de custo, conta gerencial, datas e documento sem
  * precisar dar baixa. Não mexe no pagamento (isso é o fluxo "Tratar").
  */
-function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, onCancelar }: {
-  lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; produtos: string[]; onSalvo: () => void; onCancelar: () => void;
+function FormEditarLancamento({ lanc, centros, planoContas, produtos, fornecedores, onSalvo, onCancelar }: {
+  lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; produtos: string[]; fornecedores: string[]; onSalvo: () => void; onCancelar: () => void;
 }) {
   const [descricao, setDescricao] = useState(lanc.descricao || "");
   const [fornecedor, setFornecedor] = useState(lanc.fornecedor || "");
@@ -1383,7 +1385,12 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, o
   const [tiposDocumento, setTiposDocumento] = useState<string[]>([]);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState("");
+  const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
   const tipoConta = lanc.tipo === "receita" ? "receita" : "despesa";
+  const fornecedoresDisponiveis = useMemo(
+    () => Array.from(new Set([...(fornecedor ? [fornecedor] : []), ...fornecedores])).sort(),
+    [fornecedores, fornecedor]
+  );
   const centrosOpcoes = useMemo(() => Array.from(new Set([lanc.centro_custo, ...centros].filter(Boolean))).sort(), [centros, lanc.centro_custo]);
   useEffect(() => { fetchOpcoesFinanceiro().then((d) => setTiposDocumento(d.tipos_documento || [])).catch(() => {}); }, []);
 
@@ -1419,7 +1426,16 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, o
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyleLote}>Descrição</label>
           <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} /></div>
         <div><label style={labelStyleLote}>{tipoConta === "receita" ? "Cliente" : "Fornecedor"}</label>
-          <input style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
+          <div className="flex items-center gap-2">
+            <select style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)}>
+              <option value="">Selecione…</option>
+              {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
+            </select>
+            <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+              <Plus size={13} /> Novo
+            </button>
+          </div>
+        </div>
         <div><label style={labelStyleLote}>Produto / serviço</label>
           {podeEditarProduto ? (
             <input style={selStyleLote} list="produtos-editar-lancamento" value={produto} onChange={(e) => setProduto(e.target.value)}
@@ -1466,6 +1482,15 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, o
         <button className="btn-ghost" onClick={onCancelar} disabled={salvando}>Cancelar</button>
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar alterações"}</button>
       </div>
+      {abrirNovoFornecedor && (
+        <Modal title={`Novo ${tipoConta === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px">
+          <NovoFornecedorRapido
+            tipoSugerido={tipoConta}
+            onCriado={(f) => { if (f?.nome) setFornecedor(f.nome); setAbrirNovoFornecedor(false); }}
+            onCancelar={() => setAbrirNovoFornecedor(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -2081,7 +2106,7 @@ type ComparativoLinha = { codigo_conta_gerencial: string; nome_conta_gerencial: 
 
 const MESES_NOMES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
 
-function OrcamentoView({ planoContas }: { planoContas: ContaPlano[] }) {
+function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[]; fornecedores: string[] }) {
   const anoAtual = new Date().getFullYear();
   const [ano, setAno] = useState(anoAtual);
   const [centros, setCentros] = useState<string[]>([]);
@@ -2205,6 +2230,7 @@ function OrcamentoView({ planoContas }: { planoContas: ContaPlano[] }) {
         <Modal onClose={() => setImportando(null)} title="Importar para Pedido">
           <FormImportarPedido origemTipo="orcamento" origemItemId={importando.id}
             valorEstimado={importando.valor_orcado} nomeItem={importando.nome_conta_gerencial}
+            fornecedores={fornecedores}
             onSalvo={() => setImportando(null)} onCancelar={() => setImportando(null)} />
         </Modal>
       )}
@@ -2274,9 +2300,9 @@ function FormItemOrcamento({ planoContas, centros, anoDefault, item, onSalvo, on
 // Formulário compartilhado (Orçamento e Planejamento financeiro) para criar um
 // Pedido-rascunho a partir de uma linha — só copia dados, não lança nada em
 // Estoque/Financeiro; o pedido em si fica pendente até ser vinculado depois.
-function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem, onSalvo, onCancelar }: {
+function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem, fornecedores, onSalvo, onCancelar }: {
   origemTipo: "orcamento" | "planejamento_financeiro"; origemItemId: number; valorEstimado: number; nomeItem: string;
-  onSalvo: () => void; onCancelar: () => void;
+  fornecedores: string[]; onSalvo: () => void; onCancelar: () => void;
 }) {
   const [tipoPedido, setTipoPedido] = useState<"compra" | "venda">("compra");
   const [fornecedorCliente, setFornecedorCliente] = useState("");
@@ -2284,6 +2310,12 @@ function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem,
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [resultado, setResultado] = useState<{ numero_pedido: string } | null>(null);
+  const [abrirNovoFornecedor, setAbrirNovoFornecedor] = useState(false);
+  const tipoContaPedido = tipoPedido === "venda" ? "receita" : "despesa";
+  const fornecedoresDisponiveis = useMemo(
+    () => Array.from(new Set([...(fornecedorCliente ? [fornecedorCliente] : []), ...fornecedores])).sort(),
+    [fornecedores, fornecedorCliente]
+  );
 
   async function salvar() {
     setSalvando(true); setErro(null);
@@ -2315,13 +2347,32 @@ function FormImportarPedido({ origemTipo, origemItemId, valorEstimado, nomeItem,
         <select style={{ ...selStyleLote, width: "100%" }} value={tipoPedido} onChange={(e) => setTipoPedido(e.target.value as any)}>
           <option value="compra">Compra</option><option value="venda">Venda</option>
         </select></div>
-      <div><label style={labelStyleLote}>Fornecedor/Cliente (opcional)</label><input style={{ ...selStyleLote, width: "100%" }} value={fornecedorCliente} onChange={(e) => setFornecedorCliente(e.target.value)} /></div>
+      <div><label style={labelStyleLote}>Fornecedor/Cliente (opcional)</label>
+        <div className="flex items-center gap-2">
+          <select style={{ ...selStyleLote, width: "100%" }} value={fornecedorCliente} onChange={(e) => setFornecedorCliente(e.target.value)}>
+            <option value="">Selecione…</option>
+            {fornecedoresDisponiveis.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <button type="button" className="btn-ghost" title={`Cadastrar novo ${tipoContaPedido === "receita" ? "cliente" : "fornecedor"}`} style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoFornecedor(true)}>
+            <Plus size={13} /> Novo
+          </button>
+        </div>
+      </div>
       <div><label style={labelStyleLote}>Data do pedido</label><input type="date" style={{ ...selStyleLote, width: "100%" }} value={dataPedido} onChange={(e) => setDataPedido(e.target.value)} /></div>
       {erro && <div className="alert-critico"><span>{erro}</span></div>}
       <div className="flex gap-2 justify-end">
         <button className="btn-secondary" onClick={onCancelar}>Cancelar</button>
         <button className="btn-primary" disabled={salvando} onClick={salvar}>{salvando ? "Criando…" : "Criar pedido"}</button>
       </div>
+      {abrirNovoFornecedor && (
+        <Modal title={`Novo ${tipoContaPedido === "receita" ? "cliente" : "fornecedor"}`} onClose={() => setAbrirNovoFornecedor(false)} width="480px">
+          <NovoFornecedorRapido
+            tipoSugerido={tipoContaPedido}
+            onCriado={(f) => { if (f?.nome) setFornecedorCliente(f.nome); setAbrirNovoFornecedor(false); }}
+            onCancelar={() => setAbrirNovoFornecedor(false)}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
@@ -2338,7 +2389,7 @@ const TIPOS_CENARIO = [
   { id: "personalizado", label: "Personalizado", cor: "var(--text-muted)" },
 ] as const;
 
-function PlanejamentoFinanceiroView({ planoContas }: { planoContas: ContaPlano[] }) {
+function PlanejamentoFinanceiroView({ planoContas, fornecedores }: { planoContas: ContaPlano[]; fornecedores: string[] }) {
   const [cenarios, setCenarios] = useState<CenarioRow[] | null>(null);
   const [centros, setCentros] = useState<string[]>([]);
   const [cenarioAtivo, setCenarioAtivo] = useState<number | null>(null);
@@ -2395,7 +2446,7 @@ function PlanejamentoFinanceiroView({ planoContas }: { planoContas: ContaPlano[]
       {cenarioAtivo && (
         <CenarioDetalheView
           cenario={(cenarios ?? []).find((c) => c.id === cenarioAtivo)!}
-          planoContas={planoContas} centros={centros}
+          planoContas={planoContas} centros={centros} fornecedores={fornecedores}
           onEditarCenario={() => setEditandoCenario((cenarios ?? []).find((c) => c.id === cenarioAtivo)!)}
           onExcluirCenario={() => excluirCenarioAtual(cenarioAtivo)}
         />
@@ -2446,8 +2497,8 @@ function FormCenario({ item, onSalvo, onCancelar }: { item: CenarioRow | null; o
   );
 }
 
-function CenarioDetalheView({ cenario, planoContas, centros, onEditarCenario, onExcluirCenario }: {
-  cenario: CenarioRow; planoContas: ContaPlano[]; centros: string[]; onEditarCenario: () => void; onExcluirCenario: () => void;
+function CenarioDetalheView({ cenario, planoContas, centros, fornecedores, onEditarCenario, onExcluirCenario }: {
+  cenario: CenarioRow; planoContas: ContaPlano[]; centros: string[]; fornecedores: string[]; onEditarCenario: () => void; onExcluirCenario: () => void;
 }) {
   const [itens, setItens] = useState<PlanejamentoItemRow[] | null>(null);
   const [projecao, setProjecao] = useState<{ meses: { mes: string; receitas: number; despesas: number; saldo: number; acumulado: number }[] } | null>(null);
@@ -2539,6 +2590,7 @@ function CenarioDetalheView({ cenario, planoContas, centros, onEditarCenario, on
         <Modal onClose={() => setImportando(null)} title="Importar para Pedido">
           <FormImportarPedido origemTipo="planejamento_financeiro" origemItemId={importando.id}
             valorEstimado={importando.valor_previsto} nomeItem={importando.nome_conta_gerencial}
+            fornecedores={fornecedores}
             onSalvo={() => setImportando(null)} onCancelar={() => setImportando(null)} />
         </Modal>
       )}

@@ -14,6 +14,7 @@ import { RESPONSAVEIS } from "@/lib/constants";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
+import FeriasDecimoTerceiroView from "@/components/FeriasDecimoTerceiroView";
 
 const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
 // Fundo vinho translúcido para destacar lançamentos vencidos e não pagos.
@@ -107,7 +108,7 @@ export default function FolhaPagamentoView() {
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
 
-  const [subaba, setSubaba] = useState<"funcionario" | "empreita" | "contrato" | "diarias">("funcionario");
+  const [subaba, setSubaba] = useState<"funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("funcionario");
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
@@ -411,6 +412,7 @@ export default function FolhaPagamentoView() {
           { id: "empreita" as const, label: "Empreita" },
           { id: "contrato" as const, label: "Contrato" },
           { id: "diarias" as const, label: "Diárias" },
+          { id: "ferias_decimo" as const, label: "Férias / 13º" },
         ]}
         ativa={subaba}
         onChange={setSubaba}
@@ -419,6 +421,7 @@ export default function FolhaPagamentoView() {
       {subaba === "empreita" && <EmpreitadaView />}
       {subaba === "contrato" && <ContratoView />}
       {subaba === "diarias" && <DiariaView />}
+      {subaba === "ferias_decimo" && <FeriasDecimoTerceiroView />}
 
       {subaba === "funcionario" && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
       {anexarAberto && (
