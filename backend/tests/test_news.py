@@ -267,7 +267,7 @@ class TestListagemNoticias:
             s.add(NoticiaNews(
                 fonte_id=fonte.id, manchete="Matéria antiga sobre leite", resumo="leite",
                 link="https://fontec.com/antiga", data_publicacao=datetime.utcnow() - timedelta(days=10),
-                capturado_em=datetime.utcnow() - timedelta(days=10),
+                capturado_em=datetime.utcnow() - timedelta(days=10), revisado_final=True,
             ))
             s.commit()
 
@@ -479,6 +479,8 @@ class TestAprovarNoticiaManual:
         ]})
         pend_id = c.get("/aprovacoes").json()[0]["id"]
         c.post(f"/aprovacoes/{pend_id}/aprovar")
+        nid = c.get("/news/materias").json()[0]["id"]
+        c.post(f"/news/materias/{nid}/revisar-final")
 
         chamado = {"n": False}
 
@@ -596,12 +598,22 @@ class TestMateriaBlog:
         r = c.delete("/news/materias/1")
         assert r.status_code == 403
 
-    def test_materia_aparece_na_listagem(self, client, monkeypatch):
+    def test_materia_so_aparece_na_listagem_apos_revisao_final(self, client, monkeypatch):
+        """Antes de #497: uma matéria recém-publicada aparecia direto em GET /
+        (e portanto na página pública e na aba "Matérias publicadas"), mesmo
+        sem revisão — o que o usuário reportou como bug. Agora só aparece
+        depois de POST /materias/{id}/revisar-final."""
         c, _ = client
         monkeypatch.setattr("fazenda.api.routers.news.buscar_noticias_fonte", lambda url: [])
-        c.post("/news/materias", json={"manchete": "Visível na listagem", "materia": "Corpo", "fontes": ["https://x.com"]})
+        nid = c.post("/news/materias", json={"manchete": "Visível na listagem", "materia": "Corpo", "fontes": ["https://x.com"]}).json()["id"]
+
         r = c.get("/news/")
         assert r.status_code == 200, r.text
+        nomes_com_noticias = [f["fonte"]["nome"] for f in r.json()["fontes"] if f["noticias"]]
+        assert "Blog CowData" not in nomes_com_noticias
+
+        c.post(f"/news/materias/{nid}/revisar-final")
+        r = c.get("/news/")
         fonte = next(f for f in r.json()["fontes"] if f["fonte"]["nome"] == "Blog CowData")
         assert len(fonte["noticias"]) == 1
         assert fonte["noticias"][0]["manchete"] == "Visível na listagem"
@@ -658,6 +670,69 @@ class TestRevisaoPublicacaoFinal:
     def test_operador_nao_pode_revisar(self, client_operador):
         c, _ = client_operador
         r = c.post("/news/materias/1/revisar-final")
+        assert r.status_code == 403
+
+
+class TestListarTodasMaterias:
+    """GET /news/materias — lista TODAS as matérias (publicadas + aguardando
+    revisão), usada pela tela Configurações > News. Diferente de GET /, que só
+    devolve as já revisadas (ver TestRevisaoPublicacaoFinal)."""
+
+    def test_lista_inclui_nao_revisadas(self, client):
+        c, _ = client
+        c.post("/news/materias", json={"manchete": "Ainda não revisada", "materia": "Corpo", "fontes": []})
+        r = c.get("/news/materias")
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert len(dados) == 1
+        assert dados[0]["manchete"] == "Ainda não revisada"
+        assert dados[0]["revisado_final"] is False
+
+    def test_operador_nao_pode_listar(self, client_operador):
+        c, _ = client_operador
+        r = c.get("/news/materias")
+        assert r.status_code == 403
+
+
+class TestEditarMateriaBlog:
+    """PUT /news/materias/{id} — botão "Editar matéria" na aba Revisão de
+    publicação definitiva, para corrigir texto/fontes antes de confirmar."""
+
+    def test_edita_manchete_materia_e_fontes(self, client):
+        c, engine = client
+        nid = c.post("/news/materias", json={"manchete": "Original", "materia": "Corpo original", "fontes": ["https://a.com"]}).json()["id"]
+
+        r = c.put(f"/news/materias/{nid}", json={"manchete": "Editada", "materia": "Corpo editado", "fontes": ["https://b.com", "https://c.com"]})
+        assert r.status_code == 200, r.text
+        dados = r.json()
+        assert dados["manchete"] == "Editada"
+        assert dados["materia"] == "Corpo editado"
+        assert dados["fontes"] == ["https://b.com", "https://c.com"]
+
+        with Session(engine) as s:
+            noticia = s.get(NoticiaNews, nid)
+            assert noticia.manchete == "Editada"
+            assert noticia.materia == "Corpo editado"
+
+    def test_editar_materia_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.put("/news/materias/999", json={"manchete": "X"})
+        assert r.status_code == 404
+
+    def test_manchete_vazia_da_erro(self, client):
+        c, _ = client
+        nid = c.post("/news/materias", json={"manchete": "A", "materia": "B", "fontes": []}).json()["id"]
+        r = c.put(f"/news/materias/{nid}", json={"manchete": "   "})
+        assert r.status_code == 400
+
+    def test_operador_nao_pode_editar(self, client_operador):
+        c, _ = client_operador
+        r = c.put("/news/materias/1", json={"manchete": "X"})
+        assert r.status_code == 403
+
+    def test_admin_sem_permissao_nao_pode_editar(self, client_admin_sem_permissao_publicar):
+        c, _ = client_admin_sem_permissao_publicar
+        r = c.put("/news/materias/1", json={"manchete": "X"})
         assert r.status_code == 403
 
     def test_admin_sem_permissao_nao_pode_revisar(self, client_admin_sem_permissao_publicar):

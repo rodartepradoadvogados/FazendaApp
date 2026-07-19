@@ -191,14 +191,21 @@ def seed_permissao_publicar_dono(session: Session) -> None:
     permissão de publicar matérias no blog, já que ele já usa essa função hoje
     (Configurações > News > Adicionar matéria ao blog). Todos os demais
     usuários — inclusive outros admins — começam sem essa permissão, como
-    pedido; essa migração nunca roda de novo, então o proprietário pode
-    revogar a própria depois se quiser."""
+    pedido; essa migração nunca roda de novo DEPOIS de aplicada, então o
+    proprietário pode revogar a própria depois se quiser.
+
+    Só marca a SeedFlag quando o usuário do dono já existe — o admin inicial
+    (seed_admin) nasce sem e-mail, então se o e-mail só for cadastrado depois
+    (Configurações > Usuários), esta migração tenta de novo no próximo
+    startup em vez de desistir silenciosamente e deixar o botão "Confirmar
+    revisão definitiva" sempre desabilitado."""
     chave = "pode_publicar_materias_blog_dono_202607"
     if session.get(SeedFlag, chave):
         return
     dono = session.exec(select(Usuario).where(Usuario.email == EMAIL_DONO)).first()
-    if dono:
-        dono.pode_publicar_materias_blog = True
-        session.add(dono)
+    if not dono:
+        return
+    dono.pode_publicar_materias_blog = True
+    session.add(dono)
     session.add(SeedFlag(chave=chave))
     session.commit()

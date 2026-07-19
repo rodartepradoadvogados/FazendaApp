@@ -21,10 +21,15 @@ guardadas em NoticiaNews sob a fonte fixa "Blog CowData". A tela News em si
 (botão do topo + Configurações > News) só aparece para administradores, mas
 publicar/excluir/revisar exige a permissão específica.
 
-Toda matéria nasce com revisado_final=False (aba "Revisão de publicação
-definitiva" em Configurações > News) — não importa quem/o que a publicou
-(robô /milknews, "Adicionar matéria ao blog" ou aprovação de pendente). É uma
-etapa humana que o robô nunca realiza; ver POST /news/materias/{id}/revisar-final.
+Toda matéria "de gente" nasce com revisado_final=False (aba "Revisão de
+publicação definitiva" em Configurações > News) — não importa quem/o que a
+publicou (robô /milknews, "Adicionar matéria ao blog" ou aprovação de
+pendente). É uma etapa humana que o robô nunca realiza; ver POST
+/news/materias/{id}/revisar-final. ENQUANTO não revisada, a matéria NÃO
+aparece em GET / (nem na página pública, nem na aba "Matérias publicadas") —
+só em GET /news/materias, que lista tudo. Notícias agregadas via RSS
+(_atualizar_fonte) nascem já revisado_final=True: são filtradas por palavra-
+chave automaticamente, sem etapa editorial humana.
 """
 from __future__ import annotations
 
@@ -315,6 +320,11 @@ def _atualizar_fonte(session: Session, fonte: FonteNews) -> int:
             session.add(NoticiaNews(
                 fonte_id=fonte.id, manchete=item["manchete"], resumo=item.get("resumo"),
                 link=item["link"], data_publicacao=item.get("data"),
+                # Agregador RSS automático (filtrado por palavra-chave) — não passa
+                # pela etapa humana de "revisão de publicação definitiva", que é
+                # exclusiva das matérias controladas por gente (robô /milknews,
+                # "Adicionar matéria ao blog", aprovação de pendente).
+                revisado_final=True,
             ))
             novas += 1
         fonte.ultimo_erro = None
@@ -526,16 +536,66 @@ def revisar_publicacao_final(
     return _serializar_noticia(noticia)
 
 
+class MateriaBlogEditIn(BaseModel):
+    manchete: str
+    materia: str | None = None
+    resumo: str | None = None
+    fontes: list[str] = []
+
+
+@router.get("/materias")
+def listar_todas_materias(session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> list[dict]:
+    """Lista TODAS as matérias — publicadas e aguardando revisão — para a tela
+    Configurações > News (abas "Matérias publicadas" e "Revisão de publicação
+    definitiva"). Diferente de GET /, que só devolve matérias já revisadas
+    (visão pública)."""
+    todas = session.exec(select(NoticiaNews)).all()
+    todas_ordenadas = sorted(todas, key=lambda n: (n.data_publicacao or n.capturado_em), reverse=True)
+    return [_serializar_noticia(n) for n in todas_ordenadas]
+
+
+@router.put("/materias/{noticia_id}")
+def atualizar_materia_blog(
+    noticia_id: int, dados: MateriaBlogEditIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
+) -> dict:
+    """Edita manchete/corpo/fontes de uma matéria já publicada — usado no
+    botão "Editar matéria" da aba Revisão de publicação definitiva, para
+    corrigir o texto ou as referências antes de confirmar a revisão."""
+    noticia = session.get(NoticiaNews, noticia_id)
+    if not noticia:
+        raise HTTPException(status_code=404, detail="Matéria não encontrada")
+    manchete = dados.manchete.strip()
+    if not manchete:
+        raise HTTPException(status_code=400, detail="Manchete é obrigatória")
+    urls = [u.strip() for u in dados.fontes if u.strip()]
+    noticia.manchete = manchete
+    if dados.materia is not None:
+        noticia.materia = dados.materia.strip() or None
+    if dados.resumo is not None:
+        noticia.resumo = dados.resumo.strip() or None
+    noticia.fontes = json.dumps(urls) if urls else None
+    session.add(noticia)
+    session.commit()
+    session.refresh(noticia)
+    return _serializar_noticia(noticia)
+
+
 @router.get("/")
 def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_session), user: Usuario | None = Depends(get_current_user_opcional)) -> dict:
-    # Leitura pública — qualquer visitante (mesmo sem login) pode ler as matérias do blog.
+    """Leitura pública — qualquer visitante (mesmo sem login) pode ler as
+    matérias do blog. Só devolve matérias já revisadas (revisado_final=True):
+    antes da revisão de publicação definitiva, a matéria existe no banco mas
+    fica visível só em Configurações > News > Revisão de publicação
+    definitiva (ver GET /materias) — nunca aqui nem na página pública."""
     fontes = session.exec(select(FonteNews).where(FonteNews.ativo == True).order_by(FonteNews.nome)).all()  # noqa: E712
     corte = datetime.utcnow() - timedelta(days=JANELA_PADRAO_DIAS)
     saida = []
     for fonte in fontes:
         _atualizar_fonte_se_necessario(session, fonte)
         todas = session.exec(
-            select(NoticiaNews).where(NoticiaNews.fonte_id == fonte.id).order_by(NoticiaNews.capturado_em.desc())
+            select(NoticiaNews)
+            .where(NoticiaNews.fonte_id == fonte.id, NoticiaNews.revisado_final == True)  # noqa: E712
+            .order_by(NoticiaNews.capturado_em.desc())
         ).all()
         noticias = todas if ver_tudo else [n for n in todas if (n.data_publicacao or n.capturado_em) >= corte]
         saida.append({

@@ -2815,9 +2815,15 @@ export type NoticiaNews = {
 export type NewsFeed = { janela_dias: number; fontes: { fonte: { id: number; nome: string; url: string; erro?: string | null }; noticias: NoticiaNews[] }[] };
 
 export const fetchNoticias = (verTudo = false): Promise<NewsFeed> => _rGet(`/news/${verTudo ? "?ver_tudo=true" : ""}`);
+// Lista TODAS as matérias (publicadas + aguardando revisão) — usada em
+// Configurações > News. Diferente de fetchNoticias, que só traz as já
+// revisadas (visão pública).
+export const fetchTodasMaterias = (): Promise<NoticiaNews[]> => _rGet(`/news/materias`);
 
 export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[] };
 export const criarMateriaBlog = (d: MateriaBlogIn): Promise<NoticiaNews> => _rSend(`/news/materias`, "POST", d);
+export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: string; fontes: string[] };
+export const atualizarMateriaBlog = (id: number, d: MateriaBlogEditIn): Promise<NoticiaNews> => _rSend(`/news/materias/${id}`, "PUT", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
 export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");
 
