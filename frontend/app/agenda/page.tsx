@@ -16,6 +16,7 @@ import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { SelecaoLotesTabela, LoteRow } from "@/components/SelecaoLotesTabela";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { Indicador } from "@/components/ui";
 
 const COLUNAS_AGENDA = [
   { header: "Data", key: "data" }, { header: "Categoria", key: "categoria" },
@@ -1304,89 +1305,53 @@ export default function AgendaPage() {
         <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
       ) : agenda && (
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: candidatas.length > 0 ? "pointer" : undefined }}
-            onClick={() => candidatas.length > 0 && toggleLista("iatf")}>
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--blue)" }}>{candidatas.length}</p>
-            <p className="kpi-label flex items-center gap-1">
-              Candidatas à próxima IATF
-              {candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
+            onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
+            extra={candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: animaisIatfAtual.length > 0 ? "pointer" : undefined }}
-            onClick={() => animaisIatfAtual.length > 0 && toggleLista("iatfAtual")}
-            title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)">
-            <p className="kpi-value" style={{ fontSize: "1.3rem", color: "var(--green-light)" }}>{animaisIatfAtual.length} animal(is)</p>
-            <p className="kpi-label flex items-center gap-1">
-              IATF atual
-              {animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={`${animaisIatfAtual.length} animal(is)`} rotulo="IATF atual"
+            onClick={() => toggleLista("iatfAtual")} podeClicar={animaisIatfAtual.length > 0}
+            title="Animais com alguma etapa (D0/D7/D9/D11) ainda em aberto — só passa de zero durante o protocolo, do D0 até a inseminação (D11)"
+            extra={animaisIatfAtual.length > 0 && (listaAtiva.has("iatfAtual") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: grupoUltimaIatf ? "pointer" : undefined }}
-            onClick={() => grupoUltimaIatf && toggleLista("iatfUltima")}>
-            {grupoUltimaIatf ? (
+          <Indicador categoria="reprodutivo" cor={grupoUltimaIatf ? undefined : "var(--text-muted)"} rotulo="Última IATF"
+            onClick={() => toggleLista("iatfUltima")} podeClicar={!!grupoUltimaIatf}
+            valor={grupoUltimaIatf ? (
               <>
-                <p style={{ fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
+                <span style={{ display: "block", fontSize: "0.86rem", fontWeight: 700, color: "var(--dourado-light)", lineHeight: 1.35 }}>
                   D0 {fmtCurtaAno(grupoUltimaIatf.data_d0)} · D11 {fmtCurtaAno(grupoUltimaIatf.data_d11)}
-                </p>
-                <p style={{ fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem" }}>{grupoUltimaIatf.animais.length} animal(is)</p>
+                </span>
+                <span style={{ display: "block", fontSize: "1.15rem", fontWeight: 800, marginTop: "0.1rem", color: "var(--text)" }}>{grupoUltimaIatf.animais.length} animal(is)</span>
               </>
-            ) : (
-              <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--text-muted)" }}>—</p>
-            )}
-            <p className="kpi-label flex items-center gap-1">
-              Última IATF
-              {grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+            ) : "—"}
+            extra={!!grupoUltimaIatf && (listaAtiva.has("iatfUltima") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstAptos.length > 0 ? "pointer" : undefined }}
-            onClick={() => bstAptos.length > 0 && toggleLista("bstAptos")}>
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--green-light)" }}>{bstAptos.length}</p>
-            {proxBST && <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "-0.25rem", marginBottom: "0.15rem" }}>Próx. aplicação: {proxBST}</p>}
-            <p className="kpi-label flex items-center gap-1">
-              BST aptos
-              {bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="sanidade" cor="var(--green-light)" rotulo="BST aptos"
+            onClick={() => toggleLista("bstAptos")} podeClicar={bstAptos.length > 0}
+            valor={<>
+              {bstAptos.length}
+              {proxBST && <span style={{ display: "block", fontSize: "0.7rem", fontWeight: 400, color: "var(--text-muted)" }}>Próx. aplicação: {proxBST}</span>}
+            </>}
+            extra={bstAptos.length > 0 && (listaAtiva.has("bstAptos") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstExcl.length > 0 ? "pointer" : undefined }}
-            onClick={() => bstExcl.length > 0 && toggleLista("bstExcl")}>
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--amber)" }}>{bstExcl.length}</p>
-            <p className="kpi-label flex items-center gap-1">
-              BST excluídos
-              {bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="sanidade" cor="var(--amber)" valor={bstExcl.length} rotulo="BST excluídos"
+            onClick={() => toggleLista("bstExcl")} podeClicar={bstExcl.length > 0}
+            extra={bstExcl.length > 0 && (listaAtiva.has("bstExcl") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: bstNuncaAplicados.length > 0 ? "pointer" : undefined }}
-            onClick={() => bstNuncaAplicados.length > 0 && toggleLista("bstNunca")}>
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--blue)" }}>{bstNuncaAplicados.length}</p>
-            <p className="kpi-label flex items-center gap-1">
-              Incluir no próximo BST
-              {bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="sanidade" cor="var(--blue)" valor={bstNuncaAplicados.length} rotulo="Incluir no próximo BST"
+            onClick={() => toggleLista("bstNunca")} podeClicar={bstNuncaAplicados.length > 0}
+            extra={bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: eventosPendentes.length > 0 ? "pointer" : undefined, border: eventosPendentes.length > 0 ? "1px solid var(--red)" : undefined }}
-            onClick={() => eventosPendentes.length > 0 && toggleLista("pendencias")}>
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: eventosPendentes.length > 0 ? "var(--red)" : undefined }}>{eventosPendentes.length}</p>
-            <p className="kpi-label flex items-center gap-1" style={{ color: eventosPendentes.length > 0 ? "var(--red)" : undefined }}>
-              Pendências
-              {eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)}
-            </p>
-          </div>
+          <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+            corLabel={eventosPendentes.length > 0 ? "var(--red)" : undefined} borda={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+            valor={eventosPendentes.length} rotulo="Pendências"
+            onClick={() => toggleLista("pendencias")} podeClicar={eventosPendentes.length > 0}
+            extra={eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <div className="kpi-card" style={{ padding: "0.9rem", cursor: estoqueAlertasTotal > 0 ? "pointer" : undefined }}
-            onClick={() => estoqueAlertasTotal > 0 && abrirAlertasEstoque()}
-            title="Ver o detalhe dos alertas de estoque, no final da página">
-            <p className="kpi-value" style={{ fontSize: "1.6rem", color: "var(--amber)" }}>{estoqueAlertasTotal}</p>
-            <p className="kpi-label flex items-center gap-1">
-              Alertas de estoque
-              {estoqueAlertasTotal > 0 && <PackageSearch size={11} />}
-            </p>
-          </div>
+          <Indicador categoria="geral" cor="var(--amber)" valor={estoqueAlertasTotal} rotulo="Alertas de estoque"
+            onClick={() => abrirAlertasEstoque()} podeClicar={estoqueAlertasTotal > 0}
+            title="Ver o detalhe dos alertas de estoque, no final da página"
+            extra={estoqueAlertasTotal > 0 && <PackageSearch size={11} />} />
         </div>
       )}
       {eventosPendentes.length > 0 && (

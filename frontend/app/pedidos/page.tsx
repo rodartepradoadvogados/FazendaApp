@@ -9,6 +9,7 @@ import {
 import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { Indicador } from "@/components/ui";
 
 type PedidoItemRow = PedidoItemPayload & { id: number; valor_atendido: number };
 type PedidoRow = {
@@ -42,7 +43,7 @@ function Badge({ status }: { status: string }) {
 }
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
+  return <Indicador categoria="geral" valor={v} rotulo={l} cor={c} />;
 }
 
 export default function PedidosPage() {
@@ -125,7 +126,7 @@ export default function PedidosPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String((pedidos ?? []).length)} l="Pedidos" />
+        <KPI v={String((pedidos ?? []).length)} l="Pedidos" c="var(--dourado-light)" />
         <KPI v={formatBRL(totalEstimado)} l="Valor estimado" c="var(--dourado-light)" />
         <KPI v={formatBRL(totalAtendido)} l="Valor já atendido" c="var(--green-light)" />
         <KPI v={String((pedidos ?? []).filter((p) => p.status === "aberto").length)} l="Em aberto" c="var(--amber)" />

@@ -29,7 +29,7 @@ const CATEGORIA_ICONE: Record<CategoriaIndicador, any> = {
 };
 
 export function Indicador({
-  valor, rotulo, categoria = "geral", icon, cor, onClick, podeClicar, extra, title,
+  valor, rotulo, categoria = "geral", icon, cor, onClick, podeClicar, extra, title, corLabel, borda,
 }: {
   valor: React.ReactNode;
   rotulo: React.ReactNode;
@@ -40,8 +40,13 @@ export function Indicador({
   onClick?: () => void;
   podeClicar?: boolean;
   extra?: React.ReactNode;
-  /** Sobrescreve o tooltip padrão ("Clique para ver os detalhes") quando clicável. */
+  /** Sobrescreve o tooltip padrão ("Clique para ver os detalhes") quando clicável; se
+   * informado, aparece mesmo quando o cartão não está clicável (ex.: explicação fixa). */
   title?: string;
+  /** Cor do rótulo — usado junto com `cor` quando o indicador é um alerta (ex.: pendências). */
+  corLabel?: string;
+  /** Contorno do cartão — mesmo destaque de alerta, quando uma borda simples não basta. */
+  borda?: string;
 }) {
   const clicavel = !!onClick && (podeClicar ?? true);
   // O círculo do ícone é sempre a cor da categoria (identidade fixa da área);
@@ -54,12 +59,12 @@ export function Indicador({
     <div
       className={clicavel ? "kpi-card row-clickable" : "kpi-card"}
       onClick={clicavel ? onClick : undefined}
-      title={clicavel ? (title || "Clique para ver os detalhes") : undefined}
-      style={{ ["--kpi-c" as any]: corCategoria, cursor: clicavel ? "pointer" : undefined }}
+      title={title || (clicavel ? "Clique para ver os detalhes" : undefined)}
+      style={{ ["--kpi-c" as any]: corCategoria, cursor: clicavel ? "pointer" : undefined, border: borda ? `1px solid ${borda}` : undefined }}
     >
       <div className="kpi-chip"><Icon size={15} /></div>
       <p className="kpi-value" style={{ fontSize: "1.4rem", color: corValor }}>{valor}</p>
-      <p className="kpi-label flex items-center gap-1 flex-wrap">{rotulo}{extra}</p>
+      <p className="kpi-label flex items-center gap-1 flex-wrap" style={corLabel ? { color: corLabel } : undefined}>{rotulo}{extra}</p>
     </div>
   );
 }
