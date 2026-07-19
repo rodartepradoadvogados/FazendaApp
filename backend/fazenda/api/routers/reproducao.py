@@ -123,12 +123,19 @@ PASSOS_PROTOCOLO_IATF = [
 
 
 @router.get("/agenda-veterinario")
-def agenda_veterinario(session: Session = Depends(get_session)) -> dict:
+def agenda_veterinario(data: date | None = None, session: Session = Depends(get_session)) -> dict:
     """
     Roteiro do veterinário do serviço: classifica o rebanho fêmea em 9 listas
     (ver fazenda.rules.agenda_veterinario para os critérios de cada uma).
+
+    Aceita uma data de referência opcional (`?data=AAAA-MM-DD`, #490) para um
+    cenário projetado: quando a visita do veterinário será numa data futura
+    (o "próximo serviço"), os dias inseminada/dias para parto são recalculados
+    como se aquela fosse "hoje" — com os dados já lançados, sem prever novos
+    lançamentos que ainda vão acontecer até lá.
     """
-    hoje = date.today()
+    hoje_real = date.today()
+    hoje = data or hoje_real
     animais = [
         a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
     ]
@@ -148,7 +155,12 @@ def agenda_veterinario(session: Session = Depends(get_session)) -> dict:
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
     listas = classificar_rebanho(animais, servico_por_animal, peso_por_animal, hoje)
-    return {"data_referencia": hoje.isoformat(), "listas": listas, "totais": {k: len(v) for k, v in listas.items()}}
+    return {
+        "data_referencia": hoje.isoformat(),
+        "projetado": hoje != hoje_real,
+        "listas": listas,
+        "totais": {k: len(v) for k, v in listas.items()},
+    }
 
 
 def _ultimo_servico(session: Session, numero_matriz: str) -> Servico | None:

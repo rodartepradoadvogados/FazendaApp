@@ -95,7 +95,9 @@ function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: stri
 }
 
 export default function AgendaVeterinarioPage() {
-  const [dados, setDados] = useState<{ listas: Listas; totais: Record<string, number>; data_referencia: string } | null>(null);
+  const hoje = new Date().toISOString().slice(0, 10);
+  const [dados, setDados] = useState<{ listas: Listas; totais: Record<string, number>; data_referencia: string; projetado?: boolean } | null>(null);
+  const [dataRef, setDataRef] = useState(hoje);
   const [error, setError] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [reconfirmando, setReconfirmando] = useState<string | null>(null);
@@ -103,9 +105,9 @@ export default function AgendaVeterinarioPage() {
   const [sucesso, setSucesso] = useState<string | null>(null);
 
   function carregar() {
-    fetchAgendaVeterinario().then(setDados).catch((e) => setError(e.message));
+    fetchAgendaVeterinario(dataRef !== hoje ? dataRef : undefined).then(setDados).catch((e) => setError(e.message));
   }
-  useEffect(carregar, []);
+  useEffect(carregar, [dataRef]);
 
   const toggle = (k: string) => setAbertas((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
 
@@ -121,7 +123,30 @@ export default function AgendaVeterinarioPage() {
           entram em nenhuma lista; os demais só entram (exceto em "Verificar aptidão") ao atingir 15 meses e 300 kg.
           Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
         </p>
+        <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
+          <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
+            Data de referência
+            <input type="date" value={dataRef} onChange={(e) => setDataRef(e.target.value)}
+              style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.8rem" }} />
+          </label>
+          {dataRef !== hoje && (
+            <button onClick={() => setDataRef(hoje)}
+              style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+              Voltar para hoje
+            </button>
+          )}
+        </div>
       </div>
+
+      {dados.projetado && (
+        <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem" }}>
+          <AlertTriangle size={16} />
+          <span>
+            Cenário projetado para {fmtDia(dados.data_referencia)} — classificação simulada com os dados já lançados
+            hoje, como se aquela fosse a data da visita (o "próximo serviço"); novos lançamentos até lá podem mudar o resultado.
+          </span>
+        </div>
+      )}
 
       {sucesso && (
         <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--green-light)", fontSize: "0.85rem" }}>
