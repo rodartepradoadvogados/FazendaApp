@@ -114,7 +114,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           const ativo = href === "/app" ? path === "/app" : path.startsWith(href);
           return (
             <Link key={href} href={href} className={ativo ? "ativo" : ""}>
-              <Icon size={21} strokeWidth={ativo ? 2.4 : 1.8} />
+              <span className="mob-nav-icone"><Icon size={21} strokeWidth={ativo ? 2.4 : 1.8} /></span>
               {label}
             </Link>
           );

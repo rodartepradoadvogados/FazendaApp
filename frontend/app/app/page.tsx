@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Check } from "lucide-react";
-import { MobCard, MobTitulo, MobCheck, MobAviso, corCategoria } from "@/components/mobile/ui";
+import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -81,7 +81,7 @@ function montarLista(evs: Evento[]): Renderavel[] {
 type Agenda = { eventos?: Evento[] };
 
 // Categoria do backend ("Reprodutivo", "Gestão/Financeiro", "alimentacao"…)
-// → chave de cor (corCategoria) + rótulo em MAIÚSCULAS do cartão.
+// → chave de categoria (RotuloCategoria) + rótulo em MAIÚSCULAS do cartão.
 function catInfo(categoria: string): { chave: string; rotulo: string } {
   const c = (categoria || "").toLowerCase();
   if (c === "reprodutivo") return { chave: "reprodutivo", rotulo: "REPRODUTIVO" };
@@ -377,7 +377,7 @@ export default function AgendaMovel() {
         <button type="button" onClick={() => abrirSan(g.grupo)}
           style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+            <RotuloCategoria chave={chave} rotulo={rotulo} />
             <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: tudoFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: tudoFeito ? "line-through" : "none" }}>{g.titulo}</div>
             <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
               {g.itens.length} animal{g.itens.length !== 1 ? "is" : ""}{g.produto ? ` · ${g.produto}` : ""}{feitasCount ? ` · ${feitasCount} feito(s)` : ""}
@@ -454,7 +454,7 @@ export default function AgendaMovel() {
           <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
               <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
                 {e.animais!.length} animal{e.animais!.length !== 1 ? "is" : ""}{e.hormonio ? ` · ${e.hormonio}` : ""}
@@ -539,7 +539,7 @@ export default function AgendaMovel() {
           <button type="button" onClick={() => abrirDieta(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
               <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para ver os produtos e o vagão</div>
             </div>
@@ -590,9 +590,7 @@ export default function AgendaMovel() {
           <MobCard alt={alt} style={{ marginBottom: "0.6rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
-                  {rotulo}
-                </div>
+                <RotuloCategoria chave={chave} rotulo={rotulo} />
                 <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>
                   {e.descricao}
                 </div>
@@ -628,7 +626,7 @@ export default function AgendaMovel() {
           <button type="button" onClick={() => abrirBaixa(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
             <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>{rotulo}</div>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
                 Nº {e.numero_animal}
               </div>
@@ -730,9 +728,7 @@ export default function AgendaMovel() {
       <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
           <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
-              {rotulo}
-            </div>
+            <RotuloCategoria chave={chave} rotulo={rotulo} />
             <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
               {principal}
             </div>

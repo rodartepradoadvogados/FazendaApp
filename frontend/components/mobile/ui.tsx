@@ -2,22 +2,55 @@
 // Primitivos de interface do APP MÓVEL (/app) — botões grandes, cartões e
 // rótulos pensados para uso no campo (sol forte, pressa, dedo grosso).
 // As classes .mob-* vivem em globals.css; aqui ficam os componentes React.
-import { Check, ChevronRight, ChevronLeft } from "lucide-react";
+import { Check, ChevronRight, ChevronLeft, Heart, ShieldPlus, Milk, Wheat, Landmark, CheckCheck } from "lucide-react";
 import Link from "next/link";
 import type { ReactNode, CSSProperties } from "react";
 
-/** Cores dos rótulos de categoria nos cartões da Agenda (padrão do PDF). */
+/** Cores dos rótulos de categoria — as MESMAS cores já usadas em Lançar
+ * (LancarTela) e no Menu, para que a mesma categoria nunca mude de cor ao
+ * trocar de tela dentro do app. */
 export const CATEGORIA_COR: Record<string, string> = {
-  reprodutivo: "var(--mob-acao)",
-  producao: "var(--mob-verde)",
-  sanidade: "var(--mob-azul)",
+  reprodutivo: "var(--mob-roxo)",
+  producao: "var(--mob-azul)",
+  sanidade: "var(--mob-verde)",
   manejo: "var(--mob-azul)",
-  alimentacao: "var(--mob-ambar)",
-  financeiro: "var(--mob-vermelho)",
+  alimentacao: "var(--mob-laranja)",
+  financeiro: "var(--mob-vinho)",
   atividades: "var(--mob-muted)",
 };
 export function corCategoria(cat?: string | null): string {
   return CATEGORIA_COR[(cat || "").toLowerCase()] || "var(--mob-muted)";
+}
+
+/** Ícones de categoria — mesma escolha usada no Menu (Heart/ShieldPlus/Wheat)
+ * e em Lançar (Milk/Landmark), para reforçar a mesma identidade visual. */
+const CATEGORIA_ICONE: Record<string, any> = {
+  reprodutivo: Heart,
+  producao: Milk,
+  sanidade: ShieldPlus,
+  manejo: Milk,
+  alimentacao: Wheat,
+  financeiro: Landmark,
+  atividades: CheckCheck,
+};
+export function iconeCategoria(cat?: string | null) {
+  return CATEGORIA_ICONE[(cat || "").toLowerCase()] || CheckCheck;
+}
+
+/** Rótulo de categoria com círculo de ícone colorido — usado na Agenda no
+ * lugar do texto solto colorido, para reaproveitar o mesmo padrão visual do
+ * chip de categoria já usado no site (Indicador) e em Lançar/Menu (MobBloco). */
+export function RotuloCategoria({ chave, rotulo }: { chave: string; rotulo: string }) {
+  const cor = corCategoria(chave);
+  const Icon = iconeCategoria(chave);
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.3rem" }}>
+      <span style={{ width: 18, height: 18, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: `color-mix(in srgb, ${cor} 16%, transparent)`, color: cor, flexShrink: 0 }}>
+        <Icon size={11} />
+      </span>
+      <span style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: cor }}>{rotulo}</span>
+    </div>
+  );
 }
 
 /** `alt` alterna a cor do cartão em sequência (0 = 1º/3º/5º..., 1 = 2º/4º/6º...):
@@ -71,11 +104,13 @@ export function MobBloco({ icone, label, cor, onClick }: { icone: ReactNode; lab
  * em sequência — mesmo tratamento de `MobCard` (ver comentário lá): tingido
  * translúcido da paleta ativa no claro, contorno vinho/verde fixo alternado
  * no escuro. Usado em Rebanho > Animais para diferenciar linhas em sequência. */
-export function MobLinha({ icone, titulo, subtitulo, href, onClick, alt }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void; alt?: 0 | 1 }) {
+export function MobLinha({ icone, titulo, subtitulo, href, onClick, alt, categoria }: { icone?: ReactNode; titulo: ReactNode; subtitulo?: ReactNode; href?: string; onClick?: () => void; alt?: 0 | 1; categoria?: string }) {
   const classe = ["mob-linha", alt === 0 ? "mob-card-a" : alt === 1 ? "mob-card-b" : ""].filter(Boolean).join(" ");
+  const corIcone = categoria ? corCategoria(categoria) : "var(--mob-dourado-2)";
+  const fundoIcone = categoria ? `color-mix(in srgb, ${corIcone} 14%, transparent)` : "rgba(184,134,11,0.12)";
   const conteudo = (
     <>
-      {icone && <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: "rgba(184,134,11,0.12)", color: "var(--mob-dourado-2)", flexShrink: 0 }}>{icone}</span>}
+      {icone && <span style={{ width: 40, height: 40, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: fundoIcone, color: corIcone, flexShrink: 0 }}>{icone}</span>}
       <span style={{ flex: 1, minWidth: 0 }}>
         <span style={{ display: "block", fontWeight: 700, fontSize: "0.95rem", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{titulo}</span>
         {subtitulo && <span style={{ display: "block", fontSize: "0.78rem", color: "var(--mob-muted)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{subtitulo}</span>}

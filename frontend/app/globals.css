@@ -701,6 +701,12 @@ html, body { max-width: 100%; overflow-x: hidden; }
   color: var(--mob-muted); text-decoration: none;
 }
 .mob-nav a.ativo { color: var(--mob-acao); }
+.mob-nav-icone {
+  width: 42px; height: 26px; border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  transition: background-color 0.15s ease;
+}
+.mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--mob-acao) 16%, transparent); }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {

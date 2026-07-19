@@ -6,6 +6,7 @@
 //  - Bolinha/corSemaforo: semáforo (vermelho/amarelo/verde/branco) dos relatórios.
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
+import { BarChart3 } from "lucide-react";
 import { fetchComCache, cacheEm } from "@/lib/offline";
 
 export function fmtCacheEm(iso: string): string {
@@ -51,9 +52,11 @@ export function Carregando() {
   return <p style={{ color: "var(--mob-muted)", padding: "1.5rem 0" }}>Carregando…</p>;
 }
 
-export function Vazio({ children }: { children: ReactNode }) {
+export function Vazio({ children, icon }: { children: ReactNode; icon?: any }) {
+  const Icon = icon || BarChart3;
   return (
     <div style={{ textAlign: "center", padding: "2.5rem 1rem", color: "var(--mob-muted)" }}>
+      <Icon size={28} style={{ margin: "0 auto 0.5rem", opacity: 0.7, display: "block" }} />
       <p style={{ fontSize: "1.05rem", fontWeight: 700, color: "var(--mob-text)" }}>{children}</p>
     </div>
   );
