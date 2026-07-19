@@ -4,7 +4,7 @@ import { HeartPulse, AlertTriangle, Filter } from "lucide-react";
 import { fetchServicosAnalise, fetchInseminadores, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador } from "@/components/ui";
 import { estiloSexado } from "@/lib/constants";
 import AnaliseInterativa from "@/components/AnaliseInterativa";
 
@@ -159,10 +159,10 @@ export default function AnaliseReprodutivaPage() {
 
           {/* KPIs */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{kpi.pct === null ? "—" : `${kpi.pct}%`}</p><p className="kpi-label">Taxa de concepção</p></div>
-            <div className="kpi-card"><p className="kpi-value">{kpi.diag}</p><p className="kpi-label">Serviços diagnosticados</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{kpi.pos}</p><p className="kpi-label">Positivos</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{perdas}</p><p className="kpi-label">Perdas de prenhez</p></div>
+            <Indicador categoria="reprodutivo" valor={kpi.pct === null ? "—" : `${kpi.pct}%`} cor="var(--green-light)" rotulo="Taxa de concepção" />
+            <Indicador categoria="reprodutivo" valor={kpi.diag} rotulo="Serviços diagnosticados" />
+            <Indicador categoria="reprodutivo" valor={kpi.pos} cor="var(--blue)" rotulo="Positivos" />
+            <Indicador categoria="reprodutivo" valor={perdas} cor="var(--amber)" rotulo="Perdas de prenhez" />
           </div>
 
           {/* Análise interativa configurável (cruzamento de métricas) */}
