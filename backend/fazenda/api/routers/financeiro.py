@@ -984,6 +984,9 @@ class LancamentoEditIn(BaseModel):
     valor_total: Optional[float] = None
     desconto_acrescimo: Optional[float] = None
     responsavel: Optional[str] = None
+    # Produto/serviço do item — não é campo da conta gerencial em si, é
+    # espelhado no(s) LancamentoItem abaixo (ver editar_lancamento).
+    produto: Optional[str] = None
 
 
 @router.put("/lancamentos/{lancamento_id}/pagar")
@@ -1094,6 +1097,7 @@ def editar_lancamento(lancamento_id: int, dados: LancamentoEditIn, session: Sess
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     enviados = dados.model_dump(exclude_unset=True)
+    produto_novo = enviados.pop("produto", None)
     for campo, valor in enviados.items():
         if campo == "centro_custo":
             registro.centro_custo = mapear_centro_custo(valor)
@@ -1121,6 +1125,36 @@ def editar_lancamento(lancamento_id: int, dados: LancamentoEditIn, session: Sess
             if "codigo_conta" in enviados:
                 item.codigo_conta_gerencial = registro.codigo_conta
             session.add(item)
+
+    # Produto/serviço vinculado — independe de parcela_total, já que os itens
+    # de um lançamento são compartilhados por todas as parcelas (mesmo
+    # numero_lancamento). Lançamentos importados sem nenhum item (o caso mais
+    # comum de "falta produto") ganham um item novo aqui; lançamentos com
+    # exatamente 1 item têm o produto desse item trocado. Notas com múltiplos
+    # itens não são tratadas aqui — o vínculo é ambíguo (qual item mudar?).
+    if produto_novo is not None and registro.numero_lancamento:
+        itens_produto = session.exec(
+            select(LancamentoItem).where(LancamentoItem.numero_lancamento == registro.numero_lancamento)
+        ).all()
+        if len(itens_produto) == 1:
+            itens_produto[0].produto = produto_novo
+            session.add(itens_produto[0])
+        elif len(itens_produto) == 0:
+            session.add(LancamentoItem(
+                numero_lancamento=registro.numero_lancamento,
+                tipo=registro.tipo,
+                data_competencia=registro.data_competencia,
+                codigo_conta_gerencial=registro.codigo_conta,
+                produto=produto_novo,
+                quantidade=registro.quantidade,
+                valor_unitario=registro.valor_unitario,
+                valor_total=registro.valor_total or 0,
+            ))
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Este lançamento tem múltiplos produtos/serviços — não é possível trocar por aqui.",
+            )
 
     session.commit()
     session.refresh(registro)

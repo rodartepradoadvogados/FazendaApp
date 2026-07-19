@@ -302,7 +302,11 @@ export default function FinanceiroPage() {
       // Sem período definido, mostra tudo — contas em aberto não devem sumir por falta de filtro.
       return contasBase.filter((r) => {
         const d = campoData(r);
-        const dentroPeriodo = !inicio || !fim || !d || (d >= inicio && d <= fim);
+        // Início e fim funcionam como limites independentes — só um dos dois
+        // já filtra (ex.: só "início" = "a partir desta data em diante").
+        // Lançamento sem data nesse campo não some por um filtro que ele não
+        // tem como satisfazer.
+        const dentroPeriodo = (!inicio || !d || d >= inicio) && (!fim || !d || d <= fim);
         return dentroPeriodo && (!centro || r.centro_custo === centro) && (!contaBanco || r.conta_bancaria === contaBanco);
       });
     }
@@ -504,7 +508,7 @@ export default function FinanceiroPage() {
         </div>
 
         {CONTAS_IDS.has(rel) ? (
-          <TabelaContas rel={rel} itens={filtrados} planoContas={planoContas}
+          <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
             onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
             onEditar={(l) => setEditando(l)} />
         ) : <>
@@ -780,7 +784,7 @@ export default function FinanceiroPage() {
       </>}
       {editando && (
         <Modal title={`Editar lançamento${editando.numero_lancamento ? ` ${editando.numero_lancamento}` : ""}`} onClose={() => setEditando(null)} width="720px">
-          <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas}
+          <FormEditarLancamento lanc={editando} centros={centros} planoContas={planoContas} produtos={opcoesProdutoRel}
             onCancelar={() => setEditando(null)}
             onSalvo={() => { setEditando(null); recarregar(); }} />
         </Modal>
@@ -794,6 +798,11 @@ const selStyleLote: React.CSSProperties = {
   borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%",
 };
 const labelStyleLote: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
+// Cabeçalho fixo ao rolar as tabelas de notas (Contas a pagar/receber/pagas/
+// recebidas/extrato, Pagamento/Recebimento e Pagamento em lote) — o
+// contêiner por baixo já tem overflow-y com altura máxima; sem isso, o
+// cabeçalho some assim que a lista rola.
+const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zIndex: 1, background: "var(--thead-bg)" };
 
 /**
  * Pagamento/recebimento em lote — filtra notas (despesa ou receita, aberta
@@ -999,15 +1008,15 @@ function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: stri
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr>
-              <th></th>
-              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Emissão" chave="emissao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <th>Situação</th>
-              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
-              {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+            <thead style={theadStickyStyle}><tr>
+              <th style={theadStickyStyle}></th>
+              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Emissão" chave="emissao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <th style={theadStickyStyle}>Situação</th>
+              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
+              {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
             </tr></thead>
             <tbody>
               {ordenados.map((r) => {
@@ -1334,11 +1343,17 @@ function RelatorioCompraVendaAnimaisView() {
  * fornecedor/cliente, centro de custo, conta gerencial, datas e documento sem
  * precisar dar baixa. Não mexe no pagamento (isso é o fluxo "Tratar").
  */
-function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar }: {
-  lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; onSalvo: () => void; onCancelar: () => void;
+function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, onCancelar }: {
+  lanc: Lanc; centros: string[]; planoContas: ContaPlano[]; produtos: string[]; onSalvo: () => void; onCancelar: () => void;
 }) {
   const [descricao, setDescricao] = useState(lanc.descricao || "");
   const [fornecedor, setFornecedor] = useState(lanc.fornecedor || "");
+  // Produto/serviço do item — só é seguro editar quando a nota tem 0 (ex.:
+  // importada sem vínculo) ou exatamente 1 item; com vários itens, trocar
+  // "o" produto seria ambíguo (qual deles?), então a tela só informa.
+  const itensDoLanc = lanc.itens || [];
+  const podeEditarProduto = itensDoLanc.length <= 1;
+  const [produto, setProduto] = useState(itensDoLanc[0]?.produto || "");
   const [centroCusto, setCentroCusto] = useState(lanc.centro_custo || "");
   const [codigoConta, setCodigoConta] = useState(lanc.codigo_conta || "");
   const [nomeConta, setNomeConta] = useState(lanc.conta_completa || "");
@@ -1367,6 +1382,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
         data_competencia: dataCompetencia || null, numero_nota: numeroNota || null,
         numero_os_orcamento: numeroOsOrcamento || null,
         numero_documento_pagamento: numeroPagamento || null, tipo_documento: tipoDocumento || null,
+        ...(podeEditarProduto && produto.trim() ? { produto: produto.trim() } : {}),
       });
       onSalvo();
     } catch (e: any) { setErro(e.message); setSalvando(false); }
@@ -1389,6 +1405,19 @@ function FormEditarLancamento({ lanc, centros, planoContas, onSalvo, onCancelar 
           <input style={selStyleLote} value={descricao} onChange={(e) => setDescricao(e.target.value)} /></div>
         <div><label style={labelStyleLote}>{tipoConta === "receita" ? "Cliente" : "Fornecedor"}</label>
           <input style={selStyleLote} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Produto / serviço</label>
+          {podeEditarProduto ? (
+            <input style={selStyleLote} list="produtos-editar-lancamento" value={produto} onChange={(e) => setProduto(e.target.value)}
+              placeholder={itensDoLanc.length ? undefined : "Sem vínculo — escolha ou digite um produto/serviço"} />
+          ) : (
+            <p style={{ ...selStyleLote, background: "transparent", border: "none", padding: "0.45rem 0", color: "var(--text-muted)", fontSize: "0.75rem" }}>
+              Nota com {itensDoLanc.length} produtos/serviços — edite pelo lançamento original.
+            </p>
+          )}
+          {podeEditarProduto && (
+            <datalist id="produtos-editar-lancamento">{produtos.map((p) => <option key={p} value={p} />)}</datalist>
+          )}
+        </div>
         <div><label style={labelStyleLote}>Valor (R$)</label>
           <input style={selStyleLote} type="number" step="0.01" value={valor} onChange={(e) => setValor(e.target.value)} /></div>
         <div><label style={labelStyleLote}>Centro de custo</label>
@@ -1535,18 +1564,18 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "520px" }}>
           <table className="fazenda-table">
-            <thead>
+            <thead style={theadStickyStyle}>
               <tr>
-                <ThOrd rotulo="Nº lanç." chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-                <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-                <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-                <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-                <th>Centro custo</th><th>Documento</th>
-                <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
-                {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />}
-                {!emAberto && <th>Conta bancária</th>}
-                {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
-                <th style={{ textAlign: "right" }}>Ações</th>
+                <ThOrd rotulo="Nº lanç." chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+                <ThOrd rotulo={emAberto ? "Vencimento" : "Data"} chave="data" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+                <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+                <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+                <th style={theadStickyStyle}>Centro custo</th><th style={theadStickyStyle}>Documento</th>
+                <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
+                {!emAberto && <ThOrd rotulo="Pago" chave="pago" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />}
+                {!emAberto && <th style={theadStickyStyle}>Conta bancária</th>}
+                {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
+                <th style={{ ...theadStickyStyle, textAlign: "right" }}>Ações</th>
               </tr>
             </thead>
             <tbody>
@@ -1742,14 +1771,14 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
         </div>
         <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
           <table className="fazenda-table" style={{ margin: 0 }}>
-            <thead><tr>
-              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} />
-              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ textAlign: "right" }} />
-              {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
-              <th></th>
+            <thead style={theadStickyStyle}><tr>
+              <ThOrd rotulo="Nota / lançamento" chave="numero" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Vencimento" chave="vencimento" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo={tipo === "receita" ? "Cliente" : "Fornecedor"} chave="fornecedor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Produto/Serviços" chave="produto" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={theadStickyStyle} />
+              <ThOrd rotulo="Valor" chave="valor" sortKey={sortKey} sortDir={sortDir} onSort={ordenar} style={{ ...theadStickyStyle, textAlign: "right" }} />
+              {admin && <th style={{ ...theadStickyStyle, textAlign: "left" }}>Usuário</th>}
+              <th style={theadStickyStyle}></th>
             </tr></thead>
             <tbody>
               {ordenados.map((r) => {
