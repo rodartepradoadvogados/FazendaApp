@@ -8,8 +8,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { ChevronRight, Check } from "lucide-react";
-import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria } from "@/components/mobile/ui";
+import { ChevronRight, ChevronLeft, Check } from "lucide-react";
+import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -21,6 +21,24 @@ function maisDias(iso: string, n: number): string {
   const d = new Date(iso + "T00:00:00");
   d.setDate(d.getDate() + n);
   return d.toISOString().split("T")[0];
+}
+
+/** Diferença em dias inteiros entre duas datas ISO (b - a). */
+function diasEntre(aIso: string, bIso: string): number {
+  return Math.round((new Date(bIso + "T00:00:00").getTime() - new Date(aIso + "T00:00:00").getTime()) / 86400000);
+}
+// Monta "aaaa-mm-dd" a partir de componentes locais, sem passar por
+// Date → toISOString (que converte pra UTC e pode voltar um dia) — mesmo
+// cuidado do renderCalendario() do site.
+function isoLocalCal(ano: number, mes: number, dia: number): string {
+  return `${ano}-${String(mes + 1).padStart(2, "0")}-${String(dia).padStart(2, "0")}`;
+}
+const NOMES_MES = ["Janeiro", "Fevereiro", "Março", "Abril", "Maio", "Junho", "Julho", "Agosto", "Setembro", "Outubro", "Novembro", "Dezembro"];
+const DIAS_SEMANA_ABREV = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+/** Domingo (início da semana) da semana à qual `iso` pertence. */
+function inicioDaSemana(iso: string): string {
+  const dia = new Date(iso + "T00:00:00").getDay();
+  return maisDias(iso, -dia);
 }
 
 type Evento = {
@@ -135,6 +153,15 @@ export default function AgendaMovel() {
   const [doCache, setDoCache] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState(false);
+
+  // Visão de calendário (mês/semana) — alternativa à lista padrão, com clique
+  // no dia abrindo as tarefas daquele dia logo abaixo da grade.
+  const [visualizacao, setVisualizacao] = useState<"lista" | "mes" | "semana">("lista");
+  const [mesCal, setMesCal] = useState(() => { const d = new Date(hoje + "T00:00:00"); return { ano: d.getFullYear(), mes: d.getMonth() }; });
+  const [semanaCal, setSemanaCal] = useState(() => inicioDaSemana(hoje));
+  const [diaSelecionadoCal, setDiaSelecionadoCal] = useState<string | null>(null);
+  const [agendaCal, setAgendaCal] = useState<Agenda | null>(null);
+  const [carregandoCal, setCarregandoCal] = useState(false);
   // Ids marcados como "feito" nesta sessão (otimista) — mantém o cartão visível
   // para permitir desfazer, já que o backend some com ele no próximo reload.
   const [feitos, setFeitos] = useState<Set<string>>(new Set());
@@ -330,6 +357,146 @@ export default function AgendaMovel() {
   }, [chaveCache, hoje]);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Janela de dias a pedir do backend para cobrir o mês/semana exibido na
+  // visão de calendário (mesma ideia do site: amplia a busca até o fim do
+  // período visível, sem trocar de endpoint).
+  const diasNoMesCal = new Date(mesCal.ano, mesCal.mes + 1, 0).getDate();
+  const ultimoDiaMesCalIso = isoLocalCal(mesCal.ano, mesCal.mes, diasNoMesCal);
+  const fimSemanaCalIso = maisDias(semanaCal, 6);
+  const diasJanelaCal = visualizacao === "mes"
+    ? Math.max(0, diasEntre(hoje, ultimoDiaMesCalIso))
+    : visualizacao === "semana"
+    ? Math.max(0, diasEntre(hoje, fimSemanaCalIso))
+    : 0;
+
+  useEffect(() => {
+    if (visualizacao === "lista") return;
+    let cancelado = false;
+    setCarregandoCal(true);
+    const chave = `agenda_mob_cal_${hoje}_${diasJanelaCal}`;
+    fetchComCache<Agenda>(chave, () => fetchAgenda(hoje, diasJanelaCal)).then(({ dados }) => {
+      if (!cancelado) { setAgendaCal(dados); setCarregandoCal(false); }
+    });
+    return () => { cancelado = true; };
+  }, [visualizacao, diasJanelaCal, hoje]);
+
+  const eventosPorDiaCal = new Map<string, Evento[]>();
+  (agendaCal?.eventos || []).forEach((e) => {
+    const lista = eventosPorDiaCal.get(e.data);
+    if (lista) lista.push(e); else eventosPorDiaCal.set(e.data, [e]);
+  });
+  const eventosDoDiaSelecionadoCal = diaSelecionadoCal ? (eventosPorDiaCal.get(diaSelecionadoCal) || []) : [];
+
+  function mudarMesCal(delta: number) {
+    setDiaSelecionadoCal(null);
+    setMesCal((p) => {
+      let mes = p.mes + delta, ano = p.ano;
+      if (mes < 0) { mes = 11; ano -= 1; } else if (mes > 11) { mes = 0; ano += 1; }
+      return { ano, mes };
+    });
+  }
+  function mudarSemanaCal(delta: number) {
+    setDiaSelecionadoCal(null);
+    setSemanaCal((p) => maisDias(p, delta * 7));
+  }
+  function abrirDiaCal(iso: string) {
+    setDiaSelecionadoCal((prev) => (prev === iso ? null : iso));
+  }
+
+  // Célula de um dia (grade mensal ou semanal) — número, pontinhos por
+  // categoria e contagem de eventos. `grande` dá mais espaço (visão semanal).
+  function CelulaDia({ iso, grande }: { iso: string; grande?: boolean }) {
+    const evs = eventosPorDiaCal.get(iso) || [];
+    const categoriasUnicas = Array.from(new Set(evs.map((e) => catInfo(e.categoria).chave)));
+    const atrasado = iso < hoje && evs.length > 0;
+    const ehHoje = iso === hoje;
+    const ehSelecionado = iso === diaSelecionadoCal;
+    return (
+      <button type="button" onClick={() => abrirDiaCal(iso)}
+        style={{
+          minHeight: grande ? "4.6rem" : "3.1rem", padding: "0.3rem 0.3rem", borderRadius: 10, textAlign: "left", cursor: "pointer",
+          display: "flex", flexDirection: "column", gap: "0.2rem",
+          border: "1px solid " + (ehSelecionado ? "var(--mob-dourado-2)" : ehHoje ? "var(--mob-dourado)" : "var(--mob-border)"),
+          background: ehSelecionado ? "color-mix(in srgb, var(--mob-dourado-2) 18%, transparent)" : ehHoje ? "color-mix(in srgb, var(--mob-dourado) 10%, transparent)" : "var(--mob-surface)",
+        }}>
+        <span style={{ fontSize: grande ? "0.85rem" : "0.72rem", fontWeight: ehHoje ? 800 : 600, color: atrasado ? "var(--mob-vermelho)" : "var(--mob-text)" }}>
+          {grande ? `${DIAS_SEMANA_ABREV[new Date(iso + "T00:00:00").getDay()]} ${Number(iso.slice(8, 10))}` : Number(iso.slice(8, 10))}
+        </span>
+        {evs.length > 0 && (
+          <>
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.2rem" }}>
+              {categoriasUnicas.slice(0, grande ? 6 : 4).map((c) => (
+                <span key={c} style={{ display: "inline-block", width: 6, height: 6, borderRadius: "50%", background: corCategoria(c) }} />
+              ))}
+            </div>
+            <span style={{ fontSize: "0.62rem", color: "var(--mob-muted)" }}>{evs.length} evento{evs.length !== 1 ? "s" : ""}</span>
+          </>
+        )}
+      </button>
+    );
+  }
+
+  function PainelDiaCal() {
+    if (!diaSelecionadoCal) return null;
+    return (
+      <div style={{ marginTop: "0.8rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.6rem" }}>
+          <span style={{ fontSize: "0.9rem", fontWeight: 700, textTransform: "capitalize" }}>
+            {new Date(diaSelecionadoCal + "T00:00:00").toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "long" })}
+          </span>
+          <button type="button" onClick={() => setDiaSelecionadoCal(null)} style={{ background: "none", border: "none", color: "var(--mob-muted)", fontSize: "0.8rem", cursor: "pointer" }}>Fechar</button>
+        </div>
+        {eventosDoDiaSelecionadoCal.length === 0 ? (
+          <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem", padding: "0.3rem 0.1rem" }}>Nada agendado.</p>
+        ) : (
+          montarLista(eventosDoDiaSelecionadoCal).map((r, i) => renderRenderavel(r, (i % 2) as 0 | 1))
+        )}
+      </div>
+    );
+  }
+
+  function ViewMes() {
+    const primeiroDiaSemana = new Date(mesCal.ano, mesCal.mes, 1).getDay();
+    const celulas: (string | null)[] = [];
+    for (let i = 0; i < primeiroDiaSemana; i++) celulas.push(null);
+    for (let dia = 1; dia <= diasNoMesCal; dia++) celulas.push(isoLocalCal(mesCal.ano, mesCal.mes, dia));
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
+          <button type="button" onClick={() => mudarMesCal(-1)} aria-label="Mês anterior" style={{ background: "none", border: "none", color: "var(--mob-text)", padding: "0.4rem", cursor: "pointer" }}><ChevronLeft size={20} /></button>
+          <span style={{ fontWeight: 800, fontSize: "0.95rem" }}>{NOMES_MES[mesCal.mes]} de {mesCal.ano}</span>
+          <button type="button" onClick={() => mudarMesCal(1)} aria-label="Próximo mês" style={{ background: "none", border: "none", color: "var(--mob-text)", padding: "0.4rem", cursor: "pointer" }}><ChevronRight size={20} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.3rem" }}>
+          {DIAS_SEMANA_ABREV.map((d) => (
+            <div key={d} style={{ textAlign: "center", fontSize: "0.62rem", fontWeight: 700, color: "var(--mob-muted)" }}>{d}</div>
+          ))}
+          {celulas.map((iso, i) => iso ? <CelulaDia key={iso} iso={iso} /> : <div key={`vazio-${i}`} />)}
+        </div>
+        <PainelDiaCal />
+      </div>
+    );
+  }
+
+  function ViewSemana() {
+    const dias = Array.from({ length: 7 }, (_, i) => maisDias(semanaCal, i));
+    return (
+      <div>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: "0.7rem" }}>
+          <button type="button" onClick={() => mudarSemanaCal(-1)} aria-label="Semana anterior" style={{ background: "none", border: "none", color: "var(--mob-text)", padding: "0.4rem", cursor: "pointer" }}><ChevronLeft size={20} /></button>
+          <span style={{ fontWeight: 800, fontSize: "0.88rem" }}>
+            {fmtData(dias[0], { day: "2-digit", month: "2-digit" })} – {fmtData(dias[6], { day: "2-digit", month: "2-digit" })}
+          </span>
+          <button type="button" onClick={() => mudarSemanaCal(1)} aria-label="Próxima semana" style={{ background: "none", border: "none", color: "var(--mob-text)", padding: "0.4rem", cursor: "pointer" }}><ChevronRight size={20} /></button>
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: "0.3rem" }}>
+          {dias.map((iso) => <CelulaDia key={iso} iso={iso} grande />)}
+        </div>
+        <PainelDiaCal />
+      </div>
+    );
+  }
 
   // Só hoje e as atrasadas ainda pendentes (data <= hoje), atrasadas primeiro.
   const eventos = (agenda?.eventos || [])
@@ -794,7 +961,19 @@ export default function AgendaMovel() {
 
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
 
-      {carregando && !agenda ? (
+      <div style={{ display: "flex", gap: "0.5rem", margin: "0 0 0.9rem" }}>
+        <button type="button" className={`mob-pill${visualizacao === "lista" ? " ativa" : ""}`} style={{ flex: 1, textAlign: "center" }} onClick={() => setVisualizacao("lista")}>Lista</button>
+        <button type="button" className={`mob-pill${visualizacao === "mes" ? " ativa" : ""}`} style={{ flex: 1, textAlign: "center" }} onClick={() => setVisualizacao("mes")}>Mês</button>
+        <button type="button" className={`mob-pill${visualizacao === "semana" ? " ativa" : ""}`} style={{ flex: 1, textAlign: "center" }} onClick={() => setVisualizacao("semana")}>Semana</button>
+      </div>
+
+      {visualizacao !== "lista" ? (
+        carregandoCal && !agendaCal ? (
+          <p style={{ color: "var(--mob-muted)", padding: "1.5rem 0" }}>Carregando calendário…</p>
+        ) : (
+          visualizacao === "mes" ? <ViewMes /> : <ViewSemana />
+        )
+      ) : carregando && !agenda ? (
         <p style={{ color: "var(--mob-muted)", padding: "1.5rem 0" }}>Carregando agenda…</p>
       ) : erro && !agenda ? (
         <MobAviso tipo="erro">Não foi possível carregar a agenda. Tente novamente mais tarde.</MobAviso>
