@@ -1,10 +1,9 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Users, Layers, FileSpreadsheet, Wallet, Palette, Newspaper } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper } from "lucide-react";
 import { podeModulo, ehAdmin } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
-import UsuariosPage from "@/app/usuarios/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
 import { ABAS_CADASTRO_SANITARIO, type AbaCadastroSanitario } from "@/components/CadastroSanitario";
 import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSemen";
@@ -14,7 +13,7 @@ import NewsAdmin from "@/components/NewsAdmin";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "usuarios" | "news" | "aparencia";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -41,7 +40,6 @@ export default function ConfiguracoesPage() {
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
-    if (ehAdmin()) abas.push({ id: "usuarios", label: "Usuários", icon: Users, title: "Usuários e permissões" });
     if (ehAdmin()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
@@ -64,7 +62,8 @@ export default function ConfiguracoesPage() {
     if (a.id === "cadastro") {
       return {
         id: a.id, label: a.label, icon: a.icon,
-        children: ABAS_CADASTRO.map(([cid, clabel, cIcon]) => ({
+        // "usuarios" é restrito a administradores dentro de Cadastro.
+        children: ABAS_CADASTRO.filter(([cid]) => cid !== "usuarios" || ehAdmin()).map(([cid, clabel, cIcon]) => ({
           id: cid, label: clabel, icon: cIcon,
           children: cid === "sanitario" ? ABAS_CADASTRO_SANITARIO.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
             : cid === "central-semen" ? ABAS_CENTRAL_SEMEN.map(([sid, slabel, sIcon]) => ({ id: sid, label: slabel, icon: sIcon }))
@@ -118,7 +117,6 @@ export default function ConfiguracoesPage() {
         {aba === "parametros" && parametrosAba === "financeiro" && temFinanceiro && <ParametrosFinanceiros />}
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
-        {aba === "usuarios" && <UsuariosPage />}
         {aba === "news" && <NewsAdmin />}
       </div>
     </div>

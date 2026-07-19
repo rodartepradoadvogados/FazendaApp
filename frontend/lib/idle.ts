@@ -1,6 +1,6 @@
 // Logout automático por inatividade (15 minutos sem mexer no site/app) — por
 // segurança (não deixa os dados da fazenda expostos numa tela aberta) e para
-// o controle de acessos do proprietário (ver Configurações > Usuários).
+// o controle de acessos do proprietário (ver Configurações > Cadastro > Usuários).
 //
 // A última atividade é guardada no localStorage (não só em memória) porque no
 // app móvel instalado o navegador pode suspender os timers em JS quando a

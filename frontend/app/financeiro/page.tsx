@@ -27,6 +27,7 @@ import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { RESPONSAVEIS } from "@/lib/constants";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
+import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
@@ -53,7 +54,7 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -68,6 +69,7 @@ const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "a_receber", label: "Contas a receber", icon: Clock, desc: "Receitas em aberto (sem data de recebimento)" },
   { id: "pagas", label: "Contas pagas", icon: CheckCircle2, desc: "Despesas já quitadas" },
   { id: "recebidas", label: "Contas recebidas", icon: CheckCircle2, desc: "Receitas já recebidas" },
+  { id: "folha_relatorio", label: "Folha de Pagamento", icon: Users, desc: "Relatório da folha — pagos e a vencer, com exportação" },
   { id: "extrato", label: "Todas", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
 ];
 const ACOES: { id: Rel; label: string; icon: any; desc: string }[] = [
@@ -470,7 +472,8 @@ export default function FinanceiroPage() {
         {rel === "patrimonio" ? <PatrimonioView />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
-          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
+          : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView />
+          : rel === "folha_relatorio" ? <RelatorioFolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} />
