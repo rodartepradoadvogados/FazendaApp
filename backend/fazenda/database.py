@@ -3,6 +3,7 @@ Conexão com o banco de dados e criação das tabelas.
 Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 """
 import logging
+from pathlib import Path
 
 from sqlalchemy import inspect, text
 from sqlmodel import Session, SQLModel, create_engine, select
@@ -34,8 +35,14 @@ else:
 engine = create_engine(DATABASE_URL, **engine_kwargs)
 
 
-# Migração leve: colunas adicionadas a tabelas que já podem existir em produção.
-# O create_all não altera tabelas existentes, então adicionamos manualmente.
+# Migração leve (histórico congelado): colunas adicionadas a tabelas que já
+# podem existir em produção, de antes da adoção do Alembic. O create_all não
+# altera tabelas existentes, então essas eram adicionadas manualmente aqui.
+# NÃO adicione novas entradas — toda alteração de schema a partir de agora
+# deve virar uma revisão em `alembic/versions/` (`alembic revision
+# --autogenerate -m "..."`), aplicada automaticamente no boot por
+# `_aplicar_alembic()` (ver abaixo). Este dicionário continua rodando só para
+# não quebrar bancos antigos que ainda não tenham essas colunas.
 _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     "controle_leiteiro": [
         ("raca", "VARCHAR"), ("ordenha1_kg", "FLOAT"), ("ordenha2_kg", "FLOAT"), ("ordenha3_kg", "FLOAT"),
@@ -328,9 +335,48 @@ def _backfill_login_acesso() -> None:
         session.commit()
 
 
+def _aplicar_alembic() -> None:
+    """Aplica as migrações de schema via Alembic (`alembic/versions/`).
+
+    Bancos que já existiam antes desta migração para Alembic (schema já
+    criado pelo `create_all` + `_migrar_colunas` antigos) só são "carimbados"
+    na revisão atual — sem tentar recriar tabelas/colunas que já existem.
+    Bancos novos (sem nenhuma tabela) recebem a migração completa via
+    `upgrade head`, que já cria o schema inteiro (ver revisão baseline).
+    Depois de carimbado uma vez, todo boot seguinte só confirma que já está
+    em `head` (upgrade vira no-op) — mesma idempotência das rotinas abaixo.
+    """
+    from alembic import command
+    from alembic.config import Config
+
+    alembic_ini = Path(__file__).resolve().parent.parent / "alembic.ini"
+    if not alembic_ini.exists():
+        return  # ambiente sem o diretório alembic/ (ex.: alguns testes) — sem-op
+
+    cfg = Config(str(alembic_ini))
+    cfg.file_config  # força o parse do .ini agora, com config_file_name ainda setado
+    # Evita que env.py rode `fileConfig()` a cada boot da aplicação — isso
+    # reconfiguraria (e desabilitaria) os loggers do resto do app, já que só
+    # os loggers "root"/"sqlalchemy"/"alembic" estão listados no alembic.ini.
+    cfg.config_file_name = None
+    cfg.set_main_option("sqlalchemy.url", DATABASE_URL)
+
+    insp = inspect(engine)
+    tabelas_existentes = set(insp.get_table_names())
+    ja_tem_alembic = "alembic_version" in tabelas_existentes
+    banco_pre_existente = bool(tabelas_existentes - {"alembic_version"})
+
+    if not ja_tem_alembic and banco_pre_existente:
+        command.stamp(cfg, "head")
+    else:
+        command.upgrade(cfg, "head")
+
+
 def create_db_and_tables() -> None:
-    """Cria as tabelas (idempotente) e aplica migrações leves de colunas."""
-    SQLModel.metadata.create_all(engine)
+    """Aplica as migrações de schema (Alembic) e as migrações leves antigas
+    (histórico congelado, ver comentário de `_COLUNAS_NOVAS`)."""
+    _aplicar_alembic()
+    SQLModel.metadata.create_all(engine)  # rede de segurança p/ tabela nova sem migração ainda
     _migrar_colunas()
     _migrar_tipos_bigint()
     _inativar_animais_semen()
