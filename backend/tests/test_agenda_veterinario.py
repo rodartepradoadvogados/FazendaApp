@@ -273,3 +273,60 @@ class TestVaziasPorDiagnostico:
         item = next(a for a in listas["vazias_por_diagnostico"] if a["numero_matriz"] == "51")
         assert "perda" in item["motivo"].lower()
         assert not any(a["numero_matriz"] == "51" for a in listas["pendentes_classificacao"])
+
+
+class TestUltimoDiagnostico:
+    """#488 — "último DG" da matriz + envio por e-mail (Resend, mockado)."""
+
+    def test_ultimo_diagnostico_sem_servico_devolve_none(self, client):
+        c, engine = client
+        r = c.get("/reproducao/animais/999/ultimo-diagnostico")
+        assert r.status_code == 200
+        assert r.json() is None
+
+    def test_ultimo_diagnostico_devolve_servico_mais_recente(self, client):
+        c, engine = client
+        _add_servico(engine, "60", 90, data_diagnostico=HOJE - timedelta(days=60), diagnostico="NEGATIVO")
+        _add_servico(engine, "60", 20, data_diagnostico=HOJE - timedelta(days=5), diagnostico="POSITIVO")
+        r = c.get("/reproducao/animais/60/ultimo-diagnostico")
+        assert r.status_code == 200
+        assert r.json()["diagnostico"] == "POSITIVO"
+
+    def test_enviar_diagnostico_sem_destinatario_da_erro(self, client):
+        c, engine = client
+        _add_servico(engine, "61", 20, data_diagnostico=HOJE - timedelta(days=5), diagnostico="POSITIVO")
+        r = c.post("/reproducao/animais/61/diagnostico/enviar", json={"destinatario": "  "})
+        assert r.status_code == 400
+
+    def test_enviar_diagnostico_sem_servico_da_404(self, client):
+        c, engine = client
+        r = c.post("/reproducao/animais/999/diagnostico/enviar", json={"destinatario": "a@b.com"})
+        assert r.status_code == 404
+
+    def test_enviar_diagnostico_sem_dg_lancado_da_erro(self, client):
+        c, engine = client
+        _add_servico(engine, "62", 5)
+        r = c.post("/reproducao/animais/62/diagnostico/enviar", json={"destinatario": "a@b.com"})
+        assert r.status_code == 400
+        assert "diagnóstico" in r.json()["detail"].lower()
+
+    def test_enviar_diagnostico_sem_resend_configurado_da_erro_claro(self, client):
+        c, engine = client
+        _add_servico(engine, "63", 20, data_diagnostico=HOJE - timedelta(days=5), diagnostico="POSITIVO")
+        r = c.post("/reproducao/animais/63/diagnostico/enviar", json={"destinatario": "a@b.com"})
+        assert r.status_code == 400
+        assert "RESEND_API_KEY" in r.json()["detail"]
+
+    def test_enviar_diagnostico_com_envio_mockado(self, client, monkeypatch):
+        c, engine = client
+        from fazenda.api.routers import reproducao as reproducao_router
+        chamadas = []
+        monkeypatch.setattr(
+            reproducao_router, "enviar_email",
+            lambda destinatario, assunto, corpo_html, anexo_nome=None, anexo_bytes=None: chamadas.append(destinatario),
+        )
+        _add_servico(engine, "64", 20, data_diagnostico=HOJE - timedelta(days=5), diagnostico="POSITIVO",
+                     metodo_diagnostico="Ultrassom")
+        r = c.post("/reproducao/animais/64/diagnostico/enviar", json={"destinatario": "vet@exemplo.com"})
+        assert r.status_code == 200 and r.json() == {"enviado": True}
+        assert chamadas == ["vet@exemplo.com"]
