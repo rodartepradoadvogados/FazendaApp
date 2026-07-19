@@ -4,7 +4,7 @@ import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets,
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
-import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
+import { SecaoRecolhivel, MultiFiltro, Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -352,13 +352,12 @@ function ProducaoLeiteira() {
 
             {ucRegistros.length > 0 && (
               <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-3">
-                <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{ucMedia} kg</p>
-                  <p className="kpi-label">Média do {ucLabelEscopo}</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucMenor ?? "—"} kg</p><p className="kpi-label">Menor</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucMediaManha || "—"} kg</p><p className="kpi-label">Média ordenha — manhã</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucMediaNoite || "—"} kg</p><p className="kpi-label">Média ordenha — noite</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucNumerosEscopo.size}</p><p className="kpi-label">Vacas no filtro</p></div>
-                <div className="kpi-card"><p className="kpi-value">{ucRegistros.length}</p><p className="kpi-label">Controles no filtro</p></div>
+                <Indicador categoria="producao" valor={`${ucMedia} kg`} cor="var(--green-light)" rotulo={`Média do ${ucLabelEscopo}`} />
+                <Indicador categoria="producao" valor={`${ucMenor ?? "—"} kg`} rotulo="Menor" />
+                <Indicador categoria="producao" valor={`${ucMediaManha || "—"} kg`} rotulo="Média ordenha — manhã" />
+                <Indicador categoria="producao" valor={`${ucMediaNoite || "—"} kg`} rotulo="Média ordenha — noite" />
+                <Indicador categoria="producao" valor={ucNumerosEscopo.size} rotulo="Vacas no filtro" />
+                <Indicador categoria="producao" valor={ucRegistros.length} rotulo="Controles no filtro" />
               </div>
             )}
 
@@ -431,10 +430,8 @@ function ProducaoLeiteira() {
                   <p style={{ color: "var(--amber)", fontSize: "0.8rem", marginBottom: "0.75rem" }}>Selecione ao menos um dos dois relatórios acima.</p>
                 )}
                 <div className="grid grid-cols-2 gap-4 mb-3">
-                  <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{qlAtual ?? "—"} {qlAtual != null ? qlIndicadorInfo.unidade : ""}</p>
-                    <p className="kpi-label">{qlIndicadorInfo.label} atual (última coleta)</p></div>
-                  <div className="kpi-card"><p className="kpi-value">{qlMedia ?? "—"} {qlMedia != null ? qlIndicadorInfo.unidade : ""}</p>
-                    <p className="kpi-label">{qlIndicadorInfo.label} média no período</p></div>
+                  <Indicador categoria="producao" valor={`${qlAtual ?? "—"} ${qlAtual != null ? qlIndicadorInfo.unidade : ""}`} cor="var(--green-light)" rotulo={`${qlIndicadorInfo.label} atual (última coleta)`} />
+                  <Indicador categoria="producao" valor={`${qlMedia ?? "—"} ${qlMedia != null ? qlIndicadorInfo.unidade : ""}`} rotulo={`${qlIndicadorInfo.label} média no período`} />
                 </div>
                 {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
               </>
@@ -477,14 +474,10 @@ function ProducaoLeiteira() {
             )}
 
             <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
-              <div className="kpi-card"><p className="kpi-value">{ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
-                <p className="kpi-label">Controle projetado</p></div>
-              <div className="kpi-card"><p className="kpi-value">{ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
-                <p className="kpi-label">Entregue projetado</p></div>
-              <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--dourado-light)" }}>{ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"}</p>
-                <p className="kpi-label">Não entregue</p></div>
-              <div className="kpi-card"><p className="kpi-value">{ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"}</p>
-                <p className="kpi-label">Receita média{ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}</p></div>
+              <Indicador categoria="producao" valor={ce.controle_projetado_kg != null ? `${ce.controle_projetado_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Controle projetado" />
+              <Indicador categoria="producao" valor={ce.entrega_projetada_kg != null ? `${ce.entrega_projetada_kg.toLocaleString("pt-BR")} kg` : "—"} rotulo="Entregue projetado" />
+              <Indicador categoria="producao" valor={ce.nao_entregue_kg != null ? `${ce.nao_entregue_kg.toLocaleString("pt-BR")} kg` : "—"} cor="var(--dourado-light)" rotulo="Não entregue" />
+              <Indicador categoria="producao" valor={ce.receita_projetada != null ? ce.receita_projetada.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—"} rotulo={`Receita média${ce.preco_medio_kg != null ? ` (${ce.preco_medio_kg.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}/kg)` : ""}`} />
             </div>
 
             <div className="overflow-x-auto">
