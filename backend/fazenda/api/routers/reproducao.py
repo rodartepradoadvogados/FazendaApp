@@ -19,6 +19,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
 
@@ -148,6 +149,58 @@ def agenda_veterinario(session: Session = Depends(get_session)) -> dict:
 
     listas = classificar_rebanho(animais, servico_por_animal, peso_por_animal, hoje)
     return {"data_referencia": hoje.isoformat(), "listas": listas, "totais": {k: len(v) for k, v in listas.items()}}
+
+
+def _ultimo_servico(session: Session, numero_matriz: str) -> Servico | None:
+    return session.exec(
+        select(Servico).where(Servico.numero_matriz == numero_matriz).order_by(Servico.data_servico.desc())
+    ).first()
+
+
+@router.get("/animais/{numero_matriz}/ultimo-diagnostico")
+def ultimo_diagnostico(numero_matriz: str, session: Session = Depends(get_session)) -> dict | None:
+    """Último serviço/IA da matriz (com diagnóstico, se já lançado) — usado
+    tanto na Agenda do veterinário quanto na ficha do animal para montar o
+    e-mail de "enviar último DG" (ver enviar_ultimo_diagnostico abaixo)."""
+    servico = _ultimo_servico(session, numero_matriz)
+    return servico.model_dump() if servico else None
+
+
+class EnviarDiagnosticoIn(BaseModel):
+    destinatario: str
+
+
+@router.post("/animais/{numero_matriz}/diagnostico/enviar")
+def enviar_ultimo_diagnostico(numero_matriz: str, dados: EnviarDiagnosticoIn, session: Session = Depends(get_session)) -> dict:
+    """Envia por e-mail um resumo do último diagnóstico de gestação da
+    matriz — mesmo mecanismo de e-mail do recibo financeiro (#505), mas sem
+    PDF anexado (o corpo do e-mail já traz os dados do diagnóstico)."""
+    if not (dados.destinatario or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o e-mail do destinatário")
+    servico = _ultimo_servico(session, numero_matriz)
+    if not servico:
+        raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {numero_matriz}")
+    if not servico.data_diagnostico:
+        raise HTTPException(status_code=400, detail=f"A matriz {numero_matriz} ainda não tem diagnóstico de gestação registrado")
+
+    fmt = lambda d: d.strftime("%d/%m/%Y") if d else "—"  # noqa: E731
+    linhas = [
+        f"<p><b>Matriz:</b> {numero_matriz}</p>",
+        f"<p><b>Data do serviço:</b> {fmt(servico.data_servico)}</p>",
+        f"<p><b>Data do diagnóstico:</b> {fmt(servico.data_diagnostico)}</p>",
+        f"<p><b>Resultado:</b> {servico.diagnostico or '—'}</p>",
+    ]
+    if servico.metodo_diagnostico:
+        linhas.append(f"<p><b>Método:</b> {servico.metodo_diagnostico}</p>")
+    if servico.data_reconfirmacao:
+        linhas.append(f"<p><b>Reconfirmação ({fmt(servico.data_reconfirmacao)}):</b> {servico.diagnostico_reconfirmacao or '—'}</p>")
+    corpo_html = "".join(linhas) + "<p>Fazenda Estreito Ponte de Pedra</p>"
+
+    try:
+        enviar_email(dados.destinatario.strip(), f"Diagnóstico de gestação — matriz {numero_matriz}", corpo_html)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"enviado": True}
 
 
 @router.get("/servicos")

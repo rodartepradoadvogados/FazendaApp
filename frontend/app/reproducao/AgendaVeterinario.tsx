@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X } from "lucide-react";
-import { fetchAgendaVeterinario, registrarReconfirmacao } from "@/lib/api";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail } from "lucide-react";
+import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -65,11 +65,41 @@ function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; on
   );
 }
 
+function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: string; onEnviado: (numero: string) => void; onCancelar: () => void }) {
+  const [email, setEmail] = useState("");
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.78rem" };
+
+  async function enviar() {
+    if (!email.trim()) { setErro("Informe o e-mail do destinatário."); return; }
+    setEnviando(true); setErro(null);
+    try {
+      await enviarDiagnosticoEmail(numero, email.trim());
+      onEnviado(numero);
+    } catch (e: any) { setErro(e.message); } finally { setEnviando(false); }
+  }
+
+  return (
+    <div className="flex items-center gap-2" style={{ flexWrap: "wrap" }}>
+      <input type="email" placeholder="e-mail do destinatário" style={{ ...selStyle, minWidth: "12rem" }} value={email} onChange={(e) => setEmail(e.target.value)} />
+      <button onClick={enviar} disabled={enviando} className="btn-primary" title="Enviar o último diagnóstico desta matriz por e-mail" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+        <Mail size={13} /> {enviando ? "Enviando…" : "Enviar"}
+      </button>
+      <button onClick={onCancelar} title="Cancelar" style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", border: "1px solid var(--border)", borderRadius: "6px", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+        <X size={13} />
+      </button>
+      {erro && <span style={{ color: "var(--red)", fontSize: "0.75rem" }}>{erro}</span>}
+    </div>
+  );
+}
+
 export default function AgendaVeterinarioPage() {
   const [dados, setDados] = useState<{ listas: Listas; totais: Record<string, number>; data_referencia: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [reconfirmando, setReconfirmando] = useState<string | null>(null);
+  const [enviandoDg, setEnviandoDg] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
   function carregar() {
@@ -120,7 +150,9 @@ export default function AgendaVeterinarioPage() {
       {LISTAS.filter((l) => abertas.has(l.key) && (dados.totais[l.key] ?? 0) > 0).map((l) => (
         <ListaTabela key={l.key} cfg={l} itens={dados.listas[l.key] ?? []}
           reconfirmando={reconfirmando} setReconfirmando={setReconfirmando}
-          onSalvo={(numero) => { setReconfirmando(null); setSucesso(`Reconfirmação registrada para a matriz ${numero}.`); carregar(); }} />
+          onSalvo={(numero) => { setReconfirmando(null); setSucesso(`Reconfirmação registrada para a matriz ${numero}.`); carregar(); }}
+          enviandoDg={enviandoDg} setEnviandoDg={setEnviandoDg}
+          onDgEnviado={(numero) => { setEnviandoDg(null); setSucesso(`Diagnóstico enviado por e-mail (matriz ${numero}).`); }} />
       ))}
 
       {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
@@ -130,9 +162,10 @@ export default function AgendaVeterinarioPage() {
   );
 }
 
-function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
+function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, enviandoDg, setEnviandoDg, onDgEnviado }: {
   cfg: typeof LISTAS[number]; itens: Item[];
   reconfirmando: string | null; setReconfirmando: (n: string | null) => void; onSalvo: (numero: string) => void;
+  enviandoDg: string | null; setEnviandoDg: (n: string | null) => void; onDgEnviado: (numero: string) => void;
 }) {
   const ord = useOrdenacao(itens);
   const colunasExport = [
@@ -167,6 +200,7 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
           {cfg.extra === "dias_para_parto" && <ThOrdenavel label="Dias p/ parto" campo="dias_para_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.extra === "motivo" && <ThOrdenavel label="Motivo" campo="motivo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />}
           {cfg.reconfirmavel && <th></th>}
+          <th>DG por e-mail</th>
         </tr></thead>
         <tbody>
           {ord.linhasOrdenadas.map((it) => (
@@ -195,6 +229,16 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo }: {
                   )}
                 </td>
               )}
+              <td>
+                {enviandoDg === it.numero_matriz ? (
+                  <FormEnviarDiagnostico numero={it.numero_matriz} onEnviado={onDgEnviado} onCancelar={() => setEnviandoDg(null)} />
+                ) : (
+                  <button onClick={() => setEnviandoDg(it.numero_matriz)} title="Enviar o último diagnóstico de gestação desta matriz por e-mail"
+                    style={{ fontSize: "0.72rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                    <Mail size={13} /> Enviar
+                  </button>
+                )}
+              </td>
             </tr>
           ))}
         </tbody>

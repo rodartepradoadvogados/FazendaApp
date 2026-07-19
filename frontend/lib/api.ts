@@ -414,6 +414,20 @@ export async function registrarReconfirmacao(dados: {
   return res.json();
 }
 
+// Último diagnóstico de gestação da matriz (Agenda do veterinário) + envio por e-mail.
+export async function fetchUltimoDiagnostico(numeroMatriz: string) {
+  const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/ultimo-diagnostico`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Último diagnóstico error: ${res.status}`);
+  return res.json();
+}
+export async function enviarDiagnosticoEmail(numeroMatriz: string, destinatario: string) {
+  const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/diagnostico/enviar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ destinatario }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar diagnóstico por e-mail"); }
+  return res.json();
+}
+
 export async function fetchPartosHistorico() {
   const res = await authFetch(`${API}/reproducao/partos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Partos error: ${res.status}`);
