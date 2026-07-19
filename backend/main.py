@@ -52,7 +52,8 @@ from fazenda.api.routers.financeiro import (
 )
 from fazenda.api.routers.reproducao import deduplicar_partos, backfill_categoria_crias, backfill_numero_cria_partos
 from fazenda.api.routers.cadastro import (
-    seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
+    seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_pessoa_robo_milknews,
+    seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
     sindicar_conta_gerencial_estoque, seed_tipos_pessoa,
@@ -86,6 +87,9 @@ async def lifespan(app: FastAPI):
         backfill_numero_cria_partos(session)
         seed_tipos_pessoa(session)
         seed_pessoas(session)
+        # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
+        # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
+        seed_pessoa_robo_milknews(session)
         seed_cadastro_sanitario(session)
         # Calendário sanitário padrão (vacinas/exames sazonais e por fase
         # fisiológica) — idempotente, só cria/compatibiliza o que falta.

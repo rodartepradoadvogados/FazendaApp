@@ -1,19 +1,22 @@
 "use client";
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { Users, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Pessoa = {
-  id: number; nome: string; tipos: string[]; telefone: string | null; email: string | null;
+  id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
+  cpf_cnpj: string | null; cep: string | null;
   observacoes: string | null; ativo: boolean; salario_base: number | null; data_admissao: string | null;
 };
 type Form = {
-  nome: string; tipos: string[]; telefone: string; email: string; observacoes: string; ativo: boolean;
+  nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
   salarioBase: string; dataAdmissao: string;
 };
 const formVazio: Form = {
-  nome: "", tipos: ["Funcionário"], telefone: "", email: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
+  nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
 };
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
@@ -26,7 +29,10 @@ const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
   return {
-    nome: f.nome.trim(), tipos: f.tipos, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes),
+    nome: f.nome.trim(), tipos: f.tipos,
+    telefones: f.telefones.map((t) => t.trim()).filter(Boolean),
+    emails: f.emails.map((e) => e.trim()).filter(Boolean),
+    cpf_cnpj: s(f.cpfCnpj), cep: s(f.cep), observacoes: s(f.observacoes),
     ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
     data_admissao: s(f.dataAdmissao),
   };
@@ -50,7 +56,8 @@ export default function CadastroPessoas() {
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
-      nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "",
+      nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
+      cpfCnpj: p.cpf_cnpj ?? "", cep: p.cep ?? "", observacoes: p.observacoes ?? "",
       ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "", dataAdmissao: p.data_admissao ?? "",
     });
     setEditando(p.id); setMsg(null);
@@ -76,8 +83,15 @@ export default function CadastroPessoas() {
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((p) =>
-    !termoBusca || normalizar(`${p.nome} ${p.tipos.join(" ")} ${p.telefone ?? ""} ${p.email ?? ""}`).includes(termoBusca)
+    !termoBusca || normalizar(`${p.nome} ${p.tipos.join(" ")} ${(p.telefones ?? []).join(" ")} ${(p.emails ?? []).join(" ")}`).includes(termoBusca)
   );
+
+  // Colunas derivadas (nome do 1º tipo/telefone/email) só para permitir
+  // ordenar por clique no cabeçalho — telefones/emails viram lista na tela.
+  const linhasOrdenaveis = useMemo(() => filtrados.map((p) => ({
+    ...p, tipoOrdenacao: p.tipos.join(", "), telefoneOrdenacao: (p.telefones ?? [])[0] ?? "", emailOrdenacao: (p.emails ?? [])[0] ?? "",
+  })), [filtrados]);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhasOrdenaveis);
 
   return (
     <div className="card">
@@ -109,15 +123,23 @@ export default function CadastroPessoas() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th>Tipo</th><th>Telefone</th><th>Email</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipoOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Telefone" campo="telefoneOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Email" campo="emailOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
-              {filtrados.map((p) => (
+              {linhasOrdenadas.map((p) => (
                 <Fragment key={p.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.tipos.join(", ")}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.telefone || "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.email || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{p.telefones.length ? p.telefones.join(", ") : "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{p.emails.length ? p.emails.join(", ") : "—"}</td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
                         <Pencil size={13} /> Editar
@@ -191,6 +213,35 @@ function NovoTipoPessoa({ onCriado, onCancelar }: { onCriado: (tipo: { id: numbe
   );
 }
 
+// Editor de lista de contatos (telefones ou emails) — uma linha por valor,
+// com botão de remover e "+ adicionar" — usado dentro do FormItem abaixo.
+function ListaContatoInput({ label, valores, onChange, mask, placeholder }: {
+  label: string; valores: string[]; onChange: (v: string[]) => void; mask?: (v: string) => string; placeholder?: string;
+}) {
+  const atualizar = (i: number, v: string) => onChange(valores.map((x, idx) => (idx === i ? (mask ? mask(v) : v) : x)));
+  const remover = (i: number) => onChange(valores.filter((_, idx) => idx !== i));
+  const adicionar = () => onChange([...valores, ""]);
+
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <div className="space-y-1">
+        {valores.map((v, i) => (
+          <div key={i} className="flex items-center gap-1">
+            <input style={inputStyle} value={v} placeholder={placeholder} onChange={(e) => atualizar(i, e.target.value)} />
+            <button type="button" className="btn-ghost" title={`Remover ${label.toLowerCase()}`} style={{ padding: "0.3rem" }} onClick={() => remover(i)}>
+              <X size={13} />
+            </button>
+          </div>
+        ))}
+        <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.2rem", padding: "0.1rem 0.4rem" }} onClick={adicionar}>
+          <Plus size={12} /> Adicionar {label.toLowerCase()}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, onNovoTipo }: {
   form: Form; setForm: (f: Form) => void; onSalvar: () => void; onCancelar: () => void; salvando: boolean; msg: string | null;
   tipos: { id: number; nome: string; ativo: boolean }[]; onNovoTipo: () => void;
@@ -218,8 +269,12 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
             </button>
           </div>
         </div>
-        <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
-        <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+        <ListaContatoInput label="Telefones" valores={form.telefones} onChange={(v) => setForm({ ...form, telefones: v })} mask={maskTelefone} />
+        <ListaContatoInput label="Emails" valores={form.emails} onChange={(v) => setForm({ ...form, emails: v })} placeholder="nome@exemplo.com" />
+        <div><label style={labelStyle}>CPF/CNPJ</label>
+          <input style={inputStyle} value={form.cpfCnpj} onChange={(e) => setForm({ ...form, cpfCnpj: maskCpfCnpj(e.target.value) })} /></div>
+        <div><label style={labelStyle}>CEP</label>
+          <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
           <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
         <div><label style={labelStyle}>Data de admissão</label>

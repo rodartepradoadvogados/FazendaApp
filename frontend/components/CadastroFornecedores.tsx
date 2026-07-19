@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Truck, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchFornecedores, criarFornecedor, atualizarFornecedor } from "@/lib/api";
+import { maskTelefone, maskCpfCnpj } from "@/lib/masks";
 
 type Fornecedor = {
   id: number; nome: string; tipo: string; categoria: string | null; cnpj_cpf: string | null; telefone: string | null;
@@ -155,8 +156,8 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg }: {
             <option value="">Selecione…</option>
             {CATEGORIAS_FORNECEDOR.map((c) => <option key={c} value={c}>{c}</option>)}
           </select></div>
-        <div><label style={labelStyle}>CNPJ/CPF</label><input style={inputStyle} value={form.cnpj_cpf} onChange={(e) => setForm({ ...form, cnpj_cpf: e.target.value })} /></div>
-        <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
+        <div><label style={labelStyle}>CNPJ/CPF</label><input style={inputStyle} value={form.cnpj_cpf} onChange={(e) => setForm({ ...form, cnpj_cpf: maskCpfCnpj(e.target.value) })} /></div>
+        <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: maskTelefone(e.target.value) })} /></div>
         <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>

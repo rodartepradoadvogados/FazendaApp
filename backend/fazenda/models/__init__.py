@@ -921,8 +921,12 @@ class Pessoa(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
     tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
-    telefone: Optional[str] = None
-    email: Optional[str] = None
+    telefone: Optional[str] = None  # legado — sempre o 1º item de `telefones`, mantido para quem lê Pessoa.email/telefone direto (ex.: destinatario_recibo)
+    email: Optional[str] = None  # legado — sempre o 1º item de `emails`
+    telefones: Optional[str] = None  # JSON: lista de strings — 0 a N telefones (mesmo padrão de NoticiaNews.fontes)
+    emails: Optional[str] = None  # JSON: lista de strings — 0 a N e-mails
+    cpf_cnpj: Optional[str] = None
+    cep: Optional[str] = None
     observacoes: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -2172,6 +2176,10 @@ class Usuario(SQLModel, table=True):
     # nasce sem essa permissão; o proprietário recebe uma única vez via seed
     # (ver fazenda.auth.seed_permissao_publicar_dono).
     pode_publicar_materias_blog: bool = False
+    # Vínculo com o cadastro de Pessoas — todo usuário novo exige uma pessoa já
+    # cadastrada (ver criar_usuario em fazenda.api.routers.auth); contas
+    # antigas podem não ter esse vínculo até serem editadas retroativamente.
+    pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
 
 
 # ---------------------------------------------------------------------------

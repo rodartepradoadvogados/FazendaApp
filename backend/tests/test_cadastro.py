@@ -273,6 +273,71 @@ class TestPessoas:
         assert r.status_code == 200
         assert r.json()["ativo"] is False
 
+    def test_cria_pessoa_sem_contato_retorna_listas_vazias(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Sem Contato", "tipos": ["Funcionário"]})
+        assert r.status_code == 200
+        assert r.json()["telefones"] == []
+        assert r.json()["emails"] == []
+
+    def test_cria_pessoa_com_multiplos_telefones_e_emails(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={
+            "nome": "Multi Contato", "tipos": ["Funcionário"],
+            "telefones": ["(11) 99999-0001", "(11) 3333-0002"],
+            "emails": ["principal@x.com", "backup@x.com"],
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["telefones"] == ["(11) 99999-0001", "(11) 3333-0002"]
+        assert dados["emails"] == ["principal@x.com", "backup@x.com"]
+
+    def test_lista_pessoas_traz_telefones_e_emails(self, client):
+        c, engine = client
+        c.post("/cadastro/pessoas", json={
+            "nome": "Multi Contato 2", "tipos": ["Funcionário"],
+            "telefones": ["(11) 99999-0003"], "emails": ["a@x.com", "b@x.com"],
+        })
+        pessoa = next(p for p in c.get("/cadastro/pessoas").json() if p["nome"] == "Multi Contato 2")
+        assert pessoa["telefones"] == ["(11) 99999-0003"]
+        assert pessoa["emails"] == ["a@x.com", "b@x.com"]
+
+    def test_atualiza_pessoa_troca_lista_de_contatos(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={
+            "nome": "Contato Trocado", "tipos": ["Funcionário"], "emails": ["antigo@x.com"],
+        }).json()["id"]
+        r = c.put(f"/cadastro/pessoas/{pessoa_id}", json={
+            "nome": "Contato Trocado", "tipos": ["Funcionário"], "emails": ["novo1@x.com", "novo2@x.com"],
+        })
+        assert r.status_code == 200
+        assert r.json()["emails"] == ["novo1@x.com", "novo2@x.com"]
+
+    def test_normaliza_lista_de_contato_remove_vazios_e_duplicatas(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={
+            "nome": "Contato Sujo", "tipos": ["Funcionário"],
+            "telefones": [" (11) 99999-0004 ", "", "(11) 99999-0004"],
+            "emails": ["", "  "],
+        })
+        assert r.status_code == 200
+        assert r.json()["telefones"] == ["(11) 99999-0004"]
+        assert r.json()["emails"] == []
+
+    def test_email_legado_reflete_primeiro_da_lista_para_recibo(self, client):
+        """A folha de pagamento resolve o e-mail do recibo lendo Pessoa.email
+        diretamente (ver financeiro.destinatario_recibo) — precisa continuar
+        funcionando mesmo com múltiplos e-mails cadastrados."""
+        c, engine = client
+        c.post("/cadastro/pessoas", json={
+            "nome": "Funcionário Recibo", "tipos": ["Funcionário"],
+            "emails": ["principal@x.com", "secundario@x.com"],
+        })
+        with Session(engine) as s:
+            from fazenda.models import Pessoa
+            pessoa = s.exec(select(Pessoa).where(Pessoa.nome == "Funcionário Recibo")).first()
+            assert pessoa.email == "principal@x.com"
+
 
 class TestTipoPessoa:
     def test_lista_tipos_seedados(self, client):

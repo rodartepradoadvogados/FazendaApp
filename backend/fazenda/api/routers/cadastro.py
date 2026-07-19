@@ -79,6 +79,27 @@ def seed_pessoas(session: Session) -> None:
     session.commit()
 
 
+NOME_PESSOA_ROBO_MILKNEWS = "Robô MilkNews"
+
+
+def seed_pessoa_robo_milknews(session: Session) -> None:
+    """Garante a existência de uma Pessoa "Robô MilkNews", representando a
+    automação de Telegram/MilkNews no cadastro — permite vincular um usuário
+    de sistema a essa identidade, como qualquer outra pessoa (get-or-create;
+    roda sempre, ao contrário de seed_pessoas, que só semeia tabela vazia)."""
+    seed_tipos_pessoa(session)
+    if session.exec(select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)).first():
+        return
+    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Robô")).first():
+        session.add(TipoPessoa(nome="Robô"))
+        session.commit()
+    session.add(Pessoa(
+        nome=NOME_PESSOA_ROBO_MILKNEWS, tipo="Robô",
+        observacoes="Identidade da automação de Telegram/MilkNews — não recebe folha de pagamento.",
+    ))
+    session.commit()
+
+
 def seed_tipos_pessoa(session: Session) -> None:
     """Cria os tipos de pessoa padrão se a tabela ainda estiver vazia
     (idempotente) — nunca sobrescreve tipos adicionados depois pelo usuário."""
@@ -146,16 +167,37 @@ def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Sessi
 class PessoaIn(BaseModel):
     nome: str
     tipos: list[str]
-    telefone: str | None = None
-    email: str | None = None
+    telefones: list[str] = []
+    emails: list[str] = []
+    cpf_cnpj: str | None = None
+    cep: str | None = None
     observacoes: str | None = None
     ativo: bool = True
     salario_base: float | None = None
     data_admissao: date | None = None
 
 
+def _normalizar_lista_contato(valores: list[str]) -> list[str]:
+    """Remove vazios/duplicatas mantendo a ordem — mesma ideia de _validar_tipos,
+    mas sem vocabulário fechado (telefone/e-mail são texto livre)."""
+    return list(dict.fromkeys(v.strip() for v in valores if v.strip()))
+
+
+def _aplicar_contatos(p: Pessoa, telefones: list[str], emails: list[str]) -> None:
+    """Grava telefones/emails (JSON) e mantém telefone/email (1º item) para
+    quem ainda lê o campo legado direto no ORM (ex.: destinatario_recibo)."""
+    p.telefones = json.dumps(telefones) if telefones else None
+    p.emails = json.dumps(emails) if emails else None
+    p.telefone = telefones[0] if telefones else None
+    p.email = emails[0] if emails else None
+
+
 def _serializar_pessoa(p: Pessoa) -> dict:
-    return {**p.model_dump(exclude={"tipo"}), "tipos": [t for t in (p.tipo or "").split(",") if t]}
+    dados = p.model_dump(exclude={"tipo", "telefone", "email", "telefones", "emails"})
+    dados["tipos"] = [t for t in (p.tipo or "").split(",") if t]
+    dados["telefones"] = json.loads(p.telefones) if p.telefones else ([p.telefone] if p.telefone else [])
+    dados["emails"] = json.loads(p.emails) if p.emails else ([p.email] if p.email else [])
+    return dados
 
 
 def _validar_tipos(session: Session, tipos: list[str]) -> str:
@@ -226,8 +268,11 @@ def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> di
     tipo_csv = _validar_tipos(session, dados.tipos)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    campos = dados.model_dump(exclude={"tipos"})
+    telefones = _normalizar_lista_contato(dados.telefones)
+    emails = _normalizar_lista_contato(dados.emails)
+    campos = dados.model_dump(exclude={"tipos", "telefones", "emails"})
     p = Pessoa(**campos, tipo=tipo_csv)
+    _aplicar_contatos(p, telefones, emails)
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -240,9 +285,10 @@ def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends
     p = session.get(Pessoa, pessoa_id)
     if not p:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
-    for campo, valor in dados.model_dump(exclude={"tipos"}).items():
+    for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
         setattr(p, campo, valor)
     p.tipo = tipo_csv
+    _aplicar_contatos(p, _normalizar_lista_contato(dados.telefones), _normalizar_lista_contato(dados.emails))
     session.add(p)
     session.commit()
     session.refresh(p)

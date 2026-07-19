@@ -13,7 +13,7 @@ from datetime import datetime
 
 from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_admin, exigir_dono, get_current_user, hash_senha, verificar_senha
 from fazenda.database import get_session
-from fazenda.models import Usuario
+from fazenda.models import Pessoa, Usuario
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -26,7 +26,7 @@ class LoginIn(BaseModel):
 class NovoUsuario(BaseModel):
     username: str
     senha: str
-    nome: str | None = None
+    pessoa_id: int
     papel: str = "operador"
     permissoes: list[str] = []
     email: str | None = None
@@ -35,7 +35,7 @@ class NovoUsuario(BaseModel):
 
 class EditarUsuario(BaseModel):
     username: str | None = None
-    nome: str | None = None
+    pessoa_id: int | None = None
     papel: str | None = None
     permissoes: list[str] | None = None
     ativo: bool | None = None
@@ -49,12 +49,30 @@ class PreferenciasIn(BaseModel):
     email: str | None = None
 
 
-def _publico(u: Usuario) -> dict:
+def _publico(u: Usuario, session: Session | None = None) -> dict:
     perms = MODULOS if u.papel == "admin" else [m for m in (u.permissoes or "").split(",") if m]
+    pessoa_nome = None
+    if u.pessoa_id and session is not None:
+        pessoa = session.get(Pessoa, u.pessoa_id)
+        pessoa_nome = pessoa.nome if pessoa else None
     return {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel,
             "permissoes": perms, "ativo": u.ativo, "paleta": u.paleta or "vinho",
             "email": u.email, "eh_dono": (u.email or "").strip().lower() == EMAIL_DONO,
-            "pode_publicar_materias_blog": u.pode_publicar_materias_blog}
+            "pode_publicar_materias_blog": u.pode_publicar_materias_blog,
+            "pessoa_id": u.pessoa_id, "pessoa_nome": pessoa_nome}
+
+
+def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:
+    """Toda conta de login exige uma Pessoa já cadastrada (Configurações >
+    Cadastro > Pessoas) — nunca um nome livre — e cada pessoa só pode estar
+    vinculada a um único usuário por vez."""
+    pessoa = session.get(Pessoa, pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada. Cadastre a pessoa antes de criar o login.")
+    ja_vinculado = session.exec(select(Usuario).where(Usuario.pessoa_id == pessoa_id)).first()
+    if ja_vinculado and ja_vinculado.id != ignorar_usuario_id:
+        raise HTTPException(status_code=400, detail=f"Esta pessoa já está vinculada ao usuário \"{ja_vinculado.username}\".")
+    return pessoa
 
 
 @router.post("/login")
@@ -65,17 +83,17 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     user.ultimo_login = datetime.utcnow()
     session.add(user)
     session.commit()
-    return {"token": criar_token(user.username), "usuario": _publico(user)}
+    return {"token": criar_token(user.username), "usuario": _publico(user, session)}
 
 
 @router.get("/me")
-def me(user: Usuario = Depends(get_current_user)) -> dict:
-    return _publico(user)
+def me(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+    return _publico(user, session)
 
 
 @router.get("/usuarios")
 def listar_usuarios(_: Usuario = Depends(exigir_admin), session: Session = Depends(get_session)) -> list[dict]:
-    return [_publico(u) for u in session.exec(select(Usuario)).all()]
+    return [_publico(u, session) for u in session.exec(select(Usuario)).all()]
 
 
 @router.get("/usuarios/acessos")
@@ -98,14 +116,15 @@ def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
 def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_admin), session: Session = Depends(get_session)) -> dict:
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
+    pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
-    novo = Usuario(username=dados.username, nome=dados.nome, senha_hash=hash_senha(dados.senha),
+    novo = Usuario(username=dados.username, nome=pessoa.nome, pessoa_id=pessoa.id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
                    pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
     session.add(novo)
     session.commit()
     session.refresh(novo)
-    return _publico(novo)
+    return _publico(novo, session)
 
 
 @router.put("/usuarios/{user_id}")
@@ -117,8 +136,10 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
         if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
             raise HTTPException(status_code=400, detail="Já existe um usuário com esse login")
         u.username = dados.username
-    if dados.nome is not None:
-        u.nome = dados.nome
+    if dados.pessoa_id is not None:
+        pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id, ignorar_usuario_id=u.id)
+        u.pessoa_id = pessoa.id
+        u.nome = pessoa.nome
     if dados.papel is not None:
         u.papel = dados.papel
     if dados.permissoes is not None:
@@ -137,7 +158,7 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
     session.add(u)
     session.commit()
     session.refresh(u)
-    return _publico(u)
+    return _publico(u, session)
 
 
 @router.put("/preferencias")
