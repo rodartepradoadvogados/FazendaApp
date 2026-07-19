@@ -10,7 +10,7 @@ import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, TabBar } from "@/components/ui";
+import { MultiFiltro, TabBar, Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -598,10 +598,10 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
         )}
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div className="kpi-card"><p className="kpi-value">{filtrados.length}</p><p className="kpi-label">Aplicações</p></div>
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{animaisTratados}</p><p className="kpi-label">Animais tratados</p></div>
-          <div className="kpi-card"><p className="kpi-value">{produtos}</p><p className="kpi-label">Produtos distintos</p></div>
-          <div className="kpi-card"><p className="kpi-value">{porCategoria.length}</p><p className="kpi-label">Categorias</p></div>
+          <Indicador categoria="sanidade" valor={filtrados.length} rotulo="Aplicações" />
+          <Indicador categoria="sanidade" valor={animaisTratados} cor="var(--green-light)" rotulo="Animais tratados" />
+          <Indicador categoria="sanidade" valor={produtos} rotulo="Produtos distintos" />
+          <Indicador categoria="sanidade" valor={porCategoria.length} rotulo="Categorias" />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -1024,9 +1024,9 @@ function TaxaCuraView() {
       {!dados ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value">{totalFiltro}</p><p className="kpi-label">Casos avaliados</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{curadosFiltro}</p><p className="kpi-label">Curados</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ color: taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)" }}>{taxaFiltro != null ? `${taxaFiltro}%` : "—"}</p><p className="kpi-label">Taxa de cura</p></div>
+            <Indicador categoria="sanidade" valor={totalFiltro} rotulo="Casos avaliados" />
+            <Indicador categoria="sanidade" valor={curadosFiltro} cor="var(--green-light)" rotulo="Curados" />
+            <Indicador categoria="sanidade" valor={taxaFiltro != null ? `${taxaFiltro}%` : "—"} cor={taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)"} rotulo="Taxa de cura" />
           </div>
 
           <div className="card mb-4">
