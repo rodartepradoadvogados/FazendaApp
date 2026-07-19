@@ -1342,7 +1342,9 @@ export default function AgendaPage() {
             onClick={() => toggleLista("bstNunca")} podeClicar={bstNuncaAplicados.length > 0}
             extra={bstNuncaAplicados.length > 0 && (listaAtiva.has("bstNunca") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
-          <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined} valor={eventosPendentes.length} rotulo="Pendências"
+          <Indicador categoria="geral" cor={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+            corLabel={eventosPendentes.length > 0 ? "var(--red)" : undefined} borda={eventosPendentes.length > 0 ? "var(--red)" : undefined}
+            valor={eventosPendentes.length} rotulo="Pendências"
             onClick={() => toggleLista("pendencias")} podeClicar={eventosPendentes.length > 0}
             extra={eventosPendentes.length > 0 && (listaAtiva.has("pendencias") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
 
