@@ -7,16 +7,20 @@
 // Financeiro (compra/venda de animal, folha de pagamento).
 // Endpoint do desktop: POST /producao/controles (já aceita lista de entradas).
 import { useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { BotoesEscolha, LinhaPills, MobPill, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
-import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
-import { PainelLancarBst } from "@/components/PainelLancarBst";
-import { FormSecagem } from "@/components/FormSecagem";
-import { FormQualidadeLeite } from "@/components/FormQualidadeLeite";
-import { FormEntregaLeite } from "@/components/FormEntregaLeite";
-import { FormInducaoLactacao } from "@/components/FormInducaoLactacao";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
+
+// Cada sub-aba só baixa seu próprio formulário quando aberta pela 1ª vez —
+// importante em conexão de campo, onde o app roda mais.
+const FormPesagemCorporal = dynamic(() => import("@/components/FormPesagemCorporal").then((m) => m.FormPesagemCorporal), { ssr: false });
+const PainelLancarBst = dynamic(() => import("@/components/PainelLancarBst").then((m) => m.PainelLancarBst), { ssr: false });
+const FormSecagem = dynamic(() => import("@/components/FormSecagem").then((m) => m.FormSecagem), { ssr: false });
+const FormQualidadeLeite = dynamic(() => import("@/components/FormQualidadeLeite").then((m) => m.FormQualidadeLeite), { ssr: false });
+const FormEntregaLeite = dynamic(() => import("@/components/FormEntregaLeite").then((m) => m.FormEntregaLeite), { ssr: false });
+const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactacao").then((m) => m.FormInducaoLactacao), { ssr: false });
 
 type Sub = "controle" | "pesagem" | "bst" | "secagem" | "qualidade" | "entrega" | "inducao";
 
