@@ -2,8 +2,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby, Sparkles } from "lucide-react";
-import { fetchIndicadores, fetchAnimais, podeModulo } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchControles, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioPersonalizado from "@/components/RelatorioPersonalizado";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
@@ -13,6 +14,7 @@ import { Indicador } from "@/components/ui";
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
 const cod = (g: string | null | undefined) => (g && /^\d\d/.test(g) ? g.slice(0, 2) : null);
+const LACTACAO = ["01", "02", "03"];
 
 export function IndicadoresGerais() {
   const [ind, setInd] = useState<any>(null);
@@ -21,6 +23,26 @@ export function IndicadoresGerais() {
   const [recarregando, setRecarregando] = useState(false);
   const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   const [catRep, setCatRep] = useState<"todas" | "vaca" | "novilha">("todas");
+  const [ultimoControle, setUltimoControle] = useState<{ data: string; linhas: any[] } | null | undefined>(undefined);
+  const [controleAberto, setControleAberto] = useState(false);
+
+  // Último controle leiteiro do rebanho — busca só quando o card é clicado
+  // pela 1ª vez (undefined = ainda não buscado, null = buscado e sem dados).
+  const abrirUltimoControle = async () => {
+    if (ultimoControle === undefined) {
+      try {
+        const { controles } = await fetchControles();
+        const dataMax = controles.reduce((m: string | null, c: any) => (!m || (c.data && c.data > m) ? c.data : m), null as string | null);
+        const linhas = dataMax
+          ? controles.filter((c: any) => c.data === dataMax).sort((a: any, b: any) => a.numero.localeCompare(b.numero, undefined, { numeric: true }))
+          : [];
+        setUltimoControle(dataMax ? { data: dataMax, linhas } : null);
+      } catch {
+        setUltimoControle(null);
+      }
+    }
+    setControleAberto(true);
+  };
 
   const carregar = () => {
     setRecarregando(true);
@@ -82,21 +104,25 @@ export function IndicadoresGerais() {
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={pct(rep?.taxa_prenhez_pct)}
-            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% das fêmeas aptas, hoje</span></>} />
+            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% das fêmeas aptas, hoje</span></>}
+            onClick={() => abrir("Fêmeas prenhas", (a) => a.sit_rep === "Ges.")} />
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={pct(rep?.taxa_concepcao_pct)}
             rotulo={<>Concepção / serviço<span style={{ ...legenda, display: "block" }}>serviços desde {desdeLabel}</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--amber)" valor={num(rep?.iep_meses, " m")}
             rotulo={<>IEP médio<span style={{ ...legenda, display: "block" }}>todo o histórico</span></>} />
           <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={pct(rep?.perc_vazias_pct)}
-            rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>} />
+            rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>}
+            onClick={() => abrir("Vazias", (a) => (a.sit_rep || "").startsWith("Vaz."))} />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
           <Indicador categoria="producao" cor="var(--green-light)" valor={num(prod?.producao_total_dia_kg, " kg")}
-            rotulo="Produção/dia (últ. controle)" extra={<Milk size={16} style={{ color: "var(--text-muted)" }} />} />
+            rotulo="Produção/dia (últ. controle)" extra={<Milk size={16} style={{ color: "var(--text-muted)" }} />}
+            onClick={abrirUltimoControle} />
           <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.producao_media_kg, " kg")} rotulo="Média por vaca" />
           <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.del_medio)} rotulo="DEL médio (dias)" />
-          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(reb?.vacas_lactacao)} rotulo="Vacas em lactação atual" />
+          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(reb?.vacas_lactacao)} rotulo="Vacas em lactação atual"
+            onClick={() => abrir("Vacas em lactação atual", (a) => LACTACAO.includes(cod(a.grupo_primario) || "") )} />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -160,6 +186,33 @@ export function IndicadoresGerais() {
       </>}
 
       {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
+
+      {controleAberto && (
+        <Modal title="Último controle leiteiro" onClose={() => setControleAberto(false)} width="640px">
+          {!ultimoControle && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+          {ultimoControle === null && <p style={{ color: "var(--text-muted)" }}>Nenhum controle leiteiro lançado ainda.</p>}
+          {ultimoControle && (
+            <>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} animal{ultimoControle.linhas.length !== 1 ? "is" : ""}
+              </p>
+              <table className="fazenda-table">
+                <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>Produção (kg)</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+                <tbody>
+                  {ultimoControle.linhas.map((c: any) => (
+                    <tr key={c.numero}>
+                      <td style={{ fontWeight: 700 }}>{c.numero}</td>
+                      <td style={{ fontSize: "0.75rem" }}>{c.grupo_primario || "—"}</td>
+                      <td style={{ textAlign: "right", fontWeight: 600 }}>{c.producao_kg != null ? c.producao_kg.toFixed(1) : "—"}</td>
+                      <td style={{ textAlign: "right" }}>{c.del ?? "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </>
+          )}
+        </Modal>
+      )}
     </div>
   );
 }
