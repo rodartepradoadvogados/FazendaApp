@@ -93,7 +93,7 @@ export default function CompraSemenForm() {
   const [codigoConta, setCodigoConta] = useState("");
   const [nomeConta, setNomeConta] = useState("");
   const [descricao, setDescricao] = useState("");
-  const [centroCusto, setCentroCusto] = useState("");
+  const [centroCusto, setCentroCusto] = useState("Pecuária Leiteira");
   const [tipoDocumento, setTipoDocumento] = useState("");
   const [numeroDocumento, setNumeroDocumento] = useState("");
   const [dataEmissao, setDataEmissao] = useState("");
@@ -202,7 +202,7 @@ export default function CompraSemenForm() {
     limparSelecaoAtual();
     setItens([]); setAdicionandoItem(true);
     setVendedor(""); setResponsavel(""); setObservacao("");
-    setCodigoConta(""); setNomeConta(""); setDescricao(""); setCentroCusto(""); setTipoDocumento("");
+    setCodigoConta(""); setNomeConta(""); setDescricao(""); setCentroCusto("Pecuária Leiteira"); setTipoDocumento("");
     setNumeroDocumento(""); setDataEmissao(""); setDataVencimento(""); setDataPrevista(""); setDataPedido("");
     setEntregue(false); setDesconto(""); setAcrescimo(""); setParcelado(false); setQtdParcelas("2"); setParcelas([]);
     setJaPago(false); setDataPagamento(""); setValorPago(""); setContaBancaria(""); setNumeroDocumentoPagamento("");

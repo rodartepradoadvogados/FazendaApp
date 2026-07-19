@@ -275,6 +275,7 @@ class FolhaPagamentoIn(BaseModel):
     observacao: str | None = None
     recorrente: bool = False
     dia_vencimento: int | None = None  # obrigatório quando recorrente=True (1-28)
+    centro_custo: str = "Pecuária Leiteira"
 
 
 def _competencia_seguinte(competencia: str) -> str:
@@ -381,6 +382,7 @@ def _gerar_folha_recorrente(session: Session) -> None:
                     descontos=descontos, valor_vale=valor_vale, valor_liquido=valor_liquido, status="pendente",
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
+                    centro_custo=modelo.centro_custo,
                 )
                 session.add(nova)
                 session.add(ContaGerencial(
@@ -390,6 +392,7 @@ def _gerar_folha_recorrente(session: Session) -> None:
                     data_competencia=date(ano, mes, 1),
                     fornecedor_cliente=pessoa.nome,
                     tipo_documento="Folha de pagamento",
+                    centro_custo=modelo.centro_custo,
                     valor_total=valor_liquido,
                     parcela_num=1, parcela_total=1,
                     tipo="despesa", origem="auto",
@@ -527,6 +530,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
+        centro_custo=dados.centro_custo,
         usuario_id=user.id,
     )
     session.add(registro)
@@ -537,6 +541,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         data_competencia=date(ano, mes, 1),
         fornecedor_cliente=pessoa.nome,
         tipo_documento="Folha de pagamento",
+        centro_custo=dados.centro_custo,
         valor_total=valor_liquido,
         parcela_num=1, parcela_total=1,
         tipo="despesa", origem="auto",
@@ -584,6 +589,7 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.observacao = dados.observacao
     registro.recorrente = dados.recorrente
     registro.dia_vencimento = dados.dia_vencimento if dados.recorrente else None
+    registro.centro_custo = dados.centro_custo
     session.add(registro)
 
     # Mantém a conta a pagar gerada automaticamente em sincronia com a edição.
@@ -599,6 +605,7 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
             conta.fornecedor_cliente = pessoa.nome
             conta.data_vencimento = date(ano, mes, dia)
             conta.data_competencia = date(ano, mes, 1)
+            conta.centro_custo = dados.centro_custo
             conta.valor_total = valor_liquido
             if dados.status == "pago":
                 conta.data_pagamento = dados.data_pagamento
@@ -922,6 +929,7 @@ class EmpreitadaIn(BaseModel):
     # Preenchido quando tipo_pagamento == "por_etapa" — nome + valor de cada
     # etapa (dividido proporcionalmente ou lançado específico, editável).
     etapas: list[EmpreitadaEtapaIn] = []
+    centro_custo: str = "Pecuária Leiteira"
 
 
 def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
@@ -971,6 +979,7 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
     empreitada = Empreitada(
         pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
         tipo_pagamento=dados.tipo_pagamento, observacao=dados.observacao, usuario_id=user.id,
+        centro_custo=dados.centro_custo,
     )
     session.add(empreitada)
     session.commit()
@@ -990,6 +999,7 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
                 data_competencia=parcela.data_vencimento.replace(day=1),
                 fornecedor_cliente=pessoa.nome,
                 tipo_documento="Empreitada",
+                centro_custo=dados.centro_custo,
                 valor_total=parcela.valor,
                 parcela_num=1, parcela_total=1,
                 tipo="despesa", origem="auto",
@@ -1036,6 +1046,7 @@ def concluir_etapa_empreitada(
         data_competencia=data_analise,
         fornecedor_cliente=pessoa.nome,
         tipo_documento="Empreitada",
+        centro_custo=empreitada.centro_custo,
         valor_total=etapa.valor,
         parcela_num=1, parcela_total=1,
         tipo="despesa", origem="auto",
@@ -1093,6 +1104,7 @@ class ContratoIn(BaseModel):
     # de data de término estimada, número de parcelas ou lançamento livre) e
     # editável no frontend, mesmo padrão do parcelamento do Financeiro.
     parcelas: list[ContratoParcelaIn] = []
+    centro_custo: str = "Pecuária Leiteira"
 
 
 def _serializar_contrato(session: Session, c: Contrato) -> dict:
@@ -1133,6 +1145,7 @@ def criar_contrato(dados: ContratoIn, session: Session = Depends(get_session), u
     contrato = Contrato(
         pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
         forma_pagamento=dados.forma_pagamento, observacao=dados.observacao, usuario_id=user.id,
+        centro_custo=dados.centro_custo,
     )
     session.add(contrato)
     session.commit()
@@ -1152,6 +1165,7 @@ def criar_contrato(dados: ContratoIn, session: Session = Depends(get_session), u
                 data_competencia=parcela.data_vencimento.replace(day=1),
                 fornecedor_cliente=pessoa.nome,
                 tipo_documento="Contrato",
+                centro_custo=dados.centro_custo,
                 valor_total=parcela.valor,
                 parcela_num=1, parcela_total=1,
                 tipo="despesa", origem="auto",
@@ -1224,6 +1238,7 @@ class DiariaIn(BaseModel):
     valor_diaria: float
     data_inicio: date
     observacao: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
 
 
 class DiariaPagamentoIn(BaseModel):
@@ -1272,7 +1287,7 @@ def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user:
         raise HTTPException(status_code=400, detail="Valor da diária deve ser positivo")
     diaria = Diaria(
         pessoa_id=dados.pessoa_id, valor_diaria=dados.valor_diaria, data_inicio=dados.data_inicio,
-        observacao=dados.observacao, usuario_id=user.id,
+        observacao=dados.observacao, usuario_id=user.id, centro_custo=dados.centro_custo,
     )
     session.add(diaria)
     session.commit()
@@ -1303,6 +1318,7 @@ def registrar_pagamento_diaria(
         data_competencia=dados.data_pagamento.replace(day=1),
         fornecedor_cliente=pessoa.nome,
         tipo_documento="Diária",
+        centro_custo=diaria.centro_custo,
         valor_total=dados.valor,
         parcela_num=1, parcela_total=1,
         tipo="despesa", origem="auto",

@@ -353,7 +353,7 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "desconto_acrescimo": c.desconto_acrescimo,
             "desconto_nota": c.desconto_nota,
             "acrescimo_nota": c.acrescimo_nota,
-            "centro_custo": c.centro_custo or "(sem centro)",
+            "centro_custo": c.centro_custo or "Sem centro de custo",
             "codigo_conta": (c.codigo_conta or "").split(".")[0] or "(sem conta)",
             "conta_completa": c.codigo_conta or "",
             "descricao": c.descricao or "",
@@ -883,7 +883,11 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         numero_lancamento=numero_lancamento,
         codigo_conta=codigo_resumo,
         descricao=descricao_resumo,
-        centro_custo=mapear_centro_custo(dados.centro_custo),
+        # Centro de custo é obrigatório em todo lançamento — quando não vier
+        # preenchido (ex.: CSV/robô sem esse campo), assume "Pecuária Leiteira"
+        # (perfil típico da fazenda) em vez de deixar a conta sem centro,
+        # sempre editável depois em Financeiro.
+        centro_custo=mapear_centro_custo(dados.centro_custo) or "Pecuária Leiteira",
         fornecedor_cliente=dados.fornecedor_cliente,
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,

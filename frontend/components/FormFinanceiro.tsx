@@ -141,7 +141,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     }]);
     if (dados.data_emissao) setDataEmissao(dados.data_emissao);
   }), [tipo, planoContas]);
-  const [centroCusto, setCentroCusto] = useState("");
+  const [centroCusto, setCentroCusto] = useState("Pecuária Leiteira");
   const [fornecedor, setFornecedor] = useState("");
   const [responsavel, setResponsavel] = useState("");
   const [tipoDocumento, setTipoDocumento] = useState("");
@@ -250,7 +250,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
   function limpar() {
     setItens([itemVazio()]);
-    setCentroCusto(""); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
+    setCentroCusto("Pecuária Leiteira"); setFornecedor(""); setResponsavel(""); setTipoDocumento("");
     setNumeroDocumento(""); setNumeroOsOrcamento(""); setNumeroBoleto("");
     setDataEmissao(""); setDataVencimento(""); setDataPrevistaEntrada(""); setDataPedido(""); setEntregue(false);
     setPedidoId("");
@@ -281,7 +281,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   function aplicarRascunho(d: any) {
     if (!d) return;
     setItens(Array.isArray(d.itens) && d.itens.length ? d.itens : [itemVazio()]);
-    setCentroCusto(d.centroCusto || ""); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
+    setCentroCusto(d.centroCusto || "Pecuária Leiteira"); setFornecedor(d.fornecedor || ""); setResponsavel(d.responsavel || "");
     setTipoDocumento(d.tipoDocumento || ""); setNumeroDocumento(d.numeroDocumento || "");
     setNumeroOsOrcamento(d.numeroOsOrcamento || ""); setNumeroBoleto(d.numeroBoleto || "");
     setDataEmissao(d.dataEmissao || ""); setDataVencimento(d.dataVencimento || ""); setDataPrevistaEntrada(d.dataPrevistaEntrada || ""); setDataPedido(d.dataPedido || "");
@@ -506,6 +506,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
     setErro(null); setSucesso(null);
     const validos = itens.filter((i) => i.produto.trim());
     if (!validos.length) { setErro("Informe ao menos um produto ou serviço."); return; }
+    if (!centroCusto.trim()) { setErro("Selecione o centro de custo."); return; }
     if (valorLiquido <= 0) { setErro("O valor líquido do lançamento deve ser positivo."); return; }
     if (!confirmandoDuplicado) {
       setVerificandoDuplicado(true);

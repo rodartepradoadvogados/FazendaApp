@@ -1,5 +1,5 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
   Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2,
@@ -261,9 +261,17 @@ export default function FinanceiroPage() {
     }
   }, [regs, inicio, rel]);
 
+  // Aplica o centro de custo padrão só na 1ª carga — do contrário, este efeito
+  // reagia à própria mudança de `centro` e desfazia a escolha de "Todos"
+  // (valor "") assim que o usuário selecionava, sempre voltando pra Pecuária
+  // Leiteira (bug relatado no filtro "Todos"/"Sem centro de custo").
+  const centroInicializado = useRef(false);
   useEffect(() => {
-    if (regs && !centro) setCentro("Pecuária Leiteira");
-  }, [regs, centro]);
+    if (regs && !centroInicializado.current) {
+      centroInicializado.current = true;
+      setCentro((atual) => atual || "Pecuária Leiteira");
+    }
+  }, [regs]);
 
   const centros = useMemo(() => Array.from(new Set((regs ?? []).map((r) => r.centro_custo))).sort(), [regs]);
   // Produto/serviço: opções vindas do backend + nomes efetivamente lançados nas

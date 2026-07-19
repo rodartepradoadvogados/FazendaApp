@@ -974,6 +974,9 @@ class FolhaPagamento(SQLModel, table=True):
     origem_recorrencia_id: Optional[int] = None  # id do lançamento-modelo, quando gerado automaticamente
     numero_lancamento_gerado: Optional[str] = None  # nº do lançamento (LC-...) criado em Contas a Pagar
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Centro de custo de TODAS as contas a pagar geradas por esta folha —
+    # nasce em "Pecuária Leiteira" (perfil típico da folha), mas é editável.
+    centro_custo: str = "Pecuária Leiteira"
 
 
 # ---------------------------------------------------------------------------
@@ -1054,6 +1057,9 @@ class Empreitada(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Centro de custo de todas as contas a pagar geradas por esta empreitada
+    # (parcelas ou etapas) — nasce em "Pecuária Leiteira", mas é editável.
+    centro_custo: str = "Pecuária Leiteira"
 
 
 class EmpreitadaParcela(SQLModel, table=True):
@@ -1109,6 +1115,9 @@ class Contrato(SQLModel, table=True):
     # Linha-modelo do lembrete mensal na Agenda, criada só quando forma_pagamento é None.
     origem_lembrete_agenda_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Centro de custo de todas as contas a pagar geradas por este contrato —
+    # nasce em "Pecuária Leiteira", mas é editável.
+    centro_custo: str = "Pecuária Leiteira"
 
 
 class ContratoParcela(SQLModel, table=True):
@@ -1142,6 +1151,9 @@ class Diaria(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Centro de custo de todos os pagamentos gerados por esta diária — nasce
+    # em "Pecuária Leiteira", mas é editável.
+    centro_custo: str = "Pecuária Leiteira"
 
 
 class DiariaPagamento(SQLModel, table=True):

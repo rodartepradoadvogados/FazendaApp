@@ -353,6 +353,23 @@ class TestFolhaPagamento:
         assert r.json()["valor_liquido"] == 1800.0
         assert r.json()["status"] == "pendente"
 
+    def test_folha_sem_centro_custo_assume_pecuaria_leiteira_editavel(self, client):
+        """#504 — folha vincula por padrão a "Pecuária Leiteira" (tanto no
+        registro quanto na conta a pagar gerada), mas o campo é editável."""
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0})
+        assert r.json()["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Folha de pagamento")).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+        r2 = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-08", "valor_bruto": 2000.0, "centro_custo": "Arrendamento",
+        })
+        assert r2.json()["centro_custo"] == "Arrendamento"
+
     def test_lista_traz_nome_da_pessoa(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c)
@@ -801,11 +818,13 @@ class TestEmpreitada:
         dados = r.json()
         assert len(dados["parcelas"]) == 2
         assert all(p["status"] == "pendente" for p in dados["parcelas"])
+        assert dados["centro_custo"] == "Pecuária Leiteira"
         with Session(engine) as s:
             from fazenda.models import ContaGerencial
             contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Empreitada")).all()
             assert len(contas) == 2
             assert {c.valor_total for c in contas} == {1500.0}
+            assert all(c.centro_custo == "Pecuária Leiteira" for c in contas)
 
     def test_por_etapa_cria_etapas_editaveis(self, client):
         c, engine = client
@@ -903,6 +922,11 @@ class TestContrato:
         dados = r.json()
         assert len(dados["parcelas"]) == 3
         assert dados["status"] == "ativo"
+        assert dados["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Contrato")).all()
+            assert all(c.centro_custo == "Pecuária Leiteira" for c in contas)
 
     def test_sem_frequencia_cria_lembrete_recorrente_na_agenda(self, client):
         c, engine = client
@@ -978,6 +1002,11 @@ class TestDiaria:
         assert dados["valor_pago"] == 150.0
         assert dados["saldo_devedor"] == 50.0
         assert len(dados["pagamentos"]) == 1
+        assert dados["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Diária")).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
 
     def test_rejeita_valor_diaria_invalido(self, client):
         c, engine = client

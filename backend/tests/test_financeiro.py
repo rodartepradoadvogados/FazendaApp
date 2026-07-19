@@ -210,6 +210,37 @@ class TestLancamentoMultiplosItens:
         })
         assert r.status_code == 400
 
+
+class TestCentroCustoObrigatorio:
+    """#504 — todo lançamento deve nascer com um centro de custo; quando o
+    caller (CSV, robô) não informa, assume "Pecuária Leiteira" em vez de
+    deixar a conta sem centro (nunca fica None/vazio no banco)."""
+
+    def test_lancamento_sem_centro_custo_assume_pecuaria_leiteira(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "X", "valor_total": 100.0}],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+    def test_lancamento_com_centro_custo_informado_preserva_escolha(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "X", "valor_total": 100.0}],
+            "centro_custo": "Arrendamento",
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Arrendamento"
+
     def test_desconto_reduz_o_valor_liquido(self, client):
         c, _ = client
         r = c.post("/financeiro/lancamentos", json={

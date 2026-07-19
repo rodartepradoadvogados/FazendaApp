@@ -185,7 +185,11 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
         ("valor_ir", "FLOAT DEFAULT 0"),
         ("valor_vale", "FLOAT DEFAULT 0"),
         ("usuario_id", "INTEGER"),
+        ("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'"),
     ],
+    "empreitada": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
+    "contrato": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
+    "diaria": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
     "lote": [
         ("status_lactacao", "VARCHAR"),
         ("categorias", "VARCHAR"),
