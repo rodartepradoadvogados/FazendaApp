@@ -189,7 +189,7 @@ export function IndicadoresGerais() {
 
       {controleAberto && (
         <Modal title="Último controle leiteiro" onClose={() => setControleAberto(false)} width="640px">
-          {!ultimoControle && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+          {ultimoControle === undefined && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
           {ultimoControle === null && <p style={{ color: "var(--text-muted)" }}>Nenhum controle leiteiro lançado ainda.</p>}
           {ultimoControle && (
             <>
