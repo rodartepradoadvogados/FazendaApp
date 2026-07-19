@@ -250,6 +250,32 @@ export async function fetchServicosAnalise() {
   if (!res.ok) throw new Error(`Análise error: ${res.status}`);
   return res.json();
 }
+type ServicoEditPayload = {
+  data_servico?: string; tipo_servico?: string; reprodutor?: string; tipo_semen?: string; inseminador?: string;
+  data_diagnostico?: string; diagnostico?: string; metodo_diagnostico?: string;
+  data_perda_prenhez?: string; motivo_perda_prenhez?: string;
+};
+export async function atualizarServico(id: number, dados: ServicoEditPayload) {
+  const res = await authFetch(`${API}/reproducao/servicos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
+  return res.json();
+}
+export async function atualizarParto(id: number, dados: { data_parto?: string; tipo_parto?: string; retencao_placenta?: boolean }) {
+  const res = await authFetch(`${API}/reproducao/partos/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar parto"); }
+  return res.json();
+}
+export async function atualizarSecagem(id: number, dados: { data_secagem?: string; motivo?: string; escore_condicao_corporal?: number | null; observacao?: string }) {
+  const res = await authFetch(`${API}/reproducao/secagens/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar secagem"); }
+  return res.json();
+}
 
 export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]> };
 export async function fetchIndicadoresMensais(): Promise<IndicadoresMensais> {
@@ -1433,7 +1459,7 @@ export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; 
 
 type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
-  principio_ativo_id?: number; dosagem?: string; unidade?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
+  principio_ativo_id?: number; dosagem?: string; unidade?: string; responsavel?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {

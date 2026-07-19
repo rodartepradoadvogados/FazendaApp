@@ -12,7 +12,8 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, GrauSangue, Raca, Servico, Touro
+from fazenda.models import Animal, EstoqueSemen, GrauSangue, Parto, Raca, Servico, Touro
+from fazenda.api.routers.reproducao import backfill_categoria_crias, backfill_numero_cria_partos
 
 
 @pytest.fixture
@@ -93,6 +94,80 @@ def test_parto_sem_pai_identificavel_mantem_raca_da_mae(client):
         assert cria is not None
         assert cria.raca == "Girolando"
         assert cria.grau_sangue is None
+
+
+def test_parto_insere_cria_automaticamente_na_categoria_bezerra_mamando(client):
+    _seed_graus(client.engine)
+    with Session(client.engine) as session:
+        session.add(Animal(numero="486", sexo="F", raca="Girolando", grau_sangue="3/4 Holandês", ativo=True))
+        session.commit()
+
+    resp = client.post("/reproducao/parto", json={
+        "numero_matriz": "486",
+        "data_parto": "2025-10-08",
+        "crias": [
+            {"numero": "486-C1", "sexo": "F", "nasceu_viva": True},
+            {"numero": "486-C2", "sexo": "M", "nasceu_viva": True},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+
+    with Session(client.engine) as session:
+        femea = session.exec(select(Animal).where(Animal.numero == "486-C1")).first()
+        macho = session.exec(select(Animal).where(Animal.numero == "486-C2")).first()
+        assert femea.categoria_completa == "Bezerra Mamando"
+        assert femea.categoria_abrev == "Bezerra"
+        assert macho.categoria_completa == "Bezerro Mamando"
+        assert macho.categoria_abrev == "Bezerro"
+
+
+def test_backfill_categoria_crias_corrige_animais_ja_cadastrados_sem_categoria(client):
+    with Session(client.engine) as session:
+        # Cria já existente sem categoria (comportamento antigo do /parto) —
+        # mae_numero preenchido indica que veio de um parto.
+        session.add(Animal(numero="487", sexo="F", mae_numero="200", mae_nome="Vaca 200", ativo=True))
+        # Animal sem mãe (ex.: comprado) — não deve ser tocado pelo backfill.
+        session.add(Animal(numero="300", sexo="F", ativo=True))
+        session.commit()
+
+    with Session(client.engine) as session:
+        backfill_categoria_crias(session)
+
+    with Session(client.engine) as session:
+        cria = session.exec(select(Animal).where(Animal.numero == "487")).first()
+        comprado = session.exec(select(Animal).where(Animal.numero == "300")).first()
+        assert cria.categoria_completa == "Bezerra Mamando"
+        assert cria.categoria_abrev == "Bezerra"
+        assert comprado.categoria_completa is None
+
+
+def test_backfill_numero_cria_partos_associa_por_mae_e_data(client):
+    from datetime import date
+
+    with Session(client.engine) as session:
+        # Parto importado do CSV reprodutivo (sem numero_cria) — a cria já
+        # está cadastrada com mae_numero e nasceu na mesma data do parto.
+        session.add(Parto(numero_matriz="500", data_parto=date(2026, 1, 10), ordem_parto=1))
+        session.add(Animal(numero="500-C1", sexo="F", mae_numero="500", data_nasc=date(2026, 1, 10), ativo=True))
+        # Parto gemelar — duas crias nascidas no mesmo dia.
+        session.add(Parto(numero_matriz="600", data_parto=date(2026, 2, 1), ordem_parto=2, gemelar=True))
+        session.add(Animal(numero="600-C1", sexo="F", mae_numero="600", data_nasc=date(2026, 2, 1), ativo=True))
+        session.add(Animal(numero="600-C2", sexo="M", mae_numero="600", data_nasc=date(2026, 2, 1), ativo=True))
+        # Parto sem cria cadastrada (natimorto) — não deve quebrar nem associar nada.
+        session.add(Parto(numero_matriz="700", data_parto=date(2026, 3, 1), ordem_parto=1))
+        session.commit()
+
+    with Session(client.engine) as session:
+        backfill_numero_cria_partos(session)
+
+    with Session(client.engine) as session:
+        p500 = session.exec(select(Parto).where(Parto.numero_matriz == "500")).first()
+        p600 = session.exec(select(Parto).where(Parto.numero_matriz == "600")).first()
+        p700 = session.exec(select(Parto).where(Parto.numero_matriz == "700")).first()
+        assert p500.numero_cria_1 == "500-C1"
+        assert {p600.numero_cria_1, p600.numero_cria_2} == {"600-C1", "600-C2"}
+        assert p600.gemelar_sexo == "FM"
+        assert p700.numero_cria_1 is None
 
 
 def test_crud_racas(client):

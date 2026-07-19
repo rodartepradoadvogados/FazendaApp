@@ -3,14 +3,17 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo) + motivo,
 // análogo ao MultiFiltro de Diagnóstico/Motivo das outras abas.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchSecagensHistorico } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
+import { fetchSecagensHistorico, atualizarSecagem } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type SecagemReg = {
+  id: number;
   numero: string; data: string | null; motivo: string; escore_condicao_corporal: number | null; observacao: string | null;
 };
+
+const MOTIVOS_SECAGEM = ["doente", "baixa_producao", "comportamento", "mastite", "casco", "rotina", "outros"] as const;
 
 const MOTIVO_LABEL: Record<string, string> = {
   doente: "Doente", baixa_producao: "Baixa produção", comportamento: "Comportamento",
@@ -33,7 +36,36 @@ export default function HistoricoSecagens() {
   const [cicloSel, setCicloSel] = useState<"1" | "2" | "3" | "esp">("1");
   const [cicloIdx, setCicloIdx] = useState(0);
 
-  useEffect(() => { fetchSecagensHistorico().then((d) => setRegs(d.secagens)).catch((e) => setError(e.message)); }, []);
+  const carregar = () => fetchSecagensHistorico().then((d) => setRegs(d.secagens)).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const [editando, setEditando] = useState<SecagemReg | null>(null);
+  const [editVals, setEditVals] = useState({ data: "", motivo: "rotina", escore: "", observacao: "" });
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+
+  const abrirEdicao = (s: SecagemReg) => {
+    setEditando(s);
+    setEditVals({ data: s.data || "", motivo: s.motivo || "rotina", escore: s.escore_condicao_corporal != null ? String(s.escore_condicao_corporal) : "", observacao: s.observacao || "" });
+    setErroEdicao(null);
+  };
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    setSalvandoEdicao(true); setErroEdicao(null);
+    try {
+      await atualizarSecagem(editando.id, {
+        data_secagem: editVals.data || undefined, motivo: editVals.motivo || undefined,
+        escore_condicao_corporal: editVals.escore.trim() === "" ? null : Number(editVals.escore),
+        observacao: editVals.observacao || undefined,
+      });
+      setEditando(null);
+      carregar();
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
 
   const ciclos = useMemo(() => {
     const datas = (regs ?? []).map((s) => s.data).filter(Boolean).sort() as string[];
@@ -138,7 +170,7 @@ export default function HistoricoSecagens() {
               </tr></thead>
               <tbody>
                 {ordSecagens.linhasOrdenadas.slice(0, 500).map((s, i) => (
-                  <tr key={`${s.numero}-${s.data}-${i}`}>
+                  <tr key={`${s.numero}-${s.data}-${i}`} onClick={() => abrirEdicao(s)} style={{ cursor: "pointer" }} title="Clique para editar">
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{MOTIVO_LABEL[s.motivo] || s.motivo}</td>
@@ -152,6 +184,34 @@ export default function HistoricoSecagens() {
           </div>
         </div>
       </>}
+
+      {editando && (
+        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "400px", maxWidth: "95vw" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar secagem — matriz {editando.numero}</div>
+              <button onClick={() => setEditando(null)} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data da secagem</label>
+                <input type="date" style={selStyle} value={editVals.data} onChange={(e) => setEditVals((v) => ({ ...v, data: e.target.value }))} /></div>
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Motivo</label>
+                <select style={selStyle} value={editVals.motivo} onChange={(e) => setEditVals((v) => ({ ...v, motivo: e.target.value }))}>
+                  {MOTIVOS_SECAGEM.map((m) => <option key={m} value={m}>{MOTIVO_LABEL[m]}</option>)}
+                </select></div>
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Escore de condição corporal</label>
+                <input type="number" step="0.25" min="1" max="5" style={selStyle} value={editVals.escore} onChange={(e) => setEditVals((v) => ({ ...v, escore: e.target.value }))} /></div>
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Observação</label>
+                <input style={selStyle} value={editVals.observacao} onChange={(e) => setEditVals((v) => ({ ...v, observacao: e.target.value }))} /></div>
+            </div>
+            {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
+            <div className="flex items-center gap-3 mt-4">
+              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

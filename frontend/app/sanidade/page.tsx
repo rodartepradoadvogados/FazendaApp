@@ -22,16 +22,28 @@ const COLUNAS_SANIDADE = [
 ];
 
 const COLUNAS_CALENDARIO = [
-  { header: "Evento", key: "evento_sanitario_nome" }, { header: "Categoria alvo", key: "categoria_alvo" },
+  { header: "Evento", key: "evento_sanitario_nome" }, { header: "Tipo", key: "tipoFmt" }, { header: "Categoria alvo", key: "categoria_alvo" },
   { header: "Doença", key: "doenca_nome" }, { header: "Produto", key: "produto" }, { header: "Dosagem", key: "dosagem" },
+  { header: "Responsável", key: "responsavel" },
   { header: "Frequência", key: "frequenciaFmt" }, { header: "Próxima ocorrência", key: "proxima_ocorrencia_fmt" },
 ];
 
 type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string; categoria_alvo: string | null;
   doenca_nome: string | null; produto: string | null; principio_ativo_nome: string | null; dosagem: string | null;
+  responsavel: string | null; veterinario: string | null; categoria_preventiva: string | null;
   frequencia_valor: number; frequencia_unidade: string; data_evento: string; proxima_ocorrencia: string; observacao: string | null;
 };
+
+// vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
+const TIPOS_REGRA_FILTRO = [
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
+] as const;
+function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+  if (r.categoria_preventiva === "exame") return "exame";
+  if (r.categoria_preventiva === "vacina") return "vacina";
+  return "avulso";
+}
 
 const LABEL_FREQ: Record<string, string> = { dias: "dia(s)", meses: "mês(es)", anos: "ano(s)" };
 const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento" };
@@ -77,7 +89,17 @@ function RelatorioEventosVidaView() {
     fetchEventosVidaVocabulario().then(setGatilhosVida).catch(() => {});
   }, []);
 
-  const buscar = async () => {
+  // Assim que a lista de eventos/gatilhos chega, escolhe um padrão (o 1º evento
+  // cadastrado por evento, senão o 1º evento de vida) para já mostrar o
+  // relatório abaixo dos filtros — sem precisar clicar em "Buscar" antes.
+  useEffect(() => {
+    if (eventoSanitarioId || gatilho) return;
+    if (eventos.length) setEventoSanitarioId(String(eventos[0].id));
+    else if (gatilhosVida.length) setGatilho(gatilhosVida[0].gatilho);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventos, gatilhosVida]);
+
+  const buscar = useCallback(async () => {
     if (!eventoSanitarioId && !gatilho) { setErro("Escolha um evento sanitário cadastrado ou um evento de vida."); return; }
     setErro(null); setCarregando(true);
     try {
@@ -92,7 +114,15 @@ function RelatorioEventosVidaView() {
     } finally {
       setCarregando(false);
     }
-  };
+  }, [eventoSanitarioId, gatilho, ini, fim]);
+
+  useEffect(() => { if (eventoSanitarioId || gatilho) buscar(); }, [eventoSanitarioId, gatilho, ini, fim, buscar]);
+
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(resultado?.animais || []);
+  const linhasExport = (resultado?.animais || []).map((a) => ({
+    ...a, dias_restantes_fmt: a.dias_restantes < 0 ? `${Math.abs(a.dias_restantes)}d atrás` : `em ${a.dias_restantes}d`,
+    data_evento_fmt: formatDate(a.data_evento),
+  }));
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
 
@@ -127,15 +157,30 @@ function RelatorioEventosVidaView() {
 
       {resultado && (
         <div className="card">
-          <div className="card-header mb-3">
-            {resultado.evento_sanitario_nome || resultado.rotulo} — {resultado.animais.length} animal(is)
+          <div className="card-header mb-3 flex items-center justify-between">
+            <span>{resultado.evento_sanitario_nome || resultado.rotulo} — {resultado.animais.length} animal(is) — clique no cabeçalho para ordenar</span>
+            <ExportarBotoes
+              titulo="Relatório de eventos de vida" nomeArquivoBase="relatorio_eventos_vida"
+              colunas={[
+                { header: "Nº", key: "numero_matriz" }, { header: "Nome", key: "nome" }, { header: "Lote", key: "grupo_primario" },
+                { header: "Categoria", key: "categoria" }, { header: "Data do evento", key: "data_evento_fmt" }, { header: "Dias restantes", key: "dias_restantes_fmt" },
+              ]}
+              linhas={linhasExport}
+            />
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
             <table className="fazenda-table">
-              <thead><tr><th>Nº</th><th>Nome</th><th>Lote</th><th>Categoria</th><th>Data do evento</th><th style={{ textAlign: "right" }}>Dias restantes</th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Nº" campo="numero_matriz" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Lote" campo="grupo_primario" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Categoria" campo="categoria" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Data do evento" campo="data_evento" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Dias restantes" campo="dias_restantes" coluna={coluna} dir={dir} ordenar={ordenar} />
+              </tr></thead>
               <tbody>
-                {resultado.animais.map((a) => (
-                  <tr key={a.numero_matriz}>
+                {linhasOrdenadas.map((a) => (
+                  <tr key={a.numero_matriz} onClick={() => { window.location.href = `/rebanho?aba=ficha&numero=${encodeURIComponent(a.numero_matriz)}`; }} style={{ cursor: "pointer" }}>
                     <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                     <td style={{ fontSize: "0.78rem" }}>{a.nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{a.grupo_primario || "—"}</td>
@@ -243,6 +288,7 @@ function CalendarioSanitarioView() {
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
   const [eventoId, setEventoId] = useState("");
+  const [tipoFiltro, setTipoFiltro] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
   const [recarregar, setRecarregar] = useState(0);
   const admin = ehAdmin();
 
@@ -252,10 +298,15 @@ function CalendarioSanitarioView() {
       .then(setRegras).catch((e) => setError(e.message));
   }, [ini, fim, eventoId, recarregar]);
 
-  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(regras || []);
+  const regrasFiltradas = useMemo(
+    () => (regras || []).filter((r) => tipoFiltro === "todos" || tipoRegra(r) === tipoFiltro),
+    [regras, tipoFiltro]
+  );
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(regrasFiltradas);
 
-  const linhasExport = (regras || []).map((r) => ({
-    ...r, frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
+  const linhasExport = regrasFiltradas.map((r) => ({
+    ...r, tipoFmt: tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro",
+    frequenciaFmt: `a cada ${r.frequencia_valor} ${LABEL_FREQ[r.frequencia_unidade]}`,
     proxima_ocorrencia_fmt: formatDate(r.proxima_ocorrencia),
   }));
 
@@ -300,6 +351,10 @@ function CalendarioSanitarioView() {
             <select style={selStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
               <option value="">Todos</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
             </select></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Tipo</label>
+            <select style={selStyle} value={tipoFiltro} onChange={(e) => setTipoFiltro(e.target.value as any)}>
+              {TIPOS_REGRA_FILTRO.map((t) => <option key={t.v} value={t.v}>{t.l}</option>)}
+            </select></div>
         </div>
       </div>
 
@@ -309,16 +364,17 @@ function CalendarioSanitarioView() {
       {regras && (
         <div className="card">
           <div className="card-header mb-3 flex items-center justify-between">
-            <span>Regras do calendário sanitário ({regras.length}) — clique no cabeçalho para ordenar</span>
+            <span>Regras do calendário sanitário ({regrasFiltradas.length}) — clique no cabeçalho para ordenar</span>
             <ExportarBotoes titulo="Calendário sanitário" nomeArquivoBase="calendario_sanitario" colunas={COLUNAS_CALENDARIO} linhas={linhasExport} />
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: "480px" }}>
             <table className="fazenda-table">
               <thead><tr>
                 <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <th>Tipo</th>
                 <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={coluna} dir={dir} ordenar={ordenar} />
                 <ThOrdenavel label="Doença" campo="doenca_nome" coluna={coluna} dir={dir} ordenar={ordenar} />
-                <th>Produto</th><th>Dosagem</th><th>Frequência</th>
+                <th>Produto</th><th>Dosagem</th><th>Responsável</th><th>Frequência</th>
                 <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={coluna} dir={dir} ordenar={ordenar} />
                 {admin && <th style={{ textAlign: "right" }}>Ações</th>}
               </tr></thead>
@@ -328,10 +384,14 @@ function CalendarioSanitarioView() {
                   return (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}{ehExame ? <span style={{ fontSize: "0.68rem", color: "var(--blue)", marginLeft: 6 }}>exame</span> : null}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                      {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
+                    </td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.doenca_nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.produto || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{r.dosagem || "—"}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{r.responsavel || r.veterinario || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {LABEL_FREQ[r.frequencia_unidade]}</td>
                     <td style={{ fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{formatDate(r.proxima_ocorrencia)}</td>
                     {admin && (
@@ -348,7 +408,7 @@ function CalendarioSanitarioView() {
                   </tr>
                   );
                 })}
-                {!regras.length && <tr><td colSpan={admin ? 8 : 7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
+                {!regrasFiltradas.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra no filtro.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -372,7 +432,7 @@ type Aplic = {
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)", "var(--red)", "#7A5C99", "#4C9AA8"];
 const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 60kg"];
 
-function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "preventivo" }) {
+function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { natureza?: "curativo" | "preventivo"; autoEditarId?: number | null }) {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
@@ -399,6 +459,15 @@ function AplicacoesView({ natureza = "curativo" }: { natureza?: "curativo" | "pr
     (d.aplicacoes as Aplic[]).filter((a) => natureza === "preventivo" ? a.natureza === "preventivo" : a.natureza !== "preventivo")
   )).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, [natureza]);
+
+  // Vindo do popup "regra já agendada" (Lançamentos > Preventivo > Aplicações):
+  // abre direto a edição do último evento lançado para aquele produto.
+  useEffect(() => {
+    if (!autoEditarId || !regs) return;
+    const a = regs.find((r) => r.id === autoEditarId);
+    if (a) iniciarEdicao(a);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoEditarId, regs]);
 
   const iniciarEdicao = (a: Aplic) => {
     setEditId(a.id);
@@ -1107,6 +1176,16 @@ export default function SanidadePage() {
   const [aba, setAba] = useState<AbaSanidade>("curativa");
   const [abaCur, setAbaCur] = useState<AbaCurativa>("curativo");
   const [abaPrev, setAbaPrev] = useState<AbaPreventiva>("aplicacoes");
+  // Vindo do popup "regra já agendada" em Lançamentos > Preventivo > Aplicações
+  // (link "editar/dar baixa no último evento lançado"): abre direto na aba certa.
+  const [autoEditarId, setAutoEditarId] = useState<number | null>(null);
+  useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    if (qs.get("editar_aplicacao_id")) {
+      setAba("preventiva"); setAbaPrev("aplicacoes");
+      setAutoEditarId(Number(qs.get("editar_aplicacao_id")));
+    }
+  }, []);
 
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_SANIDADE.map((a) => ({
     id: a.id, label: a.label, icon: a.icon,
@@ -1144,7 +1223,7 @@ export default function SanidadePage() {
       )}
       {aba === "preventiva" && (
         <>
-          {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" />}
+          {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
           {abaPrev === "calendario" && <CalendarioSanitarioView />}
         </>
       )}

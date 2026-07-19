@@ -45,6 +45,72 @@ def deduplicar_partos(session: Session) -> None:
     session.add(SeedFlag(chave=chave))
     session.commit()
 
+
+def backfill_categoria_crias(session: Session) -> None:
+    """Corrige crias já cadastradas via /parto que ficaram sem categoria (o
+    registro só define categoria a partir de agora — ver registrar_parto).
+    Roda UMA vez (guardada por SeedFlag): qualquer Animal com mãe registrada
+    (mae_numero preenchido, ou seja, veio de um parto) e sem categoria
+    completa ainda entra em "Bezerra/o Mamando"; o próximo upload do
+    GERAL.csv (Ideagri) segue tendo prioridade e substitui esse valor."""
+    chave = "backfill_categoria_crias_v1"
+    if session.get(SeedFlag, chave):
+        return
+    crias = session.exec(
+        select(Animal).where(Animal.mae_numero.is_not(None), Animal.categoria_completa.is_(None))
+    ).all()
+    for a in crias:
+        a.categoria_completa = "Bezerra Mamando" if a.sexo == "F" else "Bezerro Mamando"
+        a.categoria_abrev = "Bezerra" if a.sexo == "F" else "Bezerro"
+        session.add(a)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def backfill_numero_cria_partos(session: Session) -> None:
+    """Associa retroativamente numero_cria_1/2 (e gemelar_sexo) aos partos que
+    vieram do upload do CSV reprodutivo — esse CSV não traz o número da cria
+    nem o sexo do gemelar, só quem é registrado via /reproducao/parto tem
+    isso hoje. Casa pela mãe (Animal.mae_numero == Parto.numero_matriz) e
+    pela data de nascimento próxima da data do parto (± 2 dias, cobre
+    diferenças de fuso/lançamento tardio). Roda UMA vez (SeedFlag); só
+    preenche quando a combinação é inequívoca — deixa de fora (para revisão
+    manual) qualquer parto com mais candidatos do que o esperado."""
+    chave = "backfill_numero_cria_partos_v1"
+    if session.get(SeedFlag, chave):
+        return
+    por_mae: dict[str, list[Animal]] = {}
+    for a in session.exec(select(Animal).where(Animal.mae_numero.is_not(None))).all():
+        por_mae.setdefault(a.mae_numero, []).append(a)
+
+    partos = session.exec(
+        select(Parto).where(Parto.numero_cria_1.is_(None), Parto.numero_cria_2.is_(None))
+    ).all()
+    for p in partos:
+        if not p.data_parto:
+            continue
+        candidatos = [
+            a for a in por_mae.get(p.numero_matriz, [])
+            if a.data_nasc and abs((a.data_nasc - p.data_parto).days) <= 2
+        ]
+        if not candidatos:
+            continue
+        esperado = 2 if p.gemelar else 1
+        if len(candidatos) > esperado:
+            continue  # ambíguo — mais crias batendo do que o parto indica, não arrisca
+        # Prioriza o candidato cujo sexo bate com sexo_cria_1 (já vindo do CSV),
+        # depois ordena por número para ficar determinístico.
+        candidatos.sort(key=lambda a: (0 if (p.sexo_cria_1 and a.sexo == p.sexo_cria_1) else 1, a.numero))
+        p.numero_cria_1 = candidatos[0].numero
+        if len(candidatos) > 1:
+            p.numero_cria_2 = candidatos[1].numero
+            if not p.gemelar_sexo and candidatos[0].sexo and candidatos[1].sexo:
+                combo = "".join(sorted(candidatos[0].sexo + candidatos[1].sexo))
+                p.gemelar_sexo = {"FF": "FF", "FM": "FM", "MM": "MM"}.get(combo)
+        session.add(p)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
 # Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
 # (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.
 PASSOS_PROTOCOLO_IATF = [
@@ -103,6 +169,36 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
         if not r.get("tipo_semen") and r.get("touro") and r["touro"] != "(sem touro)":
             r["tipo_semen"] = tipo_por_touro.get(r["touro"].strip().lower())
     return {"servicos": registros, "total": len(registros)}
+
+
+class ServicoEditIn(BaseModel):
+    """Edição de um serviço/IA já lançado — todos os campos são opcionais,
+    só o que for enviado é alterado (usado pelas sub-abas Serviços, IAs,
+    Diagnósticos e Perda de prenhez do histórico de Reprodução, que editam
+    o mesmo registro Servico com recortes de campos diferentes)."""
+    data_servico: date | None = None
+    tipo_servico: str | None = None
+    reprodutor: str | None = None
+    tipo_semen: str | None = None
+    inseminador: str | None = None
+    data_diagnostico: date | None = None
+    diagnostico: str | None = None
+    metodo_diagnostico: str | None = None
+    data_perda_prenhez: date | None = None
+    motivo_perda_prenhez: str | None = None
+
+
+@router.put("/servicos/{servico_id}")
+def atualizar_servico(servico_id: int, dados: ServicoEditIn, session: Session = Depends(get_session)) -> dict:
+    servico = session.get(Servico, servico_id)
+    if not servico:
+        raise HTTPException(status_code=404, detail="Serviço não encontrado")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(servico, campo, valor)
+    session.add(servico)
+    session.commit()
+    session.refresh(servico)
+    return servico.model_dump()
 
 
 @router.get("/indicadores-mensais")
@@ -256,6 +352,27 @@ def listar_partos_historico(session: Session = Depends(get_session)) -> dict:
     return {"partos": registros, "total": len(registros)}
 
 
+class PartoEditIn(BaseModel):
+    data_parto: date | None = None
+    tipo_parto: str | None = None
+    retencao_placenta: bool | None = None
+
+
+@router.put("/partos/{parto_id}")
+def atualizar_parto(parto_id: int, dados: PartoEditIn, session: Session = Depends(get_session)) -> dict:
+    """Edita os campos do parto em si (data, tipo, retenção de placenta) — não
+    mexe nas crias já cadastradas, que seguem editáveis pela ficha do animal."""
+    parto = session.get(Parto, parto_id)
+    if not parto:
+        raise HTTPException(status_code=404, detail="Parto não encontrado")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(parto, campo, valor)
+    session.add(parto)
+    session.commit()
+    session.refresh(parto)
+    return parto.model_dump()
+
+
 @router.get("/secagens")
 def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
     """Todas as secagens, achatadas — histórico de secagens (Reprodução), com
@@ -271,6 +388,26 @@ def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
         d["data"] = ds.isoformat() if isinstance(ds, date) else None
         registros.append(d)
     return {"secagens": registros, "total": len(registros)}
+
+
+class SecagemEditIn(BaseModel):
+    data_secagem: date | None = None
+    motivo: str | None = None
+    escore_condicao_corporal: float | None = None
+    observacao: str | None = None
+
+
+@router.put("/secagens/{secagem_id}")
+def atualizar_secagem(secagem_id: int, dados: SecagemEditIn, session: Session = Depends(get_session)) -> dict:
+    secagem = session.get(Secagem, secagem_id)
+    if not secagem:
+        raise HTTPException(status_code=404, detail="Secagem não encontrada")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(secagem, campo, valor)
+    session.add(secagem)
+    session.commit()
+    session.refresh(secagem)
+    return secagem.model_dump()
 
 
 class CriaIn(BaseModel):
@@ -341,9 +478,15 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
         if session.exec(select(Animal).where(Animal.numero == cria.numero)).first():
             continue  # já cadastrada — não sobrescreve
         raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
+        # Todo animal que nasce entra automaticamente na categoria "bezerra/o
+        # mamando" — o próximo upload do GERAL.csv (Ideagri) pode atualizar
+        # depois, mas a cria não deve ficar sem categoria até lá.
+        categoria_completa_cria = "Bezerra Mamando" if cria.sexo == "F" else "Bezerro Mamando"
+        categoria_abrev_cria = "Bezerra" if cria.sexo == "F" else "Bezerro"
         session.add(Animal(
             numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
+            categoria_completa=categoria_completa_cria, categoria_abrev=categoria_abrev_cria,
         ))
         crias_criadas.append(cria.numero)
 

@@ -458,6 +458,8 @@ export default function RebanhoPage() {
     const params = new URLSearchParams(window.location.search);
     const abaParam = params.get("aba") as Aba | null;
     if (abaParam && ABAS_VALIDAS.includes(abaParam)) setAba(abaParam);
+    const numeroParam = params.get("numero");
+    if (numeroParam) { setFichaNumeroInicial(numeroParam); setAba("ficha"); }
   }, []);
 
   const trocarAba = useCallback((k: Aba) => { if (k === "visao") setVisaoKey((v) => v + 1); setAba(k); }, []);

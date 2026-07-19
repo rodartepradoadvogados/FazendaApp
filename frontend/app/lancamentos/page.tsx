@@ -22,6 +22,7 @@ import {
   fetchPedidos, fetchPedido,
   fetchCategoriasManejo, fetchPlanoContas, FINALIDADES_ESTOQUE,
   fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO,
+  fetchPessoas,
 } from "@/lib/api";
 import type { ApresentacaoFarmacia, Touro, AgendaVetResposta } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
@@ -1870,9 +1871,21 @@ type RegraCalendario = {
   id: number; evento_sanitario_id: number; evento_sanitario_nome: string;
   categoria_alvo: string | null; doenca_id: number | null; doenca_nome: string | null;
   produto: string | null; principio_ativo_id: number | null; principio_ativo_nome: string | null;
-  dosagem: string | null; unidade: string | null; frequencia_valor: number; frequencia_unidade: string;
+  dosagem: string | null; unidade: string | null; responsavel: string | null; veterinario: string | null;
+  frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; proxima_ocorrencia: string; observacao: string | null; ativo: boolean;
+  categoria_preventiva: string | null; ultimo_evento_data: string | null; ultimo_evento_id: number | null;
 };
+
+// vacina | exame | avulso/outro (nada marcado nos dois primeiros) | todos.
+const TIPOS_REGRA_FILTRO = [
+  { v: "todos", l: "Todos" }, { v: "vacina", l: "Vacina" }, { v: "exame", l: "Exame" }, { v: "avulso", l: "Avulso/outro" },
+] as const;
+function tipoRegra(r: { categoria_preventiva: string | null }): "vacina" | "exame" | "avulso" {
+  if (r.categoria_preventiva === "exame") return "exame";
+  if (r.categoria_preventiva === "vacina") return "vacina";
+  return "avulso";
+}
 // Separador usado para guardar mais de uma categoria-alvo no mesmo campo
 // (texto único no banco — cada regra continua com um único categoria_alvo).
 const SEP_CATEGORIAS = ", ";
@@ -1977,6 +1990,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [principioId, setPrincipioId] = useState("");
   const [dosagem, setDosagem] = useState("");
   const [unidade, setUnidade] = useState("");
+  const [responsavel, setResponsavel] = useState("");
   const [veterinario, setVeterinario] = useState("");
   const [freqValor, setFreqValor] = useState("1");
   const [freqUnidade, setFreqUnidade] = useState("meses");
@@ -1986,6 +2000,18 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  const [tipoFiltroRegras, setTipoFiltroRegras] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
+
+  const [pessoas, setPessoas] = useState<any[]>([]);
+  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
+  const pessoasAtivas = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
+  const veterinariosZootecnistas = useMemo(
+    () => pessoasAtivas.filter((p) => (p.tipos || []).some((t: string) => ["Veterinário", "Zootecnista", "Vet/Zootec."].includes(t))),
+    [pessoasAtivas]
+  );
 
   // Frequência periódica (regra recorrente do calendário) OU por evento de
   // vida (desmama, aptidão, secagem…) — nesse 2º modo não cria regra nenhuma:
@@ -2033,7 +2059,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
 
   const limpar = () => {
     setEditando(null); setEventoId(""); setCategoriaAlvoSel([]); setDoencaId(""); setProduto("");
-    setPrincipioId(""); setDosagem(""); setUnidade(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
+    setPrincipioId(""); setDosagem(""); setUnidade(""); setResponsavel(""); setVeterinario(""); setFreqValor("1"); setFreqUnidade("meses");
     setDataEvento(""); setObservacao(""); setRealizado(false);
     setModoFreq("periodica"); setGatilho("nascimento"); setGatilhoLote(""); setGatilhoIdadeMeses(""); setOffsetDias("0");
   };
@@ -2044,6 +2070,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     setDoencaId(r.doenca_id ? String(r.doenca_id) : ""); setProduto(r.produto || "");
     setPrincipioId(r.principio_ativo_id ? String(r.principio_ativo_id) : ""); setDosagem(r.dosagem || "");
     setUnidade(r.unidade || "");
+    setResponsavel(r.responsavel || "");
     setVeterinario((r as any).veterinario || "");
     setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade);
     setDataEvento(r.data_evento); setObservacao(r.observacao || ""); setRealizado(false);
@@ -2061,6 +2088,11 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
     if (modoFreq === "periodica" && (!dataEvento || !freqValor)) { setErro("Selecione a frequência e a data do evento."); return; }
     if (modoFreq === "evento_vida" && gatilho === "entrada_lote" && !gatilhoLote.trim()) { setErro("Informe o lote do gatilho (entrada no lote)."); return; }
     if (modoFreq === "evento_vida" && gatilho === "novilha_apta" && !gatilhoIdadeMeses) { setErro("Informe a idade-alvo em meses (aptidão de novilha)."); return; }
+    // Só se marca como realizado evento do dia corrente ou retroativo — nunca um evento futuro.
+    if (modoFreq === "periodica" && realizado && dataEvento && dataEvento > new Date().toISOString().slice(0, 10)) {
+      setErro("Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.");
+      return;
+    }
     setSalvando(true);
     try {
       if (modoFreq === "evento_vida") {
@@ -2086,6 +2118,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
         principio_ativo_id: ehExame ? undefined : (principioId ? Number(principioId) : undefined),
         dosagem: ehExame ? undefined : (dosagem || undefined),
         unidade: ehExame ? undefined : (unidade || undefined),
+        responsavel: responsavel || undefined,
         veterinario: veterinario || undefined,
         frequencia_valor: Number(freqValor), frequencia_unidade: freqUnidade, data_evento: dataEvento,
         observacao: observacao || undefined, realizado,
@@ -2137,9 +2170,18 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             <option value="">—</option>{doencas.map((d) => <option key={d.id} value={d.id}>{d.nome}</option>)}
           </select>
         </Campo>
+        <Campo label="Responsável">
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">Opcional</option>
+            {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+          </select>
+        </Campo>
         {ehExame ? (
           <Campo label="Veterinário (exame)">
-            <input style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" />
+            <select style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)}>
+              <option value="">Opcional</option>
+              {veterinariosZootecnistas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+            </select>
           </Campo>
         ) : (
           <>
@@ -2235,13 +2277,23 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
             descricao="Regras recorrentes já cadastradas no calendário sanitário"
             badge={<span style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700 }}>{regras.length}</span>}
           >
+          <div className="flex items-center gap-2 mb-2">
+            {TIPOS_REGRA_FILTRO.map((t) => (
+              <button key={t.v} type="button" className={tipoFiltroRegras === t.v ? "btn-primary" : "btn-secondary"}
+                style={{ fontSize: "0.72rem" }} onClick={() => setTipoFiltroRegras(t.v)}>{t.l}</button>
+            ))}
+          </div>
           <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Evento</th><th>Categoria alvo</th><th>Frequência</th><th>Próxima ocorrência</th><th></th></tr></thead>
+              <thead><tr><th>Evento</th><th>Tipo</th><th>Responsável</th><th>Categoria alvo</th><th>Frequência</th><th>Próxima ocorrência</th><th></th></tr></thead>
               <tbody>
-                {regras.map((r) => (
+                {regras.filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras).map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+                      {tipoRegra(r) === "vacina" ? "Vacina" : tipoRegra(r) === "exame" ? "Exame" : "Avulso/outro"}
+                    </td>
+                    <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.responsavel || r.veterinario || "—"}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.categoria_alvo || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>a cada {r.frequencia_valor} {FREQUENCIA_UNIDADES.find((u) => u.v === r.frequencia_unidade)?.l}</td>
                     <td style={{ fontSize: "0.78rem" }}>{formatDate(r.proxima_ocorrencia)}</td>
@@ -2251,7 +2303,9 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
                     </td>
                   </tr>
                 ))}
-                {!regras.length && <tr><td colSpan={5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra cadastrada ainda.</td></tr>}
+                {!regras.filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras).length && (
+                  <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra cadastrada ainda.</td></tr>
+                )}
               </tbody>
             </table>
           </div>
@@ -2411,7 +2465,7 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   // — pergunta se o usuário quer lançar o próximo evento já agendado (puxa
   // data/frequência dela) ou se é mesmo um lançamento avulso/novo.
   const [regraExistente, setRegraExistente] = useState<any | null>(null);
-  const [decisaoRegra, setDecisaoRegra] = useState<"existente" | "novo" | null>(null);
+  const [decisaoRegra, setDecisaoRegra] = useState<"existente" | "ultimo" | "novo" | null>(null);
   useEffect(() => {
     setRegraExistente(null);
     setDecisaoRegra(null);
@@ -2533,17 +2587,18 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 75, padding: "1rem" }}>
           <div className="card" style={{ width: "480px", maxWidth: "95vw" }}>
             <div className="card-header mb-2">Já existe uma regra agendada para este evento</div>
-            <p style={{ fontSize: "0.82rem", color: "var(--text)", marginBottom: "0.5rem" }}>
-              O evento <strong>{evento?.nome}</strong> já tem uma regra no calendário sanitário
-              {regraExistente.categoria_alvo ? <> para <strong>{regraExistente.categoria_alvo}</strong></> : ""},
-              {" "}com próxima ocorrência em <strong>{new Date(regraExistente.proxima_ocorrencia + "T00:00:00").toLocaleDateString("pt-BR")}</strong> (repete a cada {regraExistente.frequencia_valor} {regraExistente.frequencia_unidade}).
-            </p>
-            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
-              Deseja lançar o próximo evento já agendado (a data e a frequência abaixo serão preenchidas automaticamente) ou é um novo evento avulso?
-            </p>
-            <div className="flex items-center gap-3">
-              <button className="btn-primary" onClick={usarRegraExistente}>Usar o evento já agendado</button>
-              <button className="btn-ghost" onClick={() => setDecisaoRegra("novo")}>É um novo evento avulso</button>
+            <p style={{ fontSize: "0.82rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>Você deseja:</p>
+            <div className="flex flex-col gap-2">
+              {regraExistente.ultimo_evento_data && regraExistente.ultimo_evento_id && (
+                <a className="btn-secondary" style={{ textAlign: "left" }}
+                  href={`/sanidade?editar_aplicacao_id=${regraExistente.ultimo_evento_id}`}>
+                  Editar/dar baixa no último evento lançado? ({formatDate(regraExistente.ultimo_evento_data)})
+                </a>
+              )}
+              <button className="btn-primary" style={{ textAlign: "left" }} onClick={usarRegraExistente}>
+                Realizar/aplicar o próximo evento? ({formatDate(regraExistente.proxima_ocorrencia)})
+              </button>
+              <button className="btn-ghost" style={{ textAlign: "left" }} onClick={() => setDecisaoRegra("novo")}>É um novo evento avulso</button>
             </div>
           </div>
         </div>

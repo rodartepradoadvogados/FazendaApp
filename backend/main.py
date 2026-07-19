@@ -50,7 +50,7 @@ from fazenda.api.routers.financeiro import (
     seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
     seed_tipos_documento_formas_pagamento,
 )
-from fazenda.api.routers.reproducao import deduplicar_partos
+from fazenda.api.routers.reproducao import deduplicar_partos, backfill_categoria_crias, backfill_numero_cria_partos
 from fazenda.api.routers.cadastro import (
     seed_cadastro_sanitario, seed_motivos_baixa, seed_motivos_venda, seed_pessoas, seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
@@ -82,6 +82,8 @@ async def lifespan(app: FastAPI):
         classificar_natureza_plano_contas(session)
         normalizar_centros_custo(session)
         deduplicar_partos(session)
+        backfill_categoria_crias(session)
+        backfill_numero_cria_partos(session)
         seed_tipos_pessoa(session)
         seed_pessoas(session)
         seed_cadastro_sanitario(session)

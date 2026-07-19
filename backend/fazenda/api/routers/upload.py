@@ -171,9 +171,20 @@ async def _upsert_reprodutivo(content: bytes, session: Session) -> dict:
     # partos já existentes daquela data antes de reinserir. Partos lançados à
     # mão em OUTRAS datas (pelo app/site) são preservados.
     datas_csv = {(p.numero_matriz, p.data_parto) for p in partos}
+    # O CSV do reprodutivo não traz o número da cria nem o sexo do gemelar
+    # (só sexo_cria_1/2, gemelar e retenção) — preserva o que já estava
+    # lançado à mão ou preenchido pelo backfill (ver backfill_numero_cria_
+    # partos em reproducao.py) para o reenvio do CSV não apagar esse vínculo.
+    preservados: dict[tuple[str, object], dict] = {}
     if datas_csv:
         for antigo in session.exec(select(Parto)).all():
-            if (antigo.numero_matriz, antigo.data_parto) in datas_csv:
+            chave_antigo = (antigo.numero_matriz, antigo.data_parto)
+            if chave_antigo in datas_csv:
+                if antigo.numero_cria_1 or antigo.numero_cria_2 or antigo.gemelar_sexo:
+                    preservados[chave_antigo] = {
+                        "numero_cria_1": antigo.numero_cria_1, "numero_cria_2": antigo.numero_cria_2,
+                        "gemelar_sexo": antigo.gemelar_sexo,
+                    }
                 session.delete(antigo)
         session.commit()
 
@@ -183,6 +194,11 @@ async def _upsert_reprodutivo(content: bytes, session: Session) -> dict:
         ).first()
         if animal:
             parto.animal_id = animal.id
+        salvo = preservados.get((parto.numero_matriz, parto.data_parto))
+        if salvo:
+            parto.numero_cria_1 = parto.numero_cria_1 or salvo["numero_cria_1"]
+            parto.numero_cria_2 = parto.numero_cria_2 or salvo["numero_cria_2"]
+            parto.gemelar_sexo = parto.gemelar_sexo or salvo["gemelar_sexo"]
         session.add(parto)
 
     session.commit()
