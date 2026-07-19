@@ -7,6 +7,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
+import { Indicador } from "@/components/ui";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -137,16 +138,12 @@ export default function EstoquePage() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-            <div className="kpi-card"><p className="kpi-value">{filtrados.length}</p><p className="kpi-label">Itens (filtro)</p></div>
-            <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: "var(--dourado-light)" }}>{formatBRL(valorTotal)}</p><p className="kpi-label">Valor em estoque</p></div>
-            <button type="button" className="kpi-card" title="Ver quais produtos estão abaixo do mínimo" onClick={() => setModalAbaixo(true)}
-              style={{ cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}>
-              <p className="kpi-value" style={{ color: abaixo ? "var(--red)" : "var(--green-light)" }}>{abaixo}</p><p className="kpi-label">Abaixo do mínimo</p>
-            </button>
-            <button type="button" className="kpi-card" title="Ver as categorias e quantos itens cada uma tem" onClick={() => setModalCategorias(true)}
-              style={{ cursor: "pointer", textAlign: "left", border: "1px solid var(--border)", background: "var(--surface)" }}>
-              <p className="kpi-value">{categorias.length}</p><p className="kpi-label">Categorias</p>
-            </button>
+            <Indicador categoria="geral" valor={filtrados.length} rotulo="Itens (filtro)" />
+            <Indicador categoria="geral" valor={formatBRL(valorTotal)} cor="var(--dourado-light)" rotulo="Valor em estoque" />
+            <Indicador categoria="geral" valor={abaixo} cor={abaixo ? "var(--red)" : "var(--green-light)"} rotulo="Abaixo do mínimo"
+              onClick={() => setModalAbaixo(true)} title="Ver quais produtos estão abaixo do mínimo" />
+            <Indicador categoria="geral" valor={categorias.length} rotulo="Categorias"
+              onClick={() => setModalCategorias(true)} title="Ver as categorias e quantos itens cada uma tem" />
           </div>
 
           <div className="card mb-4">
