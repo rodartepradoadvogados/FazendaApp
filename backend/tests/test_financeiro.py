@@ -210,6 +210,37 @@ class TestLancamentoMultiplosItens:
         })
         assert r.status_code == 400
 
+
+class TestCentroCustoObrigatorio:
+    """#504 — todo lançamento deve nascer com um centro de custo; quando o
+    caller (CSV, robô) não informa, assume "Pecuária Leiteira" em vez de
+    deixar a conta sem centro (nunca fica None/vazio no banco)."""
+
+    def test_lancamento_sem_centro_custo_assume_pecuaria_leiteira(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "X", "valor_total": 100.0}],
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+    def test_lancamento_com_centro_custo_informado_preserva_escolha(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa",
+            "itens": [{"produto": "X", "valor_total": 100.0}],
+            "centro_custo": "Arrendamento",
+        })
+        assert r.status_code == 201
+        with Session(engine) as s:
+            from sqlmodel import select
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento"])).first()
+            assert conta.centro_custo == "Arrendamento"
+
     def test_desconto_reduz_o_valor_liquido(self, client):
         c, _ = client
         r = c.post("/financeiro/lancamentos", json={
@@ -702,3 +733,69 @@ class TestBaixaLoteDetalhada:
         c, engine = client
         r = c.put("/financeiro/lancamentos/baixa-lote-detalhada", json={"itens": []})
         assert r.status_code == 400
+
+
+class TestReciboLancamento:
+    """#505 — emissão de recibo: destinatário contextual (Fornecedor/Pessoa
+    pelo nome) e envio por e-mail (Resend, mockado nos testes)."""
+
+    def test_destinatario_resolve_por_fornecedor(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            from fazenda.models import Fornecedor
+            s.add(Fornecedor(nome="Cooperativa Agro LTDA", tipo="fornecedor", email="contato@agro.com"))
+            s.commit()
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Cooperativa Agro LTDA",
+            "itens": [{"produto": "Ração", "valor_total": 500.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        resp = c.get(f"/financeiro/lancamentos/{numero}/destinatario-recibo")
+        assert resp.status_code == 200
+        assert resp.json() == {"nome": "Cooperativa Agro LTDA", "email": "contato@agro.com"}
+
+    def test_destinatario_sem_cadastro_devolve_email_vazio(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "Fulano Desconhecido",
+            "itens": [{"produto": "X", "valor_total": 10.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        resp = c.get(f"/financeiro/lancamentos/{numero}/destinatario-recibo")
+        assert resp.json() == {"nome": "Fulano Desconhecido", "email": None}
+
+    def test_enviar_recibo_sem_resend_configurado_da_erro_claro(self, client):
+        c, engine = client
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "X",
+            "itens": [{"produto": "X", "valor_total": 10.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        resp = c.post(
+            f"/financeiro/lancamentos/{numero}/recibo/enviar",
+            data={"destinatario": "alguem@exemplo.com"},
+            files={"arquivo": ("recibo.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        )
+        assert resp.status_code == 400
+        assert "RESEND_API_KEY" in resp.json()["detail"]
+
+    def test_enviar_recibo_com_envio_mockado(self, client, monkeypatch):
+        c, engine = client
+        from fazenda.api.routers import financeiro as financeiro_router
+        chamadas = []
+        monkeypatch.setattr(
+            financeiro_router, "enviar_email",
+            lambda destinatario, assunto, corpo_html, anexo_nome, anexo_bytes: chamadas.append(destinatario),
+        )
+        r = c.post("/financeiro/lancamentos", json={
+            "tipo": "despesa", "fornecedor_cliente": "X",
+            "itens": [{"produto": "X", "valor_total": 10.0}],
+        })
+        numero = r.json()["numero_lancamento"]
+        resp = c.post(
+            f"/financeiro/lancamentos/{numero}/recibo/enviar",
+            data={"destinatario": "alguem@exemplo.com"},
+            files={"arquivo": ("recibo.pdf", b"%PDF-1.4 fake", "application/pdf")},
+        )
+        assert resp.status_code == 200 and resp.json() == {"enviado": True}
+        assert chamadas == ["alguem@exemplo.com"]

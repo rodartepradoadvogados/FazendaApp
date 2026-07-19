@@ -353,6 +353,23 @@ class TestFolhaPagamento:
         assert r.json()["valor_liquido"] == 1800.0
         assert r.json()["status"] == "pendente"
 
+    def test_folha_sem_centro_custo_assume_pecuaria_leiteira_editavel(self, client):
+        """#504 — folha vincula por padrão a "Pecuária Leiteira" (tanto no
+        registro quanto na conta a pagar gerada), mas o campo é editável."""
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0})
+        assert r.json()["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Folha de pagamento")).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
+
+        r2 = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-08", "valor_bruto": 2000.0, "centro_custo": "Arrendamento",
+        })
+        assert r2.json()["centro_custo"] == "Arrendamento"
+
     def test_lista_traz_nome_da_pessoa(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c)
@@ -471,6 +488,7 @@ class TestFolhaPagamentoRecorrente:
         assert r.status_code == 200
         corpo = r.json()
         assert corpo["numero_lancamento_gerado"]
+        assert corpo["competencia"] == "2026-07"
 
         with Session(engine) as s:
             from fazenda.models import ContaGerencial
@@ -478,15 +496,33 @@ class TestFolhaPagamentoRecorrente:
         assert conta is not None
         assert conta.valor_total == 2700.0
         assert conta.tipo == "despesa"
-        assert conta.data_vencimento == date(2026, 7, 5)
+        # Competência = mês trabalhado (07/2026); pagamento cai no mês seguinte, dia 5.
+        assert conta.data_competencia == date(2026, 7, 1)
+        assert conta.data_vencimento == date(2026, 8, 5)
 
         # Aparece em Contas a Pagar...
         lancamentos = c.get("/financeiro/lancamentos").json()["lancamentos"]
         assert any(l["numero_lancamento"] == corpo["numero_lancamento_gerado"] for l in lancamentos)
 
-        # ...e na Agenda, dentro da janela de vencimento.
-        eventos = c.get("/agenda/", params={"data": "2026-07-01", "dias": 10}).json()["eventos"]
+        # ...e na Agenda, dentro da janela de vencimento (mês seguinte à competência).
+        eventos = c.get("/agenda/", params={"data": "2026-08-01", "dias": 10}).json()["eventos"]
         assert any("Folha de pagamento" in e["descricao"] for e in eventos)
+
+    def test_dia_vencimento_customizado_aplica_no_mes_seguinte(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c)
+        r = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-12", "valor_bruto": 2000.0,
+            "recorrente": True, "dia_vencimento": 15,
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == corpo["numero_lancamento_gerado"])).first()
+        # Competência de dezembro vira pagamento em janeiro do ano seguinte, dia 15.
+        assert conta.data_vencimento == date(2027, 1, 15)
+        assert conta.data_competencia == date(2026, 12, 1)
 
     def test_gera_competencias_seguintes_ate_o_mes_atual(self, client):
         c, engine = client
@@ -632,6 +668,110 @@ class TestValeFuncionario:
         })
         assert r2.json()["valor_vale"] == 0.0
         assert r2.json()["descontos"] == 0.0
+
+    def test_atualiza_vale_recalcula_parcelas_e_folha(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        assert folha["valor_vale"] == 300.0
+
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 600.0, "forma_pagamento": "pix",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 200
+        assert r.json()["valor_total"] == 600.0
+        assert r.json()["forma_pagamento"] == "pix"
+        assert [p["valor"] for p in r.json()["parcelas_detalhe"]] == [600.0]
+
+        folha2 = c.get("/cadastro/folha-pagamento").json()
+        alvo = next(f for f in folha2 if f["id"] == folha["id"])
+        assert alvo["valor_vale"] == 600.0
+        assert alvo["valor_liquido"] == 1400.0
+
+    def test_atualiza_vale_inexistente_404(self, client):
+        c, engine = client
+        r = c.put("/cadastro/vales/9999", json={
+            "pessoa_id": 1, "valor_total": 100.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 404
+
+    def test_atualiza_vale_reaplica_alerta_quarenta_por_cento(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=1000.0)  # limite = 400
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 409
+        r2 = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02", "confirmar": True,
+        })
+        assert r2.status_code == 200
+
+    def test_bloqueia_edicao_e_exclusao_de_vale_ja_pago(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        c.put(f"/cadastro/folha-pagamento/{folha['id']}", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+            "status": "pago", "data_pagamento": "2026-02-05",
+        })
+
+        r = c.put(f"/cadastro/vales/{vale['id']}", json={
+            "pessoa_id": pessoa_id, "valor_total": 400.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 400
+
+        r2 = c.delete(f"/cadastro/vales/{vale['id']}")
+        assert r2.status_code == 400
+
+    def test_exclui_vale_reverte_desconto_na_folha_nao_paga(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        vale = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        }).json()
+        folha = c.post("/cadastro/folha-pagamento", json={
+            "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
+        }).json()
+        assert folha["valor_vale"] == 300.0
+
+        r = c.delete(f"/cadastro/vales/{vale['id']}")
+        assert r.status_code == 200
+
+        vales = c.get("/cadastro/vales").json()
+        assert not any(v["id"] == vale["id"] for v in vales)
+
+        folha2 = c.get("/cadastro/folha-pagamento").json()
+        alvo = next(f for f in folha2 if f["id"] == folha["id"])
+        assert alvo["valor_vale"] == 0.0
+        assert alvo["valor_liquido"] == 2000.0
+
+    def test_exclui_vale_inexistente_404(self, client):
+        c, engine = client
+        r = c.delete("/cadastro/vales/9999")
+        assert r.status_code == 404
 
 
 class TestCadastroSanitario:
@@ -801,11 +941,13 @@ class TestEmpreitada:
         dados = r.json()
         assert len(dados["parcelas"]) == 2
         assert all(p["status"] == "pendente" for p in dados["parcelas"])
+        assert dados["centro_custo"] == "Pecuária Leiteira"
         with Session(engine) as s:
             from fazenda.models import ContaGerencial
             contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Empreitada")).all()
             assert len(contas) == 2
             assert {c.valor_total for c in contas} == {1500.0}
+            assert all(c.centro_custo == "Pecuária Leiteira" for c in contas)
 
     def test_por_etapa_cria_etapas_editaveis(self, client):
         c, engine = client
@@ -903,6 +1045,11 @@ class TestContrato:
         dados = r.json()
         assert len(dados["parcelas"]) == 3
         assert dados["status"] == "ativo"
+        assert dados["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            contas = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Contrato")).all()
+            assert all(c.centro_custo == "Pecuária Leiteira" for c in contas)
 
     def test_sem_frequencia_cria_lembrete_recorrente_na_agenda(self, client):
         c, engine = client
@@ -978,6 +1125,11 @@ class TestDiaria:
         assert dados["valor_pago"] == 150.0
         assert dados["saldo_devedor"] == 50.0
         assert len(dados["pagamentos"]) == 1
+        assert dados["centro_custo"] == "Pecuária Leiteira"
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Diária")).first()
+            assert conta.centro_custo == "Pecuária Leiteira"
 
     def test_rejeita_valor_diaria_invalido(self, client):
         c, engine = client

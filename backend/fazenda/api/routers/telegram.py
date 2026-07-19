@@ -39,7 +39,8 @@ from fazenda.rules import telegram_fluxos as fx
 router = APIRouter(prefix="/telegram", tags=["telegram"])
 
 TG_API = "https://api.telegram.org"
-MIME_DOCUMENTO = {"application/pdf", "image/jpeg", "image/png"}
+MIME_DOCUMENTO = {"application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"}
+MIME_HEIC = {"image/heic", "image/heif"}
 
 
 # ── Infra do Telegram (chamadas à API do bot) ──────────────────────────────
@@ -282,17 +283,33 @@ def _tratar_mensagem(session: Session, msg: dict) -> None:
         nome_l = (file_name or "").lower()
         if mime in ("text/xml", "application/xml") or nome_l.endswith(".xml"):
             kind = "xml"
-        elif mime in MIME_DOCUMENTO or nome_l.endswith((".pdf", ".jpg", ".jpeg", ".png")):
+        elif mime in MIME_DOCUMENTO or nome_l.endswith((".pdf", ".jpg", ".jpeg", ".png", ".webp", ".gif")):
             # O mime_type do Telegram é preenchido pelo cliente e às vezes vem
             # ausente/genérico (ex.: app que compartilha PDF sem setar o mime
             # certo) — sem o fallback pela extensão, o arquivo era descartado
             # em silêncio e o bot respondia como se nada tivesse sido enviado.
             kind = "documento"
+        elif mime in MIME_HEIC or nome_l.endswith((".heic", ".heif")):
+            kind = "heic_nao_suportado"
     elif "photo" in msg and msg["photo"]:
         maior = msg["photo"][-1]  # a última é a de maior resolução
         file_id = maior["file_id"]
         mime = "image/jpeg"
         kind = "documento"
+
+    if file_id and kind == "heic_nao_suportado":
+        # Fotos de iPhone em HEIC/HEIF não são lidas pela IA — orientamos a
+        # enviar como "foto" (o Telegram recomprime pra JPEG no servidor,
+        # contornando o formato) em vez de anexar como arquivo.
+        if not _autorizado(chat_id):
+            _enviar(chat_id, f"🚫 Chat não liberado. Seu id é <code>{chat_id}</code> — peça ao administrador.")
+            return
+        _enviar(
+            chat_id,
+            "⚠️ Esse formato de imagem (HEIC/HEIF, comum em iPhone) não é lido diretamente. "
+            "Envie a mesma imagem como <b>foto</b> (não como arquivo/documento) que eu reconheço certinho.",
+        )
+        return
 
     if file_id and kind:
         if not _autorizado(chat_id):

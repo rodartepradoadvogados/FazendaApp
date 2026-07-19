@@ -67,7 +67,7 @@ class CompraSemenIn(BaseModel):
     # Conta gerencial (restrita a PREFIXOS_CONTA_COMPRA_SEMEN no frontend).
     codigo_conta_gerencial: str
     descricao: str | None = None
-    centro_custo: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
     tipo_documento: str | None = None
     numero_documento: str | None = None
     data_emissao: date | None = None

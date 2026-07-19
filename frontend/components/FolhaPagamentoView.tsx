@@ -4,7 +4,7 @@ import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, P
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
-  fetchVales, criarVale, ehAdmin, formatBRL,
+  fetchVales, criarVale, atualizarVale, excluirVale, ehAdmin, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
@@ -144,6 +144,20 @@ export default function FolhaPagamentoView() {
   const [fValeDe, setFValeDe] = useState("");
   const [fValeAte, setFValeAte] = useState("");
   const [fValePessoa, setFValePessoa] = useState("");
+  const [expandedValeId, setExpandedValeId] = useState<number | null>(null);
+  const [editingValeId, setEditingValeId] = useState<number | null>(null);
+  const [editValePessoaId, setEditValePessoaId] = useState("");
+  const [editValeValorTotal, setEditValeValorTotal] = useState("");
+  const [editValeFormaPagamento, setEditValeFormaPagamento] = useState("dinheiro");
+  const [editValeDataPagamento, setEditValeDataPagamento] = useState("");
+  const [editValeParcelas, setEditValeParcelas] = useState("1");
+  const [editValeCompetenciaInicio, setEditValeCompetenciaInicio] = useState("");
+  const [editValeObservacao, setEditValeObservacao] = useState("");
+  const [editValeNumeroDocumento, setEditValeNumeroDocumento] = useState("");
+  const [editValeSalvando, setEditValeSalvando] = useState(false);
+  const [editValeMsg, setEditValeMsg] = useState<string | null>(null);
+  const [excluindoValeId, setExcluindoValeId] = useState<number | null>(null);
+  const [excluirValeErro, setExcluirValeErro] = useState<string | null>(null);
 
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
@@ -194,6 +208,65 @@ export default function FolhaPagamentoView() {
     };
   }), [vales, fValeDe, fValeAte, fValePessoa]);
   const { linhasOrdenadas: valesOrdenados, coluna: valeColuna, dir: valeDir, ordenar: valeOrdenar } = useOrdenacao(valesFiltrados);
+
+  function iniciarEdicaoVale(v: any) {
+    setEditingValeId(v.id);
+    setExpandedValeId(v.id);
+    setEditValePessoaId(String(v.pessoa_id));
+    setEditValeValorTotal(String(v.valor_total));
+    setEditValeFormaPagamento(v.forma_pagamento);
+    setEditValeDataPagamento(v.data_pagamento);
+    setEditValeParcelas(String(v.parcelas));
+    setEditValeCompetenciaInicio(v.competencia_inicio);
+    setEditValeObservacao(v.observacao || "");
+    setEditValeNumeroDocumento(v.numero_documento_pagamento || "");
+    setEditValeMsg(null);
+  }
+
+  async function salvarEdicaoVale(valeId: number, confirmar = false) {
+    setEditValeMsg(null);
+    if (!editValePessoaId) { setEditValeMsg("Selecione a pessoa."); return; }
+    if (!editValeValorTotal || parseFloat(editValeValorTotal) <= 0) { setEditValeMsg("Informe o valor do vale."); return; }
+    if (!editValeParcelas || Number(editValeParcelas) < 1) { setEditValeMsg("Informe ao menos 1 parcela."); return; }
+    setEditValeSalvando(true);
+    try {
+      await atualizarVale(valeId, {
+        pessoa_id: Number(editValePessoaId), valor_total: parseFloat(editValeValorTotal), forma_pagamento: editValeFormaPagamento,
+        data_pagamento: editValeDataPagamento, parcelas: Number(editValeParcelas), competencia_inicio: editValeCompetenciaInicio,
+        observacao: editValeObservacao || undefined, numero_documento_pagamento: editValeNumeroDocumento || undefined, confirmar,
+      });
+      setEditingValeId(null);
+      setExpandedValeId(null);
+      carregarVales(); carregar(); carregarUnificada();
+    } catch (e: any) {
+      if (e.status === 409 && e.detail?.competencias_excedidas) {
+        const lista = e.detail.competencias_excedidas.map((c: any) => `${c.competencia} (R$ ${c.total.toFixed(2)})`).join(", ");
+        if (window.confirm(`${e.detail.mensagem}\n\nCompetências afetadas: ${lista}\n\nDeseja salvar mesmo assim?`)) {
+          await salvarEdicaoVale(valeId, true);
+          return;
+        }
+      } else {
+        setEditValeMsg(e.message || "Erro ao editar vale");
+      }
+    } finally {
+      setEditValeSalvando(false);
+    }
+  }
+
+  async function excluirValeHandler(v: any) {
+    if (!window.confirm("Excluir este vale? Os descontos já refletidos em folhas ainda não pagas serão revertidos.")) return;
+    setExcluirValeErro(null);
+    setExcluindoValeId(v.id);
+    try {
+      await excluirVale(v.id);
+      if (expandedValeId === v.id) setExpandedValeId(null);
+      carregarVales(); carregar(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirValeErro(e.message || "Erro ao excluir vale");
+    } finally {
+      setExcluindoValeId(null);
+    }
+  }
 
   useEffect(() => {
     if (inssManual) return;
@@ -373,6 +446,10 @@ export default function FolhaPagamentoView() {
           <div><label style={labelStyleLote}>Outros descontos (R$)</label>
             <input type="number" inputMode="decimal" style={selStyleLote} value={descontos} onChange={(e) => setDescontos(e.target.value)} /></div>
         </div>
+        <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.5rem", marginBottom: "0.75rem" }}>
+          Competência = mês trabalhado. O pagamento (conta a pagar) é lançado no dia 5 do mês seguinte
+          {recorrente ? " (ou no dia escolhido abaixo)" : ""}.
+        </p>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
           <CampoRetencao
             label="INSS" percentual={percentualInss} valor={valorInss}
@@ -396,7 +473,7 @@ export default function FolhaPagamentoView() {
             <label htmlFor="folha-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente (lançar em Contas a Pagar todo mês)</label>
           </div>
           {recorrente && (
-            <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+            <div><label style={labelStyleLote}>Dia de vencimento no mês seguinte (1–28)</label>
               <input type="number" min={1} max={28} style={selStyleLote} value={diaVencimento} onChange={(e) => setDiaVencimento(e.target.value)} /></div>
           )}
         </div>
@@ -667,7 +744,7 @@ export default function FolhaPagamentoView() {
                               <label htmlFor="folha-edit-recorrente" style={{ fontSize: "0.8rem" }}>Recorrente</label>
                             </div>
                             {editRecorrente && (
-                              <div><label style={labelStyleLote}>Dia de vencimento (1–28)</label>
+                              <div><label style={labelStyleLote}>Dia de vencimento no mês seguinte (1–28)</label>
                                 <input type="number" min={1} max={28} style={selStyleLote} value={editDiaVencimento} onChange={(e) => setEditDiaVencimento(e.target.value)} /></div>
                             )}
                           </div>
@@ -704,9 +781,11 @@ export default function FolhaPagamentoView() {
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
         </div>
+        {excluirValeErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeErro}</p>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr>
+              <th style={{ width: "1.5rem" }} />
               <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
               <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
               <ThOrdenavel label="Valor bruto" campo="valor_total" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
@@ -715,10 +794,13 @@ export default function FolhaPagamentoView() {
               <ThOrdenavel label="Status" campo="status_desconto" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
               <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
               <th>Documento</th>
+              <th>Ações</th>
             </tr></thead>
             <tbody>
               {valesOrdenados.map((v: any) => (
-                <tr key={v.id}>
+                <Fragment key={v.id}>
+                <tr style={{ cursor: "pointer" }} onClick={() => setExpandedValeId(expandedValeId === v.id ? null : v.id)}>
+                  <td>{expandedValeId === v.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
                   <td style={{ fontSize: "0.78rem" }}>{v.data_pagamento ? v.data_pagamento.split("-").reverse().join("/") : "—"}</td>
                   <td style={{ fontSize: "0.82rem" }}>{v.pessoa_nome}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_total)}</td>
@@ -727,9 +809,77 @@ export default function FolhaPagamentoView() {
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.status_desconto}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor_pago)}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.numero_documento_pagamento || "—"}</td>
+                  <td>
+                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                      disabled={excluindoValeId === v.id}
+                      onClick={(e) => { e.stopPropagation(); excluirValeHandler(v); }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
                 </tr>
+                {expandedValeId === v.id && (
+                  <tr>
+                    <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      {editingValeId === v.id ? (
+                        <div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Pessoa</label>
+                              <select style={selStyleLote} value={editValePessoaId} onChange={(e) => setEditValePessoaId(e.target.value)}>
+                                {pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+                              </select></div>
+                            <div><label style={labelStyleLote}>Valor total (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeValorTotal} onChange={(e) => setEditValeValorTotal(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Forma de pagamento</label>
+                              <select style={selStyleLote} value={editValeFormaPagamento} onChange={(e) => setEditValeFormaPagamento(e.target.value)}>
+                                {FORMAS_VALE.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                              </select></div>
+                            <div><label style={labelStyleLote}>Data do pagamento</label>
+                              <input type="date" style={selStyleLote} value={editValeDataPagamento} onChange={(e) => setEditValeDataPagamento(e.target.value)} /></div>
+                          </div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Parcelas do desconto</label>
+                              <input type="number" min={1} style={selStyleLote} value={editValeParcelas} onChange={(e) => setEditValeParcelas(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Data do primeiro desconto</label>
+                              <input type="month" style={selStyleLote} value={editValeCompetenciaInicio} onChange={(e) => setEditValeCompetenciaInicio(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Nº do documento do pagamento</label>
+                              <input style={selStyleLote} value={editValeNumeroDocumento} onChange={(e) => setEditValeNumeroDocumento(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Observação</label>
+                              <input style={selStyleLote} value={editValeObservacao} onChange={(e) => setEditValeObservacao(e.target.value)} /></div>
+                          </div>
+                          {editValeMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeMsg}</p>}
+                          <div style={{ display: "flex", gap: "0.5rem" }}>
+                            <button className="btn-primary" disabled={editValeSalvando} onClick={() => salvarEdicaoVale(v.id)}>
+                              <Check size={14} /> {editValeSalvando ? "Salvando…" : "Salvar"}
+                            </button>
+                            <button className="btn-ghost" onClick={() => { setEditingValeId(null); setExpandedValeId(null); }}>Cancelar</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          <table className="fazenda-table" style={{ marginBottom: "0.6rem" }}>
+                            <thead><tr><th>Competência</th><th style={{ textAlign: "right" }}>Valor</th><th>Situação</th></tr></thead>
+                            <tbody>
+                              {(v.parcelas_detalhe || []).map((p: any) => (
+                                <tr key={p.id}>
+                                  <td style={{ fontSize: "0.78rem" }}>{mesCompLabel(p.competencia)}</td>
+                                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(p.valor)}</td>
+                                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{p.aplicada ? "Aplicada na folha" : "Pendente"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          {v.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Observação: {v.observacao}</p>}
+                          <button className="btn-ghost" onClick={() => iniciarEdicaoVale(v)}>
+                            <Pencil size={12} /> Editar vale
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
               ))}
-              {vales && !valesOrdenados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
+              {vales && !valesOrdenados.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>

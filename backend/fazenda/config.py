@@ -15,6 +15,10 @@ class Settings(BaseSettings):
     telegram_allowed_chat_ids: str = ""     # ids de chat liberados, separados por vírgula
     public_base_url: str = ""               # ex.: https://fazendaapp-production.up.railway.app
 
+    # Envio de e-mail (recibo de lançamento financeiro, via Resend). Vazio = desligado.
+    resend_api_key: str = ""
+    email_remetente: str = "recibos@fazendaestreito.com"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

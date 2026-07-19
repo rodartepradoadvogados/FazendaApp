@@ -401,7 +401,8 @@ def _criar_lancamento_financeiro(tipo: str, dados: dict, session: Session) -> di
     valor_total = sum(i.valor_total for i in itens)
 
     lanc = LancamentoIn(
-        tipo=tipo, itens=itens, fornecedor_cliente=dados.get("fornecedor_cliente"),
+        tipo=tipo, itens=itens, centro_custo=dados.get("centro_custo") or "Pecuária Leiteira",
+        fornecedor_cliente=dados.get("fornecedor_cliente"),
         numero_documento=dados.get("numero_documento"), tipo_documento=tipo_documento,
         data_emissao=data_emissao, data_vencimento=data_emissao or data_pagamento,
         parcelas=parcelas,

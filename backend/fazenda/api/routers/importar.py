@@ -317,6 +317,7 @@ async def importar_financeiro(file: UploadFile, session: Session = Depends(get_s
             dados = LancamentoIn(
                 tipo=tipo,
                 itens=[ItemIn(produto=descricao, valor_total=valor)],
+                centro_custo=row.get("centro_custo", "").strip() or "Pecuária Leiteira",
                 fornecedor_cliente=row.get("fornecedor_cliente", "").strip() or None,
                 data_emissao=data,
                 data_competencia=data,

@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -15,10 +15,11 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, LancamentoAnexo, LancamentoItem,
-    MovimentoEstoque, Patrimonio, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
+    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, Fornecedor, LancamentoAnexo, LancamentoItem,
+    MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
@@ -353,7 +354,7 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "desconto_acrescimo": c.desconto_acrescimo,
             "desconto_nota": c.desconto_nota,
             "acrescimo_nota": c.acrescimo_nota,
-            "centro_custo": c.centro_custo or "(sem centro)",
+            "centro_custo": c.centro_custo or "Sem centro de custo",
             "codigo_conta": (c.codigo_conta or "").split(".")[0] or "(sem conta)",
             "conta_completa": c.codigo_conta or "",
             "descricao": c.descricao or "",
@@ -883,7 +884,11 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         numero_lancamento=numero_lancamento,
         codigo_conta=codigo_resumo,
         descricao=descricao_resumo,
-        centro_custo=mapear_centro_custo(dados.centro_custo),
+        # Centro de custo é obrigatório em todo lançamento — quando não vier
+        # preenchido (ex.: CSV/robô sem esse campo), assume "Pecuária Leiteira"
+        # (perfil típico da fazenda) em vez de deixar a conta sem centro,
+        # sempre editável depois em Financeiro.
+        centro_custo=mapear_centro_custo(dados.centro_custo) or "Pecuária Leiteira",
         fornecedor_cliente=dados.fornecedor_cliente,
         responsavel=dados.responsavel,
         tipo_documento=dados.tipo_documento,
@@ -1250,6 +1255,58 @@ def excluir_anexo(anexo_id: int, session: Session = Depends(get_session)) -> dic
     session.delete(anexo)
     session.commit()
     return {"excluido": True}
+
+
+@router.get("/lancamentos/{numero_lancamento}/destinatario-recibo")
+def destinatario_recibo(numero_lancamento: str, session: Session = Depends(get_session)) -> dict:
+    """
+    Resolve o destinatário contextual do recibo a partir do lançamento: folha
+    de pagamento busca o e-mail em Pessoa; os demais tipos buscam em
+    Fornecedor (compra/despesa) ou Cliente (venda/receita) — ambos cadastrados
+    na mesma tabela Fornecedor, distinguidos pelo campo `tipo`. Como
+    `fornecedor_cliente` é só o nome (texto), a busca é por nome; se houver
+    mais de um cadastro com o mesmo nome ou nenhum, devolve email vazio — o
+    campo no modal continua editável para o usuário preencher à mão.
+    """
+    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    if not conta:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    nome = (conta.fornecedor_cliente or "").strip()
+    if not nome:
+        return {"nome": None, "email": None}
+    if conta.tipo_documento == "Folha de pagamento":
+        pessoa = session.exec(select(Pessoa).where(Pessoa.nome == nome)).first()
+        return {"nome": nome, "email": pessoa.email if pessoa else None}
+    fornecedor = session.exec(select(Fornecedor).where(Fornecedor.nome == nome)).first()
+    return {"nome": nome, "email": fornecedor.email if fornecedor else None}
+
+
+@router.post("/lancamentos/{numero_lancamento}/recibo/enviar")
+async def enviar_recibo(
+    numero_lancamento: str, destinatario: str = Form(...), arquivo: UploadFile = None,
+    session: Session = Depends(get_session),
+) -> dict:
+    """Envia por e-mail o PDF do recibo (gerado no navegador) para o
+    destinatário informado — editável no modal, independente do que a
+    resolução contextual sugeriu."""
+    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    if not conta:
+        raise HTTPException(status_code=404, detail="Lançamento não encontrado")
+    if not (destinatario or "").strip():
+        raise HTTPException(status_code=400, detail="Informe o e-mail do destinatário")
+    if not arquivo:
+        raise HTTPException(status_code=400, detail="Anexe o PDF do recibo")
+    conteudo = await arquivo.read()
+    corpo_html = (
+        f"<p>Segue em anexo o recibo do lançamento <b>{numero_lancamento}</b> "
+        f"({conta.fornecedor_cliente or '—'}, R$ {conta.valor_total or 0:.2f}).</p>"
+        "<p>Fazenda Estreito Ponte de Pedra</p>"
+    )
+    try:
+        enviar_email(destinatario.strip(), f"Recibo — {numero_lancamento}", corpo_html, arquivo.filename or "recibo.pdf", conteudo)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"enviado": True}
 
 
 @router.get("/contas-a-pagar")
