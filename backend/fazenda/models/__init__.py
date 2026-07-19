@@ -2194,6 +2194,20 @@ class LoginAcesso(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class BackupAutomatico(SQLModel, table=True):
+    """Registro de cada rodada do backup automático semanal (ver
+    fazenda.rules.backup) — guarda quando rodou e se deu certo, para decidir
+    se já é hora da próxima rodada e para o erro não se perder caso o envio
+    do e-mail falhe (ex.: RESEND_API_KEY não configurada)."""
+
+    __tablename__ = "backup_automatico"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    executado_em: datetime = Field(default_factory=datetime.utcnow)
+    sucesso: bool = True
+    erro: Optional[str] = None
+
+
 # ---------------------------------------------------------------------------
 # Baixa de animal (Rebanho > Baixar animal) — morte/descarte, distinto da
 # movimentação entre lotes. Ao registrar, o animal é marcado inativo.

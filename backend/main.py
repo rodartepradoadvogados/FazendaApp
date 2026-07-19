@@ -2,6 +2,8 @@
 Aplicação FastAPI — Fazenda Estreito Ponte de Pedra
 Ponto de entrada principal.
 """
+import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI
@@ -68,6 +70,23 @@ from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_20260
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
+from fazenda.rules.backup import executar_backup_se_necessario
+
+# Confere a cada 6h se já passou 1 semana desde o último backup automático
+# bem-sucedido (ver fazenda.rules.backup) — não uma tarefa agendada em
+# horário fixo, então sobrevive normalmente a reinícios/deploys sem duplicar
+# nem perder execuções (o estado de "quando foi o último" fica no banco).
+_INTERVALO_VERIFICACAO_BACKUP_SEGUNDOS = 6 * 3600
+
+
+async def _loop_backup_automatico() -> None:
+    while True:
+        try:
+            with Session(engine) as session:
+                executar_backup_se_necessario(session)
+        except Exception:
+            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+        await asyncio.sleep(_INTERVALO_VERIFICACAO_BACKUP_SEGUNDOS)
 
 
 @asynccontextmanager
@@ -160,7 +179,11 @@ async def lifespan(app: FastAPI):
         backfill_estoque_semen_generico(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
+    tarefa_backup = asyncio.create_task(_loop_backup_automatico())
     yield
+    tarefa_backup.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await tarefa_backup
 
 
 app = FastAPI(
