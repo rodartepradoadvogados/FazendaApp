@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { MessageSquarePlus, Mail, ClipboardCheck, Send, CheckCircle2, ArrowLeft } from "lucide-react";
+import { MessageSquarePlus, Mail, ClipboardCheck, Send, CheckCircle2, ArrowLeft, DownloadCloud } from "lucide-react";
 import { TabBar } from "@/components/ui";
 import { PortalMencaoInput } from "@/components/PortalMencaoInput";
 import {
@@ -8,7 +8,8 @@ import {
   fetchPortalPermissoes, fetchPortalDestinatarios, fetchPortalMensagensPendentes, fetchPortalRelatoriosDisponiveis,
   enviarPortalMensagem, marcarPortalMensagemLida, resolverPortalMensagem, responderPortalMensagem,
   enviarPortalEmail, delegarPortalTarefa,
-  type PortalDestinatario, type PortalMensagem,
+  fetchPortalOpcoesExportacao, solicitarPortalExportacao,
+  type PortalDestinatario, type PortalMensagem, type PortalOpcaoExportacao,
 } from "@/lib/api";
 
 type SubAba = "comunicacao" | "exportar";
@@ -77,14 +78,7 @@ export function PortalView() {
         )
       )}
 
-      {subAba === "exportar" && (
-        <div className="card">
-          <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>
-            Exportação em massa (ficha do animal, reprodutivo, produção, estoque, aplicações e relatórios financeiros)
-            em desenvolvimento — envio por e-mail em formato de carrinho de seleção.
-          </p>
-        </div>
-      )}
+      {subAba === "exportar" && <ExportarCarrinho />}
     </div>
   );
 }
@@ -323,3 +317,80 @@ const selectStyle: React.CSSProperties = {
   border: "1px solid var(--border)", borderRadius: 6, padding: "0.4rem 0.5rem",
   background: "var(--surface-2)", color: "var(--text)", fontSize: "0.85rem", width: "100%",
 };
+
+// Carrinho de exportação: cada item marcado é uma tabela (ou relatório) que
+// vai para o ZIP; itens com tem_periodo ganham um filtro de/até opcional —
+// mesma lógica dos filtros do local de origem do dado.
+function ExportarCarrinho() {
+  const [opcoes, setOpcoes] = useState<PortalOpcaoExportacao[]>([]);
+  const [selecionados, setSelecionados] = useState<Record<string, boolean>>({});
+  const [periodos, setPeriodos] = useState<Record<string, { data_inicio: string; data_fim: string }>>({});
+  const [enviando, setEnviando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+  const [aviso, setAviso] = useState<string | null>(null);
+
+  useEffect(() => { fetchPortalOpcoesExportacao().then(setOpcoes).catch(() => {}); }, []);
+
+  const marcados = useMemo(() => opcoes.filter((o) => selecionados[o.chave]), [opcoes, selecionados]);
+
+  function alternar(chave: string) {
+    setSelecionados((s) => ({ ...s, [chave]: !s[chave] }));
+  }
+  function mudarPeriodo(chave: string, campo: "data_inicio" | "data_fim", valor: string) {
+    setPeriodos((p) => {
+      const atual = p[chave] || { data_inicio: "", data_fim: "" };
+      return { ...p, [chave]: { ...atual, [campo]: valor } };
+    });
+  }
+
+  async function enviar() {
+    setErro(null); setAviso(null);
+    if (!marcados.length) return setErro("Marque ao menos um item do carrinho.");
+    setEnviando(true);
+    try {
+      const itens = marcados.map((o) => ({
+        chave: o.chave,
+        ...(o.tem_periodo ? { data_inicio: periodos[o.chave]?.data_inicio || undefined, data_fim: periodos[o.chave]?.data_fim || undefined } : {}),
+      }));
+      const r = await solicitarPortalExportacao({ itens });
+      setAviso(r.mensagem);
+    } catch (e: any) { setErro(e.message || "Erro ao solicitar exportação."); } finally { setEnviando(false); }
+  }
+
+  return (
+    <div className="card" style={{ maxWidth: 640, display: "flex", flexDirection: "column", gap: "0.75rem" }}>
+      <div className="card-header">Exportar dados do sistema</div>
+      <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", margin: 0 }}>
+        Marque os bancos de dados que quer exportar — funciona como um backup: os arquivos saem em CSV, um por item, dentro de um único ZIP.
+      </p>
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+        {opcoes.map((o) => {
+          const on = !!selecionados[o.chave];
+          return (
+            <div key={o.chave} style={{ border: "1px solid var(--border)", borderRadius: 8, padding: "0.6rem 0.75rem" }}>
+              <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.85rem", cursor: "pointer" }}>
+                <input type="checkbox" checked={on} onChange={() => alternar(o.chave)} />
+                {o.rotulo}
+              </label>
+              {on && o.tem_periodo && (
+                <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.5rem", paddingLeft: "1.6rem" }}>
+                  <Campo label="De (opcional)">
+                    <input type="date" value={periodos[o.chave]?.data_inicio || ""} onChange={(e) => mudarPeriodo(o.chave, "data_inicio", e.target.value)} style={selectStyle} />
+                  </Campo>
+                  <Campo label="Até (opcional)">
+                    <input type="date" value={periodos[o.chave]?.data_fim || ""} onChange={(e) => mudarPeriodo(o.chave, "data_fim", e.target.value)} style={selectStyle} />
+                  </Campo>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+      {aviso && <p style={{ color: "var(--verde-light, #16a34a)", fontSize: "0.82rem" }}>{aviso}</p>}
+      <button className="btn-primary" disabled={enviando || !marcados.length} onClick={enviar} style={{ alignSelf: "flex-start" }}>
+        <DownloadCloud size={14} /> Enviar ({marcados.length})
+      </button>
+    </div>
+  );
+}

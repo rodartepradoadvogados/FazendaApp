@@ -2954,3 +2954,8 @@ export const enviarPortalEmail = (d: {
 
 export const delegarPortalTarefa = (d: { destinatarios_usuario_id: number[]; corpo: string; data_evento?: string }) =>
   _rSend(`/portal/tarefas`, "POST", d);
+
+export type PortalOpcaoExportacao = { chave: string; rotulo: string; tem_periodo: boolean };
+export const fetchPortalOpcoesExportacao = (): Promise<PortalOpcaoExportacao[]> => _rGet(`/portal/exportar/opcoes`);
+export const solicitarPortalExportacao = (d: { itens: { chave: string; data_inicio?: string; data_fim?: string }[] }) =>
+  _rSend(`/portal/exportar`, "POST", d);

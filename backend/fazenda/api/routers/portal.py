@@ -15,13 +15,16 @@ import zipfile
 from datetime import date, datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import get_current_user
-from fazenda.database import get_session
-from fazenda.models import AgendaManual, Pessoa, PortalMensagem, Usuario
+from fazenda.database import engine, get_session
+from fazenda.models import (
+    AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque,
+    Parto, Pessoa, PortalMensagem, Sanidade, Servico, Usuario, VendaAnimal,
+)
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/portal", tags=["portal"])
@@ -339,3 +342,119 @@ def delegar_tarefa(dados: TarefaIn, user: Usuario = Depends(get_current_user), s
         criadas.append(tarefa)
     session.commit()
     return {"criadas": len(criadas)}
+
+
+# ---------------------------------------------------------------------------
+# Exportar (admin only) — carrinho de exportação de bancos completos por
+# e-mail, funcionando como uma espécie de backup/migração. Cada item é uma
+# tabela bruta (ficha do animal, reprodutivo, produção, estoque, aplicações,
+# compra/venda de animal, lançamentos financeiros) ou um dos 3 relatórios
+# financeiros indicadores já existentes (DRE, RMCA, custo por litro de leite)
+# — os relatórios "Fluxo de caixa"/"Livro caixa"/"Extrato completo" do site
+# são apenas visões sobre os mesmos lançamentos financeiros já cobertos pelo
+# item "financeiro_lancamentos" (ContaGerencial), então não têm item próprio.
+# Roda em segundo plano (BackgroundTasks) — a resposta ao clique é imediata,
+# o e-mail com o ZIP chega depois, sem travar a tela do administrador.
+# ---------------------------------------------------------------------------
+EXPORT_CATALOG: dict[str, dict] = {
+    "animal_ficha": {"label": "Ficha completa do animal", "model": Animal, "campo_data": None},
+    "reprodutivo_servicos": {"label": "Reprodutivo — Serviços/IA/diagnósticos", "model": Servico, "campo_data": "data_servico"},
+    "reprodutivo_partos": {"label": "Reprodutivo — Partos", "model": Parto, "campo_data": "data_parto"},
+    "producao_controle_leiteiro": {"label": "Produção — Controle leiteiro", "model": ControleLeiteiro, "campo_data": "data_controle"},
+    "estoque_itens": {"label": "Estoque — Itens cadastrados", "model": Estoque, "campo_data": None},
+    "estoque_movimentos": {"label": "Estoque — Movimentações", "model": MovimentoEstoque, "campo_data": "data_movimento"},
+    "sanidade_aplicacoes": {"label": "Aplicações sanitárias", "model": Sanidade, "campo_data": "data_aplicacao"},
+    "compra_animal": {"label": "Compra de animais", "model": CompraAnimal, "campo_data": "data_compra"},
+    "venda_animal": {"label": "Venda de animais", "model": VendaAnimal, "campo_data": "data_venda"},
+    "financeiro_lancamentos": {"label": "Financeiro — todos os lançamentos (livro caixa/extrato/fluxo de caixa)", "model": ContaGerencial, "campo_data": "data_competencia"},
+}
+
+
+def _linhas_para_csv(linhas: list[dict]) -> str:
+    if not linhas:
+        return ""
+    colunas = list(linhas[0].keys())
+    buffer = io.StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=colunas, extrasaction="ignore")
+    writer.writeheader()
+    for linha in linhas:
+        writer.writerow({c: linha.get(c, "") for c in colunas})
+    return buffer.getvalue()
+
+
+def _executar_exportacao(itens: list[dict], destinatario_email: str) -> None:
+    with Session(engine) as session:
+        buffer_zip = io.BytesIO()
+        with zipfile.ZipFile(buffer_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            for item in itens:
+                chave = item["chave"]
+                if chave in EXPORT_CATALOG:
+                    cfg = EXPORT_CATALOG[chave]
+                    query = select(cfg["model"])
+                    if cfg["campo_data"] and item.get("data_inicio") and item.get("data_fim"):
+                        coluna = getattr(cfg["model"], cfg["campo_data"])
+                        query = query.where(coluna >= item["data_inicio"], coluna <= item["data_fim"])
+                    linhas = [row.model_dump(mode="json") for row in session.exec(query).all()]
+                    zf.writestr(f"{chave}.csv", _linhas_para_csv(linhas).encode("utf-8-sig"))
+                elif chave in RELATORIOS_DISPONIVEIS and item.get("data_inicio") and item.get("data_fim"):
+                    from fazenda.api.routers.financeiro import custo_litro_leite, dre, rmca
+
+                    if chave == "dre":
+                        resultado = dre(data_inicio=item["data_inicio"], data_fim=item["data_fim"], centro_custo=None, regime="competencia", session=session)
+                    elif chave == "rmca":
+                        resultado = rmca(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                    else:
+                        resultado = custo_litro_leite(data_inicio=item["data_inicio"], data_fim=item["data_fim"], session=session)
+                    zf.writestr(f"{chave}.csv", _dict_para_csv(resultado).encode("utf-8-sig"))
+
+        enviar_email(
+            destinatario_email,
+            "Exportação de dados — Portal",
+            "<p>Segue em anexo o arquivo ZIP com os dados exportados do sistema.</p>",
+            "exportacao_portal.zip",
+            buffer_zip.getvalue(),
+        )
+
+
+@router.get("/exportar/opcoes")
+def opcoes_exportacao(user: Usuario = Depends(get_current_user)) -> list[dict]:
+    if user.papel != "admin":
+        raise HTTPException(403, "Só o administrador tem acesso à exportação")
+    opcoes = [
+        {"chave": chave, "rotulo": cfg["label"], "tem_periodo": cfg["campo_data"] is not None}
+        for chave, cfg in EXPORT_CATALOG.items()
+    ]
+    opcoes += [
+        {"chave": chave, "rotulo": rotulo, "tem_periodo": True}
+        for chave, rotulo in RELATORIOS_DISPONIVEIS.items()
+    ]
+    return opcoes
+
+
+class ItemExportacaoIn(BaseModel):
+    chave: str
+    data_inicio: Optional[date] = None
+    data_fim: Optional[date] = None
+
+
+class ExportarIn(BaseModel):
+    itens: list[ItemExportacaoIn]
+
+
+@router.post("/exportar")
+def solicitar_exportacao(dados: ExportarIn, background_tasks: BackgroundTasks, user: Usuario = Depends(get_current_user)) -> dict:
+    if user.papel != "admin":
+        raise HTTPException(403, "Só o administrador tem acesso à exportação")
+    if not user.email:
+        raise HTTPException(400, "Cadastre um e-mail para o seu usuário antes de exportar")
+    if not dados.itens:
+        raise HTTPException(400, "Selecione ao menos um item para exportar")
+
+    chaves_validas = set(EXPORT_CATALOG) | set(RELATORIOS_DISPONIVEIS)
+    for item in dados.itens:
+        if item.chave not in chaves_validas:
+            raise HTTPException(400, f"Item inválido: {item.chave}")
+
+    itens = [item.model_dump() for item in dados.itens]
+    background_tasks.add_task(_executar_exportacao, itens, user.email)
+    return {"mensagem": f"Em breve o resultado será enviado para {user.email}."}
