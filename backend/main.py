@@ -16,6 +16,7 @@ from fazenda.api.routers import (
     animais,
     aprovacoes,
     assistente,
+    auditoria,
     auth,
     baixas,
     cadastro,
@@ -238,6 +239,7 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 app.include_router(exclusoes.router, dependencies=_protegido)
 app.include_router(notificacoes.router, dependencies=_protegido)
 app.include_router(portal.router, dependencies=_protegido)
+app.include_router(auditoria.router, dependencies=_protegido)
 # Telegram: webhook é público (o Telegram chama sem login; a segurança é o
 # segredo do cabeçalho + a whitelist de chats liberados).
 app.include_router(telegram.router)

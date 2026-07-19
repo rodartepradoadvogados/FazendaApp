@@ -13,7 +13,7 @@ from datetime import datetime
 
 from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_admin, exigir_dono, get_current_user, hash_senha, verificar_senha
 from fazenda.database import get_session
-from fazenda.models import Pessoa, Usuario
+from fazenda.models import LoginAcesso, Pessoa, Usuario
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -82,6 +82,7 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos")
     user.ultimo_login = datetime.utcnow()
     session.add(user)
+    session.add(LoginAcesso(usuario_id=user.id, criado_em=user.ultimo_login))
     session.commit()
     return {"token": criar_token(user.username), "usuario": _publico(user, session)}
 
@@ -98,13 +99,22 @@ def listar_usuarios(_: Usuario = Depends(exigir_admin), session: Session = Depen
 
 @router.get("/usuarios/acessos")
 def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono)."""
+    """Relatório de últimos acessos — restrito ao proprietário (ver exigir_dono).
+    Traz os 3 logins mais recentes de cada usuário (histórico completo em
+    LoginAcesso; Usuario.ultimo_login guarda só o mais recente, mantido por
+    compatibilidade com o resto do sistema)."""
     usuarios = session.exec(select(Usuario)).all()
-    return [
-        {"id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel, "ativo": u.ativo,
-         "ultimo_login": u.ultimo_login.isoformat() if u.ultimo_login else None}
-        for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True)
-    ]
+    resultado = []
+    for u in sorted(usuarios, key=lambda u: (u.ultimo_login is None, u.ultimo_login or datetime.min), reverse=True):
+        ultimos = session.exec(
+            select(LoginAcesso).where(LoginAcesso.usuario_id == u.id).order_by(LoginAcesso.criado_em.desc()).limit(3)
+        ).all()
+        resultado.append({
+            "id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel, "ativo": u.ativo,
+            "ultimo_login": u.ultimo_login.isoformat() if u.ultimo_login else None,
+            "ultimos_acessos": [a.criado_em.isoformat() for a in ultimos],
+        })
+    return resultado
 
 
 @router.get("/modulos")

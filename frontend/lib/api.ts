@@ -50,10 +50,29 @@ export async function fetchUsuarios() {
   if (!res.ok) throw new Error(`Usuários error: ${res.status}`);
   return res.json();
 }
-export type UsuarioAcesso = { id: number; username: string; nome: string | null; papel: string; ativo: boolean; ultimo_login: string | null };
+export type UsuarioAcesso = { id: number; username: string; nome: string | null; papel: string; ativo: boolean; ultimo_login: string | null; ultimos_acessos: string[] };
 export async function fetchAcessos(): Promise<UsuarioAcesso[]> {
   const res = await authFetch(`${API}/auth/usuarios/acessos`);
   if (!res.ok) throw new Error(`Acessos error: ${res.status}`);
+  return res.json();
+}
+
+// ── Auditoria de atividade (lançamentos por usuário) — só o proprietário, ver ehDono() ──
+export type AuditoriaTipo = { chave: string; label: string };
+export type AuditoriaUsuario = { id: number; username: string; nome: string | null; ativo: boolean };
+export type AuditoriaItem = { chave: string; label: string; id: number; data: string | null; resumo: string };
+export async function fetchAuditoriaOpcoes(): Promise<{ tipos: AuditoriaTipo[]; usuarios: AuditoriaUsuario[] }> {
+  const res = await authFetch(`${API}/auditoria/opcoes`);
+  if (!res.ok) throw new Error(`Auditoria opções error: ${res.status}`);
+  return res.json();
+}
+export async function fetchAuditoriaAtividades(params: { usuario_id: number; data_inicio?: string; data_fim?: string; chaves?: string[] }): Promise<{ usuario: AuditoriaUsuario; total: number; itens: AuditoriaItem[] }> {
+  const qs = new URLSearchParams({ usuario_id: String(params.usuario_id) });
+  if (params.data_inicio) qs.set("data_inicio", params.data_inicio);
+  if (params.data_fim) qs.set("data_fim", params.data_fim);
+  if (params.chaves && params.chaves.length) qs.set("chaves", params.chaves.join(","));
+  const res = await authFetch(`${API}/auditoria/atividades?${qs}`);
+  if (!res.ok) throw new Error(`Auditoria atividades error: ${res.status}`);
   return res.json();
 }
 export async function criarUsuario(dados: { username: string; senha: string; pessoa_id: number; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean }) {
