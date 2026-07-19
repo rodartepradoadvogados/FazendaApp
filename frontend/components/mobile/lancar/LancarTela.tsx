@@ -3,7 +3,7 @@
 // "fixa" um animal num chip; seis blocos grandes que abrem sub-telas com
 // mini-formulários. Todo envio passa por enviarOuEnfileirar (offline-first).
 import { useEffect, useState } from "react";
-import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes } from "lucide-react";
+import { Activity, Milk, Syringe, Wheat, ArrowLeftRight, Skull, Search, X, ChevronRight, Landmark, Boxes, Trash2 } from "lucide-react";
 import { MobTitulo, MobBloco, MobVoltar } from "@/components/mobile/ui";
 import { fetchAnimais, podeModulo } from "@/lib/api";
 import { type Animal, useCache, filtrarAnimais, rotuloAnimal } from "./comum";
@@ -15,8 +15,9 @@ import Movimentar from "@/components/mobile/rebanho/Movimentar";
 import Baixar from "@/components/mobile/rebanho/Baixar";
 import FormFinanceiroApp from "./FormFinanceiroApp";
 import BalancoEstoque from "./BalancoEstoque";
+import { FormExclusao } from "@/components/FormExclusao";
 
-type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar" | "financeiro" | "estoque";
+type Tela = "reprodutivo" | "producao" | "sanidade" | "alimentacao" | "movimentar" | "baixar" | "financeiro" | "estoque" | "exclusao";
 
 const TITULOS: Record<Tela, string> = {
   reprodutivo: "Reprodutivo",
@@ -27,6 +28,7 @@ const TITULOS: Record<Tela, string> = {
   baixar: "Baixar animal",
   financeiro: "Financeiro",
   estoque: "Balanço de estoque",
+  exclusao: "Excluir lançamento",
 };
 
 export function LancarTela() {
@@ -59,6 +61,11 @@ export function LancarTela() {
             onIrParaFinanceiro={(t) => { setTipoFinanceiroInicial(t); setTela("financeiro"); }}
           />
         )}
+        {tela === "exclusao" && (
+          <div className="mob-form-embutido">
+            <FormExclusao />
+          </div>
+        )}
       </div>
     );
   }
@@ -85,6 +92,7 @@ export function LancarTela() {
         {montado && podeModulo("estoque") && (
           <MobBloco icone={<Boxes size={24} />} label="Balanço de estoque" cor="var(--mob-dourado)" onClick={() => setTela("estoque")} />
         )}
+        <MobBloco icone={<Trash2 size={24} />} label="Excluir lançamento" cor="var(--mob-vermelho)" onClick={() => setTela("exclusao")} />
       </div>
     </div>
   );
