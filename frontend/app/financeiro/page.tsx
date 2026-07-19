@@ -18,6 +18,7 @@ import {
   ComposedChart, Bar, Line, LineChart, BarChart, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend, Cell, CartesianGrid,
 } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -195,6 +196,7 @@ export default function FinanceiroPage() {
   // Pagamento/Recebimento vindo da lista de Contas a pagar/receber ou da Agenda.
   const [notaAlvoRef, setNotaAlvoRef] = useState<string | null>(null);
   const [editando, setEditando] = useState<Lanc | null>(null);
+  const [recibo, setRecibo] = useState<Lanc | null>(null);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const [visaoFluxo, setVisaoFluxo] = useState<"mensal" | "diario">("mensal");
   // Opções de fornecedor/cliente e produto/serviço para os filtros dos relatórios.
@@ -518,7 +520,8 @@ export default function FinanceiroPage() {
         {CONTAS_IDS.has(rel) ? (
           <TabelaContas key={rel} rel={rel} itens={filtrados} planoContas={planoContas}
             onTratar={(l) => { setRel(l.tipo === "receita" ? "recebimento" : "pagamento"); setNotaAlvoRef(l.numero_lancamento || l.numero_documento || null); }}
-            onEditar={(l) => setEditando(l)} />
+            onEditar={(l) => setEditando(l)}
+            onRecibo={(l) => setRecibo(l)} />
         ) : <>
         {/* Indicadores consolidados */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -797,6 +800,7 @@ export default function FinanceiroPage() {
             onSalvo={() => { setEditando(null); recarregar(); }} />
         </Modal>
       )}
+      {recibo && <ReciboModal lanc={recibo} onClose={() => setRecibo(null)} />}
     </div>
   );
 }
@@ -1463,7 +1467,7 @@ function FormEditarLancamento({ lanc, centros, planoContas, produtos, onSalvo, o
   );
 }
 
-function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void }) {
+function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }: { rel: Rel; itens: Lanc[]; planoContas: ContaPlano[]; onTratar: (l: Lanc) => void; onEditar: (l: Lanc) => void; onRecibo: (l: Lanc) => void }) {
   const admin = ehAdmin();
   const emAberto = rel === "a_pagar" || rel === "a_receber";
   const hoje = new Date().toISOString().slice(0, 10);
@@ -1606,6 +1610,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar }: { rel: Re
                     <td style={{ whiteSpace: "nowrap", textAlign: "right" }}>
                       <button className="btn-ghost" title="Editar este lançamento (valor, datas, fornecedor, conta…)" style={{ fontSize: "0.72rem" }} onClick={() => onEditar(r)}><Pencil size={12} /> Editar</button>
                       {emAberto && <button className="btn-ghost" title="Tratar a baixa desta nota (data, conta, forma e comprovante)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onTratar(r)}>Tratar</button>}
+                      <button className="btn-ghost" title="Emitir recibo deste lançamento (salvar PDF ou enviar por e-mail)" style={{ fontSize: "0.72rem", marginLeft: "0.3rem" }} onClick={() => onRecibo(r)}><Receipt size={12} /> Recibo</button>
                     </td>
                   </tr>
                 );

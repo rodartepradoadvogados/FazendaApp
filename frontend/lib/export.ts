@@ -207,3 +207,102 @@ export async function exportarFichaPDF(
 
   doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
 }
+
+export type LancamentoRecibo = {
+  numero_lancamento: string | null;
+  tipo: string;
+  fornecedor: string;
+  descricao: string;
+  valor: number;
+  data_pagamento?: string | null;
+  data_vencimento?: string | null;
+  data_emissao?: string | null;
+  forma_pagamento?: string | null;
+  tipo_documento?: string | null;
+  centro_custo?: string | null;
+  itens?: { produto: string; quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null }[];
+};
+
+function fmtDataBR(iso?: string | null): string {
+  if (!iso) return "—";
+  const [a, m, d] = iso.slice(0, 10).split("-");
+  return d && m && a ? `${d}/${m}/${a}` : iso;
+}
+
+/** Gera o PDF do recibo de um lançamento — usado tanto para "Salvar" (baixa
+ * direto) quanto para "Enviar" (o mesmo PDF vira o anexo do e-mail). */
+export async function gerarReciboPDF(lanc: LancamentoRecibo) {
+  const { default: jsPDF } = await import("jspdf");
+  const { default: autoTable } = await import("jspdf-autotable");
+  const usuario = getUsuario();
+  const doc = new jsPDF({ orientation: "portrait" });
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const dataStr = new Date().toLocaleDateString("pt-BR");
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(14);
+  doc.setTextColor(...COR_VINHO_RGB);
+  doc.text(NOME_FAZENDA.toUpperCase(), pageWidth / 2, 14, { align: "center" });
+  doc.setFontSize(12);
+  doc.setTextColor(30, 30, 30);
+  doc.text("RECIBO", pageWidth / 2, 22, { align: "center" });
+  doc.setDrawColor(...COR_DOURADO_RGB);
+  doc.setLineWidth(0.5);
+  doc.line(14, 26, pageWidth - 14, 26);
+
+  const rotuloContraparte = lanc.tipo === "receita" ? "Recebemos de" : "Pagamos a";
+  const linhas: [string, string][] = [
+    ["Nº do lançamento", lanc.numero_lancamento || "—"],
+    [rotuloContraparte, lanc.fornecedor || "—"],
+    ["Descrição", lanc.descricao || "—"],
+    ["Valor", lanc.valor.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })],
+    ["Data de emissão", fmtDataBR(lanc.data_emissao)],
+    ["Data de vencimento", fmtDataBR(lanc.data_vencimento)],
+    ["Data de pagamento", fmtDataBR(lanc.data_pagamento)],
+    ["Forma de pagamento", lanc.forma_pagamento || "—"],
+    ["Tipo de documento", lanc.tipo_documento || "—"],
+    ["Centro de custo", lanc.centro_custo || "—"],
+  ];
+
+  let cursorY = 34;
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(10);
+  for (const [rotulo, valor] of linhas) {
+    doc.setFont("helvetica", "bold");
+    doc.text(`${rotulo}:`, 14, cursorY);
+    doc.setFont("helvetica", "normal");
+    doc.text(valor, 62, cursorY);
+    cursorY += 6;
+  }
+  cursorY += 4;
+
+  const itens = (lanc.itens || []).filter((i) => i.produto);
+  if (itens.length) {
+    doc.setFont("helvetica", "bold");
+    doc.setFontSize(10.5);
+    doc.setTextColor(...COR_VINHO_RGB);
+    doc.text("Itens", 14, cursorY);
+    cursorY += 4;
+    autoTable(doc, {
+      head: [["Produto/Serviço", "Qtd.", "Valor unit.", "Valor total"]],
+      body: itens.map((i) => [
+        i.produto,
+        i.quantidade != null ? String(i.quantidade) : "—",
+        i.valor_unitario != null ? i.valor_unitario.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—",
+        i.valor_total != null ? i.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—",
+      ]),
+      startY: cursorY,
+      styles: { fontSize: 8.5, cellPadding: 1.8 },
+      headStyles: { fillColor: COR_VINHO_RGB, textColor: 255, fontSize: 8.5 },
+      alternateRowStyles: { fillColor: [245, 240, 235] },
+    });
+    cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
+  }
+
+  doc.setFont("helvetica", "italic");
+  doc.setFontSize(8);
+  doc.setTextColor(120, 120, 120);
+  doc.text(`Recibo gerado por ${usuario?.nome || "—"} em ${dataStr}`, 14, cursorY + 10);
+
+  return doc;
+}

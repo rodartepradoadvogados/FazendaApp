@@ -2309,6 +2309,20 @@ export function urlAnexoLancamento(anexoId: number): string {
   return `${API}/financeiro/anexos/${anexoId}`;
 }
 
+export async function fetchDestinatarioRecibo(numeroLancamento: string): Promise<{ nome: string | null; email: string | null }> {
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/destinatario-recibo`);
+  if (!res.ok) return { nome: null, email: null };
+  return res.json();
+}
+
+export async function enviarReciboEmail(numeroLancamento: string, destinatario: string, arquivo: Blob): Promise<void> {
+  const form = new FormData();
+  form.append("destinatario", destinatario);
+  form.append("arquivo", arquivo, `recibo_${numeroLancamento}.pdf`);
+  const res = await authFetch(`${API}/financeiro/lancamentos/${encodeURIComponent(numeroLancamento)}/recibo/enviar`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar o recibo por e-mail"); }
+}
+
 export async function excluirAnexoLancamento(anexoId: number) {
   const res = await authFetch(`${API}/financeiro/anexos/${anexoId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
