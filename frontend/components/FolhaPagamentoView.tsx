@@ -1,17 +1,23 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil } from "lucide-react";
+import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2 } from "lucide-react";
 import {
-  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento,
-  criarVale, ehAdmin, formatBRL,
+  fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
+  fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
+  fetchVales, criarVale, ehAdmin, formatBRL,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { RESPONSAVEIS } from "@/lib/constants";
 import EmpreitadaView from "@/components/EmpreitadaView";
 import ContratoView from "@/components/ContratoView";
 import DiariaView from "@/components/DiariaView";
+
+const LABEL_TIPO: Record<string, string> = { funcionario: "Funcionário", empreita: "Empreita", contrato: "Contrato", diaria: "Diária" };
+// Fundo vinho translúcido para destacar lançamentos vencidos e não pagos.
+const VENCIDO_BG = "rgba(94, 26, 46, 0.18)";
 
 // "2026-07" → "jul/2026" (rótulo legível do mês de competência)
 const MESES_ABREV = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
@@ -105,12 +111,6 @@ export default function FolhaPagamentoView() {
   const [expandedId, setExpandedId] = useState<number | null>(null);
   // Expansão focada de um desconto (folha ou vale) numa linha específica.
   const [expandDesc, setExpandDesc] = useState<{ id: number; tipo: "folha" | "vale" } | null>(null);
-  // Filtros da lista de folha.
-  const [fStatus, setFStatus] = useState<"" | "pendente" | "pago">("");
-  const [fPessoa, setFPessoa] = useState("");
-  const [fTipoVinculo, setFTipoVinculo] = useState("");
-  const [fCompDe, setFCompDe] = useState("");
-  const [fCompAte, setFCompAte] = useState("");
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editPessoaId, setEditPessoaId] = useState("");
   const [editCompetencia, setEditCompetencia] = useState("");
@@ -128,8 +128,72 @@ export default function FolhaPagamentoView() {
   const [editSalvando, setEditSalvando] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
 
+  // Folha de pagamento unificada — funcionário + empreita + contrato + diária.
+  const [unificada, setUnificada] = useState<LinhaFolhaUnificada[] | null>(null);
+  const [erroUnificada, setErroUnificada] = useState<string | null>(null);
+  const [fUniVencDe, setFUniVencDe] = useState("");
+  const [fUniVencAte, setFUniVencAte] = useState("");
+  const [fUniStatus, setFUniStatus] = useState<"" | "pendente" | "pago">("");
+  const [fUniPessoa, setFUniPessoa] = useState("");
+  const [fUniTipo, setFUniTipo] = useState<"" | "funcionario" | "empreita" | "contrato" | "diaria">("");
+  const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
+  const [excluirErro, setExcluirErro] = useState<string | null>(null);
+
+  // Relatório de vales e descontos (vale de funcionário).
+  const [vales, setVales] = useState<any[] | null>(null);
+  const [fValeDe, setFValeDe] = useState("");
+  const [fValeAte, setFValeAte] = useState("");
+  const [fValePessoa, setFValePessoa] = useState("");
+
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+  const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
+  const carregarVales = () => fetchVales().then(setVales).catch(() => {});
+  useEffect(() => { carregar(); carregarUnificada(); carregarVales(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+
+  async function excluirLinha(linha: LinhaFolhaUnificada) {
+    const chave = `${linha.tipo}-${linha.origem_subtipo}-${linha.origem_id}`;
+    setExcluirErro(null);
+    setExcluindoChave(chave);
+    try {
+      if (linha.tipo === "funcionario") await excluirFolhaPagamento(linha.origem_id);
+      else if (linha.tipo === "empreita" && linha.origem_subtipo === "parcela") await excluirParcelaEmpreitada(linha.origem_id);
+      else if (linha.tipo === "contrato" && linha.origem_subtipo === "parcela") await excluirParcelaContrato(linha.origem_id);
+      else return;
+      carregar(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirErro(e.message || "Erro ao excluir lançamento");
+    } finally {
+      setExcluindoChave(null);
+    }
+  }
+
+  const unificadaFiltrada = useMemo(() => (unificada || []).filter((l) =>
+    (!fUniVencDe || (l.data_vencimento || "") >= fUniVencDe) &&
+    (!fUniVencAte || (l.data_vencimento || "") <= fUniVencAte) &&
+    (!fUniStatus || l.status === fUniStatus) &&
+    (!fUniPessoa || String(l.pessoa_id) === fUniPessoa) &&
+    (!fUniTipo || l.tipo === fUniTipo)
+  ), [unificada, fUniVencDe, fUniVencAte, fUniStatus, fUniPessoa, fUniTipo]);
+  const { linhasOrdenadas: unificadaOrdenada, coluna: uniColuna, dir: uniDir, ordenar: uniOrdenar } = useOrdenacao(unificadaFiltrada);
+  const somaUnificadaFiltrada = unificadaFiltrada.reduce((a, l) => a + l.valor, 0);
+  const somaUniPendente = unificadaFiltrada.filter((l) => l.status === "pendente").reduce((a, l) => a + l.valor, 0);
+  const somaUniPago = unificadaFiltrada.filter((l) => l.status === "pago").reduce((a, l) => a + l.valor, 0);
+
+  const valesFiltrados = useMemo(() => (vales || []).filter((v: any) =>
+    (!fValeDe || v.data_pagamento >= fValeDe) &&
+    (!fValeAte || v.data_pagamento <= fValeAte) &&
+    (!fValePessoa || String(v.pessoa_id) === fValePessoa)
+  ).map((v: any) => {
+    const parcelas: any[] = v.parcelas_detalhe || [];
+    const valorParcela = parcelas.length ? parcelas[0].valor : (v.parcelas ? v.valor_total / v.parcelas : v.valor_total);
+    const aplicadas = parcelas.filter((p) => p.aplicada).length;
+    const valorPago = parcelas.filter((p) => p.aplicada).reduce((a, p) => a + p.valor, 0);
+    return {
+      ...v, valor_parcela: valorParcela, valor_pago: valorPago,
+      status_desconto: aplicadas === 0 ? "Pendente" : (aplicadas === parcelas.length ? "Concluído" : `${aplicadas}/${parcelas.length} aplicadas`),
+    };
+  }), [vales, fValeDe, fValeAte, fValePessoa]);
+  const { linhasOrdenadas: valesOrdenados, coluna: valeColuna, dir: valeDir, ordenar: valeOrdenar } = useOrdenacao(valesFiltrados);
 
   useEffect(() => {
     if (inssManual) return;
@@ -258,19 +322,13 @@ export default function FolhaPagamentoView() {
     }
   }
 
-  // Tipo(s) (vínculo) por pessoa, para o filtro de salário/diárias/prestador etc.
-  const tipoPorPessoa = useMemo(() => { const m: Record<number, string[]> = {}; pessoas.forEach((p) => { m[p.id] = p.tipos; }); return m; }, [pessoas]);
-  const tiposVinculo = useMemo(() => Array.from(new Set(pessoas.flatMap((p) => p.tipos).filter(Boolean))).sort(), [pessoas]);
-  const regsFiltrados = useMemo(() => (regs || []).filter((r) =>
-    (!fStatus || r.status === fStatus) &&
-    (!fPessoa || String(r.pessoa_id) === fPessoa) &&
-    (!fTipoVinculo || (tipoPorPessoa[r.pessoa_id] || []).includes(fTipoVinculo)) &&
-    (!fCompDe || r.competencia >= fCompDe) &&
-    (!fCompAte || r.competencia <= fCompAte)
-  ), [regs, fStatus, fPessoa, fTipoVinculo, fCompDe, fCompAte, tipoPorPessoa]);
-
-  const totalPendente = regsFiltrados.filter((r) => r.status === "pendente").reduce((a, r) => a + r.valor_liquido, 0);
-  const totalPago = regsFiltrados.filter((r) => r.status === "pago").reduce((a, r) => a + r.valor_liquido, 0);
+  // Índice de FolhaPagamento por id — usado para renderizar a linha rica
+  // (expandir detalhe, editar, marcar como pago) dentro da folha unificada.
+  const regsPorId = useMemo(() => {
+    const m: Record<number, RegistroFolha> = {};
+    (regs || []).forEach((r) => { m[r.id] = r; });
+    return m;
+  }, [regs]);
 
   return (
     <div>
@@ -290,15 +348,9 @@ export default function FolhaPagamentoView() {
       {subaba === "diarias" && <DiariaView />}
 
       {subaba === "funcionario" && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
-        <KPI v={String(regsFiltrados.length)} l="Lançamentos" />
-        <KPI v={formatBRL(totalPendente)} l="Pendente" c="var(--amber)" />
-        <KPI v={formatBRL(totalPago)} l="Pago" c="var(--green-light)" />
-      </div>
-
       {anexarAberto && (
         <Modal title="Anexar comprovante — leitura automática (despesa)" onClose={() => setAnexarAberto(false)} width="1000px">
-          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
+          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); carregarUnificada(); }} />
         </Modal>
       )}
 
@@ -361,48 +413,98 @@ export default function FolhaPagamentoView() {
 
       {/* 2) Vale de funcionário */}
       <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
-        <ValeFuncionarioSection pessoas={pessoas} onLancado={carregar} />
+        <ValeFuncionarioSection pessoas={pessoas} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
+      </>)}
 
-      {/* 3) Filtros da lista de folha */}
-      <div className="card mt-4 mb-3">
-        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha</div>
+      {/* KPIs da folha de pagamento unificada (funcionário + empreita + contrato + diária), refletindo os filtros abaixo */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4 mt-4">
+        <KPI v={String(unificadaFiltrada.length)} l="Lançamentos" />
+        <KPI v={formatBRL(somaUniPendente)} l="Pendente" c="var(--amber)" />
+        <KPI v={formatBRL(somaUniPago)} l="Pago" c="var(--green-light)" />
+      </div>
+
+      {/* Filtro da folha de pagamento unificada */}
+      <div className="card mb-3">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtrar a folha de pagamento</div>
         <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div><label style={labelStyleLote}>Competência — de</label>
-            <input type="month" style={selStyleLote} value={fCompDe} onChange={(e) => setFCompDe(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Competência — até</label>
-            <input type="month" style={selStyleLote} value={fCompAte} onChange={(e) => setFCompAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — de</label>
+            <input type="date" style={selStyleLote} value={fUniVencDe} onChange={(e) => setFUniVencDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Vencimento — até</label>
+            <input type="date" style={selStyleLote} value={fUniVencAte} onChange={(e) => setFUniVencAte(e.target.value)} /></div>
           <div><label style={labelStyleLote}>Status</label>
-            <select style={selStyleLote} value={fStatus} onChange={(e) => setFStatus(e.target.value as any)}>
+            <select style={selStyleLote} value={fUniStatus} onChange={(e) => setFUniStatus(e.target.value as any)}>
               <option value="">Todos</option><option value="pendente">Pendente</option><option value="pago">Pago</option>
             </select></div>
-          <div><label style={labelStyleLote}>Funcionário</label>
-            <select style={selStyleLote} value={fPessoa} onChange={(e) => setFPessoa(e.target.value)}>
+          <div><label style={labelStyleLote}>Pessoa</label>
+            <select style={selStyleLote} value={fUniPessoa} onChange={(e) => setFUniPessoa(e.target.value)}>
               <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
             </select></div>
-          <div><label style={labelStyleLote}>Vínculo (salário/diárias/contrato)</label>
-            <select style={selStyleLote} value={fTipoVinculo} onChange={(e) => setFTipoVinculo(e.target.value)}>
-              <option value="">Todos</option>{tiposVinculo.map((t) => <option key={t} value={t}>{t}</option>)}
+          <div><label style={labelStyleLote}>Tipo</label>
+            <select style={selStyleLote} value={fUniTipo} onChange={(e) => setFUniTipo(e.target.value as any)}>
+              <option value="">Todos</option>
+              {Object.entries(LABEL_TIPO).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
             </select></div>
         </div>
       </div>
 
-      {/* 4) Lançamentos de folha listados — clique na linha expande a discriminação completa (incluindo vales aplicados); editável enquanto não estiver paga. Os descontos (folha e vale) são clicáveis e abrem o detalhe abaixo. */}
-      <div className="card mt-4">
-        <div className="card-header mb-3">Lançamentos de folha</div>
+      {/* Folha de pagamento — funcionário, empreita, contrato e diária num único ledger; recolhida por
+          padrão, expande ao clicar no cabeçalho. Prioriza pendências (destacando as vencidas em vinho). */}
+      <SecaoRecolhivel
+        titulo="Folha de pagamento" icon={Filter} defaultAberta={false}
+        descricao="Clique para ver todos os lançamentos — funcionário, empreita, contrato e diária"
+        badge={<span style={{ fontSize: "0.78rem", fontWeight: 700, whiteSpace: "nowrap" }}>Total filtrado: {formatBRL(somaUnificadaFiltrada)}</span>}
+      >
+        {erroUnificada ? <div className="alert-critico"><span>Sem dados: {erroUnificada}.</span></div> : (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
             <thead><tr>
-              <th title="Mês de pagamento (quando paga) ou de vencimento (quando pendente)">Mês</th><th>Funcionário</th><th title="Mês de referência do salário">Competência</th>
-              <th style={{ textAlign: "right" }}>Valor bruto</th>
+              <ThOrdenavel label="Tipo" campo="tipo" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <th title="Mês de pagamento (quando pago) ou de vencimento (quando pendente)">Mês</th>
+              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <th title="Mês de referência do salário (só funcionário)">Competência</th>
+              <ThOrdenavel label="Vencimento" campo="data_vencimento" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <ThOrdenavel label="Valor" campo="valor" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} alinhar="right" />
               <th style={{ textAlign: "right" }}>Descontos de folha</th>
               <th style={{ textAlign: "right" }}>Descontos de vale</th>
-              <th>Status</th><th style={{ textAlign: "right" }}>Valor pago</th>
+              <ThOrdenavel label="Status" campo="status" coluna={uniColuna} dir={uniDir} ordenar={uniOrdenar} />
+              <th style={{ textAlign: "right" }}>Valor pago</th>
               {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               <th></th>
             </tr></thead>
             <tbody>
-              {regsFiltrados.map((r) => {
+              {unificadaOrdenada.map((l) => {
+                const chave = `${l.tipo}-${l.origem_subtipo}-${l.origem_id}`;
+                if (l.tipo !== "funcionario") {
+                  return (
+                    <tr key={chave} style={l.vencido ? { background: VENCIDO_BG } : undefined}>
+                      <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO[l.tipo]}</td>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
+                        {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
+                      </td>
+                      <td style={{ fontSize: "0.82rem" }}>{l.pessoa_nome}</td>
+                      <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
+                      <td style={{ fontSize: "0.78rem" }}>{l.data_vencimento ? l.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(l.valor)}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
+                      <td style={{ textAlign: "right", fontSize: "0.76rem", color: "var(--text-muted)" }}>—</td>
+                      <td><span style={{ fontSize: "0.72rem", fontWeight: 700, color: l.status === "pago" ? "var(--green-light)" : "var(--amber)" }}>{l.status === "pago" ? "Pago" : "Pendente"}</span></td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{l.status === "pago" ? formatBRL(l.valor) : "—"}</td>
+                      {admin && <td>—</td>}
+                      <td style={{ textAlign: "right" }}>
+                        {l.pode_excluir && (
+                          <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                            disabled={excluindoChave === chave}
+                            onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
+                            <Trash2 size={13} />
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                }
+                const r = regsPorId[l.origem_id];
+                if (!r) return null;
                 const expandido = expandedId === r.id;
                 const editando = editingId === r.id;
                 const descFolha = arredonda2(r.descontos + r.valor_inss + r.valor_ir);
@@ -410,8 +512,10 @@ export default function FolhaPagamentoView() {
                 const descAberto = expandDesc && expandDesc.id === r.id;
                 const valeLinhas = r.detalhe.filter((d) => /vale/i.test(d.label));
                 return (
-                  <Fragment key={r.id}>
-                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}>
+                  <Fragment key={chave}>
+                    <tr className="row-clickable" title="Clique para ver a discriminação deste lançamento de folha" onClick={() => setExpandedId(expandido ? null : r.id)}
+                      style={l.vencido ? { background: VENCIDO_BG } : undefined}>
+                      <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO.funcionario}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}
                         title={r.data_pagamento ? "Mês em que a folha foi paga" : "Mês de vencimento (pagamento previsto)"}>
                         <span className="flex items-center gap-1">
@@ -428,6 +532,7 @@ export default function FolhaPagamentoView() {
                         )}
                       </td>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{r.competencia}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{r.data_vencimento ? r.data_vencimento.split("-").reverse().join("/") : "—"}{l.vencido && " ⚠"}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(r.valor_bruto)}</td>
                       <td style={{ textAlign: "right", fontSize: "0.78rem", color: descFolha ? "var(--red)" : "var(--text-muted)", cursor: "pointer", textDecoration: descFolha ? "underline dotted" : undefined }}
                         title="Clique para ver o detalhe dos descontos de folha (INSS, IR, outros)"
@@ -444,12 +549,19 @@ export default function FolhaPagamentoView() {
                       {admin && <td>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
                         {r.status === "pendente" && (
-                          <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                          <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                            <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                            <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                              disabled={excluindoChave === chave}
+                              onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
+                              <Trash2 size={13} />
+                            </button>
+                          </span>
                         )}
                       </td>
                     </tr>
                     {descAberto && (
-                      <tr><td colSpan={admin ? 10 : 9}>
+                      <tr><td colSpan={admin ? 12 : 11}>
                         <div style={{ padding: "0.5rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <p style={{ fontSize: "0.78rem", fontWeight: 700, marginBottom: "0.3rem" }}>
                             {expandDesc!.tipo === "folha" ? "Descontos de folha" : "Descontos de vale"} — {r.pessoa_nome}, {mesCompLabel(r.competencia)}
@@ -483,7 +595,7 @@ export default function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {pagandoId === r.id && (
-                      <tr><td colSpan={admin ? 10 : 9}>
+                      <tr><td colSpan={admin ? 12 : 11}>
                         <div className="flex items-end gap-2" style={{ padding: "0.5rem 0", flexWrap: "wrap" }} onClick={(e) => e.stopPropagation()}>
                           <div><label style={labelStyleLote}>Data do pagamento</label>
                             <input type="date" style={selStyleLote} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
@@ -494,7 +606,7 @@ export default function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {expandido && !editando && (
-                      <tr><td colSpan={admin ? 10 : 9}>
+                      <tr><td colSpan={admin ? 12 : 11}>
                         <div style={{ padding: "0.6rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <table style={{ width: "100%", maxWidth: 420, fontSize: "0.78rem" }}>
                             <tbody>
@@ -518,7 +630,7 @@ export default function FolhaPagamentoView() {
                       </td></tr>
                     )}
                     {editando && (
-                      <tr><td colSpan={admin ? 10 : 9}>
+                      <tr><td colSpan={admin ? 12 : 11}>
                         <div style={{ padding: "0.75rem 0" }} onClick={(e) => e.stopPropagation()}>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Pessoa</label>
@@ -572,12 +684,56 @@ export default function FolhaPagamentoView() {
                   </Fragment>
                 );
               })}
-              {regs && !regsFiltrados.length && <tr><td colSpan={admin ? 10 : 9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{regs.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
+              {excluirErro && <tr><td colSpan={admin ? 12 : 11} style={{ color: "var(--red)", fontSize: "0.8rem" }}>{excluirErro}</td></tr>}
+              {unificada && !unificadaOrdenada.length && <tr><td colSpan={admin ? 12 : 11} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{unificada.length ? "Nenhum lançamento de folha para os filtros escolhidos." : "Nenhum lançamento de folha ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
-      </div>
-      </>)}
+        )}
+      </SecaoRecolhivel>
+
+      {/* Relatório de vales e descontos — vale de funcionário, filtrável e ordenável */}
+      <SecaoRecolhivel titulo="Relatório de vales e descontos" icon={Filter} defaultAberta={false} descricao="Vales de funcionário lançados, com parcelamento e status de aplicação">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Data do vale — de</label>
+            <input type="date" style={selStyleLote} value={fValeDe} onChange={(e) => setFValeDe(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Data do vale — até</label>
+            <input type="date" style={selStyleLote} value={fValeAte} onChange={(e) => setFValeAte(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Pessoa</label>
+            <select style={selStyleLote} value={fValePessoa} onChange={(e) => setFValePessoa(e.target.value)}>
+              <option value="">Todos</option>{pessoas.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select></div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr>
+              <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdenavel label="Valor bruto" campo="valor_total" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdenavel label="Nº parcelas" campo="parcelas" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdenavel label="Valor da parcela" campo="valor_parcela" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <ThOrdenavel label="Status" campo="status_desconto" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
+              <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
+              <th>Documento</th>
+            </tr></thead>
+            <tbody>
+              {valesOrdenados.map((v: any) => (
+                <tr key={v.id}>
+                  <td style={{ fontSize: "0.78rem" }}>{v.data_pagamento ? v.data_pagamento.split("-").reverse().join("/") : "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{v.pessoa_nome}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_total)}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{v.parcelas}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{formatBRL(v.valor_parcela)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.status_desconto}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor_pago)}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.numero_documento_pagamento || "—"}</td>
+                </tr>
+              ))}
+              {vales && !valesOrdenados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </SecaoRecolhivel>
     </div>
   );
 }
@@ -601,6 +757,7 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
   const [parcelas, setParcelas] = useState("1");
   const [competenciaInicio, setCompetenciaInicio] = useState(() => new Date().toISOString().slice(0, 7));
   const [observacao, setObservacao] = useState("");
+  const [numeroDocumentoPagamento, setNumeroDocumentoPagamento] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -614,10 +771,10 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
       await criarVale({
         pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
-        observacao: observacao || undefined, confirmar,
+        observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined, confirmar,
       });
       setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
-      setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao("");
+      setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento("");
       onLancado();
     } catch (e: any) {
       if (e.status === 409 && e.detail?.competencias_excedidas) {
@@ -658,9 +815,11 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
         <div><label style={labelStyleLote}>Parcelas do desconto</label>
           <input type="number" min={1} style={selStyleLote} value={parcelas} onChange={(e) => setParcelas(e.target.value)} /></div>
-        <div><label style={labelStyleLote}>Competência inicial do desconto</label>
+        <div><label style={labelStyleLote}>Data do primeiro desconto</label>
           <input type="month" style={selStyleLote} value={competenciaInicio} onChange={(e) => setCompetenciaInicio(e.target.value)} /></div>
-        <div style={{ gridColumn: "span 2" }}><label style={labelStyleLote}>Observação</label>
+        <div><label style={labelStyleLote}>Nº do documento do pagamento</label>
+          <input style={selStyleLote} title="Para controle de extrato" value={numeroDocumentoPagamento} onChange={(e) => setNumeroDocumentoPagamento(e.target.value)} /></div>
+        <div><label style={labelStyleLote}>Observação</label>
           <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       </div>
       {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}

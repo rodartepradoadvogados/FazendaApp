@@ -610,6 +610,149 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     return registro.model_dump()
 
 
+@router.delete("/folha-pagamento/{registro_id}")
+def excluir_folha_pagamento(registro_id: int, session: Session = Depends(get_session)) -> dict:
+    registro = session.get(FolhaPagamento, registro_id)
+    if not registro:
+        raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
+    if registro.status == "pago":
+        raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
+    if registro.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == registro.numero_lancamento_gerado)
+        ).first()
+        if conta:
+            session.delete(conta)
+    session.delete(registro)
+    session.commit()
+    return {"ok": True}
+
+
+@router.get("/folha-pagamento-unificada")
+def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) -> list[dict]:
+    """
+    Visão consolidada de TODOS os lançamentos de folha — funcionário, empreita,
+    contrato e diária — num único ledger ordenável/filtrável por vencimento,
+    priorizando pendências (destacando as vencidas). `origem_tipo` (=`tipo`) +
+    `origem_id` apontam para o registro de origem só para permitir excluir
+    lançamentos ainda pendentes; a edição continua nas telas específicas.
+    """
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    linhas: list[dict] = []
+
+    for r in listar_folha_pagamento(session):
+        linhas.append({
+            "tipo": "funcionario", "origem_id": r["id"], "origem_subtipo": "folha",
+            "pessoa_id": r["pessoa_id"], "pessoa_nome": r["pessoa_nome"],
+            "descricao": f"Folha — {r['competencia']}",
+            "valor": r["valor_liquido"],
+            "data_vencimento": r["data_vencimento"],
+            "data_pagamento": r["data_pagamento"],
+            "status": r["status"],
+            "pode_excluir": r["status"] == "pendente",
+        })
+
+    empreitadas = {e.id: e for e in session.exec(select(Empreitada)).all()}
+    parcelas_empreita = session.exec(select(EmpreitadaParcela)).all()
+    etapas_empreita = session.exec(
+        select(EmpreitadaEtapa).where(EmpreitadaEtapa.concluida == True)  # noqa: E712
+    ).all()
+    numeros_empreita = [p.numero_lancamento_gerado for p in parcelas_empreita if p.numero_lancamento_gerado] + [
+        et.numero_lancamento_gerado for et in etapas_empreita if et.numero_lancamento_gerado
+    ]
+    contas_empreita = {
+        c.numero_lancamento: c
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_empreita))).all()
+    } if numeros_empreita else {}
+    for p in parcelas_empreita:
+        e = empreitadas.get(p.empreitada_id)
+        if not e:
+            continue
+        conta = contas_empreita.get(p.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "empreita", "origem_id": p.id, "origem_subtipo": "parcela",
+            "pessoa_id": e.pessoa_id, "pessoa_nome": pessoas.get(e.pessoa_id, "—"),
+            "descricao": f"Empreita — {e.descricao}",
+            "valor": p.valor,
+            "data_vencimento": p.data_vencimento,
+            "data_pagamento": conta.data_pagamento if conta else None,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
+        })
+    for et in etapas_empreita:
+        e = empreitadas.get(et.empreitada_id)
+        if not e:
+            continue
+        conta = contas_empreita.get(et.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "empreita", "origem_id": et.id, "origem_subtipo": "etapa",
+            "pessoa_id": e.pessoa_id, "pessoa_nome": pessoas.get(e.pessoa_id, "—"),
+            "descricao": f"Empreita — {e.descricao} — etapa: {et.nome}",
+            "valor": et.valor,
+            "data_vencimento": conta.data_vencimento if conta else None,
+            "data_pagamento": conta.data_pagamento if conta else None,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": False,
+        })
+
+    contratos = {c.id: c for c in session.exec(select(Contrato)).all()}
+    parcelas_contrato = session.exec(select(ContratoParcela)).all()
+    numeros_contrato = [p.numero_lancamento_gerado for p in parcelas_contrato if p.numero_lancamento_gerado]
+    contas_contrato = {
+        c.numero_lancamento: c
+        for c in session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento.in_(numeros_contrato))).all()
+    } if numeros_contrato else {}
+    for p in parcelas_contrato:
+        c = contratos.get(p.contrato_id)
+        if not c:
+            continue
+        conta = contas_contrato.get(p.numero_lancamento_gerado)
+        pago = bool(conta and conta.valor_pago is not None)
+        linhas.append({
+            "tipo": "contrato", "origem_id": p.id, "origem_subtipo": "parcela",
+            "pessoa_id": c.pessoa_id, "pessoa_nome": pessoas.get(c.pessoa_id, "—"),
+            "descricao": f"Contrato — {c.descricao}",
+            "valor": p.valor,
+            "data_vencimento": p.data_vencimento,
+            "data_pagamento": conta.data_pagamento if conta else None,
+            "status": "pago" if pago else "pendente",
+            "pode_excluir": not pago,
+        })
+
+    diarias = {d.id: d for d in session.exec(select(Diaria)).all()}
+    for pg in session.exec(select(DiariaPagamento)).all():
+        d = diarias.get(pg.diaria_id)
+        if not d:
+            continue
+        linhas.append({
+            "tipo": "diaria", "origem_id": pg.id, "origem_subtipo": "pagamento",
+            "pessoa_id": d.pessoa_id, "pessoa_nome": pessoas.get(d.pessoa_id, "—"),
+            "descricao": "Diária",
+            "valor": pg.valor,
+            "data_vencimento": pg.data_pagamento,
+            "data_pagamento": pg.data_pagamento,
+            "status": "pago",
+            "pode_excluir": False,
+        })
+
+    hoje = date.today()
+    for linha in linhas:
+        linha["vencido"] = bool(
+            linha["status"] == "pendente" and linha["data_vencimento"] and linha["data_vencimento"] < hoje
+        )
+
+    # Prioriza pendente-vencido, depois pendente, depois pago; dentro de cada
+    # grupo, o vencimento mais próximo primeiro.
+    def _chave_prioridade(linha: dict):
+        grupo = 0 if linha["vencido"] else (1 if linha["status"] == "pendente" else 2)
+        return (grupo, linha["data_vencimento"] or date.max)
+
+    linhas.sort(key=_chave_prioridade)
+    return linhas
+
+
 # ---------------------------------------------------------------------------
 # Vale de funcionário — adiantamento com desconto parcelado na folha. Se a
 # soma das parcelas de vale de uma competência ultrapassar 40% do salário
@@ -623,6 +766,7 @@ class ValeIn(BaseModel):
     parcelas: int = 1
     competencia_inicio: str  # "AAAA-MM"
     observacao: str | None = None
+    numero_documento_pagamento: str | None = None  # nº do documento do pagamento, p/ controle de extrato
     confirmar: bool = False  # true para prosseguir mesmo ultrapassando 40% do salário
 
 
@@ -695,7 +839,7 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
     vale = ValeFuncionario(
         pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
         data_pagamento=dados.data_pagamento, parcelas=dados.parcelas, competencia_inicio=dados.competencia_inicio,
-        observacao=dados.observacao, usuario_id=user.id,
+        observacao=dados.observacao, numero_documento_pagamento=dados.numero_documento_pagamento, usuario_id=user.id,
     )
     session.add(vale)
     session.commit()
@@ -908,6 +1052,24 @@ def concluir_etapa_empreitada(
     return _serializar_empreitada(session, empreitada)
 
 
+@router.delete("/empreitadas/parcelas/{parcela_id}")
+def excluir_parcela_empreitada(parcela_id: int, session: Session = Depends(get_session)) -> dict:
+    parcela = session.get(EmpreitadaParcela, parcela_id)
+    if not parcela:
+        raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+        raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
+    if parcela.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == parcela.numero_lancamento_gerado)
+        ).first()
+        if conta:
+            session.delete(conta)
+    session.delete(parcela)
+    session.commit()
+    return {"ok": True}
+
+
 # ---------------------------------------------------------------------------
 # Contrato — valor total pago por frequência fixa (parcelas editáveis, mesmo
 # padrão do Financeiro) ou, sem frequência definida, com lembrete mensal na
@@ -1033,6 +1195,24 @@ def encerrar_contrato(contrato_id: int, session: Session = Depends(get_session))
             session.add(modelo)
     session.commit()
     return _serializar_contrato(session, contrato)
+
+
+@router.delete("/contratos/parcelas/{parcela_id}")
+def excluir_parcela_contrato(parcela_id: int, session: Session = Depends(get_session)) -> dict:
+    parcela = session.get(ContratoParcela, parcela_id)
+    if not parcela:
+        raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+        raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
+    if parcela.numero_lancamento_gerado:
+        conta = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == parcela.numero_lancamento_gerado)
+        ).first()
+        if conta:
+            session.delete(conta)
+    session.delete(parcela)
+    session.commit()
+    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

@@ -512,6 +512,42 @@ export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoD
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar folha de pagamento"); }
   return res.json();
 }
+export async function excluirFolhaPagamento(id: number) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir lançamento de folha"); }
+  return res.json();
+}
+
+// ── Folha de pagamento unificada (funcionário + empreita + contrato + diária) ──
+export type LinhaFolhaUnificada = {
+  tipo: "funcionario" | "empreita" | "contrato" | "diaria";
+  origem_id: number;
+  origem_subtipo: string;
+  pessoa_id: number;
+  pessoa_nome: string;
+  descricao: string;
+  valor: number;
+  data_vencimento: string | null;
+  data_pagamento: string | null;
+  status: "pendente" | "pago";
+  pode_excluir: boolean;
+  vencido: boolean;
+};
+export async function fetchFolhaPagamentoUnificada(): Promise<LinhaFolhaUnificada[]> {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento-unificada`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Folha de pagamento (unificada) error: ${res.status}`);
+  return res.json();
+}
+export async function excluirParcelaEmpreitada(id: number) {
+  const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de empreitada"); }
+  return res.json();
+}
+export async function excluirParcelaContrato(id: number) {
+  const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de contrato"); }
+  return res.json();
+}
 
 // ── Vale de funcionário (Financeiro > Folha de pagamento) ──
 export async function fetchVales() {
@@ -521,7 +557,7 @@ export async function fetchVales() {
 }
 export async function criarVale(dados: {
   pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
-  parcelas: number; competencia_inicio: string; observacao?: string; confirmar?: boolean;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

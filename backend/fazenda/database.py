@@ -68,7 +68,7 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "aplicacao_agendada": [("usuario_id", "INTEGER"), ("natureza", "VARCHAR")],
     "entrega_leite_mensal": [("usuario_id", "INTEGER")],
-    "vale_funcionario": [("usuario_id", "INTEGER")],
+    "vale_funcionario": [("usuario_id", "INTEGER"), ("numero_documento_pagamento", "VARCHAR")],
     "movimento_estoque": [("usuario_id", "INTEGER"), ("pedido_id", "INTEGER"), ("pedido_item_id", "INTEGER")],
     "movimento_lote": [("usuario_id", "INTEGER")],
     "compra_animal": [
