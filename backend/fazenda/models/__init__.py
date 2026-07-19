@@ -2182,6 +2182,18 @@ class Usuario(SQLModel, table=True):
     pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
 
 
+class LoginAcesso(SQLModel, table=True):
+    """Um login bem-sucedido — histórico completo (Usuario.ultimo_login guarda
+    só o mais recente). Alimenta o relatório de últimos acessos, restrito ao
+    proprietário (ver fazenda.auth.exigir_dono)."""
+
+    __tablename__ = "login_acesso"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Baixa de animal (Rebanho > Baixar animal) — morte/descarte, distinto da
 # movimentação entre lotes. Ao registrar, o animal é marcado inativo.

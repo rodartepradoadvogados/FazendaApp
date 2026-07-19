@@ -309,12 +309,32 @@ def _inativar_animais_semen() -> None:
         )
 
 
+def _backfill_login_acesso() -> None:
+    """Semeia uma linha em LoginAcesso a partir de Usuario.ultimo_login para
+    quem já tinha login registrado antes da tabela existir — evita que o
+    relatório de últimos acessos mostre "nunca" para quem já usa o sistema.
+    Idempotente: só roda para quem ainda não tem nenhuma linha."""
+    from fazenda.models import LoginAcesso, Usuario  # import local: evita ciclo no boot do módulo
+
+    insp = inspect(engine)
+    if "login_acesso" not in insp.get_table_names():
+        return
+    with Session(engine) as session:
+        usuarios = session.exec(select(Usuario).where(Usuario.ultimo_login != None)).all()  # noqa: E711
+        for u in usuarios:
+            ja_tem = session.exec(select(LoginAcesso).where(LoginAcesso.usuario_id == u.id)).first()
+            if not ja_tem:
+                session.add(LoginAcesso(usuario_id=u.id, criado_em=u.ultimo_login))
+        session.commit()
+
+
 def create_db_and_tables() -> None:
     """Cria as tabelas (idempotente) e aplica migrações leves de colunas."""
     SQLModel.metadata.create_all(engine)
     _migrar_colunas()
     _migrar_tipos_bigint()
     _inativar_animais_semen()
+    _backfill_login_acesso()
 
 
 def get_session():
