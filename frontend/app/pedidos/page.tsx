@@ -126,7 +126,7 @@ export default function PedidosPage() {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-        <KPI v={String((pedidos ?? []).length)} l="Pedidos" />
+        <KPI v={String((pedidos ?? []).length)} l="Pedidos" c="var(--dourado-light)" />
         <KPI v={formatBRL(totalEstimado)} l="Valor estimado" c="var(--dourado-light)" />
         <KPI v={formatBRL(totalAtendido)} l="Valor já atendido" c="var(--green-light)" />
         <KPI v={String((pedidos ?? []).filter((p) => p.status === "aberto").length)} l="Em aberto" c="var(--amber)" />
