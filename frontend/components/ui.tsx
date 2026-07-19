@@ -29,7 +29,7 @@ const CATEGORIA_ICONE: Record<CategoriaIndicador, any> = {
 };
 
 export function Indicador({
-  valor, rotulo, categoria = "geral", icon, cor, onClick, podeClicar, extra,
+  valor, rotulo, categoria = "geral", icon, cor, onClick, podeClicar, extra, title,
 }: {
   valor: React.ReactNode;
   rotulo: React.ReactNode;
@@ -40,6 +40,8 @@ export function Indicador({
   onClick?: () => void;
   podeClicar?: boolean;
   extra?: React.ReactNode;
+  /** Sobrescreve o tooltip padrão ("Clique para ver os detalhes") quando clicável. */
+  title?: string;
 }) {
   const clicavel = !!onClick && (podeClicar ?? true);
   // O círculo do ícone é sempre a cor da categoria (identidade fixa da área);
@@ -52,7 +54,7 @@ export function Indicador({
     <div
       className={clicavel ? "kpi-card row-clickable" : "kpi-card"}
       onClick={clicavel ? onClick : undefined}
-      title={clicavel ? "Clique para ver os detalhes" : undefined}
+      title={clicavel ? (title || "Clique para ver os detalhes") : undefined}
       style={{ ["--kpi-c" as any]: corCategoria, cursor: clicavel ? "pointer" : undefined }}
     >
       <div className="kpi-chip"><Icon size={15} /></div>
