@@ -283,3 +283,111 @@ class TestCategoriaManejo:
         assert any(x["nome"] == "Teste2" for x in c.get("/recria/categorias").json())
         c.delete(f"/recria/categorias/{cid}")
         assert not any(x["nome"] == "Teste2" for x in c.get("/recria/categorias").json())
+
+
+class TestCategoriaSugeridaAnimal:
+    def test_animal_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.get("/recria/categorias/animal/9999")
+        assert r.status_code == 404
+
+    def test_animal_macho_retorna_categoria_none(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="M1", data_nasc=date(2026, 1, 1), ativo=True, sexo="M"))
+            s.commit()
+        r = c.get("/recria/categorias/animal/M1")
+        assert r.status_code == 200
+        assert r.json() == {"categoria": None}
+
+    def test_sugere_aleitamento_para_bezerra_recem_nascida(self, client):
+        c, engine = client
+        hoje = date.today()
+        with Session(engine) as s:
+            s.add(Animal(numero="Z1", data_nasc=hoje - timedelta(days=30), ativo=True, sexo="F"))
+            s.commit()
+        r = c.get("/recria/categorias/animal/Z1")
+        assert r.status_code == 200
+        assert r.json()["categoria"] == "Aleitamento"
+
+
+class TestExclusaoCocho:
+    def test_exclui_registro_de_cocho(self, client):
+        c, _ = client
+        cid = c.post("/recria/cocho", json={
+            "data": "2026-03-01", "lote": "Bezerras", "num_animais": 5, "kg_ofertado": 100, "kg_sobra": 10,
+        }).json()["id"]
+        r = c.delete(f"/recria/cocho/{cid}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert c.get("/recria/cocho", params={"lote": "Bezerras"}).json()["registros"] == []
+
+    def test_exclui_registro_de_cocho_inexistente_nao_quebra(self, client):
+        c, _ = client
+        r = c.delete("/recria/cocho/9999")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+
+class TestExclusaoPesoAlvo:
+    def test_exclui_faixa_de_peso_alvo(self, client):
+        c, _ = client
+        c.post("/recria/peso-alvo", json={"mes": 30, "peso_min_kg": 400, "peso_max_kg": 450})
+        assert any(l["mes"] == 30 for l in c.get("/recria/peso-alvo").json())
+        r = c.delete("/recria/peso-alvo/30")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert not any(l["mes"] == 30 for l in c.get("/recria/peso-alvo").json())
+
+    def test_exclui_peso_alvo_inexistente_nao_quebra(self, client):
+        c, _ = client
+        r = c.delete("/recria/peso-alvo/999")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+
+class TestJanelaPontoCritico:
+    def test_cria_janela_e_aparece_na_lista(self, client):
+        c, _ = client
+        r = c.post("/recria/janelas", json={"doenca": "Onfalite", "dia_min": 1, "dia_max": 10, "dias_antecedencia": 2})
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["doenca"] == "Onfalite"
+        assert corpo["dia_min"] == 1 and corpo["dia_max"] == 10
+        assert any(j["doenca"] == "Onfalite" for j in c.get("/recria/janelas").json())
+
+    def test_cria_janela_com_dia_min_maior_que_max_da_400(self, client):
+        c, _ = client
+        r = c.post("/recria/janelas", json={"doenca": "Invalida", "dia_min": 10, "dia_max": 5})
+        assert r.status_code == 400
+
+    def test_exclui_janela(self, client):
+        c, _ = client
+        jid = c.post("/recria/janelas", json={"doenca": "Onfalite2", "dia_min": 1, "dia_max": 10}).json()["id"]
+        r = c.delete(f"/recria/janelas/{jid}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert not any(j["doenca"] == "Onfalite2" for j in c.get("/recria/janelas").json())
+
+    def test_exclui_janela_inexistente_nao_quebra(self, client):
+        c, _ = client
+        r = c.delete("/recria/janelas/9999")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+
+class TestExclusaoBenchmark:
+    def test_exclui_benchmark(self, client):
+        c, _ = client
+        c.post("/recria/benchmark", json={"indicador": "Indicador teste", "unidade": "%", "valor_fazenda": 10})
+        bid = next(b["id"] for b in c.get("/recria/benchmark").json() if b["indicador"] == "Indicador teste")
+        r = c.delete(f"/recria/benchmark/{bid}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        assert not any(b["indicador"] == "Indicador teste" for b in c.get("/recria/benchmark").json())
+
+    def test_exclui_benchmark_inexistente_nao_quebra(self, client):
+        c, _ = client
+        r = c.delete("/recria/benchmark/9999")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True

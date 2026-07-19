@@ -31,6 +31,7 @@ from fazenda.models import (
     ProtocoloSanitarioLancamento,
     Sanidade,
     Servico,
+    SolicitacaoExclusao,
 )
 
 
@@ -385,3 +386,140 @@ class TestNovosTiposDeCadastro:
         r = c.get("/exclusoes/tipos")
         ids = {t["id"] for t in r.json()}
         assert {"lote", "fornecedor", "motivo_movimentacao", "pessoa", "principio_ativo", "doenca", "evento_sanitario", "protocolo_sanitario"} <= ids
+
+
+class TestFluxoAprovacaoOperador:
+    """Operador (não-admin) não apaga nada direto — POST /confirmar só cria uma
+    SolicitacaoExclusao pendente. Só um admin, via /pendentes/{id}/aprovar ou
+    /rejeitar, decide se a exclusão é executada de fato ou descartada. Este é
+    o caminho não coberto pelos demais testes do arquivo, que sempre fakeiam
+    um usuário admin (e por isso caem direto no ramo "excluido" do /confirmar)."""
+
+    def _solicitar_como_operador(self, c, tipo: str, id_: str):
+        """Chama POST /exclusoes/confirmar fazendo o get_current_user devolver
+        um operador (papel != admin) só durante esta chamada — restaura a
+        sobreposição de admin da fixture logo em seguida, já que /pendentes,
+        /aprovar e /rejeitar (via exigir_admin) continuam exigindo o admin."""
+        import main
+        from fazenda.auth import get_current_user
+
+        class _FakeOperador:
+            id = 2
+            papel = "operador"
+            ativo = True
+            username = "operador1"
+
+        anterior = main.app.dependency_overrides[get_current_user]
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
+        try:
+            return c.post("/exclusoes/confirmar", json={"tipo": tipo, "id": id_})
+        finally:
+            main.app.dependency_overrides[get_current_user] = anterior
+
+    def test_operador_solicita_em_vez_de_apagar_na_hora(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Motivo do operador"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Motivo do operador"}).json()[0]["id"]
+
+        r = self._solicitar_como_operador(c, "motivo_movimentacao", str(mid))
+        assert r.status_code == 200
+        assert r.json()["status"] == "solicitado"
+
+        with _sessao(engine) as s:
+            sol = s.exec(select(SolicitacaoExclusao)).first()
+            assert sol is not None
+            assert sol.status == "pendente"
+            assert sol.tipo == "motivo_movimentacao"
+            assert sol.id_alvo == str(mid)
+            assert sol.solicitado_por == "operador1"
+            # Nada foi apagado ainda — só o pedido foi registrado.
+            assert s.get(MotivoMovimentacao, mid) is not None
+
+    def test_admin_lista_pendentes_criados_pelo_operador(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Pendente teste"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Pendente teste"}).json()[0]["id"]
+        self._solicitar_como_operador(c, "motivo_movimentacao", str(mid))
+
+        r = c.get("/exclusoes/pendentes")
+        assert r.status_code == 200
+        pendentes = r.json()
+        assert any(
+            p["id_alvo"] == str(mid) and p["status"] == "pendente" and p["solicitado_por"] == "operador1"
+            for p in pendentes
+        )
+
+    def test_admin_aprova_solicitacao_executa_a_exclusao_de_fato(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Aprovar teste"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Aprovar teste"}).json()[0]["id"]
+        self._solicitar_como_operador(c, "motivo_movimentacao", str(mid))
+        with _sessao(engine) as s:
+            sol_id = s.exec(select(SolicitacaoExclusao)).first().id
+
+        r = c.post(f"/exclusoes/pendentes/{sol_id}/aprovar")
+        assert r.status_code == 200
+        assert r.json()["aprovado"] is True
+
+        with _sessao(engine) as s:
+            assert s.get(MotivoMovimentacao, mid) is None  # realmente apagado
+            sol = s.get(SolicitacaoExclusao, sol_id)
+            assert sol.status == "aprovada"
+            assert sol.decidido_por == "teste"
+            assert sol.decidido_em is not None
+
+    def test_admin_rejeita_solicitacao_nao_apaga_nada(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Rejeitar teste"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Rejeitar teste"}).json()[0]["id"]
+        self._solicitar_como_operador(c, "motivo_movimentacao", str(mid))
+        with _sessao(engine) as s:
+            sol_id = s.exec(select(SolicitacaoExclusao)).first().id
+
+        r = c.post(f"/exclusoes/pendentes/{sol_id}/rejeitar", json={"motivo": "Não procede"})
+        assert r.status_code == 200
+        assert r.json()["rejeitado"] is True
+
+        with _sessao(engine) as s:
+            assert s.get(MotivoMovimentacao, mid) is not None  # nada foi apagado
+            sol = s.get(SolicitacaoExclusao, sol_id)
+            assert sol.status == "rejeitada"
+            assert sol.motivo_rejeicao == "Não procede"
+            assert sol.decidido_por == "teste"
+
+        # Some da lista de pendentes depois de decidida.
+        pendentes = c.get("/exclusoes/pendentes").json()
+        assert not any(p["id"] == sol_id for p in pendentes)
+
+    def test_aprovar_solicitacao_ja_decidida_da_404(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(MotivoMovimentacao(nome="Ja decidida"))
+            s.commit()
+        mid = c.get("/exclusoes/buscar", params={"tipo": "motivo_movimentacao", "termo": "Ja decidida"}).json()[0]["id"]
+        self._solicitar_como_operador(c, "motivo_movimentacao", str(mid))
+        with _sessao(engine) as s:
+            sol_id = s.exec(select(SolicitacaoExclusao)).first().id
+
+        r_rejeita = c.post(f"/exclusoes/pendentes/{sol_id}/rejeitar", json={})
+        assert r_rejeita.status_code == 200
+
+        r = c.post(f"/exclusoes/pendentes/{sol_id}/aprovar")
+        assert r.status_code == 404
+        with _sessao(engine) as s:
+            # Continua rejeitada — a segunda decisão não altera nada.
+            assert s.get(SolicitacaoExclusao, sol_id).status == "rejeitada"
+            assert s.get(MotivoMovimentacao, mid) is not None
+
+    def test_rejeitar_solicitacao_inexistente_da_404(self, client):
+        c, _ = client
+        r = c.post("/exclusoes/pendentes/9999/rejeitar", json={})
+        assert r.status_code == 404
