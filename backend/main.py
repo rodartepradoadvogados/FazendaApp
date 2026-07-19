@@ -34,6 +34,7 @@ from fazenda.api.routers import (
     parametros,
     pedidos,
     planejamento,
+    portal,
     producao,
     recria,
     relatorio_compra_venda_animal,
@@ -56,7 +57,7 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral,
 )
 from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
@@ -86,6 +87,9 @@ async def lifespan(app: FastAPI):
         backfill_categoria_crias(session)
         backfill_numero_cria_partos(session)
         seed_tipos_pessoa(session)
+        # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não
+        # tem um papel técnico específico (Veterinário/Zootecnista) nem é admin.
+        seed_tipo_geral(session)
         seed_pessoas(session)
         # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
@@ -233,6 +237,7 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido)
 app.include_router(notificacoes.router, dependencies=_protegido)
+app.include_router(portal.router, dependencies=_protegido)
 # Telegram: webhook é público (o Telegram chama sem login; a segurança é o
 # segredo do cabeçalho + a whitelist de chats liberados).
 app.include_router(telegram.router)

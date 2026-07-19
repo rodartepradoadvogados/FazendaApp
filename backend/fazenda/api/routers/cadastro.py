@@ -110,6 +110,16 @@ def seed_tipos_pessoa(session: Session) -> None:
     session.commit()
 
 
+def seed_tipo_geral(session: Session) -> None:
+    """Garante a existência do tipo "Geral" — usado para liberar acesso a
+    Portal > Comunicação > Delegar tarefa (#515) a pessoas sem um papel
+    técnico específico. Get-or-create (roda sempre, como seed_pessoa_robo_milknews),
+    ao contrário de seed_tipos_pessoa, que só semeia tabela vazia."""
+    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Geral")).first():
+        session.add(TipoPessoa(nome="Geral"))
+        session.commit()
+
+
 # ---------------------------------------------------------------------------
 # Fornecedores / fabricantes / clientes
 # ---------------------------------------------------------------------------

@@ -2539,3 +2539,34 @@ class NoticiaNews(SQLModel, table=True):
     revisado_final: bool = False
     revisado_final_em: Optional[datetime] = None
     revisado_final_por: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Administração > Portal > Comunicação — mensagens internas e tarefas
+# delegadas entre usuários, com sinalização na central de alertas (#513-515).
+# ---------------------------------------------------------------------------
+class PortalMensagem(SQLModel, table=True):
+    """Uma mensagem, e-mail-log ou tarefa delegada do Portal de comunicação.
+
+    Regras de permanência na central de alertas (ver /notificacoes):
+      - tipo "tarefa": some ao ser lida (não tem fluxo de resposta).
+      - tipo "mensagem" sem pede_retorno: some ao ser lida.
+      - tipo "mensagem" com pede_retorno: só some quando resolvida (marcada
+        "resolvido" OU respondida — responder já marca resolvida=True)."""
+
+    __tablename__ = "portal_mensagem"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: str = "mensagem"  # "mensagem" | "tarefa"
+    remetente_usuario_id: int = Field(foreign_key="usuario.id")
+    destinatario_usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    aba: Optional[str] = None  # sanidade|alimentacao|estoque|indicadores|financeiro|pedidos|listas|lancamentos|agenda
+    corpo: str
+    pede_retorno: bool = False
+    lida: bool = False
+    resolvida: bool = False
+    # Quando esta linha é a resposta a outra, aponta para a mensagem original.
+    resposta_de_id: Optional[int] = Field(default=None, foreign_key="portal_mensagem.id")
+    # Quando tipo="tarefa", aponta para o evento correspondente na Agenda.
+    agenda_manual_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)

@@ -18,6 +18,7 @@ import {
   FileBarChart,
   CheckCheck,
   ShoppingCart,
+  MessageSquare,
   Menu,
   X,
 } from "lucide-react";
@@ -157,6 +158,7 @@ export function Sidebar() {
           {(() => {
             const todos = [...visiveis,
               ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram", grupo: "Administração" }] : []),
+              { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
             ];
             return GRUPOS.map((grupo, i) => {
