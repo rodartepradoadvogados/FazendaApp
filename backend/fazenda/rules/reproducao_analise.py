@@ -47,6 +47,7 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
         mes_perda = f"{dpp.year}-{dpp.month:02d}" if isinstance(dpp, date) else None
 
         registros.append({
+            "id": s.get("id"),
             "numero": s.get("numero_matriz"),
             "raca": s.get("raca_matriz") or "(sem raça)",
             "categoria": s.get("categoria") or "(sem categoria)",

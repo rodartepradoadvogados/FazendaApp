@@ -3,12 +3,13 @@
 // filtros aplicáveis da sub-aba Reprodução (animal, data/ciclo, ordem de
 // parto). Ordem de tentativa/método/diagnóstico não fazem sentido aqui.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Search } from "lucide-react";
-import { fetchPartosHistorico, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
+import { fetchPartosHistorico, atualizarParto, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type PartoReg = {
+  id: number;
   numero: string; data: string | null; ordem_parto: number | null; tipo_parto: string | null;
   sexo_cria_1: string | null; sexo_cria_2: string | null;
   numero_cria_1: string | null; numero_cria_2: string | null;
@@ -33,7 +34,32 @@ export default function HistoricoPartos() {
   const [cicloIdx, setCicloIdx] = useState(0);
   const admin = ehAdmin();
 
-  useEffect(() => { fetchPartosHistorico().then((d) => setRegs(d.partos)).catch((e) => setError(e.message)); }, []);
+  const carregar = () => fetchPartosHistorico().then((d) => setRegs(d.partos)).catch((e) => setError(e.message));
+  useEffect(() => { carregar(); }, []);
+
+  const [editando, setEditando] = useState<PartoReg | null>(null);
+  const [editVals, setEditVals] = useState({ data: "", tipoParto: "", retencaoPlacenta: false });
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+
+  const abrirEdicao = (p: PartoReg) => {
+    setEditando(p);
+    setEditVals({ data: p.data || "", tipoParto: p.tipo_parto || "", retencaoPlacenta: !!p.retencao_placenta });
+    setErroEdicao(null);
+  };
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    setSalvandoEdicao(true); setErroEdicao(null);
+    try {
+      await atualizarParto(editando.id, { data_parto: editVals.data || undefined, tipo_parto: editVals.tipoParto || undefined, retencao_placenta: editVals.retencaoPlacenta });
+      setEditando(null);
+      carregar();
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
 
   const ciclos = useMemo(() => {
     const datas = (regs ?? []).map((s) => s.data).filter(Boolean).sort() as string[];
@@ -140,7 +166,7 @@ export default function HistoricoPartos() {
               </tr></thead>
               <tbody>
                 {ordPartos.linhasOrdenadas.slice(0, 500).map((p, i) => (
-                  <tr key={`${p.numero}-${p.data}-${i}`}>
+                  <tr key={`${p.numero}-${p.data}-${i}`} onClick={() => abrirEdicao(p)} style={{ cursor: "pointer" }} title="Clique para editar">
                     <td style={{ fontWeight: 700 }}>{p.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(p.data)}</td>
                     <td style={{ textAlign: "right" }}>{p.ordem_parto ?? "—"}</td>
@@ -160,6 +186,31 @@ export default function HistoricoPartos() {
           </div>
         </div>
       </>}
+
+      {editando && (
+        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "380px", maxWidth: "95vw" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar parto — matriz {editando.numero}</div>
+              <button onClick={() => setEditando(null)} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data do parto</label>
+                <input type="date" style={selStyle} value={editVals.data} onChange={(e) => setEditVals((v) => ({ ...v, data: e.target.value }))} /></div>
+              <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Tipo de parto</label>
+                <input style={selStyle} value={editVals.tipoParto} onChange={(e) => setEditVals((v) => ({ ...v, tipoParto: e.target.value }))} placeholder="ex.: Normal, Distócico…" /></div>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer" }}>
+                <input type="checkbox" checked={editVals.retencaoPlacenta} onChange={(e) => setEditVals((v) => ({ ...v, retencaoPlacenta: e.target.checked }))} /> Retenção de placenta
+              </label>
+            </div>
+            {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
+            <div className="flex items-center gap-3 mt-4">
+              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

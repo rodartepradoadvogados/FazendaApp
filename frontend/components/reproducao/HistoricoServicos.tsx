@@ -4,17 +4,18 @@
 // sub-aba única "Reprodução" (animal, data/ciclo, ordem de parto/tentativa,
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Filter, Plus, Search } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, ehAdmin } from "@/lib/api";
+import { AlertTriangle, Filter, Pencil, Plus, Search, X } from "lucide-react";
+import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { estiloSexado } from "@/lib/constants";
 
 export type Serv = {
+  id: number;
   numero: string; raca: string; categoria: string;
   ordem_parto: number | null; ordem_tentativa: number | null;
   tipo_servico: string; touro: string; metodo_ia?: string;
-  tipo_semen?: string | null;
+  tipo_semen?: string | null; inseminador?: string | null;
   data: string | null; del_servico: number | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
   data_perda: string | null; motivo_perda: string | null;
@@ -49,6 +50,52 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
 
   const carregar = () => fetchServicosAnalise().then((d) => setRegs(d.servicos)).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+
+  // Edição inline do serviço clicado — os campos mostrados variam conforme o
+  // foco (Serviços/IAs editam data/tipo/touro/inseminador; Diagnósticos edita
+  // o resultado; Perda de prenhez edita data/motivo da perda), todos no mesmo
+  // registro Servico (ver PUT /reproducao/servicos/{id}).
+  const [editando, setEditando] = useState<Serv | null>(null);
+  const [editVals, setEditVals] = useState({
+    data: "", tipoServico: "", touro: "", inseminador: "",
+    dataDiagnostico: "", diagnostico: "", dataPerda: "", motivoPerda: "aborto",
+  });
+  const [salvandoEdicao, setSalvandoEdicao] = useState(false);
+  const [erroEdicao, setErroEdicao] = useState<string | null>(null);
+
+  const abrirEdicao = (s: Serv) => {
+    setEditando(s);
+    setEditVals({
+      data: s.data || "", tipoServico: s.tipo_servico === "(sem tipo)" ? "" : s.tipo_servico,
+      touro: s.touro === "(sem touro)" ? "" : s.touro, inseminador: s.inseminador === "(sem inseminador)" ? "" : (s.inseminador || ""),
+      dataDiagnostico: s.data || "", diagnostico: s.diagnostico || "",
+      dataPerda: s.data_perda || "", motivoPerda: s.motivo_perda || "aborto",
+    });
+    setErroEdicao(null);
+  };
+
+  const salvarEdicao = async () => {
+    if (!editando) return;
+    setSalvandoEdicao(true); setErroEdicao(null);
+    try {
+      if (foco === "diagnosticos") {
+        await atualizarServico(editando.id, { data_diagnostico: editVals.dataDiagnostico || undefined, diagnostico: editVals.diagnostico || undefined });
+      } else if (foco === "perdas") {
+        await atualizarServico(editando.id, { data_perda_prenhez: editVals.dataPerda || undefined, motivo_perda_prenhez: editVals.motivoPerda || undefined });
+      } else {
+        await atualizarServico(editando.id, {
+          data_servico: editVals.data || undefined, tipo_servico: editVals.tipoServico || undefined,
+          reprodutor: editVals.touro || undefined, inseminador: editVals.inseminador || undefined,
+        });
+      }
+      setEditando(null);
+      carregar();
+    } catch (e: any) {
+      setErroEdicao(e.message || "Erro ao salvar");
+    } finally {
+      setSalvandoEdicao(false);
+    }
+  };
 
   // Base do foco — aplicada ANTES dos filtros do usuário (não é opção, é o
   // recorte que define a aba: "IAs" nunca mostra monta natural, "Diagnósticos"
@@ -191,7 +238,9 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
               </tr></thead>
               <tbody>
                 {ordServ.linhasOrdenadas.slice(0, 500).map((s) => (
-                  <tr key={`${s.numero}-${s.data}`} style={estiloSexado(s.tipo_semen)} title={s.tipo_semen === "sexado" ? "Inseminação com sêmen sexado" : undefined}>
+                  <tr key={`${s.numero}-${s.data}`} onClick={() => abrirEdicao(s)}
+                    style={{ ...estiloSexado(s.tipo_semen), cursor: "pointer" }}
+                    title={s.tipo_semen === "sexado" ? "Inseminação com sêmen sexado — clique para editar" : "Clique para editar"}>
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
                     <td style={{ fontSize: "0.78rem" }}>{s.tipo_servico}</td>
@@ -214,6 +263,54 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
           </div>
         </div>
       </>}
+
+      {editando && (
+        <div onClick={() => setEditando(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "420px", maxWidth: "95vw" }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0, display: "flex", alignItems: "center", gap: "0.4rem" }}><Pencil size={15} /> Editar — matriz {editando.numero}</div>
+              <button onClick={() => setEditando(null)} className="btn-ghost" aria-label="Fechar"><X size={16} /></button>
+            </div>
+            <div className="grid grid-cols-1 gap-3">
+              {foco === "diagnosticos" ? (
+                <>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data do diagnóstico</label>
+                    <input type="date" style={selStyle} value={editVals.dataDiagnostico} onChange={(e) => setEditVals((v) => ({ ...v, dataDiagnostico: e.target.value }))} /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Diagnóstico</label>
+                    <select style={selStyle} value={editVals.diagnostico} onChange={(e) => setEditVals((v) => ({ ...v, diagnostico: e.target.value }))}>
+                      <option value="">—</option><option value="POSITIVO">Positivo</option><option value="NEGATIVO">Negativo</option><option value="INDEFINIDO">Indefinido</option>
+                    </select></div>
+                </>
+              ) : foco === "perdas" ? (
+                <>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data da perda</label>
+                    <input type="date" style={selStyle} value={editVals.dataPerda} onChange={(e) => setEditVals((v) => ({ ...v, dataPerda: e.target.value }))} /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Motivo</label>
+                    <select style={selStyle} value={editVals.motivoPerda} onChange={(e) => setEditVals((v) => ({ ...v, motivoPerda: e.target.value }))}>
+                      <option value="aborto">Aborto</option><option value="natimorto">Natimorto</option><option value="outros">Outros</option>
+                    </select></div>
+                </>
+              ) : (
+                <>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Data do serviço</label>
+                    <input type="date" style={selStyle} value={editVals.data} onChange={(e) => setEditVals((v) => ({ ...v, data: e.target.value }))} /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Tipo de serviço</label>
+                    <input style={selStyle} value={editVals.tipoServico} onChange={(e) => setEditVals((v) => ({ ...v, tipoServico: e.target.value }))} placeholder="ex.: IATF, Monta natural…" /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Touro / sêmen</label>
+                    <input style={selStyle} value={editVals.touro} onChange={(e) => setEditVals((v) => ({ ...v, touro: e.target.value }))} /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Inseminador</label>
+                    <input style={selStyle} value={editVals.inseminador} onChange={(e) => setEditVals((v) => ({ ...v, inseminador: e.target.value }))} /></div>
+                </>
+              )}
+            </div>
+            {erroEdicao && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erroEdicao}</p>}
+            <div className="flex items-center gap-3 mt-4">
+              <button className="btn-primary" onClick={salvarEdicao} disabled={salvandoEdicao}>{salvandoEdicao ? "Salvando…" : "Salvar"}</button>
+              <button className="btn-ghost" onClick={() => setEditando(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -126,6 +126,36 @@ def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
     return {"servicos": registros, "total": len(registros)}
 
 
+class ServicoEditIn(BaseModel):
+    """Edição de um serviço/IA já lançado — todos os campos são opcionais,
+    só o que for enviado é alterado (usado pelas sub-abas Serviços, IAs,
+    Diagnósticos e Perda de prenhez do histórico de Reprodução, que editam
+    o mesmo registro Servico com recortes de campos diferentes)."""
+    data_servico: date | None = None
+    tipo_servico: str | None = None
+    reprodutor: str | None = None
+    tipo_semen: str | None = None
+    inseminador: str | None = None
+    data_diagnostico: date | None = None
+    diagnostico: str | None = None
+    metodo_diagnostico: str | None = None
+    data_perda_prenhez: date | None = None
+    motivo_perda_prenhez: str | None = None
+
+
+@router.put("/servicos/{servico_id}")
+def atualizar_servico(servico_id: int, dados: ServicoEditIn, session: Session = Depends(get_session)) -> dict:
+    servico = session.get(Servico, servico_id)
+    if not servico:
+        raise HTTPException(status_code=404, detail="Serviço não encontrado")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(servico, campo, valor)
+    session.add(servico)
+    session.commit()
+    session.refresh(servico)
+    return servico.model_dump()
+
+
 @router.get("/indicadores-mensais")
 def indicadores_mensais_analise(session: Session = Depends(get_session)) -> dict:
     """
@@ -277,6 +307,27 @@ def listar_partos_historico(session: Session = Depends(get_session)) -> dict:
     return {"partos": registros, "total": len(registros)}
 
 
+class PartoEditIn(BaseModel):
+    data_parto: date | None = None
+    tipo_parto: str | None = None
+    retencao_placenta: bool | None = None
+
+
+@router.put("/partos/{parto_id}")
+def atualizar_parto(parto_id: int, dados: PartoEditIn, session: Session = Depends(get_session)) -> dict:
+    """Edita os campos do parto em si (data, tipo, retenção de placenta) — não
+    mexe nas crias já cadastradas, que seguem editáveis pela ficha do animal."""
+    parto = session.get(Parto, parto_id)
+    if not parto:
+        raise HTTPException(status_code=404, detail="Parto não encontrado")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(parto, campo, valor)
+    session.add(parto)
+    session.commit()
+    session.refresh(parto)
+    return parto.model_dump()
+
+
 @router.get("/secagens")
 def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
     """Todas as secagens, achatadas — histórico de secagens (Reprodução), com
@@ -292,6 +343,26 @@ def listar_secagens_historico(session: Session = Depends(get_session)) -> dict:
         d["data"] = ds.isoformat() if isinstance(ds, date) else None
         registros.append(d)
     return {"secagens": registros, "total": len(registros)}
+
+
+class SecagemEditIn(BaseModel):
+    data_secagem: date | None = None
+    motivo: str | None = None
+    escore_condicao_corporal: float | None = None
+    observacao: str | None = None
+
+
+@router.put("/secagens/{secagem_id}")
+def atualizar_secagem(secagem_id: int, dados: SecagemEditIn, session: Session = Depends(get_session)) -> dict:
+    secagem = session.get(Secagem, secagem_id)
+    if not secagem:
+        raise HTTPException(status_code=404, detail="Secagem não encontrada")
+    for campo, valor in dados.model_dump(exclude_unset=True).items():
+        setattr(secagem, campo, valor)
+    session.add(secagem)
+    session.commit()
+    session.refresh(secagem)
+    return secagem.model_dump()
 
 
 class CriaIn(BaseModel):
