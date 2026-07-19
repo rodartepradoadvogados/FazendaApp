@@ -66,6 +66,51 @@ def backfill_categoria_crias(session: Session) -> None:
     session.add(SeedFlag(chave=chave))
     session.commit()
 
+
+def backfill_numero_cria_partos(session: Session) -> None:
+    """Associa retroativamente numero_cria_1/2 (e gemelar_sexo) aos partos que
+    vieram do upload do CSV reprodutivo — esse CSV não traz o número da cria
+    nem o sexo do gemelar, só quem é registrado via /reproducao/parto tem
+    isso hoje. Casa pela mãe (Animal.mae_numero == Parto.numero_matriz) e
+    pela data de nascimento próxima da data do parto (± 2 dias, cobre
+    diferenças de fuso/lançamento tardio). Roda UMA vez (SeedFlag); só
+    preenche quando a combinação é inequívoca — deixa de fora (para revisão
+    manual) qualquer parto com mais candidatos do que o esperado."""
+    chave = "backfill_numero_cria_partos_v1"
+    if session.get(SeedFlag, chave):
+        return
+    por_mae: dict[str, list[Animal]] = {}
+    for a in session.exec(select(Animal).where(Animal.mae_numero.is_not(None))).all():
+        por_mae.setdefault(a.mae_numero, []).append(a)
+
+    partos = session.exec(
+        select(Parto).where(Parto.numero_cria_1.is_(None), Parto.numero_cria_2.is_(None))
+    ).all()
+    for p in partos:
+        if not p.data_parto:
+            continue
+        candidatos = [
+            a for a in por_mae.get(p.numero_matriz, [])
+            if a.data_nasc and abs((a.data_nasc - p.data_parto).days) <= 2
+        ]
+        if not candidatos:
+            continue
+        esperado = 2 if p.gemelar else 1
+        if len(candidatos) > esperado:
+            continue  # ambíguo — mais crias batendo do que o parto indica, não arrisca
+        # Prioriza o candidato cujo sexo bate com sexo_cria_1 (já vindo do CSV),
+        # depois ordena por número para ficar determinístico.
+        candidatos.sort(key=lambda a: (0 if (p.sexo_cria_1 and a.sexo == p.sexo_cria_1) else 1, a.numero))
+        p.numero_cria_1 = candidatos[0].numero
+        if len(candidatos) > 1:
+            p.numero_cria_2 = candidatos[1].numero
+            if not p.gemelar_sexo and candidatos[0].sexo and candidatos[1].sexo:
+                combo = "".join(sorted(candidatos[0].sexo + candidatos[1].sexo))
+                p.gemelar_sexo = {"FF": "FF", "FM": "FM", "MM": "MM"}.get(combo)
+        session.add(p)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
 # Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
 # (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.
 PASSOS_PROTOCOLO_IATF = [

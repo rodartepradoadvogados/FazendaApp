@@ -69,3 +69,25 @@ def test_reupload_nao_duplica_partos(client):
     partos = _partos_068(engine)
     assert len(partos) == 1, f"esperava 1 parto, achou {len(partos)}"
     assert partos[0].tipo_parto == "Natimorto"
+
+
+def test_reupload_preserva_numero_cria_ja_associado(client):
+    """O CSV do reprodutivo não traz numero_cria_1/2/gemelar_sexo — antes do
+    fix, o reenvio apagava e recriava o Parto do zero, perdendo esse vínculo
+    (lançado à mão ou pelo backfill). Agora deve preservar."""
+    engine = client._engine  # type: ignore[attr-defined]
+    r = client.post("/upload/reprodutivo", files={"file": ("repro.csv", CSV_REPRO, "text/csv")})
+    assert r.status_code == 200, r.text
+
+    with Session(engine) as s:
+        p = s.exec(select(Parto).where(Parto.numero_matriz == "068")).first()
+        p.numero_cria_1 = "068-C1"
+        s.add(p)
+        s.commit()
+
+    r = client.post("/upload/reprodutivo", files={"file": ("repro.csv", CSV_REPRO, "text/csv")})
+    assert r.status_code == 200, r.text
+
+    partos = _partos_068(engine)
+    assert len(partos) == 1
+    assert partos[0].numero_cria_1 == "068-C1"
