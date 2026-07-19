@@ -8,6 +8,7 @@ import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
 import RelatorioPersonalizado from "@/components/RelatorioPersonalizado";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { Indicador } from "@/components/ui";
 
 function pct(v: number | null | undefined) { return v === null || v === undefined ? "—" : `${v}%`; }
 function num(v: number | null | undefined, suf = "") { return v === null || v === undefined ? "—" : `${v}${suf}`; }
@@ -80,17 +81,22 @@ export function IndicadoresGerais() {
 
       {ind && <>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{pct(rep?.taxa_prenhez_pct)}</p><p className="kpi-label">Fêmeas prenhas</p><p style={legenda}>% das fêmeas aptas, hoje</p></div>
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{pct(rep?.taxa_concepcao_pct)}</p><p className="kpi-label">Concepção / serviço</p><p style={legenda}>serviços desde {desdeLabel}</p></div>
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{num(rep?.iep_meses, " m")}</p><p className="kpi-label">IEP médio</p><p style={legenda}>todo o histórico</p></div>
-          <div className="kpi-card"><p className="kpi-value">{pct(rep?.perc_vazias_pct)}</p><p className="kpi-label">Vazias</p><p style={legenda}>situação atual</p></div>
+          <Indicador categoria="reprodutivo" cor="var(--green-light)" valor={pct(rep?.taxa_prenhez_pct)}
+            rotulo={<>Fêmeas prenhas<span style={{ ...legenda, display: "block" }}>% das fêmeas aptas, hoje</span></>} />
+          <Indicador categoria="reprodutivo" cor="var(--blue)" valor={pct(rep?.taxa_concepcao_pct)}
+            rotulo={<>Concepção / serviço<span style={{ ...legenda, display: "block" }}>serviços desde {desdeLabel}</span></>} />
+          <Indicador categoria="reprodutivo" cor="var(--amber)" valor={num(rep?.iep_meses, " m")}
+            rotulo={<>IEP médio<span style={{ ...legenda, display: "block" }}>todo o histórico</span></>} />
+          <Indicador categoria="reprodutivo" cor="var(--dourado-light)" valor={pct(rep?.perc_vazias_pct)}
+            rotulo={<>Vazias<span style={{ ...legenda, display: "block" }}>situação atual</span></>} />
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
-          <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{num(prod?.producao_total_dia_kg, " kg")}</p><p className="kpi-label">Produção/dia (últ. controle)</p><Milk size={18} style={{ color: "var(--text-muted)", marginTop: "0.4rem" }} /></div>
-          <div className="kpi-card"><p className="kpi-value">{num(prod?.producao_media_kg, " kg")}</p><p className="kpi-label">Média por vaca</p></div>
-          <div className="kpi-card"><p className="kpi-value">{num(prod?.del_medio)}</p><p className="kpi-label">DEL médio (dias)</p></div>
-          <div className="kpi-card"><p className="kpi-value">{num(reb?.vacas_lactacao)}</p><p className="kpi-label">Vacas em lactação atual</p></div>
+          <Indicador categoria="producao" cor="var(--green-light)" valor={num(prod?.producao_total_dia_kg, " kg")}
+            rotulo="Produção/dia (últ. controle)" extra={<Milk size={16} style={{ color: "var(--text-muted)" }} />} />
+          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.producao_media_kg, " kg")} rotulo="Média por vaca" />
+          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(prod?.del_medio)} rotulo="DEL médio (dias)" />
+          <Indicador categoria="producao" cor="var(--dourado-light)" valor={num(reb?.vacas_lactacao)} rotulo="Vacas em lactação atual" />
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

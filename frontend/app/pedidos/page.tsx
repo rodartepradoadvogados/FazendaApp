@@ -9,6 +9,7 @@ import {
 import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
+import { Indicador } from "@/components/ui";
 
 type PedidoItemRow = PedidoItemPayload & { id: number; valor_atendido: number };
 type PedidoRow = {
@@ -42,7 +43,7 @@ function Badge({ status }: { status: string }) {
 }
 
 function KPI({ v, l, c }: { v: string; l: string; c?: string }) {
-  return <div className="kpi-card"><p className="kpi-value" style={{ fontSize: "1.25rem", color: c }}>{v}</p><p className="kpi-label">{l}</p></div>;
+  return <Indicador categoria="geral" valor={v} rotulo={l} cor={c} />;
 }
 
 export default function PedidosPage() {
