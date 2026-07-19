@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Filter, Plus, Search } from "lucide-react";
 import { fetchServicosAnalise, registrarPerdaPrenhez, ehAdmin } from "@/lib/api";
-import { TabBar, MultiFiltro } from "@/components/ui";
+import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { estiloSexado } from "@/lib/constants";
 
@@ -166,10 +166,10 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
         </div>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
-          <div className="kpi-card"><p className="kpi-value">{filtrados.length}</p><p className="kpi-label">{foco === "perdas" ? "Perdas" : "Registros"}</p></div>
-          {foco !== "perdas" && <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--green-light)" }}>{positivos}</p><p className="kpi-label">Prenhezes</p></div>}
-          {foco !== "perdas" && <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--blue)" }}>{taxa === null ? "—" : `${taxa}%`}</p><p className="kpi-label">Concepção / serviço</p></div>}
-          {foco === "todos" && <div className="kpi-card"><p className="kpi-value" style={{ color: "var(--amber)" }}>{perdas}</p><p className="kpi-label">Perdas de prenhez</p></div>}
+          <Indicador categoria="reprodutivo" valor={filtrados.length} rotulo={foco === "perdas" ? "Perdas" : "Registros"} />
+          {foco !== "perdas" && <Indicador categoria="reprodutivo" valor={positivos} cor="var(--green-light)" rotulo="Prenhezes" />}
+          {foco !== "perdas" && <Indicador categoria="reprodutivo" valor={taxa === null ? "—" : `${taxa}%`} cor="var(--blue)" rotulo="Concepção / serviço" />}
+          {foco === "todos" && <Indicador categoria="reprodutivo" valor={perdas} cor="var(--amber)" rotulo="Perdas de prenhez" />}
         </div>
 
         <div className="card">
