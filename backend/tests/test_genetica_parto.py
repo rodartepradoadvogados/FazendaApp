@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import Animal, EstoqueSemen, GrauSangue, Raca, Servico, Touro
+from fazenda.api.routers.reproducao import backfill_categoria_crias
 
 
 @pytest.fixture
@@ -93,6 +94,51 @@ def test_parto_sem_pai_identificavel_mantem_raca_da_mae(client):
         assert cria is not None
         assert cria.raca == "Girolando"
         assert cria.grau_sangue is None
+
+
+def test_parto_insere_cria_automaticamente_na_categoria_bezerra_mamando(client):
+    _seed_graus(client.engine)
+    with Session(client.engine) as session:
+        session.add(Animal(numero="486", sexo="F", raca="Girolando", grau_sangue="3/4 Holandês", ativo=True))
+        session.commit()
+
+    resp = client.post("/reproducao/parto", json={
+        "numero_matriz": "486",
+        "data_parto": "2025-10-08",
+        "crias": [
+            {"numero": "486-C1", "sexo": "F", "nasceu_viva": True},
+            {"numero": "486-C2", "sexo": "M", "nasceu_viva": True},
+        ],
+    })
+    assert resp.status_code == 200, resp.text
+
+    with Session(client.engine) as session:
+        femea = session.exec(select(Animal).where(Animal.numero == "486-C1")).first()
+        macho = session.exec(select(Animal).where(Animal.numero == "486-C2")).first()
+        assert femea.categoria_completa == "Bezerra Mamando"
+        assert femea.categoria_abrev == "Bezerra"
+        assert macho.categoria_completa == "Bezerro Mamando"
+        assert macho.categoria_abrev == "Bezerro"
+
+
+def test_backfill_categoria_crias_corrige_animais_ja_cadastrados_sem_categoria(client):
+    with Session(client.engine) as session:
+        # Cria já existente sem categoria (comportamento antigo do /parto) —
+        # mae_numero preenchido indica que veio de um parto.
+        session.add(Animal(numero="487", sexo="F", mae_numero="200", mae_nome="Vaca 200", ativo=True))
+        # Animal sem mãe (ex.: comprado) — não deve ser tocado pelo backfill.
+        session.add(Animal(numero="300", sexo="F", ativo=True))
+        session.commit()
+
+    with Session(client.engine) as session:
+        backfill_categoria_crias(session)
+
+    with Session(client.engine) as session:
+        cria = session.exec(select(Animal).where(Animal.numero == "487")).first()
+        comprado = session.exec(select(Animal).where(Animal.numero == "300")).first()
+        assert cria.categoria_completa == "Bezerra Mamando"
+        assert cria.categoria_abrev == "Bezerra"
+        assert comprado.categoria_completa is None
 
 
 def test_crud_racas(client):

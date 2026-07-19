@@ -1,10 +1,47 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Search, Trash2, AlertTriangle, X, Check, Clock, ThumbsUp, ThumbsDown } from "lucide-react";
+import { Search, Trash2, Pencil, AlertTriangle, X, Check, Clock, ThumbsUp, ThumbsDown } from "lucide-react";
 import {
   fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao,
   fetchPendentesExclusao, aprovarExclusao, rejeitarExclusao, ehAdmin, formatDate,
 } from "@/lib/api";
+
+// Para onde mandar o usuário ao clicar "Editar" num registro filtrado — cada
+// tipo já tem um lugar próprio no site que permite editar (ou pelo menos
+// localizar) aquele lançamento; "todos_lancamentos" resolve pelo tipo_real
+// de cada linha (ver DESTINO_EDITAR abaixo, no map de resultados).
+const DESTINO_EDITAR: Record<string, string> = {
+  animal: "/rebanho?aba=ficha&numero=",
+  servico: "/lancamentos?ir=inseminacao",
+  parto: "/lancamentos?ir=parto",
+  controle: "/lancamentos?ir=controle",
+  sanidade: "/lancamentos?ir=sanidade_aplicacao",
+  protocolo_sanitario_lancamento: "/lancamentos?ir=protocolo_sanitario",
+  protocolo_iatf_lancamento: "/lancamentos?ir=protocolo_iatf",
+  financeiro: "/financeiro",
+  compra_animal: "/lancamentos?ir=comprar_animal",
+  compra_semen: "/lancamentos?ir=comprar_semen",
+  venda_animal: "/lancamentos?ir=vender_animal",
+  estoque: "/lancamentos?ir=estoque",
+  evento_manual: "/agenda",
+  calendario_sanitario: "/lancamentos?ir=calendario_sanitario",
+  lote: "/configuracoes?aba=cadastro",
+  fornecedor: "/configuracoes?aba=cadastro",
+  motivo_movimentacao: "/configuracoes?aba=cadastro",
+  pessoa: "/configuracoes?aba=cadastro",
+  principio_ativo: "/configuracoes?aba=cadastro",
+  doenca: "/configuracoes?aba=cadastro",
+  evento_sanitario: "/configuracoes?aba=cadastro",
+  protocolo_sanitario: "/configuracoes?aba=cadastro",
+};
+// "animal" é o único destino que precisa do id do próprio registro (número
+// do animal) anexado à URL — os demais levam à listagem do tipo, onde o
+// usuário localiza e edita o lançamento certo.
+function destinoEditar(tipoReal: string, id: string): string | null {
+  const base = DESTINO_EDITAR[tipoReal];
+  if (!base) return null;
+  return tipoReal === "animal" ? `${base}${encodeURIComponent(id)}` : base;
+}
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -203,7 +240,15 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
                         {c.subtitulo}
                       </div>
                     </td>
-                    <td style={{ textAlign: "right" }}>
+                    <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                      {(() => {
+                        const href = destinoEditar(c.tipo_real || tipo, String(c.id));
+                        return href ? (
+                          <a href={href} className="btn-ghost" style={{ fontSize: "0.75rem", marginRight: "0.4rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}>
+                            <Pencil size={13} /> Editar
+                          </a>
+                        ) : null;
+                      })()}
                       <button className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.75rem" }} onClick={() => escolher(c)}>
                         <Trash2 size={13} /> Excluir
                       </button>

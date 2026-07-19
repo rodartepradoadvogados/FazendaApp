@@ -45,6 +45,27 @@ def deduplicar_partos(session: Session) -> None:
     session.add(SeedFlag(chave=chave))
     session.commit()
 
+
+def backfill_categoria_crias(session: Session) -> None:
+    """Corrige crias já cadastradas via /parto que ficaram sem categoria (o
+    registro só define categoria a partir de agora — ver registrar_parto).
+    Roda UMA vez (guardada por SeedFlag): qualquer Animal com mãe registrada
+    (mae_numero preenchido, ou seja, veio de um parto) e sem categoria
+    completa ainda entra em "Bezerra/o Mamando"; o próximo upload do
+    GERAL.csv (Ideagri) segue tendo prioridade e substitui esse valor."""
+    chave = "backfill_categoria_crias_v1"
+    if session.get(SeedFlag, chave):
+        return
+    crias = session.exec(
+        select(Animal).where(Animal.mae_numero.is_not(None), Animal.categoria_completa.is_(None))
+    ).all()
+    for a in crias:
+        a.categoria_completa = "Bezerra Mamando" if a.sexo == "F" else "Bezerro Mamando"
+        a.categoria_abrev = "Bezerra" if a.sexo == "F" else "Bezerro"
+        session.add(a)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
 # Passos do protocolo IATF — mesmo cronograma já usado no rascunho do front
 # (D0/D7/D9/D11); aqui viram eventos reais na Agenda em vez de só um desenho.
 PASSOS_PROTOCOLO_IATF = [
@@ -341,9 +362,15 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
         if session.exec(select(Animal).where(Animal.numero == cria.numero)).first():
             continue  # já cadastrada — não sobrescreve
         raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
+        # Todo animal que nasce entra automaticamente na categoria "bezerra/o
+        # mamando" — o próximo upload do GERAL.csv (Ideagri) pode atualizar
+        # depois, mas a cria não deve ficar sem categoria até lá.
+        categoria_completa_cria = "Bezerra Mamando" if cria.sexo == "F" else "Bezerro Mamando"
+        categoria_abrev_cria = "Bezerra" if cria.sexo == "F" else "Bezerro"
         session.add(Animal(
             numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
+            categoria_completa=categoria_completa_cria, categoria_abrev=categoria_abrev_cria,
         ))
         crias_criadas.append(cria.numero)
 
