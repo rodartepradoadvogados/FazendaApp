@@ -1552,7 +1552,9 @@ class CalendarioSanitario(SQLModel, table=True):
     principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
     dosagem: Optional[str] = None  # texto livre — ex.: "2 mL a 5 mL (conforme bula)"
     unidade: Optional[str] = None  # ml | L | unidade | dose | kg | saca 30kg | saca 60kg
-    # Veterinário/pessoa responsável (usado sobretudo em exames, que não têm baixa de estoque).
+    # Responsável pela regra (pessoa cadastrada) — vacina e exame.
+    responsavel: Optional[str] = None
+    # Veterinário (só exame) — pessoa cadastrada com tipo Veterinário/Zootecnista.
     veterinario: Optional[str] = None
     frequencia_valor: int
     frequencia_unidade: str  # "dias" | "meses" | "anos"

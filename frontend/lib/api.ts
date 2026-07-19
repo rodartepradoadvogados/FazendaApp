@@ -1433,7 +1433,7 @@ export async function fetchCalendarioSanitario(filtros?: { dataInicio?: string; 
 
 type CalendarioSanitarioPayload = {
   evento_sanitario_id: number; categoria_alvo?: string; doenca_id?: number; produto?: string;
-  principio_ativo_id?: number; dosagem?: string; unidade?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
+  principio_ativo_id?: number; dosagem?: string; unidade?: string; responsavel?: string; veterinario?: string; frequencia_valor: number; frequencia_unidade: string;
   data_evento: string; observacao?: string; ativo?: boolean; realizado?: boolean;
 };
 export async function criarCalendarioSanitario(dados: CalendarioSanitarioPayload) {

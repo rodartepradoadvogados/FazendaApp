@@ -376,8 +376,33 @@ def _nomes(session: Session) -> tuple[dict[int, str], dict[int, str], dict[int, 
     return eventos, doencas, principios, categorias
 
 
-def _serializar(c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict, categorias: dict | None = None) -> dict:
+def _ultimo_evento_por_produto(session: Session) -> dict[str, dict]:
+    """Data (isoformat) e id da aplicação Sanidade (natureza=preventivo) mais
+    recente por produto (chave em minúsculo) — usado para achar "o último
+    evento já lançado" de uma regra do calendário sanitário, no popup de
+    Aplicações (ver GET /sanidade/calendario, campos ultimo_evento_data/id)."""
+    mapa: dict[str, dict] = {}
+    registros = session.exec(
+        select(Sanidade).where(Sanidade.natureza == "preventivo", Sanidade.data_aplicacao.is_not(None))
+    ).all()
+    for r in registros:
+        chave = (r.produto or "").strip().lower()
+        if not chave:
+            continue
+        atual = mapa.get(chave)
+        novo = r.data_aplicacao.isoformat()
+        if not atual or novo > atual["data"]:
+            mapa[chave] = {"data": novo, "id": r.id}
+    return mapa
+
+
+def _serializar(
+    c: CalendarioSanitario, eventos: dict, doencas: dict, principios: dict,
+    categorias: dict | None = None, ultimos_por_produto: dict[str, dict] | None = None,
+) -> dict:
     categorias = categorias or {}
+    ultimos_por_produto = ultimos_por_produto or {}
+    ultimo = ultimos_por_produto.get((c.produto or "").strip().lower()) if c.produto else None
     return {
         **c.model_dump(),
         "evento_sanitario_nome": eventos.get(c.evento_sanitario_id, "—"),
@@ -385,6 +410,8 @@ def _serializar(c: CalendarioSanitario, eventos: dict, doencas: dict, principios
         "doenca_nome": doencas.get(c.doenca_id) if c.doenca_id else None,
         "principio_ativo_nome": principios.get(c.principio_ativo_id) if c.principio_ativo_id else None,
         "proxima_ocorrencia": proxima_ocorrencia(c.data_evento, c.frequencia_valor, c.frequencia_unidade).isoformat(),
+        "ultimo_evento_data": ultimo["data"] if ultimo else None,
+        "ultimo_evento_id": ultimo["id"] if ultimo else None,
     }
 
 
@@ -400,8 +427,9 @@ def listar_calendario(
     (esse fica em /sanidade/aplicacoes).
     """
     eventos, doencas, principios, categorias = _nomes(session)
+    ultimos = _ultimo_evento_por_produto(session)
     regras = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)).all()  # noqa: E712
-    saida = [_serializar(c, eventos, doencas, principios, categorias) for c in regras]
+    saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
     if data_inicio:
@@ -419,6 +447,7 @@ class CalendarioSanitarioIn(BaseModel):
     principio_ativo_id: int | None = None
     dosagem: str | None = None
     unidade: str | None = None
+    responsavel: str | None = None  # pessoa responsável pela regra (vacina e exame)
     veterinario: str | None = None  # p/ exames: quem realizou/vai realizar
     frequencia_valor: int
     frequencia_unidade: str
@@ -441,6 +470,20 @@ def _validar_calendario(dados: CalendarioSanitarioIn, session: Session) -> None:
         raise HTTPException(status_code=400, detail=f"Frequência inválida (use: {', '.join(FREQUENCIAS)})")
     if dados.frequencia_valor <= 0:
         raise HTTPException(status_code=400, detail="A frequência deve ser maior que zero")
+    # Só se marca como realizado evento do dia corrente ou retroativo — nunca
+    # um evento com data futura (ainda não aconteceu).
+    if dados.realizado and dados.data_evento > date.today():
+        raise HTTPException(
+            status_code=400,
+            detail="Só é possível marcar como realizado um evento de hoje ou retroativo — a data informada é futura.",
+        )
+
+
+def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> None:
+    eid = f"calendario_sanitario_{c.id}__{c.data_evento.isoformat()}"
+    if not session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first():
+        session.add(EventoRealizado(evento_id=eid))
+        session.commit()
 
 
 @router.post("/calendario")
@@ -452,13 +495,14 @@ def criar_calendario(dados: CalendarioSanitarioIn, session: Session = Depends(ge
     session.refresh(c)
     # "Já foi realizado?" — marca a ocorrência de referência como realizada para
     # não aparecer como pendência na Agenda (útil p/ exames já feitos hoje).
-    if dados.realizado and c.data_evento <= date.today():
-        eid = f"calendario_sanitario_{c.id}__{c.data_evento.isoformat()}"
-        if not session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == eid)).first():
-            session.add(EventoRealizado(evento_id=eid))
-            session.commit()
+    # Considera realizada somente essa primeira ocorrência — cada ocorrência
+    # projetada tem seu próprio evento_id (ver _eventos_calendario_agenda), as
+    # seguintes continuam pendentes normalmente.
+    if dados.realizado:
+        _marcar_calendario_realizado(session, c)
     eventos, doencas, principios, categorias = _nomes(session)
-    return _serializar(c, eventos, doencas, principios, categorias)
+    ultimos = _ultimo_evento_por_produto(session)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
 
 
 @router.put("/calendario/{calendario_id}")
@@ -472,8 +516,11 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
     session.add(c)
     session.commit()
     session.refresh(c)
+    if dados.realizado:
+        _marcar_calendario_realizado(session, c)
     eventos, doencas, principios, categorias = _nomes(session)
-    return _serializar(c, eventos, doencas, principios, categorias)
+    ultimos = _ultimo_evento_por_produto(session)
+    return _serializar(c, eventos, doencas, principios, categorias, ultimos)
 
 
 @router.delete("/calendario/{calendario_id}")
