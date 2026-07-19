@@ -11,9 +11,9 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, ShieldCheck,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
@@ -34,6 +34,7 @@ import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import News from "@/components/mobile/menu/News";
 import Estoque from "@/components/mobile/menu/Estoque";
+import Auditoria from "@/components/mobile/menu/Auditoria";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -87,7 +88,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "auditoria" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -141,6 +142,11 @@ export default function Pagina() {
     return <Estoque onVoltar={() => setSecaoAberta(null)} />;
   }
 
+  // Só o proprietário (ver ehDono()) — mesmo gate do backend (exigir_dono).
+  if (secaoAberta === "auditoria") {
+    return <Auditoria onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // 2º nível: itens da sessão escolhida, em quadrados.
   if (secaoAberta === "aparencia") {
     return (
@@ -162,10 +168,12 @@ export default function Pagina() {
   }
 
   // 1º nível: sessões, em quadrados coloridos. "Estoque" fica ao lado de
-  // "Financeiro" (mesma permissão do módulo /estoque do site).
+  // "Financeiro" (mesma permissão do módulo /estoque do site). "Auditoria" só
+  // aparece para o proprietário (ver ehDono()).
   const secoesOpcoes: OpcaoAcao[] = [
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--mob-dourado)" }] : []),
+    ...(montado && ehDono() ? [{ id: "auditoria", label: "Acessos e Auditoria", icone: <ShieldCheck size={26} />, cor: "var(--mob-vinho)" }] : []),
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
@@ -176,7 +184,7 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque")}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "auditoria")}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}
