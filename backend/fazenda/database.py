@@ -5,7 +5,7 @@ Usa SQLite em desenvolvimento, PostgreSQL em produção (via DATABASE_URL).
 import logging
 
 from sqlalchemy import inspect, text
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 from fazenda.config import settings
 
@@ -276,11 +276,41 @@ def _migrar_tipos_bigint() -> None:
                 pass  # já é BIGINT, ou o banco não deixou — segue o jogo
 
 
+def _inativar_animais_semen() -> None:
+    """Sêmen/reprodutor importado do sistema anterior como linha de Animal
+    (eh_semen=True, categoria "Indefinido") não é animal do rebanho — o
+    cadastro real de sêmen/touros vive em EstoqueSemen/Touro. Essas linhas já
+    são excluídas em todas as listagens e relatórios que filtram eh_semen, mas
+    seguiam aparecendo como "ativas" no bucket {sem grupo} de "Animais por
+    grupo (incluir machos)". Idempotente: roda a cada boot, só afeta quem
+    ainda estiver ativo."""
+    from fazenda.models import Animal  # import local: evita ciclo no boot do módulo
+
+    insp = inspect(engine)
+    if "animal" not in insp.get_table_names():
+        return
+    with Session(engine) as session:
+        pendentes = session.exec(
+            select(Animal).where(Animal.eh_semen == True, Animal.ativo == True)  # noqa: E712
+        ).all()
+        if not pendentes:
+            return
+        for a in pendentes:
+            a.ativo = False
+            session.add(a)
+        session.commit()
+        logger.info(
+            "Inativados %d registro(s) de Animal(eh_semen=True) importados como pseudo-animal.",
+            len(pendentes),
+        )
+
+
 def create_db_and_tables() -> None:
     """Cria as tabelas (idempotente) e aplica migrações leves de colunas."""
     SQLModel.metadata.create_all(engine)
     _migrar_colunas()
     _migrar_tipos_bigint()
+    _inativar_animais_semen()
 
 
 def get_session():

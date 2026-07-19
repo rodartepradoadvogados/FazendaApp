@@ -6,19 +6,21 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { CalendarCheck, PlusCircle, Beef, Menu as MenuIcon, Sun, Moon, CloudUpload } from "lucide-react";
+import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
+import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
+import { CowIcon } from "@/components/CowIcon";
 import { ehAdmin } from "@/lib/api";
 
 const ABAS = [
-  { href: "/app", label: "Agenda", icon: CalendarCheck },
+  { href: "/app", label: "Agenda", icon: CalendarColorfulIcon },
   { href: "/app/lancar", label: "Lançar", icon: PlusCircle },
-  { href: "/app/rebanho", label: "Rebanho", icon: Beef },
-  { href: "/app/menu", label: "Menu", icon: MenuIcon },
+  { href: "/app/rebanho", label: "Rebanho", icon: CowIcon },
+  { href: "/app/menu", label: "Menu", icon: MenuTricolorIcon },
 ];
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
@@ -112,9 +114,12 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       <nav className="mob-nav">
         {ABAS.map(({ href, label, icon: Icon }) => {
           const ativo = href === "/app" ? path === "/app" : path.startsWith(href);
+          const ehLancar = href === "/app/lancar";
           return (
             <Link key={href} href={href} className={ativo ? "ativo" : ""}>
-              <span className="mob-nav-icone"><Icon size={21} strokeWidth={ativo ? 2.4 : 1.8} /></span>
+              <span className={ehLancar ? "mob-nav-icone mob-nav-lancar" : "mob-nav-icone"}>
+                <Icon size={ehLancar ? 27 : 21} strokeWidth={ativo ? 2.4 : 1.8} />
+              </span>
               {label}
             </Link>
           );

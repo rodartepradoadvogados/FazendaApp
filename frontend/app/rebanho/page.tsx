@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { CowIcon } from "@/components/CowIcon";
 import { IndicadoresGerais } from "@/app/indicadores/page";
 import { fetchAnimais, fetchEstratificacaoRebanho, marcarADescartar, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -57,7 +58,7 @@ function EstratificacaoRebanho() {
     .filter((x) => x.n > 0);
   return (
     <div className="card mb-4">
-      <div className="card-header mb-3 flex items-center gap-2"><Beef size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
+      <div className="card-header mb-3 flex items-center gap-2"><CowIcon size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
         <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação" />
         <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho" />
@@ -225,7 +226,7 @@ function RebanhoVisaoGeral() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Beef size={22} style={{ color: "var(--dourado)" }} /> Rebanho</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><CowIcon size={22} color="var(--dourado)" /> Rebanho</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva ou número.</p>
       </div>
 
@@ -399,7 +400,7 @@ type Aba = "visao" | "sugestoes" | "ficha" | "touros" | "indicadores";
 const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros", "indicadores"];
 
 const ABAS_REBANHO = [
-  { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
+  { id: "visao", label: "Rebanho", icon: CowIcon, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
