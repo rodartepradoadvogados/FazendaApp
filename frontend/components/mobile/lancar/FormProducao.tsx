@@ -1,35 +1,79 @@
 "use client";
 // Sub-tela PRODUÇÃO (LEITE): controle leiteiro por vaca (individual) ou por
 // lote (pesagem de todas as vacas do lote de uma vez, salvando tudo junto),
-// mais Pesagem corporal e BST — reaproveitando os mesmos componentes ricos
-// do site (FormPesagemCorporal, PainelLancarBst) dentro do envoltório
-// ".mob-form-embutido", igual ao já feito em Financeiro (compra/venda de
-// animal, folha de pagamento).
+// mais Pesagem corporal, BST, Secagem, Qualidade do leite, Venda mensal do
+// leite e Indução de lactação — reaproveitando os mesmos componentes ricos
+// do site dentro do envoltório ".mob-form-embutido", igual ao já feito em
+// Financeiro (compra/venda de animal, folha de pagamento).
 // Endpoint do desktop: POST /producao/controles (já aceita lista de entradas).
 import { useEffect, useMemo, useState } from "react";
 import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { BotoesEscolha, LinhaPills, MobPill, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
 import { FormPesagemCorporal } from "@/components/FormPesagemCorporal";
 import { PainelLancarBst } from "@/components/PainelLancarBst";
-import { fetchAgenda } from "@/lib/api";
+import { FormSecagem } from "@/components/FormSecagem";
+import { FormQualidadeLeite } from "@/components/FormQualidadeLeite";
+import { FormEntregaLeite } from "@/components/FormEntregaLeite";
+import { FormInducaoLactacao } from "@/components/FormInducaoLactacao";
+import { type EstoqueItem } from "@/components/lancamentos/comumForms";
+import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
+
+type Sub = "controle" | "pesagem" | "bst" | "secagem" | "qualidade" | "entrega" | "inducao";
 
 export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const [sub, setSub] = useState<"controle" | "pesagem" | "bst">("controle");
+  const [sub, setSub] = useState<Sub>("controle");
   const [agenda, setAgenda] = useState<any>(null);
   const carregarAgenda = () => { fetchAgenda().then(setAgenda).catch(() => {}); };
   useEffect(() => { if (sub === "bst" && !agenda) carregarAgenda(); }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Estoque e produtos já lançados em Sanidade — só a Secagem precisa (lista
+  // de medicamentos de secagem/vacina pré-parto), então busca só na 1ª vez
+  // que o usuário abre essa aba.
+  const [estoque, setEstoque] = useState<EstoqueItem[]>([]);
+  const [produtosSanidade, setProdutosSanidade] = useState<string[]>([]);
+  const [estoqueCarregado, setEstoqueCarregado] = useState(false);
+  useEffect(() => {
+    if (sub !== "secagem" || estoqueCarregado) return;
+    setEstoqueCarregado(true);
+    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
+    fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
+  }, [sub, estoqueCarregado]);
 
   return (
     <>
       <LinhaPills>
         <MobPill ativa={sub === "controle"} onClick={() => setSub("controle")}>Controle leiteiro</MobPill>
         <MobPill ativa={sub === "pesagem"} onClick={() => setSub("pesagem")}>Pesagem corporal</MobPill>
+        <MobPill ativa={sub === "secagem"} onClick={() => setSub("secagem")}>Secagem</MobPill>
+        <MobPill ativa={sub === "inducao"} onClick={() => setSub("inducao")}>Indução de lactação</MobPill>
+        <MobPill ativa={sub === "qualidade"} onClick={() => setSub("qualidade")}>Qualidade do leite</MobPill>
+        <MobPill ativa={sub === "entrega"} onClick={() => setSub("entrega")}>Venda mensal do leite</MobPill>
         <MobPill ativa={sub === "bst"} onClick={() => setSub("bst")}>BST</MobPill>
       </LinhaPills>
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">
           <FormPesagemCorporal animais={animais as any} lotes={lotesDe(animais)} />
+        </div>
+      )}
+      {sub === "secagem" && (
+        <div className="mob-form-embutido">
+          <FormSecagem animais={animais as any} estoque={estoque} produtos={produtosSanidade} />
+        </div>
+      )}
+      {sub === "inducao" && (
+        <div className="mob-form-embutido">
+          <FormInducaoLactacao animais={animais as any} />
+        </div>
+      )}
+      {sub === "qualidade" && (
+        <div className="mob-form-embutido">
+          <FormQualidadeLeite animais={animais as any} />
+        </div>
+      )}
+      {sub === "entrega" && (
+        <div className="mob-form-embutido">
+          <FormEntregaLeite />
         </div>
       )}
       {sub === "bst" && (
