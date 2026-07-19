@@ -18,7 +18,7 @@ import os
 
 NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
 
-MIME_ACEITOS = {"application/pdf", "image/jpeg", "image/png"}
+MIME_ACEITOS = {"application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"}
 
 _SCHEMA = {
     "type": "object",

@@ -233,6 +233,39 @@ def test_pdf_sem_mime_type_correto_ainda_e_reconhecido(client):
     assert any(e["metodo"] == "sendMessage" and "reply_markup" in e for e in enviados)
 
 
+def test_webp_e_gif_sao_reconhecidos_como_documento(client):
+    """Comprovantes fotografados em WebP/GIF (ex.: print de app que salva
+    nesse formato) devem ser aceitos como qualquer outra imagem — a IA
+    (Claude Vision) já lê esses formatos nativamente."""
+    c, engine, enviados = client
+    upd = {"message": {"chat": {"id": CHAT}, "document": {
+        "file_id": "FID-WEBP", "file_name": "comprovante.webp", "mime_type": "image/webp",
+    }}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        pend = s.exec(select(TelegramPendente)).first()
+        assert pend is not None and pend.kind == "documento"
+
+
+def test_heic_orienta_enviar_como_foto(client):
+    """Fotos de iPhone em HEIC/HEIF não são lidas pela IA — o bot deve
+    orientar o usuário a reenviar como "foto" (o Telegram recomprime para
+    JPEG no servidor, contornando o formato), em vez da mensagem genérica de
+    "não reconheci"."""
+    c, engine, enviados = client
+    upd = {"message": {"chat": {"id": CHAT}, "document": {
+        "file_id": "FID-HEIC", "file_name": "IMG_0001.HEIC", "mime_type": "image/heic",
+    }}}
+    r = c.post("/telegram/webhook", json=upd, headers=_hdr())
+    assert r.status_code == 200
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
+    ultima = enviados[-1]
+    assert "foto" in ultima["text"].lower()
+    assert "heic" in ultima["text"].lower()
+
+
 def test_arquivo_tipo_nao_reconhecido_avisa_usuario(client):
     """Um arquivo que não é XML/PDF/JPG/PNG nem por mime nem por extensão deve
     avisar o usuário, não cair na mensagem genérica de comando (como se nada
