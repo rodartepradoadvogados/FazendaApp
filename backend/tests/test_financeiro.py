@@ -754,6 +754,23 @@ class TestReciboLancamento:
         assert resp.status_code == 200
         assert resp.json() == {"nome": "Cooperativa Agro LTDA", "email": "contato@agro.com"}
 
+    def test_destinatario_resolve_por_pessoa_na_folha_de_pagamento(self, client):
+        """Folha de pagamento busca o e-mail em Pessoa (não Fornecedor) — e
+        continua funcionando com o cadastro de múltiplos e-mails (#511): o
+        recibo usa sempre o primeiro e-mail da lista."""
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={
+            "nome": "Funcionário Recibo", "tipos": ["Funcionário"],
+            "emails": ["principal@x.com", "secundario@x.com"],
+        }).json()["id"]
+        c.post("/cadastro/folha-pagamento", json={"pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 1000.0})
+        with Session(engine) as s:
+            from sqlmodel import select
+            conta = s.exec(select(ContaGerencial).where(ContaGerencial.tipo_documento == "Folha de pagamento")).first()
+        resp = c.get(f"/financeiro/lancamentos/{conta.numero_lancamento}/destinatario-recibo")
+        assert resp.status_code == 200
+        assert resp.json() == {"nome": "Funcionário Recibo", "email": "principal@x.com"}
+
     def test_destinatario_sem_cadastro_devolve_email_vazio(self, client):
         c, engine = client
         r = c.post("/financeiro/lancamentos", json={

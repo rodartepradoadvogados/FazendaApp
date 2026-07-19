@@ -167,8 +167,8 @@ def atualizar_fornecedor(fornecedor_id: int, dados: FornecedorIn, session: Sessi
 class PessoaIn(BaseModel):
     nome: str
     tipos: list[str]
-    telefone: str | None = None
-    email: str | None = None
+    telefones: list[str] = []
+    emails: list[str] = []
     cpf_cnpj: str | None = None
     cep: str | None = None
     observacoes: str | None = None
@@ -177,8 +177,27 @@ class PessoaIn(BaseModel):
     data_admissao: date | None = None
 
 
+def _normalizar_lista_contato(valores: list[str]) -> list[str]:
+    """Remove vazios/duplicatas mantendo a ordem — mesma ideia de _validar_tipos,
+    mas sem vocabulário fechado (telefone/e-mail são texto livre)."""
+    return list(dict.fromkeys(v.strip() for v in valores if v.strip()))
+
+
+def _aplicar_contatos(p: Pessoa, telefones: list[str], emails: list[str]) -> None:
+    """Grava telefones/emails (JSON) e mantém telefone/email (1º item) para
+    quem ainda lê o campo legado direto no ORM (ex.: destinatario_recibo)."""
+    p.telefones = json.dumps(telefones) if telefones else None
+    p.emails = json.dumps(emails) if emails else None
+    p.telefone = telefones[0] if telefones else None
+    p.email = emails[0] if emails else None
+
+
 def _serializar_pessoa(p: Pessoa) -> dict:
-    return {**p.model_dump(exclude={"tipo"}), "tipos": [t for t in (p.tipo or "").split(",") if t]}
+    dados = p.model_dump(exclude={"tipo", "telefone", "email", "telefones", "emails"})
+    dados["tipos"] = [t for t in (p.tipo or "").split(",") if t]
+    dados["telefones"] = json.loads(p.telefones) if p.telefones else ([p.telefone] if p.telefone else [])
+    dados["emails"] = json.loads(p.emails) if p.emails else ([p.email] if p.email else [])
+    return dados
 
 
 def _validar_tipos(session: Session, tipos: list[str]) -> str:
@@ -249,8 +268,11 @@ def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> di
     tipo_csv = _validar_tipos(session, dados.tipos)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    campos = dados.model_dump(exclude={"tipos"})
+    telefones = _normalizar_lista_contato(dados.telefones)
+    emails = _normalizar_lista_contato(dados.emails)
+    campos = dados.model_dump(exclude={"tipos", "telefones", "emails"})
     p = Pessoa(**campos, tipo=tipo_csv)
+    _aplicar_contatos(p, telefones, emails)
     session.add(p)
     session.commit()
     session.refresh(p)
@@ -263,9 +285,10 @@ def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends
     p = session.get(Pessoa, pessoa_id)
     if not p:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
-    for campo, valor in dados.model_dump(exclude={"tipos"}).items():
+    for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
         setattr(p, campo, valor)
     p.tipo = tipo_csv
+    _aplicar_contatos(p, _normalizar_lista_contato(dados.telefones), _normalizar_lista_contato(dados.emails))
     session.add(p)
     session.commit()
     session.refresh(p)

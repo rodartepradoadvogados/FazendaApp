@@ -463,8 +463,8 @@ export async function fetchPessoas() {
   return res.json();
 }
 type PessoaDados = {
-  nome: string; tipos: string[]; telefone?: string; email?: string; observacoes?: string; ativo?: boolean;
-  salario_base?: number; data_admissao?: string;
+  nome: string; tipos: string[]; telefones?: string[]; emails?: string[]; cpf_cnpj?: string; cep?: string;
+  observacoes?: string; ativo?: boolean; salario_base?: number; data_admissao?: string;
 };
 export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {
