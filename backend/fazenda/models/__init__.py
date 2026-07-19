@@ -993,6 +993,7 @@ class ValeFuncionario(SQLModel, table=True):
     parcelas: int = 1
     competencia_inicio: str = Field(index=True)  # "AAAA-MM" — primeira competência com desconto
     observacao: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None  # nº do documento do pagamento, p/ controle de extrato
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
