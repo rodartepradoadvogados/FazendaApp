@@ -14,7 +14,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import AgendaManual, Pessoa, PortalMensagem, Usuario
+from fazenda.models import AgendaManual, Animal, ContaGerencial, Pessoa, PortalMensagem, Usuario
 
 
 @pytest.fixture
@@ -240,3 +240,94 @@ class TestEnviarEmail:
             "data_inicio": "2026-01-01", "data_fim": "2026-01-31",
         })
         assert r.status_code == 400
+
+
+class TestExportar:
+    def test_opcoes_admin_ok_operador_403(self, ambiente):
+        app, engine = ambiente
+        admin = _client_como(app, engine, "admin-teste")
+        r = admin.get("/portal/exportar/opcoes")
+        assert r.status_code == 200
+        chaves = {o["chave"] for o in r.json()}
+        assert "animal_ficha" in chaves
+        assert "dre" in chaves
+
+        func = _client_como(app, engine, "func-teste")
+        assert func.get("/portal/exportar/opcoes").status_code == 403
+
+    def test_operador_nao_pode_solicitar_exportacao(self, ambiente):
+        app, engine = ambiente
+        func = _client_como(app, engine, "func-teste")
+        r = func.post("/portal/exportar", json={"itens": [{"chave": "animal_ficha"}]})
+        assert r.status_code == 403
+
+    def test_admin_sem_email_da_erro(self, ambiente):
+        app, engine = ambiente
+        with Session(engine) as s:
+            u = s.exec(select(Usuario).where(Usuario.username == "admin-teste")).first()
+            u.email = None
+            s.add(u)
+            s.commit()
+        admin = _client_como(app, engine, "admin-teste")
+        r = admin.post("/portal/exportar", json={"itens": [{"chave": "animal_ficha"}]})
+        assert r.status_code == 400
+
+    def test_chave_invalida_rejeitada(self, ambiente):
+        app, engine = ambiente
+        admin = _client_como(app, engine, "admin-teste")
+        r = admin.post("/portal/exportar", json={"itens": [{"chave": "chave_que_nao_existe"}]})
+        assert r.status_code == 400
+
+    def test_solicitar_exportacao_dispara_tarefa_em_background(self, ambiente, monkeypatch):
+        app, engine = ambiente
+        from fazenda.api.routers import portal as portal_router
+        chamadas = []
+        monkeypatch.setattr(portal_router, "_executar_exportacao", lambda itens, email: chamadas.append((itens, email)))
+        admin = _client_como(app, engine, "admin-teste")
+        r = admin.post("/portal/exportar", json={"itens": [
+            {"chave": "animal_ficha"}, {"chave": "dre", "data_inicio": "2026-01-01", "data_fim": "2026-01-31"},
+        ]})
+        assert r.status_code == 200
+        assert "admin@fazenda.com" in r.json()["mensagem"]
+        assert len(chamadas) == 1
+        itens, email = chamadas[0]
+        assert email == "admin@fazenda.com"
+        assert {i["chave"] for i in itens} == {"animal_ficha", "dre"}
+
+    def test_executar_exportacao_gera_zip_com_csvs(self, ambiente, monkeypatch):
+        app, engine = ambiente
+        from fazenda.api.routers import portal as portal_router
+        monkeypatch.setattr(portal_router, "engine", engine)
+
+        with Session(engine) as s:
+            s.add(Animal(numero="1001", sexo="F"))
+            s.add(Animal(numero="1002", sexo="F"))
+            s.add(ContaGerencial(tipo="despesa", valor_total=100.0, data_competencia=date(2026, 1, 15)))
+            s.commit()
+
+        capturado = {}
+        def _enviar_email_fake(destinatario, assunto, corpo_html, anexo_nome=None, anexo_bytes=None):
+            capturado["destinatario"] = destinatario
+            capturado["anexo_nome"] = anexo_nome
+            capturado["anexo_bytes"] = anexo_bytes
+        monkeypatch.setattr(portal_router, "enviar_email", _enviar_email_fake)
+
+        portal_router._executar_exportacao(
+            [
+                {"chave": "animal_ficha", "data_inicio": None, "data_fim": None},
+                {"chave": "financeiro_lancamentos", "data_inicio": date(2026, 1, 1), "data_fim": date(2026, 1, 31)},
+            ],
+            "admin@fazenda.com",
+        )
+
+        assert capturado["destinatario"] == "admin@fazenda.com"
+        assert capturado["anexo_nome"] == "exportacao_portal.zip"
+
+        import io
+        import zipfile
+        zf = zipfile.ZipFile(io.BytesIO(capturado["anexo_bytes"]))
+        nomes = zf.namelist()
+        assert "animal_ficha.csv" in nomes
+        assert "financeiro_lancamentos.csv" in nomes
+        animais_csv = zf.read("animal_ficha.csv").decode("utf-8-sig")
+        assert "1001" in animais_csv and "1002" in animais_csv
