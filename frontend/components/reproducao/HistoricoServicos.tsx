@@ -8,6 +8,7 @@ import { AlertTriangle, Filter, Pencil, Plus, Search, X } from "lucide-react";
 import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { estiloSexado } from "@/lib/constants";
 
 export type Serv = {
@@ -157,6 +158,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
   const perdas = filtrados.filter((s) => s.perda).length;
 
   const ordServ = useOrdenacao(filtrados);
+  const pagServ = usePaginacao(ordServ.linhasOrdenadas);
 
   return (
     <div>
@@ -237,7 +239,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                 {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               </tr></thead>
               <tbody>
-                {ordServ.linhasOrdenadas.slice(0, 500).map((s) => (
+                {pagServ.linhasPagina.map((s) => (
                   <tr key={`${s.numero}-${s.data}`} onClick={() => abrirEdicao(s)}
                     style={{ ...estiloSexado(s.tipo_semen), cursor: "pointer" }}
                     title={s.tipo_semen === "sexado" ? "Inseminação com sêmen sexado — clique para editar" : "Clique para editar"}>
@@ -259,7 +261,8 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                 ))}
               </tbody>
             </table>
-            {filtrados.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {filtrados.length} — refine os filtros.</p>}
+            <Paginacao pagina={pagServ.pagina} totalPaginas={pagServ.totalPaginas} totalLinhas={pagServ.totalLinhas}
+              tamanhoPagina={pagServ.tamanhoPagina} onMudarPagina={pagServ.setPagina} onMudarTamanho={pagServ.setTamanhoPagina} />
           </div>
         </div>
       </>}

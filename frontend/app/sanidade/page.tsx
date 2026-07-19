@@ -5,6 +5,7 @@ import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, type ExameResultado,
+  fetchMedicamentos,
 } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -461,7 +462,12 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   const [editId, setEditId] = useState<number | null>(null);
   const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<string[]>([]);
   const admin = ehAdmin();
+
+  useEffect(() => {
+    fetchMedicamentos({ incluir_sem_estoque: true }).then((m: any[]) => setProdutosCatalogo(m.map((x) => x.nome))).catch(() => setProdutosCatalogo([]));
+  }, []);
 
   // Cada aba busca só o que é dela — legado/importado (natureza=null) conta
   // como curativo (ver Sanidade.natureza).
@@ -755,7 +761,11 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
                                 <input type="date" style={inp} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Produto</label>
-                                <input style={inp} value={editVals.produto} onChange={(e) => setEditVals((s) => ({ ...s, produto: e.target.value }))} /></div>
+                                <select style={inp} value={editVals.produto} onChange={(e) => setEditVals((s) => ({ ...s, produto: e.target.value }))}>
+                                  <option value="">Selecione...</option>
+                                  {!produtosCatalogo.includes(editVals.produto) && editVals.produto && <option value={editVals.produto}>{editVals.produto}</option>}
+                                  {produtosCatalogo.map((p) => <option key={p} value={p}>{p}</option>)}
+                                </select></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Dose</label>
                                 <input type="number" step="any" style={inp} value={editVals.dose} onChange={(e) => setEditVals((s) => ({ ...s, dose: e.target.value }))} /></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Unidade</label>

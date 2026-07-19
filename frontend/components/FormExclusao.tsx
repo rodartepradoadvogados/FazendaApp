@@ -5,6 +5,7 @@ import {
   fetchTiposExclusao, buscarExclusao, impactoExclusao, confirmarExclusao,
   fetchPendentesExclusao, aprovarExclusao, rejeitarExclusao, ehAdmin, formatDate,
 } from "@/lib/api";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 
 // Para onde mandar o usuário ao clicar "Editar" num registro filtrado — cada
 // tipo já tem um lugar próprio no site que permite editar (ou pelo menos
@@ -78,6 +79,8 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
   const [souAdmin, setSouAdmin] = useState(false);
   const [pendentes, setPendentes] = useState<Pendente[] | null>(null);
   const [decidindo, setDecidindo] = useState<number | null>(null);
+
+  const pagResultados = usePaginacao(resultados);
 
   const carregarPendentes = () => {
     if (!ehAdmin()) return;
@@ -231,7 +234,7 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr><th>Registro</th><th></th></tr></thead>
               <tbody>
-                {resultados.map((c) => (
+                {pagResultados.linhasPagina.map((c) => (
                   <tr key={`${c.tipo_real || tipo}-${c.id}`}>
                     <td>
                       <div style={{ fontWeight: 700, fontSize: "0.85rem" }}>{c.titulo}</div>
@@ -261,6 +264,12 @@ export function FormExclusao({ ocultarTipos }: { ocultarTipos?: string[] } = {})
               </tbody>
             </table>
           </div>
+          {resultados.length > 0 && (
+            <div style={{ padding: "0 0.7rem 0.6rem" }}>
+              <Paginacao pagina={pagResultados.pagina} totalPaginas={pagResultados.totalPaginas} totalLinhas={pagResultados.totalLinhas}
+                tamanhoPagina={pagResultados.tamanhoPagina} onMudarPagina={pagResultados.setPagina} onMudarTamanho={pagResultados.setTamanhoPagina} />
+            </div>
+          )}
         </div>
       )}
 

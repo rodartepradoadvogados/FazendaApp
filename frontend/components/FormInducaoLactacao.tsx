@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import {
-  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate,
+  fetchProtocolosInducaoLactacao, lancarInducaoLactacao, fetchInducaoLactacaoAtivos, formatDate, fetchPessoas,
 } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -85,9 +85,15 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const recarregarAtivosRef = useRef(() => {});
+  const [pessoas, setPessoas] = useState<any[]>([]);
 
   useEffect(() => { fetchProtocolosInducaoLactacao().then(setProtocolos).catch(() => setProtocolos([])); }, []);
+  useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
   const protocolo = protocolos.find((p) => String(p.id) === protocoloId);
+  const pessoasAtivas = useMemo(
+    () => pessoas.filter((p) => p.ativo !== false).sort((a, b) => (a.nome || "").localeCompare(b.nome || "")),
+    [pessoas]
+  );
 
   async function salvar() {
     setErro(null); setSucesso(null);
@@ -124,7 +130,10 @@ export function FormInducaoLactacao({ animais }: { animais: AnimalRow[] }) {
           <input type="date" style={inputStyle} value={dataD0} onChange={(e) => setDataD0(e.target.value)} />
         </Campo>
         <Campo label="Responsável">
-          <input style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)} placeholder="Opcional" />
+          <select style={inputStyle} value={responsavel} onChange={(e) => setResponsavel(e.target.value)}>
+            <option value="">Opcional</option>
+            {pessoasAtivas.map((p) => <option key={p.id ?? p.nome} value={p.nome}>{p.nome}</option>)}
+          </select>
         </Campo>
         <Campo label="Observação" full>
           <input style={inputStyle} value={observacao} onChange={(e) => setObservacao(e.target.value)} placeholder="Opcional" />

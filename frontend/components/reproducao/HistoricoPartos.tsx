@@ -7,6 +7,7 @@ import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
 import { fetchPartosHistorico, atualizarParto, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 
 type PartoReg = {
   id: number;
@@ -102,6 +103,7 @@ export default function HistoricoPartos() {
   }, [regs, animal, ini, fim, ordemParto, modo, janelas]);
 
   const ordPartos = useOrdenacao(filtrados);
+  const pagPartos = usePaginacao(ordPartos.linhasOrdenadas);
 
   return (
     <div>
@@ -165,7 +167,7 @@ export default function HistoricoPartos() {
                 {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               </tr></thead>
               <tbody>
-                {ordPartos.linhasOrdenadas.slice(0, 500).map((p, i) => (
+                {pagPartos.linhasPagina.map((p, i) => (
                   <tr key={`${p.numero}-${p.data}-${i}`} onClick={() => abrirEdicao(p)} style={{ cursor: "pointer" }} title="Clique para editar">
                     <td style={{ fontWeight: 700 }}>{p.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(p.data)}</td>
@@ -182,7 +184,8 @@ export default function HistoricoPartos() {
                 ))}
               </tbody>
             </table>
-            {filtrados.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {filtrados.length} — refine os filtros.</p>}
+            <Paginacao pagina={pagPartos.pagina} totalPaginas={pagPartos.totalPaginas} totalLinhas={pagPartos.totalLinhas}
+              tamanhoPagina={pagPartos.tamanhoPagina} onMudarPagina={pagPartos.setPagina} onMudarTamanho={pagPartos.setTamanhoPagina} />
           </div>
         </div>
       </>}

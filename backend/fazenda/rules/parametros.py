@@ -30,6 +30,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "metas_reproducao": "Metas reprodutivas",
     "producao_descarte": "Produção e descarte",
     "estoque_semen": "Estoque de sêmen",
+    "folha_rh": "Folha de pagamento / RH",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -96,6 +97,11 @@ DEFINICOES: list[dict] = [
     # (cadastro.py) e pelo alerta de sêmen abaixo do mínimo na Agenda.
     {"chave": "estoque_minimo_semen_convencional", "grupo": "estoque_semen", "label": "Estoque mínimo — sêmen convencional", "valor": 20, "unidade": "doses"},
     {"chave": "estoque_minimo_semen_sexado", "grupo": "estoque_semen", "label": "Estoque mínimo — sêmen sexado", "valor": 5, "unidade": "doses"},
+
+    # ---- Folha de pagamento / RH — Férias e 13º salário (cálculo interno,
+    # sem envio ao eSocial) ----------------------------------------------------
+    {"chave": "percentual_terco_constitucional_ferias", "grupo": "folha_rh", "label": "1/3 constitucional de férias", "valor": 0.3333, "tipo": "float", "unidade": "fração"},
+    {"chave": "dias_ferias_padrao", "grupo": "folha_rh", "label": "Dias de férias padrão", "valor": 30, "unidade": "dias"},
 ]
 
 
@@ -286,6 +292,18 @@ def estoque_minimo_semen_convencional() -> int:
 
 def estoque_minimo_semen_sexado() -> int:
     return int(get_param("estoque_minimo_semen_sexado", 5) or 5)
+
+
+def percentual_terco_constitucional_ferias() -> float:
+    """1/3 constitucional aplicado sobre o valor das férias gozadas (padrão
+    0.3333) — usado por `fazenda.rules.folha_rh.calcular_ferias`."""
+    return float(get_param("percentual_terco_constitucional_ferias", 0.3333) or 0.3333)
+
+
+def dias_ferias_padrao() -> int:
+    """Dias de férias padrão (direito integral por período aquisitivo) —
+    sugestão inicial no lançamento de férias, sempre editável."""
+    return int(get_param("dias_ferias_padrao", 30) or 30)
 
 
 def minimos_semen_por_tipo() -> dict[str, int]:

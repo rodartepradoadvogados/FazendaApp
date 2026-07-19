@@ -7,6 +7,7 @@ import { AlertTriangle, Filter, Pencil, Search, X } from "lucide-react";
 import { fetchSecagensHistorico, atualizarSecagem } from "@/lib/api";
 import { TabBar, MultiFiltro } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 
 type SecagemReg = {
   id: number;
@@ -108,6 +109,7 @@ export default function HistoricoSecagens() {
   }, [regs, animal, ini, fim, motivo, modo, janelas]);
 
   const ordSecagens = useOrdenacao(filtrados);
+  const pagSecagens = usePaginacao(ordSecagens.linhasOrdenadas);
 
   return (
     <div>
@@ -169,7 +171,7 @@ export default function HistoricoSecagens() {
                 <th style={{ textAlign: "left" }}>Observação</th>
               </tr></thead>
               <tbody>
-                {ordSecagens.linhasOrdenadas.slice(0, 500).map((s, i) => (
+                {pagSecagens.linhasPagina.map((s, i) => (
                   <tr key={`${s.numero}-${s.data}-${i}`} onClick={() => abrirEdicao(s)} style={{ cursor: "pointer" }} title="Clique para editar">
                     <td style={{ fontWeight: 700 }}>{s.numero}</td>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data)}</td>
@@ -180,7 +182,8 @@ export default function HistoricoSecagens() {
                 ))}
               </tbody>
             </table>
-            {filtrados.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {filtrados.length} — refine os filtros.</p>}
+            <Paginacao pagina={pagSecagens.pagina} totalPaginas={pagSecagens.totalPaginas} totalLinhas={pagSecagens.totalLinhas}
+              tamanhoPagina={pagSecagens.tamanhoPagina} onMudarPagina={pagSecagens.setPagina} onMudarTamanho={pagSecagens.setTamanhoPagina} />
           </div>
         </div>
       </>}

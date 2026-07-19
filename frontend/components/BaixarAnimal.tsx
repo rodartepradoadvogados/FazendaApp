@@ -61,6 +61,7 @@ export default function BaixarAnimal() {
   const [valorComissao, setValorComissao] = useState("");
   const [formaComissao, setFormaComissao] = useState("redirecionado");
   const corretores = useMemo(() => fornecedores.filter((f) => f.tipo === "corretor" && f.ativo).map((f) => f.nome), [fornecedores]);
+  const clientes = useMemo(() => fornecedores.filter((f) => f.tipo === "cliente" && f.ativo).map((f) => f.nome).sort((a, b) => a.localeCompare(b)), [fornecedores]);
 
   const carregar = () => {
     fetchAnimais().then((a: Animal[]) => setAnimais(a.filter((x) => x.ativo !== false))).catch((e) => setError(e.message));
@@ -257,7 +258,14 @@ export default function BaixarAnimal() {
                 <div><label style={labelStyle}>{tipoValor === "total" ? "Valor total (R$)" : "Valor por animal (R$)"}</label>
                   <input type="number" step="0.01" style={selStyle} value={valor} onChange={(e) => setValor(e.target.value)} /></div>
                 <div><label style={labelStyle}>Cliente</label>
-                  <input style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)} placeholder="ex.: Frigorífico X" /></div>
+                  <select style={selStyle} value={cliente} onChange={(e) => setCliente(e.target.value)}>
+                    <option value="">Selecione…</option>
+                    {clientes.map((v) => <option key={v} value={v}>{v}</option>)}
+                  </select>
+                  {!clientes.length && <p style={{ fontSize: "0.7rem", color: "var(--amber)", marginTop: "0.2rem" }}>
+                    Cadastre fornecedores/clientes em Configurações → Cadastro → Pessoas/Fornecedores.
+                  </p>}
+                </div>
               </div>
               {tipoValor === "total" && !!valor && !!selecionados.size && (
                 <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "-0.5rem" }}>
