@@ -37,18 +37,25 @@ export function iconeCategoria(cat?: string | null) {
   return CATEGORIA_ICONE[(cat || "").toLowerCase()] || CheckCheck;
 }
 
-/** Rótulo de categoria com círculo de ícone colorido — usado na Agenda no
- * lugar do texto solto colorido, para reaproveitar o mesmo padrão visual do
- * chip de categoria já usado no site (Indicador) e em Lançar/Menu (MobBloco). */
-export function RotuloCategoria({ chave, rotulo }: { chave: string; rotulo: string }) {
+/** Círculo grande de ícone por categoria — fica à esquerda do cartão inteiro
+ * na Agenda (mesmo padrão da proposta visual aprovada: um ícone só, grande,
+ * por cartão — não mais um mini-ícone ao lado do rótulo). */
+export function IconeCategoria({ chave, size = 48 }: { chave: string; size?: number }) {
   const cor = corCategoria(chave);
   const Icon = iconeCategoria(chave);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: "0.35rem", marginBottom: "0.3rem" }}>
-      <span style={{ width: 18, height: 18, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: `color-mix(in srgb, ${cor} 16%, transparent)`, color: cor, flexShrink: 0 }}>
-        <Icon size={11} />
-      </span>
-      <span style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: cor }}>{rotulo}</span>
+    <span style={{ width: size, height: size, borderRadius: "50%", display: "flex", alignItems: "center", justifyContent: "center", background: `color-mix(in srgb, ${cor} 16%, transparent)`, color: cor, flexShrink: 0 }}>
+      <Icon size={Math.round(size * 0.46)} />
+    </span>
+  );
+}
+
+/** Rótulo de categoria (texto só, sem ícone — o ícone já aparece grande à
+ * esquerda do cartão via IconeCategoria) usado na Agenda acima do título. */
+export function RotuloCategoria({ chave, rotulo }: { chave: string; rotulo: string }) {
+  return (
+    <div style={{ fontSize: "0.68rem", fontWeight: 800, letterSpacing: "0.06em", color: corCategoria(chave), marginBottom: "0.2rem" }}>
+      {rotulo}
     </div>
   );
 }

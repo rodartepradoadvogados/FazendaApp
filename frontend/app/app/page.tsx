@@ -9,7 +9,7 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, Check } from "lucide-react";
-import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria } from "@/components/mobile/ui";
+import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria } from "@/components/mobile/ui";
 import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -99,6 +99,12 @@ function linhas(e: Evento): { principal: string; detalhe: string | null } {
     return { principal: e.descricao, detalhe: `${e.animais.length} animal${e.animais.length !== 1 ? "is" : ""}` };
   }
   if (e.lote) return { principal: `Lote ${e.lote}`, detalhe: e.descricao || e.observacao || null };
+  // calendario_sanitario/evento_sanitario sem animal específico sempre trazem
+  // a mesma instrução padrão ("Dê baixa para gerar a aplicação...") — some
+  // no cartão porque o check já comunica a ação; poluía a tela sem informar
+  // nada de novo (ver proposta visual aprovada: cartão limpo, só categoria e
+  // título).
+  if (e.tipo === "calendario_sanitario" || e.tipo === "evento_sanitario") return { principal: e.descricao, detalhe: null };
   return { principal: e.descricao, detalhe: e.observacao || null };
 }
 
@@ -376,6 +382,7 @@ export default function AgendaMovel() {
       <MobCard key={g.grupo} alt={alt} style={{ marginBottom: "0.6rem" }}>
         <button type="button" onClick={() => abrirSan(g.grupo)}
           style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+          <IconeCategoria chave={chave} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <RotuloCategoria chave={chave} rotulo={rotulo} />
             <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: tudoFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: tudoFeito ? "line-through" : "none" }}>{g.titulo}</div>
@@ -453,6 +460,7 @@ export default function AgendaMovel() {
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => abrirIatf(e.id, e.animais!)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
@@ -538,6 +546,7 @@ export default function AgendaMovel() {
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => abrirDieta(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
@@ -589,6 +598,7 @@ export default function AgendaMovel() {
         <Link key={e.id} href={`/app/rebanho?numero=${encodeURIComponent(e.numero_animal || "")}&destacar=${destacar}`} style={{ textDecoration: "none", color: "inherit" }}>
           <MobCard alt={alt} style={{ marginBottom: "0.6rem" }}>
             <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+              <IconeCategoria chave={chave} />
               <div style={{ flex: 1, minWidth: 0 }}>
                 <RotuloCategoria chave={chave} rotulo={rotulo} />
                 <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>
@@ -625,6 +635,7 @@ export default function AgendaMovel() {
         <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
           <button type="button" onClick={() => abrirBaixa(e)}
             style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
             <div style={{ flex: 1, minWidth: 0 }}>
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
@@ -727,6 +738,7 @@ export default function AgendaMovel() {
     return (
       <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
         <div style={{ display: "flex", alignItems: "center", gap: "0.85rem" }}>
+          <IconeCategoria chave={chave} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <RotuloCategoria chave={chave} rotulo={rotulo} />
             <div style={{ fontSize: "1.15rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
