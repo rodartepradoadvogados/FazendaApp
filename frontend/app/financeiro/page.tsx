@@ -25,6 +25,7 @@ import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { RESPONSAVEIS } from "@/lib/constants";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
@@ -445,6 +446,7 @@ export default function FinanceiroPage() {
       return { data: r.data_pagamento, descricao: r.descricao, fornecedor: r.fornecedor, entrada, saida, saldo: Math.round(acc) };
     });
   }, [filtrados]);
+  const pagLivro = usePaginacao(livro);
 
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
@@ -737,7 +739,7 @@ export default function FinanceiroPage() {
             {rel === "livro" && (
               <table className="fazenda-table">
                 <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
-                <tbody>{livro.slice(0, 500).map((l, i) => (
+                <tbody>{pagLivro.linhasPagina.map((l, i) => (
                   <tr key={i}>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(l.data || "")}</td>
                     <td style={{ fontSize: "0.78rem" }}>{l.descricao}</td>
@@ -749,7 +751,10 @@ export default function FinanceiroPage() {
                 ))}</tbody>
               </table>
             )}
-            {rel === "livro" && livro.length > 500 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 500 de {livro.length} — refine o período.</p>}
+            {rel === "livro" && (
+              <Paginacao pagina={pagLivro.pagina} totalPaginas={pagLivro.totalPaginas} totalLinhas={pagLivro.totalLinhas}
+                tamanhoPagina={pagLivro.tamanhoPagina} onMudarPagina={pagLivro.setPagina} onMudarTamanho={pagLivro.setTamanhoPagina} />
+            )}
           </div>
         </div>
 
@@ -1722,6 +1727,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
     produto: (r) => (r.itens || []).map((it) => it.produto).join(", ").toLowerCase(),
     valor: (r) => r.valor,
   });
+  const pagNotas = usePaginacao(ordenados);
 
   function selecionar(nota: Lanc) {
     setNotaId(nota.id);
@@ -1822,7 +1828,7 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
               <th style={theadStickyStyle}></th>
             </tr></thead>
             <tbody>
-              {ordenados.map((r) => {
+              {pagNotas.linhasPagina.map((r) => {
                 const produtos = (r.itens || []).map((it) => it.produto).filter(Boolean).join(", ");
                 const ativa = r.id === notaId;
                 return (
@@ -1845,6 +1851,12 @@ function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTra
             </tbody>
           </table>
         </div>
+        {filtradas.length > 0 && (
+          <div style={{ padding: "0 0.9rem 0.6rem" }}>
+            <Paginacao pagina={pagNotas.pagina} totalPaginas={pagNotas.totalPaginas} totalLinhas={pagNotas.totalLinhas}
+              tamanhoPagina={pagNotas.tamanhoPagina} onMudarPagina={pagNotas.setPagina} onMudarTamanho={pagNotas.setTamanhoPagina} />
+          </div>
+        )}
       </div>
 
       {notaSelecionada && (

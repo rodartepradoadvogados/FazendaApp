@@ -11,6 +11,7 @@ import {
   type UsuarioAcesso, type AuditoriaTipo, type AuditoriaUsuario, type AuditoriaItem,
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -84,6 +85,7 @@ export function AuditoriaAtividade() {
   };
 
   const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(resultado?.itens || []);
+  const pagAtividades = usePaginacao(linhasOrdenadas);
   const fmtData = (iso: string | null) => iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
   return (
@@ -144,7 +146,7 @@ export function AuditoriaAtividade() {
                     </tr>
                   </thead>
                   <tbody>
-                    {linhasOrdenadas.map((i, idx) => (
+                    {pagAtividades.linhasPagina.map((i, idx) => (
                       <tr key={`${i.chave}-${i.id}-${idx}`}>
                         <td style={{ fontSize: "0.8rem" }}>{i.label}</td>
                         <td style={{ fontSize: "0.8rem" }}>{fmtData(i.data)}</td>
@@ -153,6 +155,10 @@ export function AuditoriaAtividade() {
                     ))}
                   </tbody>
                 </table>
+              )}
+              {resultado.itens.length > 0 && (
+                <Paginacao pagina={pagAtividades.pagina} totalPaginas={pagAtividades.totalPaginas} totalLinhas={pagAtividades.totalLinhas}
+                  tamanhoPagina={pagAtividades.tamanhoPagina} onMudarPagina={pagAtividades.setPagina} onMudarTamanho={pagAtividades.setTamanhoPagina} />
               )}
             </>
           )}

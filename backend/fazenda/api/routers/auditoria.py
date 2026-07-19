@@ -97,11 +97,19 @@ def listar_atividades(
     data_inicio: Optional[date] = None,
     data_fim: Optional[date] = None,
     chaves: Optional[str] = None,
+    limit: int = 2000,
     _: Usuario = Depends(exigir_dono),
     session: Session = Depends(get_session),
 ) -> dict:
     """Lista os lançamentos de um usuário em todos os tipos do catálogo (ou só
-    nos `chaves` informados, CSV), opcionalmente filtrados por período."""
+    nos `chaves` informados, CSV), opcionalmente filtrados por período.
+
+    `limit` corta a resposta (como antes, quando era fixo em 500) — o
+    `total` abaixo sempre reflete a contagem real, sem o corte. Subimos o
+    padrão de 500 para 2000: o volume típico de atividades por usuário/período
+    não é gigantesco, e paginar de verdade contra o servidor seria
+    over-engineering para este caso — a tela pagina client-side em cima do
+    que já chegou (ver usePaginacao em AuditoriaAcessoView.tsx)."""
     alvo = session.get(Usuario, usuario_id)
     if not alvo:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
@@ -131,5 +139,5 @@ def listar_atividades(
     return {
         "usuario": {"id": alvo.id, "username": alvo.username, "nome": alvo.nome},
         "total": len(itens),
-        "itens": itens[:500],
+        "itens": itens[:limit],
     }

@@ -16,6 +16,7 @@ import { MultiFiltro, Indicador } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -243,6 +244,7 @@ function RebanhoVisaoGeral() {
     () => [...filtrados].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true })),
     [filtrados]
   );
+  const pagPorNumero = usePaginacao(porNumero);
 
   const total = filtrados.length;
   const gestantes = filtrados.filter((a) => a.sit_rep === "Ges.").length;
@@ -387,7 +389,7 @@ function RebanhoVisaoGeral() {
                     <th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th>
                   </tr></thead>
                   <tbody>
-                    {porNumero.map((a) => (
+                    {pagPorNumero.linhasPagina.map((a) => (
                       <tr key={a.numero}>
                         <td style={{ fontWeight: 700 }}>{a.numero}</td>
                         <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
@@ -402,6 +404,8 @@ function RebanhoVisaoGeral() {
                     {!porNumero.length && <tr><td colSpan={femeasApenas ? 7 : 8} style={{ color: "var(--text-muted)", fontSize: "0.85rem", padding: "0.75rem" }}>Nenhum animal no filtro.</td></tr>}
                   </tbody>
                 </table>
+                <Paginacao pagina={pagPorNumero.pagina} totalPaginas={pagPorNumero.totalPaginas} totalLinhas={pagPorNumero.totalLinhas}
+                  tamanhoPagina={pagPorNumero.tamanhoPagina} onMudarPagina={pagPorNumero.setPagina} onMudarTamanho={pagPorNumero.setTamanhoPagina} />
               </div>
             ) : (
               <div className="space-y-2">

@@ -6,6 +6,7 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from 
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
 import { Indicador } from "@/components/ui";
 
@@ -68,6 +69,8 @@ export default function EstoquePage() {
   }, [itens, fCat, busca, soAbaixo]);
 
   const ordItens = useOrdenacao(filtrados);
+  const pagItens = usePaginacao(ordItens.linhasOrdenadas);
+  const pagMovimentos = usePaginacao(movimentos ?? []);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
   const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
@@ -181,7 +184,7 @@ export default function EstoquePage() {
                   <th></th>
                 </tr></thead>
                 <tbody>
-                  {ordItens.linhasOrdenadas.slice(0, 200).map((i, idx) => (
+                  {pagItens.linhasPagina.map((i, idx) => (
                     <tr key={idx}>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{i.nome}</td>
                       <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.categoria || "—"}</td>
@@ -199,7 +202,8 @@ export default function EstoquePage() {
                   ))}
                 </tbody>
               </table>
-              {filtrados.length > 200 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 200 de {filtrados.length}.</p>}
+              <Paginacao pagina={pagItens.pagina} totalPaginas={pagItens.totalPaginas} totalLinhas={pagItens.totalLinhas}
+                tamanhoPagina={pagItens.tamanhoPagina} onMudarPagina={pagItens.setPagina} onMudarTamanho={pagItens.setTamanhoPagina} />
             </div>
           </div>
 
@@ -219,7 +223,7 @@ export default function EstoquePage() {
                     {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
                   </tr></thead>
                   <tbody>
-                    {movimentos.slice(0, 200).map((m) => (
+                    {pagMovimentos.linhasPagina.map((m) => (
                       <tr key={m.id}>
                         <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{formatDate(m.data_movimento)}</td>
                         <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
@@ -232,7 +236,8 @@ export default function EstoquePage() {
                     {!movimentos.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento lançado ainda.</td></tr>}
                   </tbody>
                 </table>
-                {movimentos.length > 200 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 200 de {movimentos.length}.</p>}
+                <Paginacao pagina={pagMovimentos.pagina} totalPaginas={pagMovimentos.totalPaginas} totalLinhas={pagMovimentos.totalLinhas}
+                  tamanhoPagina={pagMovimentos.tamanhoPagina} onMudarPagina={pagMovimentos.setPagina} onMudarTamanho={pagMovimentos.setTamanhoPagina} />
               </div>
             </div>
           )}
