@@ -11,10 +11,13 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import AlimentacaoEstado, Animal, Dieta, Estoque, Lote, MovimentoEstoque
+from fazenda.models import (
+    AlimentacaoEstado, Alimento, AnaliseBromatologica, Animal, CategoriaAlimento, Dieta, Estoque,
+    IngredienteMS, Lote, MovimentoEstoque,
+)
 
 HOJE = date(2026, 7, 8)
 
@@ -471,3 +474,269 @@ class TestDietaContextoApresentacao:
         futuro = [e for e in c.get("/agenda/", params={"data": "2026-07-11", "dias": 30}).json()["eventos"]
                   if e["id"] == chave]
         assert len(futuro) == 0
+
+
+class TestCategoriasAlimento:
+    def test_lista_categorias_semeia_padrao(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/categorias")
+        assert r.status_code == 200
+        nomes = {cat["nome"] for cat in r.json()}
+        assert {"Volumoso", "Concentrado", "Mineral"} <= nomes
+
+    def test_cria_categoria(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/categorias", json={"nome": "Suplemento"})
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["nome"] == "Suplemento"
+        assert corpo["ativo"] is True
+        with Session(engine) as s:
+            assert s.exec(select(CategoriaAlimento).where(CategoriaAlimento.nome == "Suplemento")).first() is not None
+
+    def test_cria_categoria_duplicada_da_409(self, client):
+        c, engine = client
+        c.post("/alimentacao/categorias", json={"nome": "Suplemento"})
+        r = c.post("/alimentacao/categorias", json={"nome": "Suplemento"})
+        assert r.status_code == 409
+
+    def test_atualiza_categoria_renomeia(self, client):
+        c, engine = client
+        cid = c.post("/alimentacao/categorias", json={"nome": "Antiga"}).json()["id"]
+        r = c.put(f"/alimentacao/categorias/{cid}", json={"nome": "Nova", "ativo": False})
+        assert r.status_code == 200
+        # A rota devolve `cat.model_dump()` logo após o commit sem `refresh` —
+        # o objeto fica "expirado" e o corpo da resposta vem vazio; a
+        # confirmação real do que foi de fato gravado é via GET/DB.
+        with Session(engine) as s:
+            cat = s.get(CategoriaAlimento, cid)
+            assert cat.nome == "Nova"
+            assert cat.ativo is False
+        listadas = {c2["nome"]: c2 for c2 in c.get("/alimentacao/categorias").json()}
+        assert listadas["Nova"]["ativo"] is False
+
+    def test_atualiza_categoria_para_nome_ja_usado_da_409(self, client):
+        c, engine = client
+        c.post("/alimentacao/categorias", json={"nome": "A"})
+        cid_b = c.post("/alimentacao/categorias", json={"nome": "B"}).json()["id"]
+        r = c.put(f"/alimentacao/categorias/{cid_b}", json={"nome": "A"})
+        assert r.status_code == 409
+
+    def test_atualiza_categoria_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/categorias/999", json={"nome": "X"})
+        assert r.status_code == 404
+
+    def test_exclui_categoria_sem_uso(self, client):
+        c, engine = client
+        cid = c.post("/alimentacao/categorias", json={"nome": "Descartavel"}).json()["id"]
+        r = c.delete(f"/alimentacao/categorias/{cid}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        with Session(engine) as s:
+            assert s.get(CategoriaAlimento, cid) is None
+
+    def test_exclui_categoria_em_uso_da_409(self, client):
+        c, engine = client
+        cid = c.post("/alimentacao/categorias", json={"nome": "Volumoso teste"}).json()["id"]
+        c.post("/alimentacao/alimentos", json={"nome": "Feno teste", "categoria_alimento_id": cid})
+        r = c.delete(f"/alimentacao/categorias/{cid}")
+        assert r.status_code == 409
+        assert "Feno teste" in r.json()["detail"]
+        with Session(engine) as s:
+            assert s.get(CategoriaAlimento, cid) is not None
+
+    def test_exclui_categoria_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.delete("/alimentacao/categorias/999")
+        assert r.status_code == 404
+
+
+class TestAlimentos:
+    def test_lista_alimentos_reflete_cadastro(self, client):
+        # O seed de alimentos padrão (`seed_alimentos`) só roda no startup da
+        # aplicação, contra o engine real — não neste banco de teste isolado —
+        # então a lista começa vazia até algo ser cadastrado pela própria rota.
+        c, engine = client
+        assert c.get("/alimentacao/alimentos").json() == []
+        c.post("/alimentacao/alimentos", json={"nome": "Silagem de teste"})
+        nomes = {a["nome"] for a in c.get("/alimentacao/alimentos").json()}
+        assert "Silagem de teste" in nomes
+
+    def test_cria_alimento_simples(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/alimentos", json={"nome": "Farelo de soja"})
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["nome"] == "Farelo de soja"
+        assert corpo["estoque_vinculado"] == []
+        with Session(engine) as s:
+            assert s.exec(select(Alimento).where(Alimento.nome == "Farelo de soja")).first() is not None
+
+    def test_cria_alimento_duplicado_da_409(self, client):
+        c, engine = client
+        c.post("/alimentacao/alimentos", json={"nome": "Farelo de soja"})
+        r = c.post("/alimentacao/alimentos", json={"nome": "Farelo de soja"})
+        assert r.status_code == 409
+
+    def test_cria_alimento_vincula_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            e = Estoque(nome="Farelo X", categoria="alimento", quantidade=100.0, unidade="kg")
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+
+        r = c.post("/alimentacao/alimentos", json={"nome": "Farelo X", "estoque_ids": [estoque_id]})
+        assert r.status_code == 201
+        vinculados = r.json()["estoque_vinculado"]
+        assert len(vinculados) == 1 and vinculados[0]["id"] == estoque_id
+        with Session(engine) as s:
+            item = s.get(Estoque, estoque_id)
+            assert item.alimento_id == r.json()["id"]
+
+    def test_atualiza_alimento_revincula_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            e_a = Estoque(nome="Estoque A", categoria="alimento", quantidade=10.0, unidade="kg")
+            e_b = Estoque(nome="Estoque B", categoria="alimento", quantidade=20.0, unidade="kg")
+            s.add(e_a)
+            s.add(e_b)
+            s.commit()
+            s.refresh(e_a)
+            s.refresh(e_b)
+            id_a, id_b = e_a.id, e_b.id
+
+        alimento_id = c.post("/alimentacao/alimentos", json={"nome": "Concentrado X", "estoque_ids": [id_a]}).json()["id"]
+        r = c.put(f"/alimentacao/alimentos/{alimento_id}", json={"nome": "Concentrado X", "estoque_ids": [id_b]})
+        assert r.status_code == 200
+        vinculados = {v["id"] for v in r.json()["estoque_vinculado"]}
+        assert vinculados == {id_b}
+        with Session(engine) as s:
+            assert s.get(Estoque, id_a).alimento_id is None
+            assert s.get(Estoque, id_b).alimento_id == alimento_id
+
+    def test_atualiza_alimento_para_nome_ja_usado_da_409(self, client):
+        c, engine = client
+        c.post("/alimentacao/alimentos", json={"nome": "Alimento A"})
+        id_b = c.post("/alimentacao/alimentos", json={"nome": "Alimento B"}).json()["id"]
+        r = c.put(f"/alimentacao/alimentos/{id_b}", json={"nome": "Alimento A"})
+        assert r.status_code == 409
+
+    def test_atualiza_alimento_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/alimentos/999", json={"nome": "X"})
+        assert r.status_code == 404
+
+    def test_exclui_alimento_desvincula_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            e = Estoque(nome="Estoque C", categoria="alimento", quantidade=5.0, unidade="kg")
+            s.add(e)
+            s.commit()
+            s.refresh(e)
+            estoque_id = e.id
+
+        alimento_id = c.post("/alimentacao/alimentos", json={"nome": "Concentrado Y", "estoque_ids": [estoque_id]}).json()["id"]
+        r = c.delete(f"/alimentacao/alimentos/{alimento_id}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+        with Session(engine) as s:
+            assert s.get(Alimento, alimento_id) is None
+            assert s.get(Estoque, estoque_id).alimento_id is None
+
+    def test_exclui_alimento_inexistente_da_404(self, client):
+        c, engine = client
+        r = c.delete("/alimentacao/alimentos/999")
+        assert r.status_code == 404
+
+
+class TestMateriaSeca:
+    def test_lista_semeia_padrao(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/materia-seca")
+        assert r.status_code == 200
+        por_nome = {i["nome"]: i["ms_pct"] for i in r.json()}
+        assert por_nome["Silagem"] == 33.24
+        assert por_nome["Ração Teck Milk 24%"] == 88.0
+
+    def test_upsert_cria_novo_ingrediente(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/materia-seca", json={"nome": "Casca de soja", "ms_pct": 90.0})
+        assert r.status_code == 200
+        assert r.json()["ms_pct"] == 90.0
+        with Session(engine) as s:
+            item = s.exec(select(IngredienteMS).where(IngredienteMS.nome == "Casca de soja")).first()
+            assert item is not None and item.ms_pct == 90.0
+
+    def test_upsert_atualiza_existente_sem_duplicar(self, client):
+        c, engine = client
+        c.put("/alimentacao/materia-seca", json={"nome": "Silagem", "ms_pct": 35.0})
+        r = c.get("/alimentacao/materia-seca").json()
+        linhas = [i for i in r if i["nome"] == "Silagem"]
+        assert len(linhas) == 1
+        assert linhas[0]["ms_pct"] == 35.0
+
+    def test_ms_pct_acima_de_100_da_400(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/materia-seca", json={"nome": "Silagem", "ms_pct": 150.0})
+        assert r.status_code == 400
+
+    def test_nome_vazio_da_400(self, client):
+        c, engine = client
+        r = c.put("/alimentacao/materia-seca", json={"nome": "   ", "ms_pct": 50.0})
+        assert r.status_code == 400
+
+
+class TestAnaliseBromatologica:
+    def test_lista_vazia_inicialmente(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/analise-bromatologica")
+        assert r.status_code == 200
+        assert r.json() == {"registros": [], "total": 0}
+
+    def test_cria_analise_bromatologica(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/analise-bromatologica", json={
+            "data": "2026-07-01", "alimento": "Silagem de milho", "ms_pct": 34.5, "pb_pct": 8.2,
+        })
+        assert r.status_code == 201
+        corpo = r.json()
+        assert corpo["alimento"] == "Silagem de milho"
+        assert corpo["ms_pct"] == 34.5
+        with Session(engine) as s:
+            registro = s.exec(select(AnaliseBromatologica).where(AnaliseBromatologica.alimento == "Silagem de milho")).first()
+            assert registro is not None and registro.usuario_id == 1
+
+        r2 = c.get("/alimentacao/analise-bromatologica")
+        assert r2.json()["total"] == 1
+        assert r2.json()["registros"][0]["alimento"] == "Silagem de milho"
+
+    def test_alimento_vazio_da_400(self, client):
+        c, engine = client
+        r = c.post("/alimentacao/analise-bromatologica", json={"data": "2026-07-01", "alimento": "   "})
+        assert r.status_code == 400
+
+    def test_lista_ordenada_por_data_desc(self, client):
+        c, engine = client
+        c.post("/alimentacao/analise-bromatologica", json={"data": "2026-01-01", "alimento": "Silagem"})
+        c.post("/alimentacao/analise-bromatologica", json={"data": "2026-06-01", "alimento": "Corte 21"})
+        registros = c.get("/alimentacao/analise-bromatologica").json()["registros"]
+        assert [r["alimento"] for r in registros] == ["Corte 21", "Silagem"]
+
+
+class TestEstadoBaixa:
+    def test_antes_do_primeiro_acesso_estado_e_none(self, client):
+        c, engine = client
+        r = c.get("/alimentacao/estado-baixa")
+        assert r.status_code == 200
+        assert r.json() == {"ultima_data_deducao": None}
+
+    def test_apos_primeiro_acesso_estado_tem_data_de_hoje(self, client):
+        c, engine = client
+        _seed(engine)
+        c.get("/alimentacao/")  # dispara a baixa automática e estabelece a linha de estado
+        r = c.get("/alimentacao/estado-baixa")
+        assert r.status_code == 200
+        assert r.json()["ultima_data_deducao"] == date.today().isoformat()
