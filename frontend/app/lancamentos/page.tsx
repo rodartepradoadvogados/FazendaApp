@@ -12,7 +12,7 @@ import {
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
   fetchExames,
-  atualizarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
+  atualizarEventoSanitario, criarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchAlimentosPadrao, fetchDietas, encerrarDieta, registrarRealDieta, fetchComparativoDieta,
   fetchProtocolosSanitarios, lancarProtocoloSanitario, fetchMastiteOpcoes, fetchMastiteContexto, fetchLotes, previewCriteriosLote, fetchMedicamentos,
   fetchQualidadeLeite, criarQualidadeLeite, criarEntregaLeiteMensal, registrarColostragem,
@@ -1804,8 +1804,86 @@ const FREQUENCIA_UNIDADES = [
   { v: "dias", l: "dia(s)" }, { v: "meses", l: "mês(es)" }, { v: "anos", l: "ano(s)" },
 ];
 
+/**
+ * Seletor de evento preventivo com a pergunta "vacina ou exame" na frente —
+ * usado tanto no cadastro do Calendário sanitário quanto no lançamento de
+ * Aplicações. "Avulso" (padrão, nada marcado) mantém o combinado tradicional
+ * com todos os eventos, já que uma aplicação preventiva pode ser avulsa, sem
+ * vínculo com uma vacina ou exame específico cadastrado.
+ * Ao escolher um exame que ainda não tem um evento sanitário vinculado, cria
+ * esse vínculo na hora (transparente para o usuário) para que o exame
+ * cadastrado (Configurações > Cadastro > Sanitário > Exames) fique
+ * selecionável aqui sem precisar de um cadastro de evento à parte.
+ */
+function SeletorEventoPreventivo({ eventos, exames, eventoId, onEventoId, onEventosRecarregados }: {
+  eventos: { id: number; nome: string }[]; exames: ExameDef[]; eventoId: string;
+  onEventoId: (id: string) => void; onEventosRecarregados: () => void;
+}) {
+  const [tipo, setTipo] = useState<"" | "vacina" | "exame">("");
+  const [vinculando, setVinculando] = useState(false);
+  const [erro, setErro] = useState<string | null>(null);
+
+  // Mantém a aba coerente com o evento carregado (edição de uma regra já
+  // existente, ou pré-preenchimento vindo da Agenda).
+  useEffect(() => {
+    const ev = eventos.find((e) => String(e.id) === eventoId) as any;
+    if (ev) setTipo(ev.categoria_preventiva === "exame" ? "exame" : "vacina");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId]);
+
+  const eventosVacina = eventos.filter((e) => (e as any).categoria_preventiva !== "exame");
+  const eventoAtual = eventos.find((e) => String(e.id) === eventoId) as any;
+  const exameSelId = eventoAtual?.exame_definicao_id ? String(eventoAtual.exame_definicao_id) : "";
+
+  async function escolherExame(exameDefId: string) {
+    setErro(null);
+    if (!exameDefId) { onEventoId(""); return; }
+    const jaVinculado = eventos.find((e) => String((e as any).exame_definicao_id) === exameDefId);
+    if (jaVinculado) { onEventoId(String(jaVinculado.id)); return; }
+    const ex = exames.find((x) => String(x.id) === exameDefId);
+    if (!ex) return;
+    setVinculando(true);
+    try {
+      const novo = await criarEventoSanitario({ nome: ex.nome, categoria_preventiva: "exame", exame_definicao_id: ex.id, tipo_agendamento: "nenhum" });
+      onEventosRecarregados();
+      onEventoId(String(novo.id));
+    } catch (e: any) {
+      setErro(e.message || "Erro ao vincular este exame a um evento sanitário");
+    } finally {
+      setVinculando(false);
+    }
+  }
+
+  return (
+    <div>
+      <div className="flex items-center gap-2 mb-2">
+        <button type="button" className={tipo === "vacina" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }}
+          onClick={() => { setTipo("vacina"); if (eventoAtual?.categoria_preventiva === "exame") onEventoId(""); }}>Vacina</button>
+        <button type="button" className={tipo === "exame" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }}
+          onClick={() => { setTipo("exame"); if (eventoAtual && eventoAtual.categoria_preventiva !== "exame") onEventoId(""); }}>Exame</button>
+        <button type="button" className={tipo === "" ? "btn-primary" : "btn-secondary"} style={{ fontSize: "0.78rem" }}
+          onClick={() => setTipo("")}>Avulso / outro</button>
+      </div>
+      {tipo === "exame" ? (
+        <select style={inputStyle} value={exameSelId} onChange={(e) => escolherExame(e.target.value)} disabled={vinculando}>
+          <option value="">{vinculando ? "Vinculando…" : "Selecione…"}</option>
+          {exames.map((ex) => <option key={ex.id} value={ex.id}>{ex.nome}</option>)}
+        </select>
+      ) : (
+        <select style={inputStyle} value={eventos.some((e) => String(e.id) === eventoId) && (tipo !== "vacina" || eventosVacina.some((e) => String(e.id) === eventoId)) ? eventoId : ""}
+          onChange={(e) => onEventoId(e.target.value)}>
+          <option value="">Selecione…</option>
+          {(tipo === "vacina" ? eventosVacina : eventos).map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
+        </select>
+      )}
+      {erro && <p style={{ color: "var(--red)", fontSize: "0.72rem", marginTop: "0.25rem" }}>{erro}</p>}
+    </div>
+  );
+}
+
 function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const [eventos, setEventos] = useState<OpcaoNomeAtivo[]>([]);
+  const [exames, setExames] = useState<ExameDef[]>([]);
   const [doencas, setDoencas] = useState<OpcaoNomeAtivo[]>([]);
   const [principios, setPrincipios] = useState<OpcaoNomeAtivo[]>([]);
   // Categorias de vida (Configurações > Cadastro > Categorias) — a lista real
@@ -1868,6 +1946,7 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
   const carregarEventos = () => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
   useEffect(() => {
     carregarEventos();
+    fetchExames().then(setExames).catch(() => {});
     fetchDoencas().then((d) => setDoencas(d.filter((e: OpcaoNomeAtivo) => e.ativo))).catch(() => {});
     fetchPrincipiosAtivos().then((d) => setPrincipios(d.filter((e: OpcaoNomeAtivo) => e.ativo !== false))).catch(() => {});
     fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {});
@@ -1955,9 +2034,9 @@ function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] }) {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
         <Campo label="Evento sanitário">
           <div className="flex items-center gap-2">
-            <select style={inputStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
-              <option value="">Selecione…</option>{eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}</option>)}
-            </select>
+            <div style={{ flex: 1 }}>
+              <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={eventoId} onEventoId={setEventoId} onEventosRecarregados={carregarEventos} />
+            </div>
             <button type="button" className="btn-ghost" title="Cadastrar novo evento sanitário" style={{ fontSize: "0.72rem", whiteSpace: "nowrap" }} onClick={() => setAbrirNovoEvento(true)}>
               <Plus size={13} /> Novo
             </button>
@@ -2129,7 +2208,6 @@ type EventoPrev = {
   produto_padrao: string | null; dose_padrao: number | null; unidade_padrao: string | null;
   exame_definicao_id: number | null;
 };
-const LABEL_CAT_PREV: Record<string, string> = { vacina: "Vacina", exame: "Exame", tratamento: "Tratamento", outros: "Outros" };
 type ExameDef = { id: number; nome: string; tipo_resultado: "diagnostico" | "numerico"; faixa_min: number | null; faixa_max: number | null; acao_abaixo: string | null; acao_dentro: string | null; acao_acima: string | null };
 const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", negativo: "Negativo", indefinido: "Indefinido" };
 
@@ -2334,10 +2412,8 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
       <p style={nota}>Registra um preventivo (vacina/exame/tratamento) mirando animais, categoria ou lote — grava a regra no calendário e, para vacina/tratamento, a aplicação com baixa de estoque. Exame não baixa estoque; permite vincular o veterinário.</p>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
         <Campo label="Evento preventivo">
-          <select style={inputStyle} value={eventoId} onChange={(e) => setEventoId(e.target.value)}>
-            <option value="">Selecione…</option>
-            {eventos.map((ev) => <option key={ev.id} value={ev.id}>{ev.nome}{ev.categoria_preventiva ? ` — ${LABEL_CAT_PREV[ev.categoria_preventiva] || ev.categoria_preventiva}` : ""}</option>)}
-          </select>
+          <SeletorEventoPreventivo eventos={eventos} exames={exames} eventoId={eventoId} onEventoId={setEventoId}
+            onEventosRecarregados={() => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {})} />
         </Campo>
         <Campo label="Data de referência"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
         <Campo label="Repetir a cada">

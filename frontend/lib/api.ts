@@ -2174,7 +2174,7 @@ export async function atualizarLancamentoFinanceiro(id: number, dados: {
   data_emissao?: string | null; data_vencimento?: string | null; data_competencia?: string | null;
   data_prevista_entrada?: string | null; data_pedido?: string | null;
   quantidade?: number | null; valor_unitario?: number | null; valor_total?: number | null;
-  desconto_acrescimo?: number | null; responsavel?: string | null;
+  desconto_acrescimo?: number | null; responsavel?: string | null; produto?: string | null;
 }) {
   const res = await authFetch(`${API}/financeiro/lancamentos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
