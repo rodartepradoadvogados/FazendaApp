@@ -707,6 +707,14 @@ html, body { max-width: 100%; overflow-x: hidden; }
   transition: background-color 0.15s ease;
 }
 .mob-nav a.ativo .mob-nav-icone { background: color-mix(in srgb, var(--mob-acao) 16%, transparent); }
+/* "Lançar" — botão mais evidente, cheio na cor da paleta, saltando acima da barra. */
+.mob-nav-lancar {
+  width: 50px; height: 50px; margin-top: -20px;
+  background: var(--mob-vinho); color: #fff;
+  border: 3px solid var(--mob-surface);
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.28);
+}
+.mob-nav a .mob-nav-icone.mob-nav-lancar { background: var(--mob-vinho); color: #fff; }
 
 /* Botões-bloco do Lançamento Rápido (fat finger). */
 .mob-bloco {

@@ -4,7 +4,7 @@
 // por lote, calculadas aqui mesmo a partir da mesma lista de animais — não
 // existe endpoint dedicado no backend para isso).
 import { useEffect, useMemo, useState } from "react";
-import { Rows3, Gauge } from "lucide-react";
+import { PieChart, Gauge } from "lucide-react";
 import { fetchAnimais } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
@@ -162,7 +162,7 @@ export default function Lotes() {
     return (
       <GradeAcoes
         opcoes={[
-          { id: "composicao", label: "Composição", icone: <Rows3 size={28} />, cor: "var(--mob-verde)" },
+          { id: "composicao", label: "Composição", icone: <PieChart size={28} />, cor: "var(--mob-verde)" },
           { id: "indicadores", label: "Indicadores", icone: <Gauge size={28} />, cor: "var(--mob-laranja)" },
         ]}
         onEscolher={(id) => setSub(id as Sub)}

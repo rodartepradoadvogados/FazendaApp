@@ -95,6 +95,9 @@ def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
         "novilhas_acima_24m": 0, "vacas_lactacao": 0, "vacas_secas": 0, "vacas_pre_parto": 0,
         "sem_data_nasc": 0,
     }
+    # Números dos animais de cada estrato — usado pelo front para abrir a
+    # janela suspensa de animais ao clicar numa fatia/card da composição.
+    numeros: dict[str, list[str]] = {k: [] for k in estratos}
     total = 0
     for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
         if a.eh_semen or a.sexo == "M":
@@ -107,24 +110,32 @@ def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
             gest = (hoje - ult_pos[a.numero]).days if a.numero in ult_pos else None
             if _codigo_lote(a.grupo_primario) in LOTES_LACTACAO:
                 estratos["vacas_lactacao"] += 1
+                numeros["vacas_lactacao"].append(a.numero)
             elif gest is not None and gest >= 240:
                 estratos["vacas_pre_parto"] += 1
+                numeros["vacas_pre_parto"].append(a.numero)
             else:
                 estratos["vacas_secas"] += 1
+                numeros["vacas_secas"].append(a.numero)
             continue
         # Fêmea que ainda não pariu → classifica por idade.
         if not a.data_nasc:
             estratos["sem_data_nasc"] += 1
+            numeros["sem_data_nasc"].append(a.numero)
             continue
         d = (hoje - a.data_nasc).days
         if d <= 90:
             estratos["aleitamento_0_3m"] += 1
+            numeros["aleitamento_0_3m"].append(a.numero)
         elif d <= 364:
             estratos["recria_4_11m"] += 1
+            numeros["recria_4_11m"].append(a.numero)
         elif d <= 730:
             estratos["recria_12_24m"] += 1
+            numeros["recria_12_24m"].append(a.numero)
         else:
             estratos["novilhas_acima_24m"] += 1
+            numeros["novilhas_acima_24m"].append(a.numero)
 
     def pct(n: int) -> float:
         return round(100 * n / total, 1) if total else 0.0
@@ -133,8 +144,10 @@ def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
     return {
         "total": total,
         "estratos": estratos,
+        "numeros": numeros,
         "percentuais": {k: pct(v) for k, v in estratos.items()},
         "vacas_total": vacas,
+        "numeros_vacas_total": numeros["vacas_lactacao"] + numeros["vacas_secas"] + numeros["vacas_pre_parto"],
         "pct_lactacao_sobre_total": pct(estratos["vacas_lactacao"]),
         "pct_lactacao_sobre_vacas": round(100 * estratos["vacas_lactacao"] / vacas, 1) if vacas else 0.0,
     }

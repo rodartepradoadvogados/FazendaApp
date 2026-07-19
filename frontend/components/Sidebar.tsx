@@ -9,7 +9,6 @@ import {
   BarChart3,
   Package,
   Home,
-  Beef,
   LineChart,
   Milk,
   Wheat,
@@ -24,6 +23,7 @@ import {
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
+import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CwdMilkMark } from "@/components/CwdMilkMark";
 import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
@@ -41,7 +41,7 @@ const links = [
   { href: "/agenda",      label: "Agenda",       icon: Calendar,      title: "Agenda de atividades do dia — pendências e eventos a cumprir", grupo: "Ciclo diário" },
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia", grupo: "Ciclo diário" },
   // ── Manejo do rebanho ──
-  { href: "/rebanho",     label: "Rebanho",      icon: Beef,          title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
+  { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
   { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva", grupo: "Manejo do rebanho" },
   { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite", grupo: "Manejo do rebanho" },
   // ── Insumos e sanidade ──

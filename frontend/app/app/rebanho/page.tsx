@@ -3,9 +3,10 @@
 // consulta) e Lotes (Composição / Indicadores).
 // Movimentar e Baixar ficam na tela LANÇAR.
 import { useEffect, useState } from "react";
-import { PawPrint, LayoutGrid } from "lucide-react";
+import { Fence } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
+import { CowIcon } from "@/components/CowIcon";
 import Ficha from "@/components/mobile/rebanho/Ficha";
 import Lotes from "@/components/mobile/rebanho/Lotes";
 
@@ -35,8 +36,8 @@ export default function Pagina() {
         <MobTitulo>Rebanho</MobTitulo>
         <GradeAcoes
           opcoes={[
-            { id: "animais", label: "Animais", icone: <PawPrint size={28} />, cor: "var(--mob-vinho)" },
-            { id: "lotes", label: "Lotes", icone: <LayoutGrid size={28} />, cor: "var(--mob-azul)" },
+            { id: "animais", label: "Animais", icone: <CowIcon size={28} />, cor: "var(--mob-vinho)" },
+            { id: "lotes", label: "Lotes", icone: <Fence size={28} />, cor: "var(--mob-azul)" },
           ]}
           onEscolher={(id) => setAba(id as Aba)}
         />

@@ -1,6 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Beef, AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
+import { CowIcon } from "@/components/CowIcon";
 import { IndicadoresGerais } from "@/app/indicadores/page";
 import { fetchAnimais, fetchEstratificacaoRebanho, marcarADescartar, type Estratificacao } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
@@ -14,6 +15,7 @@ import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, Indicador } from "@/components/ui";
 import { GrupoLotePicker } from "@/components/GrupoLotePicker";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COLUNAS_REBANHO = [
   { header: "Nº", key: "numero" }, { header: "Grupo", key: "grupo_primario" },
@@ -48,31 +50,46 @@ const ESTRATOS_ROTULO: [string, string, string][] = [
   ["vacas_pre_parto", "Vacas pré-parto", "#2E5A7C"],
 ];
 
-function EstratificacaoRebanho() {
+function EstratificacaoRebanho({ animais }: { animais: Animal[] }) {
   const [d, setD] = useState<Estratificacao | null>(null);
+  const [modal, setModal] = useState<{ title: string; list: AnimalRow[] } | null>(null);
   useEffect(() => { fetchEstratificacaoRebanho().then(setD).catch(() => setD(null)); }, []);
   if (!d || !d.total) return null;
+
+  const porNumero = new Map(animais.map((a) => [a.numero, a]));
+  const listaDe = (numeros: string[] | undefined): AnimalRow[] =>
+    (numeros || []).map((n) => porNumero.get(n)).filter((a): a is Animal => !!a);
+  const abrir = (title: string, numeros: string[] | undefined) => setModal({ title, list: listaDe(numeros) });
+
   const dados = ESTRATOS_ROTULO
-    .map(([k, label, cor]) => ({ label, cor, n: d.estratos[k] || 0, pct: d.percentuais[k] || 0 }))
+    .map(([k, label, cor]) => ({ k, label, cor, n: d.estratos[k] || 0, pct: d.percentuais[k] || 0 }))
     .filter((x) => x.n > 0);
+
   return (
     <div className="card mb-4">
-      <div className="card-header mb-3 flex items-center gap-2"><Beef size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
+      <div className="card-header mb-3 flex items-center gap-2"><CowIcon size={14} /> Composição do rebanho ({d.total} fêmeas)</div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação" />
-        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho" />
-        <Indicador categoria="geral" valor={d.estratos.vacas_lactacao} rotulo="Vacas em lactação" />
-        <Indicador categoria="geral" valor={d.vacas_total} rotulo="Vacas (adultas)" />
+        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_vacas}%`} cor="var(--green-light)" rotulo="% de vacas em lactação"
+          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
+        <Indicador categoria="geral" valor={`${d.pct_lactacao_sobre_total}%`} rotulo="% de vacas em lactação em relação ao rebanho"
+          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
+        <Indicador categoria="geral" valor={d.estratos.vacas_lactacao} rotulo="Vacas em lactação"
+          onClick={() => abrir("Vacas em lactação", d.numeros?.vacas_lactacao)} />
+        <Indicador categoria="geral" valor={d.vacas_total} rotulo="Vacas (adultas)"
+          onClick={() => abrir("Vacas (adultas)", d.numeros_vacas_total)} />
       </div>
-      {/* Barra empilhada 100% */}
+      {/* Barra empilhada 100% — cada fatia clicável abre os animais daquela categoria */}
       <div style={{ display: "flex", height: 26, borderRadius: 8, overflow: "hidden", border: "1px solid var(--border)" }}>
         {dados.map((x) => (
-          <div key={x.label} title={`${x.label}: ${x.n} (${x.pct}%)`} style={{ width: `${x.pct}%`, background: x.cor, minWidth: x.pct > 0 ? 2 : 0 }} />
+          <div key={x.label} title={`${x.label}: ${x.n} (${x.pct}%) — clique para ver os animais`}
+            style={{ width: `${x.pct}%`, background: x.cor, minWidth: x.pct > 0 ? 2 : 0, cursor: "pointer" }}
+            onClick={() => abrir(x.label, d.numeros?.[x.k])} />
         ))}
       </div>
       <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2" style={{ fontSize: "0.74rem" }}>
         {dados.map((x) => (
-          <span key={x.label} className="flex items-center gap-1">
+          <span key={x.label} className="flex items-center gap-1" style={{ cursor: "pointer" }}
+            title="Clique para ver os animais" onClick={() => abrir(x.label, d.numeros?.[x.k])}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: x.cor, display: "inline-block" }} /> {x.label}: <strong>{x.n}</strong> ({x.pct}%)
           </span>
         ))}
@@ -80,6 +97,7 @@ function EstratificacaoRebanho() {
       {(d.estratos as any).sem_data_nasc > 0 && (
         <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>{(d.estratos as any).sem_data_nasc} animal(is) sem data de nascimento não entraram nas faixas etárias.</p>
       )}
+      {modal && <AnimalModal title={modal.title} animais={modal.list} onClose={() => setModal(null)} />}
     </div>
   );
 }
@@ -145,6 +163,40 @@ function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtuali
         {salvando ? "Salvando…" : `Desmarcar ${sel.size || ""} selecionado(s)`}
       </button>
     </div>
+  );
+}
+
+// Tabela de um grupo/lote da lista "Fêmeas/Animais por Grupo" — extraída à
+// parte para poder ordenar por coluna (clique no cabeçalho) de forma
+// independente em cada grupo (cada instância deste componente tem seu
+// próprio estado de ordenação via useOrdenacao).
+function TabelaGrupoAnimais({ lista, femeasApenas }: { lista: Animal[]; femeasApenas: boolean }) {
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(lista);
+  return (
+    <table className="fazenda-table" style={{ margin: 0 }}>
+      <thead><tr>
+        <ThOrdenavel label="Nº" campo="numero" coluna={coluna} dir={dir} ordenar={ordenar} />
+        <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={coluna} dir={dir} ordenar={ordenar} />
+        {!femeasApenas && <ThOrdenavel label="Sexo" campo="sexo" coluna={coluna} dir={dir} ordenar={ordenar} />}
+        <ThOrdenavel label="Raça" campo="raca" coluna={coluna} dir={dir} ordenar={ordenar} />
+        <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={coluna} dir={dir} ordenar={ordenar} />
+        <ThOrdenavel label="DEL" campo="del_dias" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+        <ThOrdenavel label="Últ. CL" campo="ult_cl_kg" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+      </tr></thead>
+      <tbody>
+        {linhasOrdenadas.map((a) => (
+          <tr key={a.numero}>
+            <td style={{ fontWeight: 700 }}>{a.numero}</td>
+            <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+            {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
+            <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
+            <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+            <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
+            <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
   );
 }
 
@@ -225,7 +277,7 @@ function RebanhoVisaoGeral() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Beef size={22} style={{ color: "var(--dourado)" }} /> Rebanho</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><CowIcon size={22} color="var(--dourado)" /> Rebanho</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Fêmeas do rebanho — filtre por grupo, situação reprodutiva ou número.</p>
       </div>
 
@@ -234,7 +286,7 @@ function RebanhoVisaoGeral() {
 
       {regs && (
         <>
-          <EstratificacaoRebanho />
+          <EstratificacaoRebanho animais={regs} />
           <CaixaADescartar animais={regs} aoAtualizar={carregar} />
           <div className="card mb-4">
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
@@ -250,13 +302,21 @@ function RebanhoVisaoGeral() {
           </div>
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-4">
-            <Indicador categoria="geral" valor={total} rotulo={femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"} />
-            <Indicador categoria="reprodutivo" valor={gestantes} cor="var(--green-light)" rotulo="Gestantes" />
-            <Indicador categoria="reprodutivo" valor={vazias} cor="var(--amber)" rotulo="Vazias" />
-            <Indicador categoria="reprodutivo" valor={inseminadas} cor="var(--dourado-light)" rotulo="Inseminadas" />
-            <Indicador categoria="reprodutivo" valor={vacasPev} cor="var(--blue)" rotulo="Vacas no PEV" />
-            <Indicador categoria="geral" icon={Skull} valor={aDescartar} cor="var(--red)" rotulo="A descartar" />
-            <Indicador categoria="producao" valor={delMedio ?? "—"} rotulo="DEL médio (lactação)" />
+            <Indicador categoria="geral" valor={total} rotulo={femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"}
+              onClick={() => setModal({ title: femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)", list: filtrados })} />
+            <Indicador categoria="reprodutivo" valor={gestantes} cor="var(--green-light)" rotulo="Gestantes"
+              onClick={() => setModal({ title: "Gestantes", list: filtrados.filter((a) => a.sit_rep === "Ges.") })} />
+            <Indicador categoria="reprodutivo" valor={vazias} cor="var(--amber)" rotulo="Vazias"
+              onClick={() => setModal({ title: "Vazias", list: filtrados.filter((a) => (a.sit_rep || "").startsWith("Vaz.")) })} />
+            <Indicador categoria="reprodutivo" valor={inseminadas} cor="var(--dourado-light)" rotulo="Inseminadas"
+              onClick={() => setModal({ title: "Inseminadas", list: filtrados.filter((a) => a.sit_rep === "Ins.") })} />
+            <Indicador categoria="reprodutivo" valor={vacasPev} cor="var(--blue)" rotulo="Vacas no PEV"
+              onClick={() => setModal({ title: "Vacas no PEV", list: filtrados.filter((a) => a.sit_rep === "Vaz. pev") })} />
+            <Indicador categoria="geral" icon={Skull} valor={aDescartar} cor="var(--red)" rotulo="A descartar"
+              onClick={() => setModal({ title: "A descartar", list: filtrados.filter((a) => a.a_descartar) })} />
+            <Indicador categoria="producao" valor={delMedio ?? "—"} rotulo="DEL médio (lactação)"
+              podeClicar={!!delMedio}
+              onClick={() => setModal({ title: "DEL médio (lactação)", list: filtrados.filter((a) => LACTACAO.includes(cod(a.grupo_primario) || "") && a.del_dias) })} />
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
@@ -356,26 +416,7 @@ function RebanhoVisaoGeral() {
                       </button>
                       {aberto && (
                         <div className="overflow-x-auto">
-                          <table className="fazenda-table" style={{ margin: 0 }}>
-                            <thead><tr>
-                              <th>Nº</th><th>Categoria</th>
-                              {!femeasApenas && <th>Sexo</th>}
-                              <th>Raça</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th><th style={{ textAlign: "right" }}>Últ. CL</th>
-                            </tr></thead>
-                            <tbody>
-                              {lista.map((a) => (
-                                <tr key={a.numero}>
-                                  <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                                  <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                                  {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
-                                  <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                                  <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
-                                  <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
-                                  <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
+                          <TabelaGrupoAnimais lista={lista} femeasApenas={femeasApenas} />
                         </div>
                       )}
                     </div>
@@ -399,7 +440,7 @@ type Aba = "visao" | "sugestoes" | "ficha" | "touros" | "indicadores";
 const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros", "indicadores"];
 
 const ABAS_REBANHO = [
-  { id: "visao", label: "Rebanho", icon: Beef, title: "Visão geral do rebanho por grupo" },
+  { id: "visao", label: "Rebanho", icon: CowIcon, title: "Visão geral do rebanho por grupo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },

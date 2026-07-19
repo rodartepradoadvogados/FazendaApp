@@ -2701,7 +2701,11 @@ export async function importarCochoPlanilha(file: File): Promise<{ criados: numb
   return res.json();
 }
 
-export type Estratificacao = { total: number; estratos: Record<string, number>; percentuais: Record<string, number>; vacas_total: number; pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number };
+export type Estratificacao = {
+  total: number; estratos: Record<string, number>; numeros: Record<string, string[]>;
+  percentuais: Record<string, number>; vacas_total: number; numeros_vacas_total: string[];
+  pct_lactacao_sobre_total: number; pct_lactacao_sobre_vacas: number;
+};
 export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);
 
 export type CategoriaManejo = {
