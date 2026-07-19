@@ -5,9 +5,9 @@
 // mostra o Estoque de Sêmen (touros com doses, com botão excluir) e, como
 // segunda pílula interna, o catálogo NAAB (banco de dados de touros, só leitura).
 import { useMemo, useState } from "react";
-import { Search, Warehouse, Database, Trash2 } from "lucide-react";
+import { Search, Warehouse, Database, Trash2, Wheat, Pill, Dna, Package } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
-import { LinhaPills, MobPill } from "@/components/mobile/lancar/comum";
+import { LinhaPills, MobPill, GradeAcoes } from "@/components/mobile/lancar/comum";
 import { fetchEstoque, fetchEstoqueSemen, fetchTouros, excluirEstoqueSemen, type Touro } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
 
@@ -27,8 +27,12 @@ const CATEGORIA_ESTOQUE: { chave: "alimentacao" | "medicamentos"; rotulo: string
 ];
 type CategoriaChave = (typeof CATEGORIA_ESTOQUE)[number]["chave"] | "semen" | "outros";
 
+const ROTULOS_CATEGORIA: Record<CategoriaChave, string> = {
+  alimentacao: "Alimentação", medicamentos: "Medicamentos", semen: "Sêmen", outros: "Outros",
+};
+
 export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
-  const [aba, setAba] = useState<CategoriaChave>("alimentacao");
+  const [aba, setAba] = useState<CategoriaChave | null>(null);
   const { dados, doCache, carregando } = useCarregar<{ itens: ItemEstoque[] }>("menu_estoque", fetchEstoque);
   const [busca, setBusca] = useState("");
   // Dois filtros independentes de saldo: positivo/negativo e abaixo do mínimo
@@ -56,16 +60,26 @@ export default function Estoque({ onVoltar }: { onVoltar: () => void }) {
       .filter((i) => !soAbaixo || i.abaixo_minimo === true);
   }, [itens, aba, busca, filtroSaldo, soAbaixo]);
 
+  if (!aba) {
+    return (
+      <div>
+        <MobVoltar titulo="Estoque" onVoltar={onVoltar} />
+        <GradeAcoes
+          opcoes={[
+            { id: "alimentacao", label: "Alimentação", icone: <Wheat size={28} />, cor: "var(--mob-laranja)" },
+            { id: "medicamentos", label: "Medicamentos", icone: <Pill size={28} />, cor: "var(--mob-azul)" },
+            { id: "semen", label: "Sêmen", icone: <Dna size={28} />, cor: "var(--mob-roxo)" },
+            { id: "outros", label: "Outros", icone: <Package size={28} />, cor: "var(--mob-amarelo)" },
+          ]}
+          onEscolher={(id) => setAba(id as CategoriaChave)}
+        />
+      </div>
+    );
+  }
+
   return (
     <div>
-      <MobVoltar titulo="Estoque" onVoltar={onVoltar} />
-      <LinhaPills>
-        {CATEGORIA_ESTOQUE.map((c) => (
-          <MobPill key={c.chave} ativa={aba === c.chave} onClick={() => { setAba(c.chave); setBusca(""); }}>{c.rotulo}</MobPill>
-        ))}
-        <MobPill ativa={aba === "semen"} onClick={() => { setAba("semen"); setBusca(""); }}>Sêmen</MobPill>
-        <MobPill ativa={aba === "outros"} onClick={() => { setAba("outros"); setBusca(""); }}>Outros</MobPill>
-      </LinhaPills>
+      <MobVoltar titulo={ROTULOS_CATEGORIA[aba]} onVoltar={() => { setAba(null); setBusca(""); }} />
 
       {aba === "semen" ? (
         <SemenView />

@@ -731,7 +731,8 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
 
 @router.get("/exames/resultados")
 def listar_resultados_exame(
-    evento_sanitario_id: int | None = None, resultado: str | None = None, session: Session = Depends(get_session),
+    evento_sanitario_id: int | None = None, resultado: str | None = None,
+    data_de: date | None = None, data_ate: date | None = None, session: Session = Depends(get_session),
 ) -> list[dict]:
     """Relatório de resultados de exames (positivo/negativo/indefinido ou
     numérico) lançados via calendário sanitário preventivo — ver
@@ -741,6 +742,10 @@ def listar_resultados_exame(
         query = query.where(ExameResultado.evento_sanitario_id == evento_sanitario_id)
     if resultado is not None:
         query = query.where(ExameResultado.resultado == resultado)
+    if data_de is not None:
+        query = query.where(ExameResultado.data_exame >= data_de)
+    if data_ate is not None:
+        query = query.where(ExameResultado.data_exame <= data_ate)
     eventos = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
     saida = []
     for r in session.exec(query).all():

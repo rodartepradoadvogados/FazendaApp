@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -38,7 +38,7 @@ import Estoque from "@/components/mobile/menu/Estoque";
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "gestao" | "financeiro";
-type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean };
+type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
 
 const GRUPOS: Grupo[] = [
@@ -51,9 +51,9 @@ const GRUPOS: Grupo[] = [
     { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={26} />, soAdmin: true },
   ] },
   { secao: "alimentacao", titulo: "Alimentação", cor: "var(--mob-laranja)", iconeSecao: <Wheat size={26} />, itens: [
-    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} /> },
-    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <Wheat size={26} /> },
-    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <Wheat size={26} /> },
+    { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} />, cor: "var(--mob-laranja)" },
+    { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={26} />, cor: "var(--mob-verde)" },
+    { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={26} />, cor: "var(--mob-azul)" },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--mob-azul)", iconeSecao: <FileBarChart size={26} />, itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
@@ -146,15 +146,13 @@ export default function Pagina() {
     return (
       <div>
         <MobVoltar titulo="Aparência" onVoltar={() => setSecaoAberta(null)} />
-        <div className="mob-card" style={{ padding: "0.9rem 1rem" }}>
-          <AparenciaSelector variant="app" />
-        </div>
+        <AparenciaSelector variant="app" />
       </div>
     );
   }
   const grupoAberto = grupos.find((g) => g.secao === secaoAberta);
   if (grupoAberto) {
-    const opcoes: OpcaoAcao[] = grupoAberto.itens.map((i) => ({ id: i.chave, label: i.titulo, icone: i.icone, cor: grupoAberto.cor }));
+    const opcoes: OpcaoAcao[] = grupoAberto.itens.map((i) => ({ id: i.chave, label: i.titulo, icone: i.icone, cor: i.cor || grupoAberto.cor }));
     return (
       <div>
         <MobVoltar titulo={grupoAberto.titulo} onVoltar={() => setSecaoAberta(null)} />

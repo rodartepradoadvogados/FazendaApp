@@ -8,8 +8,9 @@
 // Endpoint do desktop: POST /producao/controles (já aceita lista de entradas).
 import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
-import { MobCampo, MobAviso } from "@/components/mobile/ui";
-import { BotoesEscolha, LinhaPills, MobPill, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
+import { Milk, Scale, Moon, Pill, TestTube, Truck, Zap } from "lucide-react";
+import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
+import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
 
@@ -24,8 +25,13 @@ const FormInducaoLactacao = dynamic(() => import("@/components/FormInducaoLactac
 
 type Sub = "controle" | "pesagem" | "bst" | "secagem" | "qualidade" | "entrega" | "inducao";
 
+const TITULOS_SUB: Record<Sub, string> = {
+  controle: "Controle leiteiro", pesagem: "Pesagem corporal", secagem: "Secagem",
+  inducao: "Indução de lactação", qualidade: "Qualidade do leite", entrega: "Venda mensal do leite", bst: "BST",
+};
+
 export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const [sub, setSub] = useState<Sub>("controle");
+  const [sub, setSub] = useState<Sub | null>(null);
   const [agenda, setAgenda] = useState<any>(null);
   const carregarAgenda = () => { fetchAgenda().then(setAgenda).catch(() => {}); };
   useEffect(() => { if (sub === "bst" && !agenda) carregarAgenda(); }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -43,17 +49,26 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
     fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
   }, [sub, estoqueCarregado]);
 
+  if (!sub) {
+    return (
+      <GradeAcoes
+        opcoes={[
+          { id: "controle", label: "Controle leiteiro", icone: <Milk size={28} />, cor: "var(--mob-azul)" },
+          { id: "pesagem", label: "Pesagem corporal", icone: <Scale size={28} />, cor: "var(--mob-roxo)" },
+          { id: "secagem", label: "Secagem", icone: <Moon size={28} />, cor: "var(--mob-amarelo)" },
+          { id: "inducao", label: "Indução de lactação", icone: <Pill size={28} />, cor: "var(--mob-verde)" },
+          { id: "qualidade", label: "Qualidade do leite", icone: <TestTube size={28} />, cor: "var(--mob-laranja)" },
+          { id: "entrega", label: "Venda mensal do leite", icone: <Truck size={28} />, cor: "var(--mob-vermelho)" },
+          { id: "bst", label: "BST", icone: <Zap size={28} />, cor: "var(--mob-dourado-2)" },
+        ]}
+        onEscolher={(id) => setSub(id as Sub)}
+      />
+    );
+  }
+
   return (
     <>
-      <LinhaPills>
-        <MobPill ativa={sub === "controle"} onClick={() => setSub("controle")}>Controle leiteiro</MobPill>
-        <MobPill ativa={sub === "pesagem"} onClick={() => setSub("pesagem")}>Pesagem corporal</MobPill>
-        <MobPill ativa={sub === "secagem"} onClick={() => setSub("secagem")}>Secagem</MobPill>
-        <MobPill ativa={sub === "inducao"} onClick={() => setSub("inducao")}>Indução de lactação</MobPill>
-        <MobPill ativa={sub === "qualidade"} onClick={() => setSub("qualidade")}>Qualidade do leite</MobPill>
-        <MobPill ativa={sub === "entrega"} onClick={() => setSub("entrega")}>Venda mensal do leite</MobPill>
-        <MobPill ativa={sub === "bst"} onClick={() => setSub("bst")}>BST</MobPill>
-      </LinhaPills>
+      <MobVoltar titulo={TITULOS_SUB[sub]} onVoltar={() => setSub(null)} />
       {sub === "controle" && <ControleLeiteiro animais={animais} animalFixado={animalFixado} />}
       {sub === "pesagem" && (
         <div className="mob-form-embutido">

@@ -7,8 +7,9 @@
 // como texto livre — exatamente o que a importação deve preservar.
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
-import { LinhaPills, MobPill, type Animal } from "@/components/mobile/lancar/comum";
+import { GradeAcoes, type Animal } from "@/components/mobile/lancar/comum";
 import { RESPONSAVEIS } from "@/lib/constants";
 
 // Cada pílula só baixa seu próprio formulário quando aberta pela 1ª vez —
@@ -20,20 +21,36 @@ const FolhaPagamentoView = dynamic(() => import("@/components/FolhaPagamentoView
 
 type TipoLancamento = "despesa" | "receita" | "compra_animal" | "venda_animal" | "compra_semen" | "folha";
 
+const TITULOS: Record<TipoLancamento, string> = {
+  despesa: "Contas a pagar", receita: "Contas a receber", compra_animal: "Compra de animal",
+  venda_animal: "Venda de animal", compra_semen: "Compra de sêmen", folha: "Folha de pagamento",
+};
+
 export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita"; animais: Animal[] }) {
-  const [tipo, setTipo] = useState<TipoLancamento>(tipoInicial || "despesa");
+  const [tipo, setTipo] = useState<TipoLancamento | null>(tipoInicial || null);
+
+  if (!tipo) {
+    return (
+      <div>
+        <MobVoltar titulo="Financeiro" onVoltar={onVoltar} />
+        <GradeAcoes
+          opcoes={[
+            { id: "despesa", label: "Contas a pagar", icone: <Receipt size={28} />, cor: "var(--mob-vermelho)" },
+            { id: "receita", label: "Contas a receber", icone: <HandCoins size={28} />, cor: "var(--mob-verde)" },
+            { id: "compra_animal", label: "Compra de animal", icone: <ShoppingCart size={28} />, cor: "var(--mob-azul)" },
+            { id: "venda_animal", label: "Venda de animal", icone: <Tag size={28} />, cor: "var(--mob-laranja)" },
+            { id: "compra_semen", label: "Compra de sêmen", icone: <Dna size={28} />, cor: "var(--mob-roxo)" },
+            { id: "folha", label: "Folha de pagamento", icone: <Users size={28} />, cor: "var(--mob-dourado-2)" },
+          ]}
+          onEscolher={(id) => setTipo(id as TipoLancamento)}
+        />
+      </div>
+    );
+  }
 
   return (
     <div>
-      <MobVoltar titulo="Financeiro" onVoltar={onVoltar} />
-      <LinhaPills>
-        <MobPill ativa={tipo === "despesa"} onClick={() => setTipo("despesa")}>Contas a pagar</MobPill>
-        <MobPill ativa={tipo === "receita"} onClick={() => setTipo("receita")}>Contas a receber</MobPill>
-        <MobPill ativa={tipo === "compra_animal"} onClick={() => setTipo("compra_animal")}>Compra de animal</MobPill>
-        <MobPill ativa={tipo === "venda_animal"} onClick={() => setTipo("venda_animal")}>Venda de animal</MobPill>
-        <MobPill ativa={tipo === "compra_semen"} onClick={() => setTipo("compra_semen")}>Compra de sêmen</MobPill>
-        <MobPill ativa={tipo === "folha"} onClick={() => setTipo("folha")}>Folha de pagamento</MobPill>
-      </LinhaPills>
+      <MobVoltar titulo={TITULOS[tipo]} onVoltar={() => setTipo(null)} />
       <div className="mob-form-embutido">
         {(tipo === "despesa" || tipo === "receita") && <FormFinanceiro key={tipo} tipo={tipo} responsaveis={RESPONSAVEIS} />}
         {tipo === "compra_animal" && <CompraVendaAnimalForm key="compra_animal" modo="compra" animais={animais} />}

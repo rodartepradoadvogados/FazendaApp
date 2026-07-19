@@ -578,7 +578,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
    acompanha sozinho). */
 :root[data-paleta="verde"] .mob {
   --mob-vinho:     #1F5C3D;
-  --mob-dourado:   #2E7D52;
+  /* Dourado é o token que dirige --mob-acao (cor de "ativo" no rodapé) — na
+     paleta verde ele precisa de tanto "pop" quanto o dourado da vinho
+     (#B8860B), senão o rodapé fica sem o mesmo efeito colorido ao clicar
+     (#524). Um verde mais saturado/vívido, não o verde-oliva antigo. */
+  --mob-dourado:   #16A34A;
   --mob-dourado-2: #4ADE80;
   --mob-header:    linear-gradient(160deg, #1F5C3D, #164430);
 }
