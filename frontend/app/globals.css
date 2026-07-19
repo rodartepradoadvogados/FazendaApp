@@ -17,10 +17,13 @@
   /* Ouro fixo — não acompanha a paleta (o D do logo CWD milk fica sempre
      dourado, mesmo na paleta verde, ao contrário de --dourado/--dourado-light). */
   --dourado-fixo: #D4A017;
-  --bg:          #0F0A0C;
-  --surface:     #1C1218;
-  --surface-2:   #261820;
-  --border:      #3D2535;
+  /* Fundo escuro tingido pela paleta ativa (vinho→avermelhado, verde→esverdeado)
+     — deriva de var(--vinho), que já troca de cor no bloco data-paleta="verde"
+     abaixo, então o degradê de tons escuros aqui acompanha sozinho. */
+  --bg:          color-mix(in srgb, var(--vinho) 12%, #050304);
+  --surface:     color-mix(in srgb, var(--vinho) 14%, #0F0A0C);
+  --surface-2:   color-mix(in srgb, var(--vinho) 16%, #170F13);
+  --border:      color-mix(in srgb, var(--vinho) 22%, #2A1A20);
   --text:        #F0E8EC;
   --text-muted:  #9B8A91;
   --green:       #2E7D52;
@@ -41,7 +44,7 @@
   --alert-fg:    #E07070;
   --overlay:     rgba(0, 0, 0, 0.7);
   /* Barra lateral. */
-  --sidebar-bg:  #1C1218;
+  --sidebar-bg:  var(--surface);
   --sidebar-fg:  var(--text);
   --sidebar-muted: var(--text-muted);
   --sidebar-border: var(--border);
@@ -550,13 +553,15 @@ html, body { max-width: 100%; overflow-x: hidden; }
   -webkit-tap-highlight-color: transparent;
 }
 :root[data-theme="escuro"] .mob {
-  /* escuro OLED */
-  --mob-bg:        #121212;
-  --mob-surface:   #1E1E1E;
-  --mob-surface-2: #262626;
+  /* escuro OLED — tingido pela paleta ativa (vinho→avermelhado, verde→
+     esverdeado), a partir de var(--mob-vinho), que já troca de cor no bloco
+     data-paleta="verde" mais abaixo. */
+  --mob-bg:        color-mix(in srgb, var(--mob-vinho) 10%, #0A0A0A);
+  --mob-surface:   color-mix(in srgb, var(--mob-vinho) 12%, #161616);
+  --mob-surface-2: color-mix(in srgb, var(--mob-vinho) 14%, #1E1E1E);
   --mob-text:      #F3F4F6;
   --mob-muted:     #9AA1AA;
-  --mob-border:    #2C2C2C;
+  --mob-border:    color-mix(in srgb, var(--mob-vinho) 18%, #242424);
   --mob-header:    linear-gradient(160deg, #340F1C, #200A12);
   --mob-header-fg: #F5EEF1;
   --mob-acao:      var(--mob-dourado-2);  /* dourado-claro no escuro (mesma marca, mais luminoso) */
