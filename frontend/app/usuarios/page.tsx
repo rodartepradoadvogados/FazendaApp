@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Users, AlertTriangle, UserPlus, Check, Pencil, X, ShieldCheck, Clock, Newspaper } from "lucide-react";
-import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchAcessos, type UsuarioAcesso } from "@/lib/api";
+import { Users, AlertTriangle, UserPlus, Check, Pencil, X, ShieldCheck, Clock, Newspaper, UserSquare2 } from "lucide-react";
+import Link from "next/link";
+import { fetchUsuarios, criarUsuario, atualizarUsuario, getUsuario, ehDono, fetchAcessos, fetchPessoas, type UsuarioAcesso } from "@/lib/api";
 
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
@@ -19,11 +20,12 @@ const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted
 
 export default function UsuariosPage() {
   const [usuarios, setUsuarios] = useState<any[] | null>(null);
+  const [pessoas, setPessoas] = useState<any[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [username, setUsername] = useState("");
-  const [nome, setNome] = useState("");
+  const [pessoaId, setPessoaId] = useState("");
   const [email, setEmail] = useState("");
   const [senha, setSenha] = useState("");
   const [papel, setPapel] = useState<"admin" | "operador">("operador");
@@ -33,7 +35,15 @@ export default function UsuariosPage() {
   const [editando, setEditando] = useState<any | null>(null);
 
   const carregar = () => fetchUsuarios().then(setUsuarios).catch((e) => setError(e.message));
-  useEffect(() => { carregar(); }, []);
+  const carregarPessoas = () => fetchPessoas().then(setPessoas).catch(() => {});
+  useEffect(() => { carregar(); carregarPessoas(); }, []);
+
+  // Pessoas já vinculadas a algum usuário não podem ser escolhidas de novo
+  // (regra de 1 pessoa por login, ver auth.py::_validar_pessoa_do_usuario).
+  const pessoasDisponiveis = useMemo(() => {
+    const vinculadas = new Set((usuarios || []).map((u) => u.pessoa_id).filter(Boolean));
+    return (pessoas || []).filter((p) => p.ativo && !vinculadas.has(p.id));
+  }, [pessoas, usuarios]);
 
   const toggle = (k: string) => setPerms((p) => { const s = new Set(p); s.has(k) ? s.delete(k) : s.add(k); return s; });
 
@@ -41,12 +51,12 @@ export default function UsuariosPage() {
     setSalvando(true); setError(null); setMsg(null);
     try {
       await criarUsuario({
-        username: username.trim(), senha, nome: nome.trim() || undefined, email: email.trim() || undefined, papel,
+        username: username.trim(), senha, pessoa_id: Number(pessoaId), email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms), pode_publicar_materias_blog: podePublicarBlog,
       });
       setMsg(`Usuário "${username}" criado.`);
-      setUsername(""); setNome(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setPodePublicarBlog(false);
-      carregar();
+      setUsername(""); setPessoaId(""); setEmail(""); setSenha(""); setPapel("operador"); setPerms(new Set(TODOS)); setPodePublicarBlog(false);
+      carregar(); carregarPessoas();
     } catch (e: any) { setError(e.message); }
     finally { setSalvando(false); }
   };
@@ -74,7 +84,21 @@ export default function UsuariosPage() {
           <div className="card-header mb-3 flex items-center gap-2"><UserPlus size={14} /> Novo usuário</div>
           <div className="space-y-3">
             <div><label style={lbl}>Usuário (login)</label><input style={inp} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
-            <div><label style={lbl}>Nome</label><input style={inp} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+            <div>
+              <div className="flex items-center justify-between">
+                <label style={lbl}>Pessoa</label>
+                <Link href="/configuracoes?aba=cadastro&sub=pessoas" className="btn-ghost" style={{ fontSize: "0.68rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                  <UserSquare2 size={12} /> Cadastre a pessoa primeiro
+                </Link>
+              </div>
+              <select style={inp} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+                <option value="">Selecione…</option>
+                {pessoasDisponiveis.map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+              </select>
+              <p style={{ fontSize: "0.66rem", color: "var(--text-muted)", marginTop: "0.25rem" }}>
+                Todo login precisa ser de uma pessoa já cadastrada em Configurações &gt; Cadastro &gt; Pessoas.
+              </p>
+            </div>
             <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
             <div><label style={lbl}>Senha</label><input style={inp} type="text" value={senha} onChange={(e) => setSenha(e.target.value)} /></div>
             <div><label style={lbl}>Tipo</label>
@@ -115,7 +139,7 @@ export default function UsuariosPage() {
               </p>
             </div>
 
-            <button className="btn-primary" onClick={criar} disabled={salvando || !username || !senha} style={{ width: "100%", justifyContent: "center" }}>
+            <button className="btn-primary" onClick={criar} disabled={salvando || !username || !senha || !pessoaId} style={{ width: "100%", justifyContent: "center" }}>
               <Check size={16} /> Criar usuário
             </button>
           </div>
@@ -157,8 +181,10 @@ export default function UsuariosPage() {
         <EditarUsuarioModal
           usuario={editando}
           souEu={editando.id === meuId}
+          pessoas={pessoas || []}
+          usuarios={usuarios || []}
           onClose={() => setEditando(null)}
-          onSalvo={() => { setEditando(null); carregar(); }}
+          onSalvo={() => { setEditando(null); carregar(); carregarPessoas(); }}
         />
       )}
     </div>
@@ -201,9 +227,11 @@ function RelatorioAcessos() {
   );
 }
 
-function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any; souEu: boolean; onClose: () => void; onSalvo: () => void }) {
+function EditarUsuarioModal({ usuario, souEu, pessoas, usuarios, onClose, onSalvo }: {
+  usuario: any; souEu: boolean; pessoas: any[]; usuarios: any[]; onClose: () => void; onSalvo: () => void;
+}) {
   const [username, setUsername] = useState(usuario.username);
-  const [nome, setNome] = useState(usuario.nome || "");
+  const [pessoaId, setPessoaId] = useState(usuario.pessoa_id ? String(usuario.pessoa_id) : "");
   const [email, setEmail] = useState(usuario.email || "");
   const [papel, setPapel] = useState<"admin" | "operador">(usuario.papel);
   const [perms, setPerms] = useState<Set<string>>(new Set(usuario.papel === "admin" ? TODOS : usuario.permissoes || []));
@@ -219,7 +247,7 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
     setSalvando(true); setErro(null);
     try {
       await atualizarUsuario(usuario.id, {
-        username: username.trim(), nome: nome.trim() || undefined, email: email.trim() || undefined, papel,
+        username: username.trim(), pessoa_id: pessoaId ? Number(pessoaId) : undefined, email: email.trim() || undefined, papel,
         permissoes: papel === "admin" ? TODOS : Array.from(perms),
         ativo, pode_publicar_materias_blog: podePublicarBlog, ...(novaSenha ? { senha: novaSenha } : {}),
       });
@@ -237,7 +265,20 @@ function EditarUsuarioModal({ usuario, souEu, onClose, onSalvo }: { usuario: any
         </div>
         <div className="space-y-3">
           <div><label style={lbl}>Usuário (login)</label><input style={inp} value={username} onChange={(e) => setUsername(e.target.value)} autoComplete="off" /></div>
-          <div><label style={lbl}>Nome</label><input style={inp} value={nome} onChange={(e) => setNome(e.target.value)} /></div>
+          <div>
+            <div className="flex items-center justify-between">
+              <label style={lbl}>Pessoa</label>
+              <Link href="/configuracoes?aba=cadastro&sub=pessoas" className="btn-ghost" style={{ fontSize: "0.68rem", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                <UserSquare2 size={12} /> Cadastre a pessoa primeiro
+              </Link>
+            </div>
+            <select style={inp} value={pessoaId} onChange={(e) => setPessoaId(e.target.value)}>
+              <option value="">Selecione…</option>
+              {pessoas
+                .filter((p) => p.ativo && (p.id === usuario.pessoa_id || !usuarios.some((u) => u.pessoa_id === p.id)))
+                .map((p) => <option key={p.id} value={p.id}>{p.nome}</option>)}
+            </select>
+          </div>
           <div><label style={lbl}>E-mail (opcional)</label><input style={inp} type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></div>
           <div><label style={lbl}>Nova senha (deixe em branco para manter)</label><input style={inp} value={novaSenha} onChange={(e) => setNovaSenha(e.target.value)} /></div>
           <div><label style={lbl}>Tipo</label>

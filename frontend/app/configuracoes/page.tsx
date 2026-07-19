@@ -48,8 +48,13 @@ export default function ConfiguracoesPage() {
     setAbasVisiveis(abas);
     // Respeita ?aba=... (ex.: link da Agenda para "Importar dados"), desde que
     // a sub-aba exista e o usuário tenha acesso a ela; senão cai na primeira.
-    const alvo = new URLSearchParams(window.location.search).get("aba") as Aba | null;
+    const params = new URLSearchParams(window.location.search);
+    const alvo = params.get("aba") as Aba | null;
     setAba(alvo && abas.some((a) => a.id === alvo) ? alvo : (abas[0]?.id ?? null));
+    // ?sub=... — sub-aba de Cadastro (ex.: link direto de "Novo usuário" para
+    // "Cadastre a pessoa primeiro" em Configurações > Cadastro > Pessoas).
+    const sub = params.get("sub");
+    if (sub && ABAS_CADASTRO.some(([cid]) => cid === sub)) setCadastroAba(sub as AbaCadastro);
   }, []);
 
   // Árvore completa (3 níveis: Configurações › Cadastro › Sanitário) — um único

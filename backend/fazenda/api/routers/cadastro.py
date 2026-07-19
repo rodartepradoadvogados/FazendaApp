@@ -79,6 +79,27 @@ def seed_pessoas(session: Session) -> None:
     session.commit()
 
 
+NOME_PESSOA_ROBO_MILKNEWS = "Robô MilkNews"
+
+
+def seed_pessoa_robo_milknews(session: Session) -> None:
+    """Garante a existência de uma Pessoa "Robô MilkNews", representando a
+    automação de Telegram/MilkNews no cadastro — permite vincular um usuário
+    de sistema a essa identidade, como qualquer outra pessoa (get-or-create;
+    roda sempre, ao contrário de seed_pessoas, que só semeia tabela vazia)."""
+    seed_tipos_pessoa(session)
+    if session.exec(select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)).first():
+        return
+    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Robô")).first():
+        session.add(TipoPessoa(nome="Robô"))
+        session.commit()
+    session.add(Pessoa(
+        nome=NOME_PESSOA_ROBO_MILKNEWS, tipo="Robô",
+        observacoes="Identidade da automação de Telegram/MilkNews — não recebe folha de pagamento.",
+    ))
+    session.commit()
+
+
 def seed_tipos_pessoa(session: Session) -> None:
     """Cria os tipos de pessoa padrão se a tabela ainda estiver vazia
     (idempotente) — nunca sobrescreve tipos adicionados depois pelo usuário."""
@@ -148,6 +169,8 @@ class PessoaIn(BaseModel):
     tipos: list[str]
     telefone: str | None = None
     email: str | None = None
+    cpf_cnpj: str | None = None
+    cep: str | None = None
     observacoes: str | None = None
     ativo: bool = True
     salario_base: float | None = None

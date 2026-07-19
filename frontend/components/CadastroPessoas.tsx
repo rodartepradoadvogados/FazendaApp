@@ -3,17 +3,19 @@ import { Fragment, useEffect, useState } from "react";
 import { Users, Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
 import { fetchPessoas, criarPessoa, atualizarPessoa, fetchTiposPessoa, criarTipoPessoa } from "@/lib/api";
 import { Modal } from "@/components/Modal";
+import { maskTelefone, maskCpfCnpj, maskCep } from "@/lib/masks";
 
 type Pessoa = {
   id: number; nome: string; tipos: string[]; telefone: string | null; email: string | null;
+  cpf_cnpj: string | null; cep: string | null;
   observacoes: string | null; ativo: boolean; salario_base: number | null; data_admissao: string | null;
 };
 type Form = {
-  nome: string; tipos: string[]; telefone: string; email: string; observacoes: string; ativo: boolean;
+  nome: string; tipos: string[]; telefone: string; email: string; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
   salarioBase: string; dataAdmissao: string;
 };
 const formVazio: Form = {
-  nome: "", tipos: ["Funcionário"], telefone: "", email: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
+  nome: "", tipos: ["Funcionário"], telefone: "", email: "", cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
 };
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
@@ -26,7 +28,7 @@ const normalizar = (s: string) => s.toLowerCase().normalize("NFD").replace(/[̀-
 function paraPayload(f: Form) {
   const s = (v: string) => (v.trim() === "" ? undefined : v.trim());
   return {
-    nome: f.nome.trim(), tipos: f.tipos, telefone: s(f.telefone), email: s(f.email), observacoes: s(f.observacoes),
+    nome: f.nome.trim(), tipos: f.tipos, telefone: s(f.telefone), email: s(f.email), cpf_cnpj: s(f.cpfCnpj), cep: s(f.cep), observacoes: s(f.observacoes),
     ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
     data_admissao: s(f.dataAdmissao),
   };
@@ -50,7 +52,8 @@ export default function CadastroPessoas() {
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Pessoa) => {
     setForm({
-      nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefone: p.telefone ?? "", email: p.email ?? "", observacoes: p.observacoes ?? "",
+      nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefone: p.telefone ?? "", email: p.email ?? "",
+      cpfCnpj: p.cpf_cnpj ?? "", cep: p.cep ?? "", observacoes: p.observacoes ?? "",
       ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "", dataAdmissao: p.data_admissao ?? "",
     });
     setEditando(p.id); setMsg(null);
@@ -218,8 +221,13 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
             </button>
           </div>
         </div>
-        <div><label style={labelStyle}>Telefone</label><input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: e.target.value })} /></div>
+        <div><label style={labelStyle}>Telefone</label>
+          <input style={inputStyle} value={form.telefone} onChange={(e) => setForm({ ...form, telefone: maskTelefone(e.target.value) })} /></div>
         <div><label style={labelStyle}>Email</label><input style={inputStyle} value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></div>
+        <div><label style={labelStyle}>CPF/CNPJ</label>
+          <input style={inputStyle} value={form.cpfCnpj} onChange={(e) => setForm({ ...form, cpfCnpj: maskCpfCnpj(e.target.value) })} /></div>
+        <div><label style={labelStyle}>CEP</label>
+          <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
           <input type="number" inputMode="decimal" style={inputStyle} value={form.salarioBase} onChange={(e) => setForm({ ...form, salarioBase: e.target.value })} /></div>
         <div><label style={labelStyle}>Data de admissão</label>

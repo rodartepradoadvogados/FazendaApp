@@ -56,7 +56,7 @@ export async function fetchAcessos(): Promise<UsuarioAcesso[]> {
   if (!res.ok) throw new Error(`Acessos error: ${res.status}`);
   return res.json();
 }
-export async function criarUsuario(dados: { username: string; senha: string; nome?: string; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean }) {
+export async function criarUsuario(dados: { username: string; senha: string; pessoa_id: number; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean }) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
