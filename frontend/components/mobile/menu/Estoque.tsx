@@ -136,6 +136,7 @@ function SemenView() {
   const estoqueReq = useCarregar<ItemSemen[]>("menu_estoque_semen", fetchEstoqueSemen);
   const naabReq = useCarregar<Touro[]>("menu_touros_naab", fetchTouros);
   const [busca, setBusca] = useState("");
+  const [erro, setErro] = useState("");
 
   const emEstoque = useMemo(
     () => (estoqueReq.dados || []).filter((e) => e.tipo !== "fazenda"),
@@ -153,11 +154,12 @@ function SemenView() {
 
   async function excluir(e: ItemSemen) {
     if (!window.confirm(`Excluir "${e.touro_nome}" do estoque de sêmen?`)) return;
+    setErro("");
     try {
       await excluirEstoqueSemen(e.id);
       estoqueReq.recarregar();
     } catch (err: any) {
-      alert(err.message || "Erro ao excluir sêmen do estoque");
+      setErro(err.message || "Erro ao excluir sêmen do estoque");
     }
   }
 
@@ -177,6 +179,8 @@ function SemenView() {
         <input className="mob-input" value={busca} onChange={(e) => setBusca(e.target.value)}
           placeholder={origem === "estoque" ? "Buscar touro, código, NAAB…" : "Buscar touro, NAAB, central, raça…"} style={{ paddingLeft: "2.5rem" }} />
       </div>
+
+      {erro && <p style={{ color: "var(--mob-vermelho)", fontSize: "0.85rem", marginBottom: "0.6rem", fontWeight: 600 }}>{erro}</p>}
 
       {origem === "estoque" ? (
         <>

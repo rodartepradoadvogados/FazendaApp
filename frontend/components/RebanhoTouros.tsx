@@ -202,13 +202,15 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
   const ordEstoque = useOrdenacao(estoqueFiltrado);
   const ordNaab = useOrdenacao(naabFiltrado);
 
+  const [erroExclusao, setErroExclusao] = useState("");
   const excluirDoEstoque = async (e: EstoqueSemenItem) => {
     if (!window.confirm(`Excluir "${e.touro_nome}" do estoque de sêmen? Esta ação não pode ser desfeita.`)) return;
+    setErroExclusao("");
     try {
       await excluirEstoqueSemen(e.id);
       setEstoque((prev) => (prev ?? []).filter((x) => x.id !== e.id));
     } catch (err: any) {
-      alert(err.message || "Erro ao excluir sêmen do estoque");
+      setErroExclusao(err.message || "Erro ao excluir sêmen do estoque");
     }
   };
 
@@ -304,6 +306,7 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
 
           {origemSemen === "estoque" && (
             <div className="overflow-x-auto">
+              {erroExclusao && <p style={{ color: "var(--vermelho, #d33)", fontSize: "0.85rem", marginBottom: "0.6rem" }}>{erroExclusao}</p>}
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead>
                   <tr>

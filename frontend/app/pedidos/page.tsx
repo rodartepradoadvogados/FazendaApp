@@ -78,7 +78,7 @@ export default function PedidosPage() {
 
   async function excluir(id: number) {
     if (!confirm("Excluir este pedido? Só é possível se não houver lançamento financeiro vinculado.")) return;
-    try { await excluirPedido(id); recarregar(); } catch (e: any) { alert(e.message); }
+    try { await excluirPedido(id); recarregar(); } catch (e: any) { setErro(e.message); }
   }
 
   async function mudarStatus(id: number, status: string) {
