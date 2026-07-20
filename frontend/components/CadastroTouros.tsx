@@ -158,6 +158,7 @@ export default function CadastroTouros() {
   const [touros, setTouros] = useState<Touro[]>([]);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState("");
+  const [info, setInfo] = useState("");
   const [busca, setBusca] = useState("");
   const [expandido, setExpandido] = useState<number | null>(null);
   const [editando, setEditando] = useState<Touro | "novo" | null>(null);
@@ -165,11 +166,11 @@ export default function CadastroTouros() {
 
   async function recarregarCatalogo() {
     setRecarregando(true);
-    setErro("");
+    setErro(""); setInfo("");
     try {
       const r = await recarregarCatalogoTouros();
       await carregar();
-      alert(`Catálogo padrão recarregado: ${r.touros_depois} touro(s) no banco (eram ${r.touros_antes}).`);
+      setInfo(`Catálogo padrão recarregado: ${r.touros_depois} touro(s) no banco (eram ${r.touros_antes}).`);
     } catch (e: any) {
       setErro(e.message || "Falha ao recarregar o catálogo");
     } finally {
@@ -207,7 +208,7 @@ export default function CadastroTouros() {
       await excluirTouro(t.id);
       setTouros((prev) => prev.filter((x) => x.id !== t.id));
     } catch (e: any) {
-      alert(e.message || "Falha ao excluir");
+      setErro(e.message || "Falha ao excluir");
     }
   }
 
@@ -259,6 +260,7 @@ export default function CadastroTouros() {
       </div>
 
       {erro && <p style={{ color: "var(--vermelho, #d33)", fontSize: "0.85rem" }}>{erro}</p>}
+      {info && <p style={{ color: "var(--verde, #2a8)", fontSize: "0.85rem" }}>{info}</p>}
       {carregando ? (
         <p style={{ color: "var(--text-muted)" }}>Carregando...</p>
       ) : filtrados.length === 0 ? (
