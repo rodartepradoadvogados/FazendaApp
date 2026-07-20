@@ -12,9 +12,15 @@ import { TabBar } from "@/components/ui";
 import {
   Campo, Secao, inputStyle, nota,
   type EstoqueItem, type ItemSanidade, itemSanidadeVazio, unidadesCompativeis, EstoqueRestante, codigoGrupo, MOTIVOS_SECAGEM,
+  animalEmLactacao,
 } from "@/components/lancamentos/comumForms";
 
 export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] }) {
+  // Secagem só faz sentido para quem está em lactação — sem este filtro, a
+  // lista de candidatas (e a tabela de lotes, com sua contagem e DEL médio)
+  // misturava secas, novilhas e machos que só compartilham o grupo_primario.
+  const animaisLactacao = useMemo(() => animais.filter(animalEmLactacao), [animais]);
+
   // Animal(is) ou lote(s) — dentro de lote, pode escolher mais de um; mesmo
   // padrão do Diagnóstico (TabBar + AnimalPickerModal/LotePicker).
   const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
@@ -22,13 +28,13 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
   const codigosLotes = useMemo(
-    () => Array.from(new Set(animais.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
-    [animais]
+    () => Array.from(new Set(animaisLactacao.map((a) => codigoGrupo(a.grupo_primario)).filter((c): c is string => !!c))).sort(),
+    [animaisLactacao]
   );
   const animaisDoLoteSel = useMemo(() => {
     const cods = new Set(lotesSelecionados);
-    return animais.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
-  }, [animais, lotesSelecionados]);
+    return animaisLactacao.filter((a) => { const c = codigoGrupo(a.grupo_primario); return c && cods.has(c); });
+  }, [animaisLactacao, lotesSelecionados]);
   const [selLote, setSelLote] = useState<Set<string>>(new Set());
   const toggleLote = (n: string) => setSelLote((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   useEffect(() => {
@@ -150,9 +156,10 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
           ativa={vinculo}
           onChange={setVinculo}
         />
+        <p style={nota}>Lista apenas vacas em lactação (lote de lactação ou DEL em curso).</p>
         {vinculo === "animal" ? (
           <AnimalPickerModal
-            animais={animais} selecionados={selecionados} onToggle={toggle}
+            animais={animaisLactacao} selecionados={selecionados} onToggle={toggle}
             titulo="Escolher vaca(s) para secar"
             colunas={[
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
@@ -162,7 +169,7 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
         ) : (
           <div style={{ marginTop: "0.5rem" }}>
             <LotePicker
-              opcoes={opcoesLoteDeAnimais(animais, codigosLotes)}
+              opcoes={opcoesLoteDeAnimais(animaisLactacao, codigosLotes)}
               selecionados={lotesSelecionados}
               onChange={setLotesSelecionados}
               placeholder="Selecionar lote(s)…"

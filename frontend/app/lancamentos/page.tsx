@@ -982,7 +982,7 @@ function classeColostragemUI(brix: number | null, proteina: number | null): { tx
 }
 
 function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }) {
-  const [modo, setModo] = useState<"animal" | "lote">("animal");
+  const [modo, setModo] = useState<"animal" | "lote" | "categoria">("animal");
   const [matriz, setMatriz] = useState("");
   const [dataParto, setDataParto] = useState(() => new Date().toISOString().slice(0, 10));
   const [tipoParto, setTipoParto] = useState("");
@@ -1077,15 +1077,39 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
 
   const animaisDoLoteBatch = useMemo(() => (loteBatch ? animais.filter((a) => a.grupo_primario === loteBatch) : []), [animais, loteBatch]);
 
+  // Categoria: alternativa ao lote — pode escolher uma ou mais categorias
+  // prontas (mesmo motor de critérios cumulativos de Configurações > Lotes,
+  // POST /lotes/preview, reaproveitando CATEGORIAS_ANIMAIS — mesmo padrão do
+  // Preventivo > Aplicação) para lançar partos em lote sem precisar que as
+  // matrizes estejam todas no mesmo lote.
+  const [categoriasSel, setCategoriasSel] = useState<Set<string>>(new Set());
+  const toggleCategoria = (id: string) => setCategoriasSel((p) => { const s = new Set(p); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  const [animaisCategoriasUniao, setAnimaisCategoriasUniao] = useState<string[]>([]);
   useEffect(() => {
-    setSelBatch(new Set(animaisDoLoteBatch.map((a) => a.numero)));
-  }, [loteBatch]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!categoriasSel.size) { setAnimaisCategoriasUniao([]); return; }
+    Promise.all(Array.from(categoriasSel).map((id) => {
+      const cat = CATEGORIAS_ANIMAIS.find((c) => c.id === id);
+      if (!cat) return Promise.resolve([] as string[]);
+      return previewCriteriosLote(cat.criterios).then((r: any) => r.animais || []).catch(() => [] as string[]);
+    })).then((listas) => setAnimaisCategoriasUniao(Array.from(new Set(listas.flat()))));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [Array.from(categoriasSel).sort().join("|")]);
+  const animaisDaCategoriaBatch = useMemo(() => {
+    const nums = new Set(animaisCategoriasUniao);
+    return animais.filter((a) => nums.has(a.numero));
+  }, [animais, animaisCategoriasUniao]);
+  const animaisBatchFonte = modo === "categoria" ? animaisDaCategoriaBatch : animaisDoLoteBatch;
+
+  useEffect(() => {
+    setSelBatch(new Set(animaisBatchFonte.map((a) => a.numero)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loteBatch, animaisCategoriasUniao.join("|"), modo]);
 
   function toggleBatch(numero: string) {
     setSelBatch((p) => { const s = new Set(p); s.has(numero) ? s.delete(numero) : s.add(numero); return s; });
   }
   function toggleTodosBatch() {
-    setSelBatch((p) => (p.size === animaisDoLoteBatch.length && animaisDoLoteBatch.length ? new Set() : new Set(animaisDoLoteBatch.map((a) => a.numero))));
+    setSelBatch((p) => (p.size === animaisBatchFonte.length && animaisBatchFonte.length ? new Set() : new Set(animaisBatchFonte.map((a) => a.numero))));
   }
   function campoBatch(numero: string) {
     return dadosBatch[numero] || { criaNumero: "", criaSexo: "", criaBaixada: false, retencaoPlacenta: false };
@@ -1097,7 +1121,7 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
   async function salvarLote() {
     setErroBatch(null); setSucessoBatch(null);
     const alvo = Array.from(selBatch);
-    if (!alvo.length) { setErroBatch("Selecione ao menos uma matriz do lote."); return; }
+    if (!alvo.length) { setErroBatch("Selecione ao menos uma matriz do lote ou categoria."); return; }
     if (!dataParto) { setErroBatch("Informe a data do parto."); return; }
     setSalvandoBatch(true);
     let partosOk = 0;
@@ -1124,7 +1148,7 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
       `${partosOk} de ${alvo.length} parto(s) registrado(s)${criasOk.length ? `; cria(s) cadastrada(s): ${criasOk.join(", ")}` : ""}.` +
       `${falhas.length ? ` Atenção: ${falhas.join("; ")}.` : ""} A mudança de lote das mães não é automática aqui — use Rebanho > Movimentar animais, se precisar.`
     );
-    if (partosOk) { setSelBatch(new Set()); setDadosBatch({}); setLoteBatch(""); }
+    if (partosOk) { setSelBatch(new Set()); setDadosBatch({}); setLoteBatch(""); setCategoriasSel(new Set()); }
     setSalvandoBatch(false);
   }
 
@@ -1217,25 +1241,38 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
       {manualSangueAberto && <ManualSangueModal onClose={() => setManualSangueAberto(false)} />}
 
       <div className="mb-3">
-        <TabBar<"animal" | "lote">
+        <TabBar<"animal" | "lote" | "categoria">
           abas={[
             { id: "animal", label: "Uma matriz", title: "Lançar o parto de uma matriz, com cria, colostragem e IgG" },
-            { id: "lote", label: "Várias matrizes (lote)", title: "Selecionar um lote e lançar partos simples de várias matrizes de uma vez" },
+            { id: "lote", label: "Lotes", title: "Selecionar um lote e lançar partos simples de várias matrizes de uma vez" },
+            { id: "categoria", label: "Categoria", title: "Selecionar uma ou mais categorias e lançar partos simples de várias matrizes de uma vez" },
           ]}
           ativa={modo}
           onChange={setModo}
         />
       </div>
 
-      {modo === "lote" ? (
+      {modo !== "animal" ? (
         <>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Campo label="Lote">
-              <select style={inputStyle} value={loteBatch} onChange={(e) => setLoteBatch(e.target.value)}>
-                <option value="">Selecione…</option>
-                {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
-              </select>
-            </Campo>
+            {modo === "lote" ? (
+              <Campo label="Lote">
+                <select style={inputStyle} value={loteBatch} onChange={(e) => setLoteBatch(e.target.value)}>
+                  <option value="">Selecione…</option>
+                  {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </Campo>
+            ) : (
+              <Campo label="Categoria(s)" full>
+                <div className="flex flex-wrap gap-3">
+                  {CATEGORIAS_ANIMAIS.map((c) => (
+                    <label key={c.id} className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}>
+                      <input type="checkbox" checked={categoriasSel.has(c.id)} onChange={() => toggleCategoria(c.id)} /> {c.label}
+                    </label>
+                  ))}
+                </div>
+              </Campo>
+            )}
             <Campo label="Data do parto (todas)"><input type="date" style={inputStyle} value={dataParto} onChange={(e) => setDataParto(e.target.value)} /></Campo>
             <Campo label="Tipo de parto (todas)">
               <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
@@ -1246,19 +1283,19 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
             </Campo>
           </div>
 
-          {loteBatch ? (
+          {(modo === "lote" ? !!loteBatch : categoriasSel.size > 0) ? (
             <div className="card mt-3" style={{ padding: 0 }}>
               <div className="card-header m-3 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
-                <span>Matrizes do lote {loteBatch} ({animaisDoLoteBatch.length})</span>
-                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodosBatch} disabled={!animaisDoLoteBatch.length}>
-                  {selBatch.size === animaisDoLoteBatch.length && animaisDoLoteBatch.length ? "Limpar seleção" : "Selecionar todos"}
+                <span>{modo === "lote" ? `Matrizes do lote ${loteBatch}` : "Matrizes das categorias selecionadas"} ({animaisBatchFonte.length})</span>
+                <button type="button" className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodosBatch} disabled={!animaisBatchFonte.length}>
+                  {selBatch.size === animaisBatchFonte.length && animaisBatchFonte.length ? "Limpar seleção" : "Selecionar todos"}
                 </button>
               </div>
               <div className="overflow-x-auto" style={{ maxHeight: "460px" }}>
                 <table className="fazenda-table" style={{ margin: 0 }}>
                   <thead><tr><th></th><th>Nº</th><th>Nº da cria (vazio = baixa)</th><th>Sexo da cria</th><th>Cria baixada?</th><th>Retenção de placenta</th></tr></thead>
                   <tbody>
-                    {animaisDoLoteBatch.map((a) => {
+                    {animaisBatchFonte.map((a) => {
                       const d = campoBatch(a.numero);
                       const marcada = selBatch.has(a.numero);
                       return (
@@ -1282,13 +1319,13 @@ function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: string[] }
                         </tr>
                       );
                     })}
-                    {!animaisDoLoteBatch.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal neste lote.</td></tr>}
+                    {!animaisBatchFonte.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum animal {modo === "lote" ? "neste lote" : "nesta(s) categoria(s)"}.</td></tr>}
                   </tbody>
                 </table>
               </div>
             </div>
           ) : (
-            <p style={nota}>Selecione um lote para ver a lista de matrizes e lançar vários partos de uma vez.</p>
+            <p style={nota}>Selecione um lote ou uma categoria para ver a lista de matrizes e lançar vários partos de uma vez.</p>
           )}
 
           <p style={nota}>
