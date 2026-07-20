@@ -765,6 +765,50 @@ class Patrimonio(SQLModel, table=True):
     data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Plano de manutenção preventiva (opcional) — periodicidade só por DATA
+    # (ex.: "a cada 6 meses"). O sistema hoje não rastreia horímetro/horas de
+    # uso de nenhum equipamento, então manutenção por uso fica fora de escopo
+    # por ora (ver ADR em rules/patrimonio.py). Sem plano cadastrado, os três
+    # campos ficam None e o item nunca gera alerta.
+    frequencia_manutencao_meses: Optional[int] = None
+    data_ultima_manutencao: Optional[date] = None
+    # Calculada (última + frequência) quando a manutenção é registrada, mas
+    # também editável manualmente — cobre o caso de plano novo sem histórico
+    # ainda, ou de o usuário querer antecipar/adiar a próxima data.
+    data_proxima_manutencao: Optional[date] = None
+    observacao_manutencao: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Manutenção de patrimônio (histórico de execuções do plano preventivo)
+# ---------------------------------------------------------------------------
+class ManutencaoPatrimonio(SQLModel, table=True):
+    """Um registro de manutenção preventiva realizada (ou agendada) em um item
+    de Patrimônio — histórico + link opcional para o lançamento em Contas a
+    Pagar (ContaGerencial) gerado automaticamente, mesmo padrão de
+    FeriasFuncionario/DecimoTerceiro (RH ampliado)."""
+
+    __tablename__ = "manutencao_patrimonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    patrimonio_id: int = Field(foreign_key="patrimonio.id", index=True)
+    data_realizacao: date
+    descricao: Optional[str] = None
+    fornecedor: Optional[str] = None
+    valor: Optional[float] = None
+    centro_custo: str = "Pecuária Leiteira"
+    # pendente = a conta a pagar segue em aberto; pago = já baixada na hora
+    # do registro (mesmo vocabulário de FeriasFuncionario/DecimoTerceiro).
+    status: str = "pago"
+    data_pagamento: Optional[date] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # nº do lançamento (LC-...) criado em Contas a Pagar quando
+    # `gerar_conta_a_pagar=True` foi pedido ao registrar — None quando o
+    # usuário optou por não lançar nada financeiro para esta manutenção.
+    numero_lancamento_gerado: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Estoque
@@ -1666,8 +1710,8 @@ class CalendarioSanitario(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Protocolo sanitário — cadastro (Configurações > Cadastro > Sanitário) de um
 # tratamento com múltiplas etapas (produto/dosagem/via por dia), a exemplo do
-# tratamento de mastite. Etapas começam em D1 (protocolos sanitários não têm
-# D0 — isso é exclusivo do protocolo hormonal IATF).
+# tratamento de mastite. Dias podem começar em D0 ou D1 conforme o protocolo
+# cadastrado (mesmo padrão de dia_inicial usado em ProtocoloInducaoLactacao).
 # ---------------------------------------------------------------------------
 class ProtocoloSanitario(SQLModel, table=True):
     """Um protocolo sanitário cadastrado (ex.: Mastite clínica, Vermifugação padrão)."""
@@ -1678,18 +1722,20 @@ class ProtocoloSanitario(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
+    dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma (etapas já existentes usam 1)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ProtocoloSanitarioEtapa(SQLModel, table=True):
-    """Uma linha do protocolo — produto, dosagem, via e dia de aplicação (D1, D2...)."""
+    """Uma linha do protocolo — produto, dosagem, via e dia de aplicação (dia bruto; o
+    rótulo exibido é dia - dia_inicial do protocolo)."""
 
     __tablename__ = "protocolo_sanitario_etapa"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
-    dia: int  # 1, 2, 3... nunca 0
+    dia: int  # 0, 1, 2... conforme dia_inicial do protocolo
     # Como o medicamento é definido: "medicamento" (produto = item de estoque,
     # aplicação já definida), "principio_ativo" ou "classificacao" (produto
     # guarda o critério; o medicamento real é escolhido no lançamento).
@@ -2648,6 +2694,43 @@ class NoticiaNews(SQLModel, table=True):
     revisado_final: bool = False
     revisado_final_em: Optional[datetime] = None
     revisado_final_por: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Notificações push (Web Push API) — canal adicional de entrega para os
+# MESMOS alertas do sininho (/notificacoes), funcionando com o app fechado.
+# Ver fazenda/api/routers/push.py.
+# ---------------------------------------------------------------------------
+class PushSubscription(SQLModel, table=True):
+    """Uma inscrição de push do navegador (PushSubscription da Web Push API)
+    vinculada ao usuário logado que a criou. Um usuário pode ter mais de uma
+    (um por navegador/dispositivo em que clicou "Ativar notificações")."""
+
+    __tablename__ = "push_subscription"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    endpoint: str = Field(index=True)  # URL única do serviço de push do navegador
+    p256dh: str
+    auth: str
+    user_agent: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PushNotificacaoEnviada(SQLModel, table=True):
+    """Registro de deduplicação: evita reenviar o mesmo alerta (mesma
+    `chave`) via push para o mesmo usuário mais de uma vez por dia — a
+    lógica de "quando gerar o alerta" continua 100% em calcular_agenda()/
+    notificacoes.py; isto só impede reenvio no canal de entrega novo, já
+    que o sininho é reconsultado a cada poll do app aberto."""
+
+    __tablename__ = "push_notificacao_enviada"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    chave: str = Field(index=True)
+    data_referencia: date = Field(index=True)
+    enviado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------

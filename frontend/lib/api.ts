@@ -349,6 +349,34 @@ export async function fetchSemenDisponivel() {
   if (!res.ok) throw new Error(`Sêmen disponível error: ${res.status}`);
   return res.json() as Promise<SemenDisponivel>;
 }
+
+// ── Acasalamento direcionado (sugestão de touro por vaca) ──
+export type SugestaoTouro = {
+  naab?: string | null;
+  nome?: string | null;
+  tpi?: number | null;
+  nm_dolar?: number | null;
+  leite_kg?: number | null;
+  doses?: number | null;
+  tipo?: "convencional" | "sexado" | "fazenda" | string;
+  score: number;
+  tem_ancestral_comum: boolean;
+  motivo: string;
+};
+export type SugestaoAcasalamento = {
+  numero_matriz: string;
+  criterios: string[];
+  sugestoes: SugestaoTouro[];
+  ancestrais_maternos_avaliados: boolean;
+};
+export async function fetchSugestaoAcasalamento(numeroMatriz: string): Promise<SugestaoAcasalamento> {
+  const res = await authFetch(`${API}/reproducao/acasalamento/sugestao?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `Sugestão de acasalamento error: ${res.status}`);
+  }
+  return res.json() as Promise<SugestaoAcasalamento>;
+}
 export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;
@@ -1602,14 +1630,14 @@ export async function importarProtocoloSanitarioExcel(file: File) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
   return res.json();
 }
-export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function criarProtocoloSanitario(dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo sanitário"); }
   return res.json();
 }
-export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
+export async function atualizarProtocoloSanitario(id: number, dados: { nome: string; doenca_id?: number | null; eh_mastite?: boolean; dia_inicial?: number; ativo?: boolean; etapas: ProtocoloEtapa[] }) {
   const res = await authFetch(`${API}/cadastro/protocolos-sanitarios/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -2284,6 +2312,35 @@ export async function fetchPatrimonio() {
   return res.json();
 }
 
+export async function atualizarPlanoManutencaoPatrimonio(itemId: number, dados: {
+  frequencia_manutencao_meses?: number | null; data_ultima_manutencao?: string | null;
+  data_proxima_manutencao?: string | null; observacao_manutencao?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao-plano`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar o plano de manutenção"); }
+  return res.json();
+}
+
+export async function fetchManutencoesPatrimonio(itemId: number) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Histórico de manutenção error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarManutencaoPatrimonio(itemId: number, dados: {
+  data_realizacao: string; descricao?: string | null; fornecedor?: string | null; valor?: number | null;
+  centro_custo?: string; status?: string; data_pagamento?: string | null; observacao?: string | null;
+  gerar_conta_a_pagar?: boolean;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar a manutenção"); }
+  return res.json();
+}
+
 export async function fetchOpcoesFinanceiro() {
   const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);
@@ -2863,6 +2920,29 @@ export async function rejeitarExclusao(id: number, motivo?: string) {
 export async function fetchNotificacoes() {
   const res = await authFetch(`${API}/notificacoes/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Notificações error: ${res.status}`);
+  return res.json();
+}
+
+// ── Push nativo (Web Push, PWA) ──
+export async function fetchPushChavePublica(): Promise<{ chave_publica: string }> {
+  const res = await fetch(`${API}/push/chave-publica`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Chave pública do push error: ${res.status}`);
+  return res.json();
+}
+
+export async function subscribePush(dados: { endpoint: string; keys: { p256dh: string; auth: string }; user_agent?: string }) {
+  const res = await authFetch(`${API}/push/subscribe`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ativar notificações"); }
+  return res.json();
+}
+
+export async function unsubscribePush(endpoint?: string) {
+  const res = await authFetch(`${API}/push/subscribe`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: endpoint || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desativar notificações"); }
   return res.json();
 }
 

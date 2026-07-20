@@ -71,6 +71,19 @@ export function codigoGrupo(grupo: string | null | undefined): string | null {
   return g.length >= 2 && /^\d\d/.test(g) ? g.slice(0, 2) : null;
 }
 
+// Códigos de lote (2 dígitos) considerados "em lactação" — mesmo esquema
+// usado em indicadores/produção/rebanho (LACTACAO/LOTES_LACTACAO).
+export const LOTES_LACTACAO = ["01", "02", "03"];
+
+// Mesmo idioma usado em Controle leiteiro (app/lancamentos/page.tsx, FormControle):
+// animal em lactação = está num lote de lactação (01/02/03) OU já tem DEL em curso (> 0).
+// Serve para não misturar secas/novilhas/machos nas telas que só fazem sentido para
+// quem está produzindo leite (ex.: Secagem).
+export function animalEmLactacao(a: { grupo_primario?: string | null; del_dias?: number | null }): boolean {
+  const cod = codigoGrupo(a.grupo_primario);
+  return (!!cod && LOTES_LACTACAO.includes(cod)) || ((a.del_dias ?? 0) > 0);
+}
+
 export const MOTIVOS_SECAGEM = [
   { v: "doente", l: "Animal doente" },
   { v: "baixa_producao", l: "Baixa produção" },

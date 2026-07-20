@@ -3101,8 +3101,8 @@ def atualizar_grau_sangue(item_id: int, dados: GrauSangueIn, session: Session = 
 
 # ---------------------------------------------------------------------------
 # Protocolo sanitário — cadastro com múltiplas etapas (produto/dosagem/via por
-# dia), a exemplo do tratamento de mastite. Etapas começam em D1 — protocolos
-# sanitários não têm D0 (isso é exclusivo do protocolo hormonal IATF).
+# dia), a exemplo do tratamento de mastite. Dias podem começar em D0 ou D1
+# conforme o dia_inicial do protocolo (mesmo padrão da indução de lactação).
 # ---------------------------------------------------------------------------
 # Igual à lista usada no restante do site (frontend/lib/constants.ts) — as
 # duas listas divergiam (esta faltava Subcutânea/Intrauterina), o que rejeitava
@@ -3126,6 +3126,7 @@ class ProtocoloSanitarioIn(BaseModel):
     nome: str
     doenca_id: int | None = None
     eh_mastite: bool = False
+    dia_inicial: int = 0
     ativo: bool = True
     etapas: list[ProtocoloEtapaIn]
 
@@ -3134,10 +3135,10 @@ def _validar_etapas(etapas: list[ProtocoloEtapaIn]) -> None:
     if not etapas:
         raise HTTPException(status_code=400, detail="Informe ao menos uma etapa do protocolo")
     for e in etapas:
-        if e.dia < 1:
+        if e.dia < 0:
             raise HTTPException(
                 status_code=400,
-                detail="Protocolos sanitários não têm D0 — os dias começam em D1 (D0 é exclusivo do protocolo hormonal)",
+                detail="O dia da etapa não pode ser negativo (o protocolo pode começar em D0)",
             )
         if e.dosagem <= 0:
             raise HTTPException(status_code=400, detail="A dosagem de cada etapa deve ser positiva")
@@ -3176,7 +3177,10 @@ def criar_protocolo_sanitario(dados: ProtocoloSanitarioIn, session: Session = De
         raise HTTPException(status_code=409, detail=f"Já existe um protocolo com o nome '{nome}'")
     _validar_etapas(dados.etapas)
 
-    protocolo = ProtocoloSanitario(nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite, ativo=dados.ativo)
+    protocolo = ProtocoloSanitario(
+        nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite,
+        dia_inicial=dados.dia_inicial, ativo=dados.ativo,
+    )
     session.add(protocolo)
     session.commit()
     session.refresh(protocolo)
@@ -3201,6 +3205,7 @@ def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn
     protocolo.nome = nome
     protocolo.doenca_id = dados.doenca_id
     protocolo.eh_mastite = dados.eh_mastite
+    protocolo.dia_inicial = dados.dia_inicial
     protocolo.ativo = dados.ativo
     session.add(protocolo)
 
@@ -3853,47 +3858,51 @@ def atualizar_protocolo_inducao(protocolo_id: int, dados: ProtocoloInducaoIn, se
 
 
 # Cronograma das duas planilhas do produtor ("Protocolo Ativos 1" — 28 dias,
-# D1 a D28, e manutenção da bST depois disso — e "Protocolo Ativos 2" — 18
+# D0 a D27, e manutenção da bST depois disso — e "Protocolo Ativos 2" — 18
 # dias, D0 a D18). Doses/unidades e dias vêm literalmente das planilhas
 # anexadas; "Somatotropina Bovina (bST)" não tinha princípio ativo cadastrado
 # — foi criado aqui para compatibilizar com o restante do sistema (mesmo
 # grupo/categoria dos demais hormônios reprodutivos).
+# Os dias abaixo já são 0-based (dia_inicial=0) — antes desta padronização
+# em D0 (jul/2026) este protocolo era D1-based (dia_inicial=1); quem já
+# tinha rodado o seed antigo é corrigido por seed_inducao_lactacao_ativos1_d0
+# (mesmo offset de datas: dia - dia_inicial é idêntico nos dois casos).
 SEED_PRINCIPIOS_INDUCAO = ["Somatotropina Bovina (bST)"]
 
 # (dia, tipo, produto/principio, acao_dispositivo, dose, unidade, via)
 SEED_ETAPAS_INDUCAO_1 = [
-    (1, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (0, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (0, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
+    (0, "dispositivo", "Implante de Progesterona", "colocar", None, None, None),
     (1, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
-    (1, "dispositivo", "Implante de Progesterona", "colocar", None, None, None),
     (2, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
     (3, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
     (4, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
     (5, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
     (6, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
-    (7, "medicamento", "Benzoato de Estradiol", None, 30, "ml", None),
-    (8, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (7, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (7, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (7, "dispositivo", "Implante de Progesterona", "retirar", None, None, None),
     (8, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
-    (8, "dispositivo", "Implante de Progesterona", "retirar", None, None, None),
     (9, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
     (10, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
     (11, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
     (12, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
     (13, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
+    (14, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
     (14, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
-    (15, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
-    (15, "medicamento", "Benzoato de Estradiol", None, 20, "ml", None),
-    (16, "medicamento", "Cloprostenol Sódico / D-Cloprostenol", None, 3, "ml", None),
+    (15, "medicamento", "Cloprostenol Sódico / D-Cloprostenol", None, 3, "ml", None),
+    (16, "manejo", "Adaptação na ordenha", None, None, None, None),
     (17, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (18, "medicamento", "Dexametasona", None, 20, "ml", None),
     (18, "manejo", "Adaptação na ordenha", None, None, None, None),
     (19, "medicamento", "Dexametasona", None, 20, "ml", None),
     (19, "manejo", "Adaptação na ordenha", None, None, None, None),
+    (20, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
     (20, "medicamento", "Dexametasona", None, 20, "ml", None),
     (20, "manejo", "Adaptação na ordenha", None, None, None, None),
-    (21, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
-    (21, "medicamento", "Dexametasona", None, 20, "ml", None),
-    (21, "manejo", "Adaptação na ordenha", None, None, None, None),
-    (22, "manejo", "COMEÇAR A ORDENHA", None, None, None, None),
-    (28, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
+    (21, "manejo", "COMEÇAR A ORDENHA", None, None, None, None),
+    (27, "medicamento", "Somatotropina Bovina (bST)", None, None, "dose", None),
 ]
 
 SEED_ETAPAS_INDUCAO_2 = [
@@ -3955,9 +3964,9 @@ def seed_protocolos_inducao_lactacao(session: Session) -> None:
         session.commit()
 
     _criar(
-        "Protocolo de Indução de Lactação — 28 dias (Ativos 1)", 1,
+        "Protocolo de Indução de Lactação — 28 dias (Ativos 1)", 0,
         "Manter a bST (Somatotropina Bovina) a cada 12 dias até o final da lactação — "
-        "a partir do D28 a vaca entra no ciclo normal de aplicação de bST do rebanho (Sanidade > Preventiva > BST).",
+        "a partir do D27 a vaca entra no ciclo normal de aplicação de bST do rebanho (Sanidade > Preventiva > BST).",
         SEED_ETAPAS_INDUCAO_1,
     )
     _criar(
@@ -3966,6 +3975,42 @@ def seed_protocolos_inducao_lactacao(session: Session) -> None:
         SEED_ETAPAS_INDUCAO_2,
     )
 
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def seed_inducao_lactacao_ativos1_d0(session: Session) -> None:
+    """
+    Uma única vez (SeedFlag): normaliza o protocolo "Ativos 1" (28 dias) para
+    também começar em D0, como todos os demais protocolos do sistema
+    (sanitários e o outro protocolo de indução, "Ativos 2") passaram a fazer
+    nesta padronização (jul/2026). Quando `seed_protocolos_inducao_lactacao`
+    já rodou num deploy anterior a esta mudança, o protocolo já existe no
+    banco com `dia_inicial=1` e etapas em D1..D28 — aqui subtraímos 1 do dia
+    de cada etapa e zeramos `dia_inicial`, preservando exatamente as mesmas
+    datas de aplicação (a fórmula de cálculo é `dia - dia_inicial`, então
+    D1/dia_inicial=1 e D0/dia_inicial=0 produzem o mesmo offset). Em bancos
+    novos, o seed acima já cria o protocolo com SEED_ETAPAS_INDUCAO_1
+    renumerado e dia_inicial=0 — esta função não encontra nada para corrigir
+    e só marca a flag.
+    """
+    chave = "inducao_lactacao_ativos1_d0_202607"
+    if session.get(SeedFlag, chave):
+        return
+    protocolo = session.exec(
+        select(ProtocoloInducaoLactacao).where(
+            ProtocoloInducaoLactacao.nome == "Protocolo de Indução de Lactação — 28 dias (Ativos 1)"
+        )
+    ).first()
+    if protocolo and protocolo.dia_inicial == 1:
+        etapas = session.exec(
+            select(ProtocoloInducaoLactacaoEtapa).where(ProtocoloInducaoLactacaoEtapa.protocolo_id == protocolo.id)
+        ).all()
+        for etapa in etapas:
+            etapa.dia -= 1
+            session.add(etapa)
+        protocolo.dia_inicial = 0
+        session.add(protocolo)
     session.add(SeedFlag(chave=chave))
     session.commit()
 

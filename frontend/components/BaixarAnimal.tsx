@@ -33,6 +33,7 @@ export default function BaixarAnimal() {
   const [error, setError] = useState<string | null>(null);
 
   const [busca, setBusca] = useState("");
+  const [filtroLote, setFiltroLote] = useState("");
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   // "definitiva" = saída do rebanho (morte/descarte/venda); "a_descartar" =
   // vaca segue ativa, mas sai das ações reprodutivas.
@@ -71,10 +72,18 @@ export default function BaixarAnimal() {
   };
   useEffect(carregar, []);
 
+  const lotes = useMemo(
+    () => Array.from(new Set((animais || []).map((a) => a.grupo_primario).filter((g): g is string => !!g))).sort(),
+    [animais]
+  );
+
   const candidatos = useMemo(() => {
     if (!animais) return [];
-    return animais.filter((a) => !busca || a.numero.toLowerCase().includes(busca.toLowerCase()));
-  }, [animais, busca]);
+    return animais.filter((a) => {
+      if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
+      return !busca || a.numero.toLowerCase().includes(busca.toLowerCase());
+    });
+  }, [animais, busca, filtroLote]);
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
@@ -84,7 +93,7 @@ export default function BaixarAnimal() {
   );
 
   const limpar = () => {
-    setSelecionados(new Set()); setBusca(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoOutro("");
+    setSelecionados(new Set()); setBusca(""); setFiltroLote(""); setTipoBaixa(""); setMotivo(""); setMotivoDoenca(""); setMotivoOutro("");
     setValor(""); setTipoValor("por_animal"); setCliente(""); setVendaRecria(false); setObservacao("");
     setPagarComissao(false); setCorretorNome(""); setValorComissao(""); setFormaComissao("redirecionado");
   };
@@ -165,12 +174,23 @@ export default function BaixarAnimal() {
               </label>
             </div>
           </div>
-          <div className="mb-3">
-            <label style={labelStyle}>Buscar animal (nº)</label>
-            <div style={{ position: "relative", maxWidth: "260px" }}>
-              <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-              <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" />
+          <div className="flex gap-3 mb-3" style={{ flexWrap: "wrap" }}>
+            <div>
+              <label style={labelStyle}>Buscar animal (nº)</label>
+              <div style={{ position: "relative", maxWidth: "260px" }}>
+                <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" />
+              </div>
             </div>
+            {lotes.length > 1 && (
+              <div>
+                <label style={labelStyle}>Filtrar por lote</label>
+                <select style={{ ...selStyle, maxWidth: "220px" }} value={filtroLote} onChange={(e) => setFiltroLote(e.target.value)} title="Filtrar por lote">
+                  <option value="">Todos os lotes</option>
+                  {lotes.map((l) => <option key={l} value={l}>{l}</option>)}
+                </select>
+              </div>
+            )}
           </div>
 
           <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>

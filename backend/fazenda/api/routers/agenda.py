@@ -15,7 +15,7 @@ from fazenda.auth import Usuario, get_current_user, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
-    ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    Patrimonio, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
@@ -28,6 +28,7 @@ from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.auditoria import usuario_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
+from fazenda.rules.patrimonio import status_manutencao
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
@@ -597,6 +598,35 @@ def calcular_agenda(
                 "fonte": "auto", "cor": "var(--red)", "ref": None, "tipo": "semen_minimo",
             })
 
+    # Manutenção preventiva de patrimônio vencida (ou a vencer em até 15 dias,
+    # ver DIAS_ALERTA_MANUTENCAO_PROXIMA) — um alerta por item, sem sufixo de
+    # data (a chave é só o id do item): some sozinho quando a manutenção é
+    # registrada (POST /financeiro/patrimonio/{id}/manutencao recalcula
+    # data_proxima_manutencao) e não pode ser dispensado sem registrá-la (ver
+    # bloqueio em marcar_realizado, mesmo padrão de colostragem/IgG).
+    eventos_patrimonio = []
+    itens_patrimonio = session.exec(
+        select(Patrimonio).where(Patrimonio.data_proxima_manutencao != None)  # noqa: E711
+    ).all()
+    for item in itens_patrimonio:
+        if item.data_baixa:
+            continue
+        situacao = status_manutencao(item.model_dump(), data)["situacao_manutencao"]
+        if situacao not in ("vencida", "proxima"):
+            continue
+        chave = f"patrimonio_manutencao_{item.id}"
+        if chave in realizados:
+            continue
+        vencida = situacao == "vencida"
+        eventos_patrimonio.append({
+            "id": chave, "data": item.data_proxima_manutencao.isoformat(), "categoria": "Gestão/Financeiro",
+            "descricao": f"Manutenção preventiva {'VENCIDA' if vencida else 'próxima'} — {item.nome}"
+            + (f" (nº {item.numero})" if item.numero else ""),
+            "numero_animal": None, "observacao": item.observacao_manutencao,
+            "fonte": "auto", "cor": "var(--red)" if vencida else "var(--dourado)", "ref": None,
+            "tipo": "patrimonio_manutencao", "patrimonio_id": item.id, "situacao_manutencao": situacao,
+        })
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -619,7 +649,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -1022,6 +1052,8 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
         raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
     if dados.evento_id.startswith("colostragem_pendente_") or dados.evento_id.startswith("igg_pendente_"):
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — preencha o dado que falta na ficha do animal.")
+    if dados.evento_id.startswith("patrimonio_manutencao_"):
+        raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre a manutenção no item de patrimônio (isso atualiza a próxima data sozinho).")
     if dados.evento_id.startswith("protocolo_iatf_"):
         _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
         return {"marcado": True}

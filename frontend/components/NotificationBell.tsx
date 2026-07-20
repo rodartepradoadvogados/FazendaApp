@@ -1,10 +1,20 @@
 "use client";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, X } from "lucide-react";
-import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin } from "@/lib/api";
+import { Bell, BellRing, X } from "lucide-react";
+import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin, fetchPushChavePublica, subscribePush, unsubscribePush } from "@/lib/api";
 
 type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string };
+
+// base64url (formato da chave VAPID) -> Uint8Array, exigido pela Push API.
+function urlBase64ToUint8Array(base64: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64.length % 4)) % 4);
+  const base64Padded = (base64 + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64Padded);
+  return Uint8Array.from([...raw].map((c) => c.charCodeAt(0)));
+}
+
+type StatusPush = "indisponivel" | "podeAtivar" | "ativado" | "negado";
 
 // Decide para qual página levar o usuário para resolver a pendência,
 // a partir da categoria/tipo da notificação.
@@ -25,6 +35,8 @@ export function NotificationBell() {
   const [erro, setErro] = useState(false);
 
   const [aprov, setAprov] = useState(0);
+  const [statusPush, setStatusPush] = useState<StatusPush>("indisponivel");
+  const [ativandoPush, setAtivandoPush] = useState(false);
 
   const carregar = () => {
     fetchNotificacoes().then((d) => { setItens(d.itens || []); setErro(false); }).catch(() => setErro(true));
@@ -36,6 +48,45 @@ export function NotificationBell() {
     const h = setInterval(carregar, 5 * 60 * 1000);
     return () => clearInterval(h);
   }, []);
+
+  // Push só é oferecido onde já existe um service worker ativo (hoje, o
+  // PWA em /app — ver frontend/public/sw.js). Fora dali, o botão nem aparece.
+  useEffect(() => {
+    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+    if (Notification.permission === "denied") { setStatusPush("negado"); return; }
+    navigator.serviceWorker.getRegistration().then((reg) => {
+      if (!reg) return; // sem SW registrado nesta página — não oferece push aqui
+      reg.pushManager.getSubscription().then((sub) => setStatusPush(sub ? "ativado" : "podeAtivar"));
+    }).catch(() => {});
+  }, []);
+
+  const ativarPush = async () => {
+    setAtivandoPush(true);
+    try {
+      const permissao = await Notification.requestPermission();
+      if (permissao !== "granted") { setStatusPush(permissao === "denied" ? "negado" : "podeAtivar"); return; }
+      const reg = await navigator.serviceWorker.ready;
+      const { chave_publica } = await fetchPushChavePublica();
+      const sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(chave_publica) as BufferSource,
+      });
+      const json = sub.toJSON();
+      await subscribePush({ endpoint: json.endpoint!, keys: { p256dh: json.keys!.p256dh, auth: json.keys!.auth }, user_agent: navigator.userAgent });
+      setStatusPush("ativado");
+    } catch { /* mantém o botão para tentar de novo — falha silenciosa não trava o sino */ }
+    finally { setAtivandoPush(false); }
+  };
+
+  const desativarPush = async () => {
+    setAtivandoPush(true);
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      const sub = await reg.pushManager.getSubscription();
+      if (sub) { await unsubscribePush(sub.endpoint); await sub.unsubscribe(); }
+      setStatusPush("podeAtivar");
+    } catch { /* idem */ }
+    finally { setAtivandoPush(false); }
+  };
 
   // Pendências de aprovação (Telegram) entram como um item no topo, para o admin.
   const itensExibidos: Item[] = aprov > 0
@@ -91,6 +142,22 @@ export function NotificationBell() {
               <div className="card-header" style={{ margin: 0 }}>Hoje</div>
               <button className="btn-ghost" onClick={() => setAberto(false)} aria-label="Fechar"><X size={15} /></button>
             </div>
+            {(statusPush === "podeAtivar" || statusPush === "ativado") && (
+              <button
+                className="btn-ghost"
+                onClick={statusPush === "ativado" ? desativarPush : ativarPush}
+                disabled={ativandoPush}
+                style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", marginBottom: "0.6rem", width: "100%", justifyContent: "flex-start" }}
+              >
+                <BellRing size={13} />
+                {ativandoPush ? "Aguarde…" : statusPush === "ativado" ? "Notificações push ativadas (clique para desativar)" : "Ativar notificações push neste dispositivo"}
+              </button>
+            )}
+            {statusPush === "negado" && (
+              <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                Notificações push bloqueadas — habilite nas permissões do navegador para este site.
+              </p>
+            )}
             {erro ? (
               <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>Não foi possível carregar as notificações agora.</p>
             ) : !total ? (

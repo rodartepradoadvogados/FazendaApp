@@ -42,7 +42,9 @@ from fazenda.api.routers import (
     planejamento,
     portal,
     producao,
+    push,
     recria,
+    relatorio_acasalamento,
     relatorio_compra_venda_animal,
     relatorio_custo_hectare,
     relatorio_custo_producao,
@@ -66,7 +68,7 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
 )
 from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
@@ -77,12 +79,20 @@ from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
+from fazenda.api.routers.push import despachar_push_pendentes
 
 # Confere a cada 6h se já passou 1 semana desde o último backup automático
 # bem-sucedido (ver fazenda.rules.backup) — não uma tarefa agendada em
 # horário fixo, então sobrevive normalmente a reinícios/deploys sem duplicar
 # nem perder execuções (o estado de "quando foi o último" fica no banco).
 _INTERVALO_VERIFICACAO_BACKUP_SEGUNDOS = 6 * 3600
+
+# Varredura periódica do push (Web Push): cobre o caso de ninguém estar com
+# o app aberto no momento em que um alerta passa a valer (ex.: conta que
+# vence hoje) — sem isso, o rewire em notificacoes.py só dispara push quando
+# alguém efetivamente consulta o sino. Reaproveita 100% a mesma função de
+# decisão (montar_itens_notificacoes); só itera usuários com subscription.
+_INTERVALO_DESPACHO_PUSH_SEGUNDOS = 30 * 60
 
 
 async def _loop_backup_automatico() -> None:
@@ -93,6 +103,16 @@ async def _loop_backup_automatico() -> None:
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_VERIFICACAO_BACKUP_SEGUNDOS)
+
+
+async def _loop_despacho_push() -> None:
+    while True:
+        try:
+            with Session(engine) as session:
+                despachar_push_pendentes(session)
+        except Exception:
+            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+        await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)
 
 
 @asynccontextmanager
@@ -138,6 +158,10 @@ async def lifespan(app: FastAPI):
         # Protocolo de indução de lactação (18 e 28 dias) — cronograma por
         # princípio ativo, editável depois em Configurações > Cadastro.
         seed_protocolos_inducao_lactacao(session)
+        # Padronização em D0 (jul/2026): quem já tinha o protocolo "Ativos 1"
+        # em D1..D28 (dia_inicial=1) de um deploy anterior é renumerado para
+        # D0..D27 (dia_inicial=0), mesmas datas de aplicação.
+        seed_inducao_lactacao_ativos1_d0(session)
         # Protocolos sanitários curativos (mastite, pós-parto/retenção de
         # placenta, pneumonia, diarreia) das planilhas do produtor.
         seed_protocolos_sanitarios_curativos(session)
@@ -187,10 +211,14 @@ async def lifespan(app: FastAPI):
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
+    tarefa_push = asyncio.create_task(_loop_despacho_push())
     yield
     tarefa_backup.cancel()
+    tarefa_push.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_backup
+    with contextlib.suppress(asyncio.CancelledError):
+        await tarefa_push
 
 
 app = FastAPI(
@@ -247,6 +275,7 @@ app.include_router(parametros.router, dependencies=_protegido)
 app.include_router(alimentacao.router, dependencies=_protegido)
 app.include_router(producao.router, dependencies=_protegido)
 app.include_router(reproducao.router, dependencies=_protegido)
+app.include_router(relatorio_acasalamento.router, dependencies=_protegido)
 app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao"))])
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(farmacia.router, dependencies=_protegido)
@@ -271,6 +300,11 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido)
 app.include_router(notificacoes.router, dependencies=_protegido)
+# Push (Web Push API): GET /push/chave-publica é pública (o frontend precisa
+# dela antes mesmo de terminar a inscrição); subscribe/unsubscribe exigem
+# login internamente (ver fazenda/api/routers/push.py) — por isso este
+# router NÃO leva a dependência _protegido global, igual news.router.
+app.include_router(push.router)
 app.include_router(portal.router, dependencies=_protegido)
 app.include_router(auditoria.router, dependencies=_protegido)
 # Telegram: webhook é público (o Telegram chama sem login; a segurança é o

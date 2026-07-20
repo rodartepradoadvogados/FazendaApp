@@ -16,7 +16,7 @@ from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
     CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, Fornecedor, LancamentoAnexo, LancamentoItem,
-    MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
+    ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.email import enviar_email
@@ -25,7 +25,7 @@ from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
 from fazenda.rules.nfe_xml import parse_nfe_xml
 from fazenda.rules.rmca import calcular_custo_fisico, calcular_rmca_gerencial
 from fazenda.rules.custo_leite import calcular_custo_por_litro, litros_leite_no_periodo
-from fazenda.rules.patrimonio import calcular_depreciacao
+from fazenda.rules.patrimonio import calcular_depreciacao, somar_meses, status_manutencao
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
@@ -820,6 +820,7 @@ def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
         d = i.model_dump()
         dep = calcular_depreciacao(d, hoje)
         d.update(dep)
+        d.update(status_manutencao(d, hoje))
         itens.append(d)
         if not i.data_baixa:
             valor_total_bruto += i.valor_total or 0
@@ -832,6 +833,144 @@ def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
         "valor_atual_total": round(valor_atual_total, 2),
         "inconsistencias": inconsistencias,
     }
+
+
+class PlanoManutencaoIn(BaseModel):
+    frequencia_manutencao_meses: Optional[int] = None
+    data_ultima_manutencao: Optional[date] = None
+    # Editável manualmente — quando não vier, é recalculada a partir de
+    # data_ultima_manutencao + frequência (se ambas vierem preenchidas).
+    data_proxima_manutencao: Optional[date] = None
+    observacao_manutencao: Optional[str] = None
+
+
+@router.put("/patrimonio/{item_id}/manutencao-plano")
+def atualizar_plano_manutencao(item_id: int, dados: PlanoManutencaoIn, session: Session = Depends(get_session)) -> dict:
+    """Cadastra/edita o plano de manutenção preventiva (opcional) de um item de
+    patrimônio — só periodicidade por data (ver rules/patrimonio.py). Sem
+    frequência informada, `data_proxima_manutencao` só é aceita se vier
+    explícita (não há como calculá-la)."""
+    item = session.get(Patrimonio, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if dados.frequencia_manutencao_meses is not None and dados.frequencia_manutencao_meses <= 0:
+        raise HTTPException(status_code=400, detail="Frequência da manutenção deve ser um número de meses maior que zero")
+
+    item.frequencia_manutencao_meses = dados.frequencia_manutencao_meses
+    item.data_ultima_manutencao = dados.data_ultima_manutencao
+    item.observacao_manutencao = dados.observacao_manutencao
+    if dados.data_proxima_manutencao:
+        item.data_proxima_manutencao = dados.data_proxima_manutencao
+    elif dados.data_ultima_manutencao and dados.frequencia_manutencao_meses:
+        item.data_proxima_manutencao = somar_meses(dados.data_ultima_manutencao, dados.frequencia_manutencao_meses)
+    else:
+        item.data_proxima_manutencao = None
+    session.add(item)
+    session.commit()
+    session.refresh(item)
+    d = item.model_dump()
+    d.update(status_manutencao(d))
+    return d
+
+
+@router.get("/patrimonio/{item_id}/manutencoes")
+def listar_manutencoes(item_id: int, session: Session = Depends(get_session)) -> list[dict]:
+    """Histórico de manutenções registradas para um item de patrimônio."""
+    item = session.get(Patrimonio, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    registros = session.exec(
+        select(ManutencaoPatrimonio)
+        .where(ManutencaoPatrimonio.patrimonio_id == item_id)
+        .order_by(ManutencaoPatrimonio.data_realizacao.desc())
+    ).all()
+    return [r.model_dump() for r in registros]
+
+
+class ManutencaoRealizadaIn(BaseModel):
+    data_realizacao: date
+    descricao: Optional[str] = None
+    fornecedor: Optional[str] = None
+    valor: Optional[float] = None
+    centro_custo: str = "Pecuária Leiteira"
+    # Igual ao fluxo de Férias/13º: "pago" baixa a conta na hora; "pendente"
+    # nasce em aberto (Contas a Pagar) e é quitada depois pela tela normal.
+    status: str = "pago"
+    data_pagamento: Optional[date] = None
+    observacao: Optional[str] = None
+    # Opt-out — por padrão toda manutenção paga/realizada gera o lançamento em
+    # Contas a Pagar (mesmo padrão de Férias/13º/compra de animal); marque
+    # False só quando a manutenção já foi paga por fora e não deve duplicar.
+    gerar_conta_a_pagar: bool = True
+
+
+@router.post("/patrimonio/{item_id}/manutencao", status_code=201)
+def registrar_manutencao(
+    item_id: int, dados: ManutencaoRealizadaIn,
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    """
+    Registra que a manutenção preventiva de um item foi paga/realizada:
+    - opcionalmente gera o lançamento em Contas a Pagar (ContaGerencial),
+      igual ao padrão de Férias/13º (rules/folha_rh via cadastro.py) e de
+      compra/venda de animal;
+    - atualiza `data_ultima_manutencao` para a data informada e recalcula
+      `data_proxima_manutencao` a partir da frequência cadastrada no plano
+      (quando houver) — sem frequência, a próxima data fica em aberto até o
+      usuário cadastrar/editar o plano de novo.
+    """
+    item = session.get(Patrimonio, item_id)
+    if not item:
+        raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido — use 'pendente' ou 'pago'")
+    if dados.valor is not None and dados.valor < 0:
+        raise HTTPException(status_code=400, detail="Valor da manutenção não pode ser negativo")
+    if dados.gerar_conta_a_pagar and not dados.valor:
+        raise HTTPException(status_code=400, detail="Informe o valor para gerar a conta a pagar (ou desmarque a opção)")
+
+    numero_lancamento = None
+    if dados.gerar_conta_a_pagar:
+        numero_lancamento = _proximo_numero_lancamento(session, dados.data_realizacao.year)
+        session.add(ContaGerencial(
+            numero_lancamento=numero_lancamento,
+            descricao=f"Manutenção preventiva — {item.nome}" + (f" ({dados.descricao})" if dados.descricao else ""),
+            data_vencimento=dados.data_pagamento or dados.data_realizacao,
+            data_competencia=dados.data_realizacao,
+            fornecedor_cliente=dados.fornecedor,
+            tipo_documento="Manutenção",
+            centro_custo=mapear_centro_custo(dados.centro_custo) or dados.centro_custo,
+            valor_total=dados.valor,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+            valor_pago=dados.valor if dados.status == "pago" else None,
+        ))
+
+    registro = ManutencaoPatrimonio(
+        patrimonio_id=item_id, data_realizacao=dados.data_realizacao, descricao=dados.descricao,
+        fornecedor=dados.fornecedor, valor=dados.valor, centro_custo=dados.centro_custo,
+        status=dados.status, data_pagamento=dados.data_pagamento, observacao=dados.observacao,
+        usuario_id=user.id, numero_lancamento_gerado=numero_lancamento,
+    )
+    session.add(registro)
+
+    # Recalcula o plano: a manutenção realizada agora É a última; a próxima
+    # só se move quando há frequência cadastrada (plano sem frequência fica
+    # sem próxima data até o usuário editar o plano de novo).
+    item.data_ultima_manutencao = dados.data_realizacao
+    item.data_proxima_manutencao = (
+        somar_meses(dados.data_realizacao, item.frequencia_manutencao_meses)
+        if item.frequencia_manutencao_meses else None
+    )
+    session.add(item)
+    session.commit()
+    session.refresh(registro)
+    session.refresh(item)
+
+    d_item = item.model_dump()
+    d_item.update(status_manutencao(d_item))
+    return {"manutencao": registro.model_dump(), "item": d_item}
 
 
 @router.post("/lancamentos", status_code=201)
