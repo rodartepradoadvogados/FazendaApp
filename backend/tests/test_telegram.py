@@ -13,6 +13,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.api.routers import telegram
+from fazenda.api.routers.telegram import _ler_documento_pendente as _ler_documento_pendente_real
 from fazenda.auth import get_current_user
 from fazenda.config import settings
 from fazenda.models import ContaGerencial, Fornecedor, LancamentoPendente, TelegramPendente, Usuario
@@ -423,3 +424,29 @@ def test_boleto_parcelado_nao_pergunta_avulso(client, monkeypatch):
     ultima = enviados[-1]
     assert "avulso" not in ultima["text"].lower()
     assert "2/6" in ultima["text"]
+
+
+def test_sem_chave_de_api_avisa_usuario_com_mensagem_clara(client, monkeypatch):
+    """Regressão: os outros testes deste arquivo sempre trocam
+    `_ler_documento_pendente` por um stub — o que significa que o caminho real
+    (baixar o arquivo do Telegram e chamar `ler_documento`, que depende de
+    ANTHROPIC_API_KEY) nunca era exercitado pela suíte, e um problema de
+    configuração da chave em produção não seria pego pelo CI. Este teste usa a
+    função de verdade (só a chamada de rede ao Telegram é simulada) e confirma
+    que, sem a chave, o usuário recebe o aviso claro (não uma mensagem genérica
+    de erro) e o pendente é descartado — igual ao caminho do Financeiro
+    (ver test_leitura_documento.py::test_sem_chave_de_api_retorna_503)."""
+    c, engine, enviados = client
+    monkeypatch.setattr(telegram, "_ler_documento_pendente", _ler_documento_pendente_real)
+    monkeypatch.setattr(telegram, "_baixar_arquivo", lambda file_id: b"%PDF-1.4")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    _enviar_documento(c)
+    with Session(engine) as s:
+        pid = s.exec(select(TelegramPendente)).first().id
+    _callback(c, f"lanc:{pid}:despesa")
+
+    ultima = enviados[-1]
+    assert "ANTHROPIC_API_KEY" in ultima["text"]
+    with Session(engine) as s:
+        assert s.exec(select(TelegramPendente)).first() is None
