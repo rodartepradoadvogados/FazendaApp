@@ -243,9 +243,9 @@ export default function FinanceiroPage() {
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    { id: "patrimonio-grupo", label: "Patrimônio", icon: Building2, children: [
-      { id: "patrimonio", label: "Patrimônio", icon: Building2 },
-    ] },
+    // Patrimônio é um destino único — vira folha direta (sem grupo "guarda-chuva"
+    // de 1 item só), economizando um nível/clique da árvore de navegação.
+    { id: "patrimonio", label: "Patrimônio", icon: Building2 },
   ], []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
 
