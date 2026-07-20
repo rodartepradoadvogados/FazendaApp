@@ -19,6 +19,7 @@ import {
   CheckCheck,
   ShoppingCart,
   MessageSquare,
+  Users,
   Menu,
   X,
   Search,
@@ -219,6 +220,7 @@ export function Sidebar() {
           {(() => {
             const todos = [...visiveis,
               ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram", grupo: "Administração" }] : []),
+              ...(admin ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
             ];
