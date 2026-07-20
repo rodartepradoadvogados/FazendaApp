@@ -12,7 +12,7 @@ import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
-import { MultiFiltro, TabBar, Indicador } from "@/components/ui";
+import { MultiFiltro, TabBar, Indicador, SecaoRecolhivel } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -690,44 +690,43 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
           <Indicador categoria="sanidade" valor={porCategoria.length} rotulo="Categorias" />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-          <div className="card">
-            <div className="card-header mb-3">Aplicações por Categoria <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para filtrar)</span></div>
-            <div title="Clique numa barra para filtrar as aplicações por categoria">
-            <ResponsiveContainer width="100%" height={Math.max(180, porCategoria.length * 34)}>
-              <BarChart data={porCategoria} layout="vertical" margin={{ left: 8 }}>
-                <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
-                <YAxis type="category" dataKey="cat" tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={130} />
-                <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
-                <Bar dataKey="n" name="Aplicações" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }} onClick={(e: any) => e?.cat && setFCat((c) => c === e.cat ? "" : e.cat)}>
-                  {porCategoria.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
-                </Bar>
-              </BarChart>
-            </ResponsiveContainer>
-            </div>
-          </div>
-          <div className="card">
-            <div className="card-header mb-3">Aplicações por Mês</div>
-            <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={porMes}>
-                <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 9 }} tickFormatter={(m) => m.slice(2)} />
-                <YAxis tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} width={30} />
-                <Tooltip contentStyle={tip} />
-                <Line type="monotone" dataKey="n" name="Aplicações" stroke="var(--dourado-light)" strokeWidth={2} dot={{ r: 2 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 gap-4">
-          <div className="card">
-            <div className="card-header mb-3 flex items-center justify-between">
-              <span>Aplicações</span>
-              <div className="flex items-center gap-3">
-                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span>
-                <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
+        <SecaoRecolhivel titulo="Aplicações por Categoria e por Mês" descricao="Clique numa barra para filtrar as aplicações por categoria">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="card-header mb-3">Aplicações por Categoria <span style={{ fontWeight: 400, fontSize: "0.7rem", color: "var(--text-muted)" }}>(clique para filtrar)</span></div>
+              <div title="Clique numa barra para filtrar as aplicações por categoria">
+              <ResponsiveContainer width="100%" height={Math.max(180, porCategoria.length * 34)}>
+                <BarChart data={porCategoria} layout="vertical" margin={{ left: 8 }}>
+                  <XAxis type="number" tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} />
+                  <YAxis type="category" dataKey="cat" tick={{ fill: "var(--text-muted)", fontSize: 10 }} width={130} />
+                  <Tooltip contentStyle={tip} cursor={{ fill: "rgba(255,255,255,0.04)" }} />
+                  <Bar dataKey="n" name="Aplicações" radius={[0, 3, 3, 0]} style={{ cursor: "pointer" }} onClick={(e: any) => e?.cat && setFCat((c) => c === e.cat ? "" : e.cat)}>
+                    {porCategoria.map((_, i) => <Cell key={i} fill={CORES[i % CORES.length]} />)}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
               </div>
             </div>
+            <div>
+              <div className="card-header mb-3">Aplicações por Mês</div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={porMes}>
+                  <XAxis dataKey="mes" tick={{ fill: "var(--text-muted)", fontSize: 9 }} tickFormatter={(m) => m.slice(2)} />
+                  <YAxis tick={{ fill: "var(--text-muted)", fontSize: 10 }} allowDecimals={false} width={30} />
+                  <Tooltip contentStyle={tip} />
+                  <Line type="monotone" dataKey="n" name="Aplicações" stroke="var(--dourado-light)" strokeWidth={2} dot={{ r: 2 }} />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+        </SecaoRecolhivel>
+
+        <SecaoRecolhivel titulo="Aplicações" badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} registro(s)</span>}
+          descricao="Lista completa das aplicações que atendem aos filtros acima">
+          <div className="flex justify-end mb-2">
+            <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
+          </div>
+          <div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
                 <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
@@ -805,7 +804,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
               {filtrados.length > 300 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 300 de {filtrados.length} — refine os filtros.</p>}
             </div>
           </div>
-        </div>
+        </SecaoRecolhivel>
       </>}
     </>
   );
@@ -1119,8 +1118,8 @@ function TaxaCuraView() {
             <Indicador categoria="sanidade" valor={taxaFiltro != null ? `${taxaFiltro}%` : "—"} cor={taxaFiltro != null && taxaFiltro < 70 ? "var(--red)" : "var(--green-light)"} rotulo="Taxa de cura" />
           </div>
 
-          <div className="card mb-4">
-            <div className="card-header mb-3">Casos ({filtrados.length})</div>
+          <SecaoRecolhivel titulo="Casos" badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length}</span>}
+            descricao="Lista completa dos casos avaliados que atendem aos filtros acima">
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table" style={{ margin: 0 }}>
                 <thead><tr>
@@ -1142,10 +1141,10 @@ function TaxaCuraView() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </SecaoRecolhivel>
 
-          <div className="card">
-            <div className="card-header mb-2">Comparação do próprio animal ao longo da vida</div>
+          <SecaoRecolhivel titulo="Comparação do próprio animal ao longo da vida"
+            descricao="Só animais com mais de um caso avaliado no filtro atual — a taxa de cura individual ajuda a identificar quem tem recidiva frequente">
             <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
               Só animais com mais de um caso avaliado no filtro atual — a taxa de cura individual ajuda a identificar quem tem recidiva frequente.
             </p>
@@ -1166,7 +1165,7 @@ function TaxaCuraView() {
             ) : (
               <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal com mais de um caso no filtro atual.</p>
             )}
-          </div>
+          </SecaoRecolhivel>
         </>
       )}
     </>

@@ -1,7 +1,8 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
-import { Upload as UploadIcon, CheckCircle, XCircle, FileText, Loader2, RefreshCw } from "lucide-react";
+import { Upload as UploadIcon, CheckCircle, XCircle, FileText, Loader2, RefreshCw, Info } from "lucide-react";
 import { uploadCSV } from "@/lib/api";
+import { SecaoRecolhivel } from "@/components/ui";
 
 const TIPOS = [
   { id: "geral",            label: "GERAL.csv",                       desc: "Situação atual por animal (grupos, sit. rep., DEL)" },
@@ -134,22 +135,23 @@ export default function UploadPage() {
         })}
       </div>
 
-      <div className="card mt-6" style={{ borderLeft: "3px solid var(--dourado)" }}>
-        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
-          <strong style={{ color: "var(--dourado-light)" }}>Como exportar do Ideagri:</strong><br />
-          1. <strong>GERAL:</strong> Meus Relatórios › Geral — situação atual (sem filtro de período)<br />
-          2. <strong>Reprodutivo:</strong> Utilitários › Consulta SQL (arrastar o arquivo SQL) — exportar .csv<br />
-          3. <strong>Controle Leiteiro:</strong> Relatórios › Controle Leiteiro — histórico de pesagens (todas as datas), exportar .csv<br />
-          4. <strong>Dieta:</strong> Nutrição/Alimentação › Dieta por lote — exportar o plano vigente (kg/cabeça/dia) em .csv<br />
-          5. <strong>Sanidade:</strong> Relatórios › Sanidade — medicamentos aplicados no período desejado, exportar .csv<br />
-          6. <strong>Plano de Contas Gerenciais:</strong> Cadastros › Plano de Contas Gerenciais — exportar a hierarquia em .csv (suba antes da Conta Gerencial)<br />
-          7. <strong>Financeiro (Conta Gerencial):</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
-          8. <strong>Estoque:</strong> Inventário — data atual<br />
-          9. <strong>Curva ABC:</strong> Relatórios › Compras › Curva ABC — classificação A/B/C de custos, exportar .csv<br />
-          10. <strong>Patrimônio:</strong> Cadastros › Patrimônio (bens, máquinas, veículos e terras) — exportar a lista em .csv<br />
-          <br />
-          <strong style={{ color: "var(--dourado-light)" }}>Encoding dos arquivos:</strong> Windows-1252 (Latin-1), separador ponto-e-vírgula (;), decimal com vírgula.
-        </p>
+      <div className="mt-6">
+        <SecaoRecolhivel titulo="Como exportar do Ideagri" icon={Info} descricao="Passo a passo de exportação de cada relatório do Ideagri">
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", lineHeight: 1.7 }}>
+            1. <strong>GERAL:</strong> Meus Relatórios › Geral — situação atual (sem filtro de período)<br />
+            2. <strong>Reprodutivo:</strong> Utilitários › Consulta SQL (arrastar o arquivo SQL) — exportar .csv<br />
+            3. <strong>Controle Leiteiro:</strong> Relatórios › Controle Leiteiro — histórico de pesagens (todas as datas), exportar .csv<br />
+            4. <strong>Dieta:</strong> Nutrição/Alimentação › Dieta por lote — exportar o plano vigente (kg/cabeça/dia) em .csv<br />
+            5. <strong>Sanidade:</strong> Relatórios › Sanidade — medicamentos aplicados no período desejado, exportar .csv<br />
+            6. <strong>Plano de Contas Gerenciais:</strong> Cadastros › Plano de Contas Gerenciais — exportar a hierarquia em .csv (suba antes da Conta Gerencial)<br />
+            7. <strong>Financeiro (Conta Gerencial):</strong> Relatórios › Gestão › Movimentação financeira por conta gerencial — desde 12/2025<br />
+            8. <strong>Estoque:</strong> Inventário — data atual<br />
+            9. <strong>Curva ABC:</strong> Relatórios › Compras › Curva ABC — classificação A/B/C de custos, exportar .csv<br />
+            10. <strong>Patrimônio:</strong> Cadastros › Patrimônio (bens, máquinas, veículos e terras) — exportar a lista em .csv<br />
+            <br />
+            <strong style={{ color: "var(--dourado-light)" }}>Encoding dos arquivos:</strong> Windows-1252 (Latin-1), separador ponto-e-vírgula (;), decimal com vírgula.
+          </p>
+        </SecaoRecolhivel>
       </div>
     </div>
   );

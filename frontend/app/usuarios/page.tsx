@@ -176,8 +176,8 @@ export default function UsuariosPage() {
         </div>
       </div>
 
-      {ehDono() && <div className="mt-4"><RelatorioAcessos /></div>}
-      {ehDono() && <div className="mt-4"><AuditoriaAtividade /></div>}
+      {ehDono() && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
+      {ehDono() && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
 
       {editando && (
         <EditarUsuarioModal

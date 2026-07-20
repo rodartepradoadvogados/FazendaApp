@@ -9,6 +9,7 @@ import { Baby, Activity, TrendingUp, PlusCircle, Trash2, AlertTriangle, Heart, W
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
+import { SecaoRecolhivel } from "@/components/ui";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
@@ -504,10 +505,9 @@ function AbaNutricao() {
         </div>
       )}
 
-      {/* Tabela diária */}
-      <div style={card}>
-        <div className="flex items-center justify-between flex-wrap gap-2" style={{ marginBottom: "0.6rem" }}>
-          <div style={{ fontWeight: 700, fontSize: "0.9rem" }}>Leituras diárias</div>
+      {/* Tabela diária — histórico das leituras já lançadas, secundário em relação ao registro acima */}
+      <SecaoRecolhivel titulo="Leituras diárias" badge={<span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{registros.length} registro(s)</span>}>
+        <div className="flex items-center justify-end flex-wrap gap-2 mb-3">
           <select style={{ ...input, width: 200 }} value={loteFiltro} onChange={(e) => setLoteFiltro(e.target.value)}>
             <option value="">Todos os lotes</option>
             {(dados?.lotes || []).map((l) => <option key={l} value={l}>{l}</option>)}
@@ -539,7 +539,7 @@ function AbaNutricao() {
             </table>
           </div>
         )}
-      </div>
+      </SecaoRecolhivel>
     </div>
   );
 }
@@ -604,8 +604,7 @@ function AbaRegistrar() {
         </div>
       </div>
 
-      <div style={card}>
-        <div style={{ fontWeight: 700, fontSize: "0.9rem", marginBottom: "0.6rem" }}>Casos registrados</div>
+      <SecaoRecolhivel titulo="Casos registrados" badge={lista ? <span style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{lista.length} caso(s)</span> : null}>
         {!lista ? <p style={{ color: "var(--text-muted)" }}>Carregando…</p> : !lista.length ? (
           <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum caso registrado ainda.</p>
         ) : (
@@ -629,7 +628,7 @@ function AbaRegistrar() {
             </table>
           </div>
         )}
-      </div>
+      </SecaoRecolhivel>
     </div>
   );
 }
