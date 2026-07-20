@@ -1710,8 +1710,8 @@ class CalendarioSanitario(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 # Protocolo sanitário — cadastro (Configurações > Cadastro > Sanitário) de um
 # tratamento com múltiplas etapas (produto/dosagem/via por dia), a exemplo do
-# tratamento de mastite. Etapas começam em D1 (protocolos sanitários não têm
-# D0 — isso é exclusivo do protocolo hormonal IATF).
+# tratamento de mastite. Dias podem começar em D0 ou D1 conforme o protocolo
+# cadastrado (mesmo padrão de dia_inicial usado em ProtocoloInducaoLactacao).
 # ---------------------------------------------------------------------------
 class ProtocoloSanitario(SQLModel, table=True):
     """Um protocolo sanitário cadastrado (ex.: Mastite clínica, Vermifugação padrão)."""
@@ -1722,18 +1722,20 @@ class ProtocoloSanitario(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
+    dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma (etapas já existentes usam 1)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class ProtocoloSanitarioEtapa(SQLModel, table=True):
-    """Uma linha do protocolo — produto, dosagem, via e dia de aplicação (D1, D2...)."""
+    """Uma linha do protocolo — produto, dosagem, via e dia de aplicação (dia bruto; o
+    rótulo exibido é dia - dia_inicial do protocolo)."""
 
     __tablename__ = "protocolo_sanitario_etapa"
 
     id: Optional[int] = Field(default=None, primary_key=True)
     protocolo_id: int = Field(foreign_key="protocolo_sanitario.id")
-    dia: int  # 1, 2, 3... nunca 0
+    dia: int  # 0, 1, 2... conforme dia_inicial do protocolo
     # Como o medicamento é definido: "medicamento" (produto = item de estoque,
     # aplicação já definida), "principio_ativo" ou "classificacao" (produto
     # guarda o critério; o medicamento real é escolhido no lançamento).

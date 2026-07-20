@@ -44,6 +44,7 @@ from fazenda.api.routers import (
     producao,
     push,
     recria,
+    relatorio_acasalamento,
     relatorio_compra_venda_animal,
     relatorio_custo_hectare,
     relatorio_custo_producao,
@@ -67,7 +68,7 @@ from fazenda.api.routers.cadastro import (
     seed_servicos, seed_semen_categorias,
     seed_estoque_semen_inicial, configurar_calendario_sanitario_padrao, atualizar_estoque_semen_202607,
     seed_protocolos_inducao_lactacao, seed_tipos_metodos_servico, seed_protocolos_sanitarios_curativos, seed_racas_grau_sangue,
-    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral,
+    sindicar_conta_gerencial_estoque, seed_tipos_pessoa, seed_tipo_geral, seed_inducao_lactacao_ativos1_d0,
 )
 from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque_semen_generico
 from fazenda.api.routers.recria import seed_recria
@@ -157,6 +158,10 @@ async def lifespan(app: FastAPI):
         # Protocolo de indução de lactação (18 e 28 dias) — cronograma por
         # princípio ativo, editável depois em Configurações > Cadastro.
         seed_protocolos_inducao_lactacao(session)
+        # Padronização em D0 (jul/2026): quem já tinha o protocolo "Ativos 1"
+        # em D1..D28 (dia_inicial=1) de um deploy anterior é renumerado para
+        # D0..D27 (dia_inicial=0), mesmas datas de aplicação.
+        seed_inducao_lactacao_ativos1_d0(session)
         # Protocolos sanitários curativos (mastite, pós-parto/retenção de
         # placenta, pneumonia, diarreia) das planilhas do produtor.
         seed_protocolos_sanitarios_curativos(session)
@@ -270,6 +275,7 @@ app.include_router(parametros.router, dependencies=_protegido)
 app.include_router(alimentacao.router, dependencies=_protegido)
 app.include_router(producao.router, dependencies=_protegido)
 app.include_router(reproducao.router, dependencies=_protegido)
+app.include_router(relatorio_acasalamento.router, dependencies=_protegido)
 app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao"))])
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(farmacia.router, dependencies=_protegido)

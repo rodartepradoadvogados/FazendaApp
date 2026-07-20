@@ -840,7 +840,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         escolhido = (dados.escolhas_medicamento.get(str(etapa.id)) or "").strip()
         if getattr(etapa, "criterio_tipo", "medicamento") != "medicamento":
             if not escolhido:
-                raise HTTPException(status_code=400, detail=f"Escolha o medicamento da etapa D{etapa.dia} ({etapa.produto}).")
+                raise HTTPException(status_code=400, detail=f"Escolha o medicamento da etapa D{etapa.dia - protocolo.dia_inicial} ({etapa.produto}).")
             produto_por_etapa[etapa.id] = escolhido
         else:
             produto_por_etapa[etapa.id] = escolhido or None
@@ -900,7 +900,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
         session.refresh(lancamento)
 
         for etapa in etapas:
-            data_prevista = dados.data_inicio + timedelta(days=etapa.dia - 1)
+            data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
                 produto=produto_por_etapa.get(etapa.id),

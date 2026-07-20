@@ -88,11 +88,15 @@ export default function CadastroSanitario({ abaControlada, onAbaChange }: {
 
 type Protocolo = {
   id: number; nome: string; doenca_id: number | null; doenca_nome: string | null; eh_mastite: boolean; ativo: boolean;
+  dia_inicial?: number;
   etapas: ProtocoloEtapa[];
 };
-type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; ativo: boolean; etapas: ProtocoloEtapa[] };
+type ProtocoloForm = { nome: string; doenca_id: string; eh_mastite: boolean; dia_inicial: number; ativo: boolean; etapas: ProtocoloEtapa[] };
 const etapaVazia = (dia: number): ProtocoloEtapa => ({ dia, criterio_tipo: "medicamento", produto: "", dosagem: 0, unidade: "ml", via: "", observacao: "" });
-const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, ativo: true, etapas: [etapaVazia(1)] });
+// Protocolos novos nascem em D0 (mesmo padrão da indução de lactação); um
+// protocolo já existente que veio com dia_inicial=1 (pré-padronização D0)
+// mantém o próprio dia_inicial ao ser editado — ver abrirEdicao.
+const protocoloFormVazio = (): ProtocoloForm => ({ nome: "", doenca_id: "", eh_mastite: false, dia_inicial: 0, ativo: true, etapas: [etapaVazia(0)] });
 
 export function CadastroProtocolosSanitarios() {
   const [itens, setItens] = useState<Protocolo[] | null>(null);
@@ -120,27 +124,28 @@ export function CadastroProtocolosSanitarios() {
   const abrirNovo = () => { setForm(protocoloFormVazio()); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (p: Protocolo) => {
     setForm({
-      nome: p.nome, doenca_id: p.doenca_id ? String(p.doenca_id) : "", eh_mastite: p.eh_mastite, ativo: p.ativo,
-      etapas: p.etapas.length ? p.etapas.map((e) => ({ ...e })) : [etapaVazia(1)],
+      nome: p.nome, doenca_id: p.doenca_id ? String(p.doenca_id) : "", eh_mastite: p.eh_mastite,
+      dia_inicial: p.dia_inicial ?? 0, ativo: p.ativo,
+      etapas: p.etapas.length ? p.etapas.map((e) => ({ ...e })) : [etapaVazia(p.dia_inicial ?? 0)],
     });
     setEditando(p.id); setMsg(null);
   };
   const cancelar = () => { setEditando(null); setMsg(null); };
 
-  const acrescentarEtapa = () => setForm((f) => ({ ...f, etapas: [...f.etapas, etapaVazia(f.etapas.length + 1)] }));
+  const acrescentarEtapa = () => setForm((f) => ({ ...f, etapas: [...f.etapas, etapaVazia(f.etapas.length)] }));
   const removerEtapa = (idx: number) => setForm((f) => (f.etapas.length > 1 ? { ...f, etapas: f.etapas.filter((_, i) => i !== idx) } : f));
   const atualizarEtapa = (idx: number, patch: Partial<ProtocoloEtapa>) =>
     setForm((f) => ({ ...f, etapas: f.etapas.map((e, i) => (i === idx ? { ...e, ...patch } : e)) }));
 
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
-    if (form.etapas.some((e) => e.dia < 1)) { setMsg("Protocolos sanitários não têm D0 — os dias começam em D1."); return; }
+    if (form.etapas.some((e) => e.dia < 0)) { setMsg("O dia da etapa não pode ser negativo (o protocolo pode começar em D0)."); return; }
     if (form.etapas.some((e) => !e.produto.trim() || !e.dosagem || Number(e.dosagem) <= 0)) { setMsg("Preencha produto e dosagem em todas as etapas."); return; }
     setSalvando(true); setMsg(null);
     try {
       const dados = {
         nome: form.nome.trim(), doenca_id: form.doenca_id ? Number(form.doenca_id) : undefined,
-        eh_mastite: form.eh_mastite, ativo: form.ativo,
+        eh_mastite: form.eh_mastite, dia_inicial: form.dia_inicial, ativo: form.ativo,
         etapas: form.etapas.map((e) => ({ ...e, dia: Number(e.dia), dosagem: Number(e.dosagem), via: e.via || undefined, observacao: e.observacao || undefined })),
       };
       if (editando === "novo") await criarProtocoloSanitario(dados);
@@ -222,8 +227,8 @@ export function CadastroProtocolosSanitarios() {
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
         Tratamento com múltiplas etapas (produto, dosagem, via e dia de aplicação), a exemplo do tratamento de
-        mastite. Os dias começam em D1 — protocolos sanitários não têm D0 (isso é exclusivo do protocolo hormonal
-        IATF). Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
+        mastite. Os dias começam em D0, como todos os protocolos do sistema (inclusive o protocolo hormonal IATF).
+        Marque "É protocolo de mastite" para habilitar, no lançamento, os campos de CMT, teto afetado e
         classificação (clínica/subclínica/ambiental). Para cadastrar vários protocolos de uma vez, baixe o modelo,
         preencha uma linha por etapa (várias linhas com o mesmo nome formam um único protocolo) e importe.
       </p>
@@ -259,7 +264,7 @@ export function CadastroProtocolosSanitarios() {
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.doenca_nome || "—"}</td>
                     <td style={{ fontSize: "0.78rem" }}>{p.eh_mastite ? "Sim" : "—"}</td>
-                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia}`).join(", ")}</td>
+                    <td style={{ fontSize: "0.78rem" }}>{p.etapas.map((e) => `D${e.dia - (p.dia_inicial ?? 0)}`).join(", ")}</td>
                     <td style={{ textAlign: "right" }}>
                       <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirEdicao(p)}>
                         <Pencil size={13} /> Editar
@@ -307,11 +312,11 @@ function FormProtocolo({ form, setForm, doencas, estoque, principios, onSalvar, 
           <input type="checkbox" checked={form.ativo} onChange={(e) => setForm({ ...form, ativo: e.target.checked })} /> Ativo</label></div>
       </div>
 
-      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D1, D2, D3...)</p>
+      <p style={{ fontSize: "0.72rem", color: "var(--dourado-light)", fontWeight: 700, marginBottom: "0.4rem" }}>Etapas (D0, D1, D2...)</p>
       <div className="space-y-2 mb-2">
         {form.etapas.map((e, idx) => (
           <div key={idx} className="grid grid-cols-2 md:grid-cols-8 gap-2 items-end" style={{ background: "var(--surface)", padding: "0.5rem", borderRadius: "6px" }}>
-            <div><label style={labelStyle}>Dia (D)</label><input type="number" min={1} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
+            <div><label style={labelStyle}>Dia (D)</label><input type="number" min={0} style={inputStyle} value={e.dia} onChange={(ev) => atualizarEtapa(idx, { dia: Number(ev.target.value) })} /></div>
             <div><label style={labelStyle}>Definir por</label>
               <select style={inputStyle} value={e.criterio_tipo || "medicamento"} onChange={(ev) => atualizarEtapa(idx, { criterio_tipo: ev.target.value, produto: "" })}>
                 {CRITERIOS.map(([v, lbl]) => <option key={v} value={v}>{lbl}</option>)}

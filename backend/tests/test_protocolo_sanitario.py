@@ -59,13 +59,25 @@ class TestCadastroProtocolo:
         assert corpo["eh_mastite"] is True
         assert [e["dia"] for e in corpo["etapas"]] == [1, 2, 3]
 
-    def test_rejeita_etapa_com_dia_zero(self, client):
+    def test_aceita_etapa_com_dia_zero(self, client):
+        # Padronização em D0 (jul/2026): protocolos sanitários agora aceitam D0,
+        # assim como o protocolo hormonal IATF e a indução de lactação.
         c, engine = client
         r = c.post("/cadastro/protocolos-sanitarios", json={
-            "nome": "Protocolo inválido", "etapas": [_etapa(0), _etapa(1)],
+            "nome": "Protocolo D0", "etapas": [_etapa(0), _etapa(1)],
+        })
+        assert r.status_code == 200, r.json()
+        corpo = r.json()
+        assert [e["dia"] for e in corpo["etapas"]] == [0, 1]
+        # Novo protocolo (sem dia_inicial explícito) nasce com dia_inicial=0.
+        assert corpo["dia_inicial"] == 0
+
+    def test_rejeita_etapa_com_dia_negativo(self, client):
+        c, engine = client
+        r = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Protocolo inválido", "etapas": [_etapa(-1), _etapa(1)],
         })
         assert r.status_code == 400
-        assert "D0" in r.json()["detail"]
 
     def test_rejeita_protocolo_sem_etapas(self, client):
         c, engine = client
@@ -196,8 +208,11 @@ class TestImportarProtocolo:
 
 class TestLancamentoProtocolo:
     def _protocolo_mastite(self, c):
+        # dia_inicial=1 explícito: simula um protocolo já existente antes da
+        # padronização em D0 — usado por test_datas_das_etapas_seguem_d1_d2_d3_sem_d0
+        # para provar que as datas continuam idênticas às de sempre.
         return c.post("/cadastro/protocolos-sanitarios", json={
-            "nome": "Mastite subclínica", "eh_mastite": True,
+            "nome": "Mastite subclínica", "eh_mastite": True, "dia_inicial": 1,
             "etapas": [_etapa(1), _etapa(2), _etapa(3)],
         }).json()["id"]
 
@@ -215,6 +230,9 @@ class TestLancamentoProtocolo:
         assert r.status_code == 201
 
     def test_datas_das_etapas_seguem_d1_d2_d3_sem_d0(self, client):
+        # Protocolo pré-existente à padronização em D0 (dia_inicial=1, etapas
+        # armazenadas como D1/D2/D3) continua gerando as MESMAS datas de sempre —
+        # a fórmula dia - dia_inicial com dia_inicial=1 é idêntica ao antigo `dia - 1`.
         c, engine = client
         protocolo_id = self._protocolo_mastite(c)
         r = c.post("/sanidade/protocolos/lancamentos", json={
@@ -225,6 +243,29 @@ class TestLancamentoProtocolo:
         aplicacoes = sorted(r.json()["lancamentos"][0]["aplicacoes"], key=lambda a: a["data_prevista"])
         datas = [a["data_prevista"] for a in aplicacoes]
         assert datas == ["2026-03-01", "2026-03-02", "2026-03-03"]  # D1=início, D2=+1, D3=+2
+
+    def test_datas_das_etapas_com_dia_inicial_0_batem_com_dia_inicial_1(self, client):
+        # Um protocolo NOVO (dia_inicial=0, etapas D0/D1/D2) deve gerar
+        # exatamente as mesmas datas que o protocolo D1-based acima, provando
+        # que o rótulo exibido (D0, D1, D2...) é só uma questão de exibição —
+        # o offset de datas (dia - dia_inicial) é o mesmo nos dois casos.
+        c, engine = client
+        r_proto = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Mastite subclínica D0", "eh_mastite": True, "dia_inicial": 0,
+            "etapas": [_etapa(0), _etapa(1), _etapa(2)],
+        })
+        assert r_proto.status_code == 200, r_proto.json()
+        assert r_proto.json()["dia_inicial"] == 0
+        protocolo_id = r_proto.json()["id"]
+
+        r = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-03-01",
+            "classificacao_mastite": "clinica", "tetos_afetados": ["AE", "PD"],
+        })
+        assert r.status_code == 201
+        aplicacoes = sorted(r.json()["lancamentos"][0]["aplicacoes"], key=lambda a: a["data_prevista"])
+        datas = [a["data_prevista"] for a in aplicacoes]
+        assert datas == ["2026-03-01", "2026-03-02", "2026-03-03"]  # D0=início, D1=+1, D2=+2
 
     def test_exige_classificacao_de_mastite_quando_protocolo_e_mastite(self, client):
         c, engine = client
@@ -371,8 +412,11 @@ class TestConfirmacaoCura:
     DIA do protocolo já foram lançados — não basta a data ter passado."""
 
     def _protocolo_2_dias(self, c):
+        # dia_inicial=1 explícito: simula um protocolo já existente antes da
+        # padronização em D0 — as datas abaixo (2026-03-01, 2026-03-03) só
+        # batem com a fórmula antiga (dia - 1) quando dia_inicial=1.
         return c.post("/cadastro/protocolos-sanitarios", json={
-            "nome": "Mastite 2 dias", "eh_mastite": True,
+            "nome": "Mastite 2 dias", "eh_mastite": True, "dia_inicial": 1,
             "etapas": [_etapa(1), _etapa(2)],
         }).json()["id"]
 
