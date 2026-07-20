@@ -14,8 +14,9 @@ from sqlmodel import Session, select
 from fazenda.auth import Usuario, get_current_user, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
-    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
-    Patrimonio, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
+    AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Diaria,
+    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
+    Patrimonio, Pessoa, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
@@ -108,6 +109,64 @@ def _gerar_agenda_recorrente(session: Session) -> None:
             proxima = _proxima_ocorrencia(proxima, modelo.intervalo_dias, modelo.intervalo_meses)
 
 
+def _gerar_auditorias_diarias(session: Session) -> None:
+    """
+    Para cada Diária com `auditar_periodicamente` ligado, cria (uma vez por
+    período fechado — idempotente por periodo_inicio/periodo_fim) a pendência
+    que a Agenda vai perguntar: "o diarista trabalhou os N dias do período?".
+    - semanal: dispara no dia da semana escolhido (`dia_semana_auditoria`),
+      perguntando pelos 7 dias terminados ontem.
+    - intervalo_dias: dispara a cada N dias corridos desde o fim do último
+      período já criado (ou desde o início da diária, se ainda não houve
+      nenhum) — em loop, para recuperar períodos perdidos se o app ficou
+      fora do ar por mais de um ciclo.
+    - mensal: dispara todo dia 1º, perguntando pelo mês calendário anterior.
+    """
+    hoje = date.today()
+    diarias = session.exec(
+        select(Diaria).where(Diaria.status == "ativo", Diaria.auditar_periodicamente == True)  # noqa: E712
+    ).all()
+    for d in diarias:
+        freq = d.frequencia_auditoria or "semanal"
+        periodos: list[tuple[date, date]] = []
+        if freq == "semanal":
+            dia_semana = d.dia_semana_auditoria if d.dia_semana_auditoria is not None else 0
+            if hoje.weekday() == dia_semana:
+                fim = hoje - timedelta(days=1)
+                periodos.append((fim - timedelta(days=6), fim))
+        elif freq == "intervalo_dias":
+            intervalo = d.intervalo_dias_auditoria or 7
+            ultima = session.exec(
+                select(DiariaAuditoria).where(DiariaAuditoria.diaria_id == d.id).order_by(DiariaAuditoria.periodo_fim.desc())
+            ).first()
+            base = ultima.periodo_fim if ultima else (d.data_inicio - timedelta(days=1))
+            fim = base + timedelta(days=intervalo)
+            while fim < hoje:
+                periodos.append((base + timedelta(days=1), fim))
+                base = fim
+                fim = base + timedelta(days=intervalo)
+        elif freq == "mensal":
+            if hoje.day == 1:
+                ultimo_dia_mes_passado = hoje.replace(day=1) - timedelta(days=1)
+                periodos.append((ultimo_dia_mes_passado.replace(day=1), ultimo_dia_mes_passado))
+        for periodo_inicio, periodo_fim in periodos:
+            if periodo_inicio < d.data_inicio:
+                periodo_inicio = d.data_inicio
+            if periodo_inicio > periodo_fim:
+                continue
+            ja_existe = session.exec(
+                select(DiariaAuditoria).where(
+                    DiariaAuditoria.diaria_id == d.id,
+                    DiariaAuditoria.periodo_inicio == periodo_inicio,
+                    DiariaAuditoria.periodo_fim == periodo_fim,
+                )
+            ).first()
+            if ja_existe:
+                continue
+            session.add(DiariaAuditoria(diaria_id=d.id, periodo_inicio=periodo_inicio, periodo_fim=periodo_fim))
+            session.commit()
+
+
 _INSTRUCOES_TOUROS = (
     "Passo a passo para atualizar o banco de touros (provas NAAB):\n"
     "1) Entre no site do seu fornecedor de sêmen (ABS BullSearch, Alta, Select Sires, CRV...) "
@@ -166,6 +225,7 @@ def calcular_agenda(
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
     _gerar_agenda_recorrente(session)
+    _gerar_auditorias_diarias(session)
     animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
     servicos_ult = [
         _model_to_dict(s) for s in session.exec(
@@ -660,6 +720,26 @@ def calcular_agenda(
     tem_reproducao = "reproducao" in modulos
     tem_estoque = tem_modulo(usuario, "estoque")
 
+    diaria_auditorias_pendentes = []
+    if tem_financeiro:
+        pendentes = session.exec(
+            select(DiariaAuditoria, Diaria, Pessoa)
+            .join(Diaria, DiariaAuditoria.diaria_id == Diaria.id)
+            .join(Pessoa, Diaria.pessoa_id == Pessoa.id)
+            .where(DiariaAuditoria.dias_trabalhados.is_(None))
+            .order_by(DiariaAuditoria.periodo_fim)
+        ).all()
+        diaria_auditorias_pendentes = [
+            {
+                "id": auditoria.id,
+                "diaria_id": diaria.id,
+                "pessoa_nome": pessoa.nome,
+                "periodo_inicio": auditoria.periodo_inicio.isoformat(),
+                "periodo_fim": auditoria.periodo_fim.isoformat(),
+            }
+            for auditoria, diaria, pessoa in pendentes
+        ]
+
     # Alertas de estoque (negativo/abaixo do mínimo) — SEMPRE calculado (não
     # depende do opt-in "exibir necessidade de compra na agenda" por item, que
     # só vira um evento cronológico simples em Gestão/Financeiro). Aqui é uma
@@ -701,12 +781,14 @@ def calcular_agenda(
         "estoque_negativo": estoque_negativo,
         "estoque_abaixo_minimo": estoque_abaixo_minimo,
         "eventos": eventos_visiveis,
+        "diaria_auditorias_pendentes": diaria_auditorias_pendentes,
         "totais": {
             "candidatas_iatf": len(result.candidatas_iatf) if tem_reproducao else 0,
             "bst_elegiveis": len(result.bst_elegiveis) if tem_reproducao else 0,
             "bst_nunca_aplicados": len(bst_nunca_aplicados) if tem_reproducao else 0,
             "contas_a_pagar": len(result.contas_a_pagar) if tem_financeiro else 0,
             "eventos": len(eventos_visiveis),
+            "diaria_auditorias_pendentes": len(diaria_auditorias_pendentes),
         },
     }
 

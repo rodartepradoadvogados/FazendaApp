@@ -22,10 +22,11 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 from sqlalchemy import func
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, exigir_admin
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, CalendarioSanitario, ContaGerencial, Contrato, ContratoParcela, DecimoTerceiro, Diaria,
+    DiariaAuditoria, ParametroDiariaPadrao,
     DiariaPagamento, Doenca, Empreitada, EmpreitadaEtapa, EmpreitadaParcela, Estoque, EstoqueSemen, EventoSanitario, ExameDefinicao,
     FeriasFuncionario, FolhaPagamento, Fornecedor,
     GrauSangue, Lote, MetodoServicoReprodutivo, MotivoBaixa, MotivoVenda, Pessoa, PlanoContaGerencial, PrincipioAtivo, ProtocoloInducaoLactacao,
@@ -2071,6 +2072,12 @@ class DiariaIn(BaseModel):
     data_inicio: date
     observacao: str | None = None
     centro_custo: str = "Pecuária Leiteira"
+    conta_dia_a_dia: bool = True
+    # None = herda o padrão de ParametroDiariaPadrao no momento do cadastro.
+    auditar_periodicamente: bool | None = None
+    frequencia_auditoria: str | None = None
+    dia_semana_auditoria: int | None = None
+    intervalo_dias_auditoria: int | None = None
 
 
 class DiariaPagamentoIn(BaseModel):
@@ -2079,9 +2086,34 @@ class DiariaPagamentoIn(BaseModel):
     observacao: str | None = None
 
 
+def _dias_confirmados_diaria(session: Session, diaria_id: int) -> tuple[int, date | None]:
+    """Soma os dias efetivamente confirmados nas auditorias JÁ RESPONDIDAS
+    desta diária, e devolve também até que data essa contagem cobre
+    (`periodo_fim` da última auditoria respondida — os dias corridos depois
+    dela ainda não foram auditados, então continuam contados no "olho" pela
+    regra antiga, dia a dia, até a próxima resposta)."""
+    respondidas = session.exec(
+        select(DiariaAuditoria)
+        .where(DiariaAuditoria.diaria_id == diaria_id, DiariaAuditoria.dias_trabalhados.is_not(None))
+        .order_by(DiariaAuditoria.periodo_fim)
+    ).all()
+    if not respondidas:
+        return 0, None
+    return sum(a.dias_trabalhados for a in respondidas), respondidas[-1].periodo_fim
+
+
 def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
     hoje = date.today()
-    numero_diarias = max((hoje - d.data_inicio).days + 1, 0)
+    dias_confirmados, cobertura_ate = _dias_confirmados_diaria(session, d.id)
+    if cobertura_ate is not None:
+        # Períodos já auditados usam o valor confirmado (pode ser < dias
+        # corridos, se o diarista faltou); o restante (da última auditoria
+        # até hoje, ainda sem resposta) continua contado dia a dia — mesma
+        # regra de sempre, só que sem sobrescrever o que já foi confirmado.
+        dias_desde_cobertura = max((hoje - cobertura_ate).days, 0)
+        numero_diarias = dias_confirmados + dias_desde_cobertura
+    else:
+        numero_diarias = max((hoje - d.data_inicio).days + 1, 0)
     total_ate_hoje = round(numero_diarias * d.valor_diaria, 2)
     pagamentos = sorted(
         session.exec(select(DiariaPagamento).where(DiariaPagamento.diaria_id == d.id)).all(),
@@ -2090,6 +2122,11 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
     valor_pago = round(sum(p.valor for p in pagamentos), 2)
     vales = _listar_vales_avulsos(session, "diaria", d.id)
     valor_vale = round(sum(v["valor"] for v in vales), 2)
+    auditorias_pendentes = session.exec(
+        select(DiariaAuditoria)
+        .where(DiariaAuditoria.diaria_id == d.id, DiariaAuditoria.dias_trabalhados.is_(None))
+        .order_by(DiariaAuditoria.periodo_fim)
+    ).all()
     return {
         **d.model_dump(),
         "pessoa_nome": pessoa_nome,
@@ -2100,6 +2137,7 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
         "saldo_devedor": round(total_ate_hoje - valor_pago - valor_vale, 2),
         "pagamentos": [p.model_dump() for p in pagamentos],
         "vales": vales,
+        "auditorias_pendentes": [a.model_dump() for a in auditorias_pendentes],
     }
 
 
@@ -2110,6 +2148,46 @@ def listar_diarias(session: Session = Depends(get_session)) -> list[dict]:
     return [_resumo_diaria(session, d, pessoas.get(d.pessoa_id, "—")) for d in diarias]
 
 
+def _parametro_diaria_padrao(session: Session) -> ParametroDiariaPadrao:
+    padrao = session.get(ParametroDiariaPadrao, 1)
+    if not padrao:
+        padrao = ParametroDiariaPadrao(id=1)
+        session.add(padrao)
+        session.commit()
+        session.refresh(padrao)
+    return padrao
+
+
+@router.get("/diarias/parametro-padrao")
+def obter_parametro_diaria_padrao(session: Session = Depends(get_session)) -> dict:
+    return _parametro_diaria_padrao(session).model_dump()
+
+
+class ParametroDiariaPadraoIn(BaseModel):
+    auditar_periodicamente: bool
+    frequencia_auditoria: str  # semanal | intervalo_dias | mensal
+    dia_semana_auditoria: int = 0
+    intervalo_dias_auditoria: int = 7
+
+
+@router.put("/diarias/parametro-padrao")
+def salvar_parametro_diaria_padrao(
+    dados: ParametroDiariaPadraoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)
+) -> dict:
+    if dados.frequencia_auditoria not in ("semanal", "intervalo_dias", "mensal"):
+        raise HTTPException(status_code=400, detail="Frequência inválida")
+    padrao = _parametro_diaria_padrao(session)
+    padrao.auditar_periodicamente = dados.auditar_periodicamente
+    padrao.frequencia_auditoria = dados.frequencia_auditoria
+    padrao.dia_semana_auditoria = dados.dia_semana_auditoria
+    padrao.intervalo_dias_auditoria = dados.intervalo_dias_auditoria
+    padrao.atualizado_em = datetime.utcnow()
+    session.add(padrao)
+    session.commit()
+    session.refresh(padrao)
+    return padrao.model_dump()
+
+
 @router.post("/diarias")
 def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
     pessoa = session.get(Pessoa, dados.pessoa_id)
@@ -2117,13 +2195,47 @@ def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.valor_diaria <= 0:
         raise HTTPException(status_code=400, detail="Valor da diária deve ser positivo")
+    # Campos de auditoria não informados herdam o padrão configurado em
+    # Configurações > Parâmetros — cada diária pode depois editar a própria
+    # cadência sem afetar as demais.
+    padrao = _parametro_diaria_padrao(session)
+    auditar = dados.auditar_periodicamente if dados.auditar_periodicamente is not None else padrao.auditar_periodicamente
+    frequencia = dados.frequencia_auditoria or padrao.frequencia_auditoria
+    dia_semana = dados.dia_semana_auditoria if dados.dia_semana_auditoria is not None else padrao.dia_semana_auditoria
+    intervalo = dados.intervalo_dias_auditoria if dados.intervalo_dias_auditoria is not None else padrao.intervalo_dias_auditoria
     diaria = Diaria(
         pessoa_id=dados.pessoa_id, valor_diaria=dados.valor_diaria, data_inicio=dados.data_inicio,
         observacao=dados.observacao, usuario_id=user.id, centro_custo=dados.centro_custo,
+        conta_dia_a_dia=dados.conta_dia_a_dia, auditar_periodicamente=auditar,
+        frequencia_auditoria=frequencia, dia_semana_auditoria=dia_semana, intervalo_dias_auditoria=intervalo,
     )
     session.add(diaria)
     session.commit()
     session.refresh(diaria)
+    return _resumo_diaria(session, diaria, pessoa.nome)
+
+
+class DiariaAuditoriaResponderIn(BaseModel):
+    dias_trabalhados: int
+
+
+@router.put("/diarias/auditorias/{auditoria_id}")
+def responder_auditoria_diaria(
+    auditoria_id: int, dados: DiariaAuditoriaResponderIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+) -> dict:
+    auditoria = session.get(DiariaAuditoria, auditoria_id)
+    if not auditoria:
+        raise HTTPException(status_code=404, detail="Auditoria não encontrada")
+    dias_no_periodo = (auditoria.periodo_fim - auditoria.periodo_inicio).days + 1
+    if not (0 <= dados.dias_trabalhados <= dias_no_periodo):
+        raise HTTPException(status_code=400, detail=f"Dias trabalhados deve estar entre 0 e {dias_no_periodo}")
+    auditoria.dias_trabalhados = dados.dias_trabalhados
+    auditoria.confirmado_em = datetime.utcnow()
+    auditoria.usuario_id = user.id
+    session.add(auditoria)
+    session.commit()
+    diaria = session.get(Diaria, auditoria.diaria_id)
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
     return _resumo_diaria(session, diaria, pessoa.nome)
 
 

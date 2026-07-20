@@ -347,7 +347,17 @@ class ContratoParcela(SQLModel, table=True):
 # hoje e mantém o saldo devedor a partir dos pagamentos registrados.
 # ---------------------------------------------------------------------------
 class Diaria(SQLModel, table=True):
-    """Diarista lançada — valor da diária e data de início da contagem."""
+    """Diarista lançada — valor da diária e data de início da contagem.
+
+    `conta_dia_a_dia` preserva o comportamento histórico (soma automática de
+    todos os dias corridos desde `data_inicio`) — sempre True por padrão, para
+    não alterar diárias já cadastradas. Quando `auditar_periodicamente` está
+    ligado, a Agenda passa a perguntar, na cadência escolhida (ver
+    `frequencia_auditoria`), se o diarista realmente trabalhou todos os dias
+    do período fechado — a resposta vira uma `DiariaAuditoria` e corrige a
+    contagem daquele período (ver `_dias_confirmados_diaria` em
+    `routers/cadastro.py`), em vez de presumir cegamente que todo dia corrido
+    foi um dia trabalhado."""
 
     __tablename__ = "diaria"
 
@@ -362,6 +372,19 @@ class Diaria(SQLModel, table=True):
     # Centro de custo de todos os pagamentos gerados por esta diária — nasce
     # em "Pecuária Leiteira", mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    # Contagem automática dia a dia (comportamento histórico) — desligar exige
+    # lançar manualmente os dias trabalhados (fora do escopo desta 1ª versão;
+    # hoje só controla se a auditoria periódica abaixo tem o que corrigir).
+    conta_dia_a_dia: bool = True
+    # Pergunta periódica na Agenda ("o diarista trabalhou os N dias do
+    # período?") — desligada por padrão (não muda nada pra quem já usa o
+    # sistema sem configurar nada). Os 3 campos abaixo só importam quando esta
+    # flag está ligada; nascem com o valor padrão de `ParametroDiariaPadrao` no
+    # cadastro, mas são editáveis por diária.
+    auditar_periodicamente: bool = False
+    frequencia_auditoria: Optional[str] = None  # semanal | intervalo_dias | mensal
+    dia_semana_auditoria: Optional[int] = None  # 0=segunda ... 6=domingo (frequencia == semanal)
+    intervalo_dias_auditoria: Optional[int] = None  # frequencia == intervalo_dias
 
 
 class DiariaPagamento(SQLModel, table=True):
@@ -376,3 +399,41 @@ class DiariaPagamento(SQLModel, table=True):
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class DiariaAuditoria(SQLModel, table=True):
+    """Uma pendência (e depois, resposta) da auditoria periódica de uma
+    diária — um período fechado (ex.: a semana passada) para o qual a Agenda
+    perguntou quantos dias o diarista realmente trabalhou. `dias_trabalhados`
+    nasce None (pendente); ao responder, vira o número informado (0 a
+    `dias_no_periodo`) e a contagem da diária nesse período passa a usar esse
+    valor em vez de presumir todos os dias corridos."""
+
+    __tablename__ = "diaria_auditoria"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    diaria_id: int = Field(foreign_key="diaria.id", index=True)
+    periodo_inicio: date
+    periodo_fim: date
+    dias_trabalhados: Optional[int] = None
+    confirmado_em: Optional[datetime] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class ParametroDiariaPadrao(SQLModel, table=True):
+    """Configuração-padrão (linha única, id=1 — mesmo padrão de
+    `AlimentacaoEstado`) da auditoria periódica de diárias, definida em
+    Configurações > Parâmetros > Folha de pagamento/RH. Copiada para os campos
+    de mesmo nome de `Diaria` no momento do cadastro (ver `criar_diaria` em
+    `routers/cadastro.py`) — cada diária pode depois editar a própria
+    cadência sem afetar esta configuração global nem as demais diárias."""
+
+    __tablename__ = "parametro_diaria_padrao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    auditar_periodicamente: bool = False
+    frequencia_auditoria: str = "semanal"  # semanal | intervalo_dias | mensal
+    dia_semana_auditoria: int = 0  # 0=segunda ... 6=domingo
+    intervalo_dias_auditoria: int = 7
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
