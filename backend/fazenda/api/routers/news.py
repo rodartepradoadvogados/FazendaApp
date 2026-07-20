@@ -283,6 +283,173 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             ],
         },
     ],
+    "milknews_20260720b": [
+        {
+            "manchete": "Leite spot fecha julho estável após alta na primeira quinzena",
+            "resumo": (
+                "O leite spot encerrou a segunda quinzena de julho praticamente estável (média nacional "
+                "a R$ 3,216/L, -R$ 0,013), após a alta generalizada da primeira quinzena, que levou a "
+                "média a R$ 3,229/L (+R$ 0,170). O movimento acompanha o reajuste de 2% aprovado pelo "
+                "Conseleite/MT no leite pago em julho. Dados: Cepea/Esalq via MilkPoint (07/2026)."
+            ),
+            "materia": (
+                "O mercado de leite spot no Brasil encerrou a segunda quinzena de julho com preços "
+                "praticamente estáveis, depois de uma valorização generalizada no início do mês, segundo "
+                "dados do Cepea/Esalq divulgados pelo MilkPoint.\n\n"
+                "Na primeira quinzena de julho, a média nacional do leite spot subiu para R$ 3,229 por "
+                "litro, avanço de R$ 0,170 puxado pela maior demanda por leite fresco em meio a uma oferta "
+                "mais restrita no campo. São Paulo liderou as cotações, a R$ 3,460, seguido por Minas "
+                "Gerais (R$ 3,361), Santa Catarina, Paraná, Goiás e Rio Grande do Sul, todos em alta no "
+                "período.\n\n"
+                "Na segunda quinzena, o ritmo mudou: a média nacional recuou levemente para R$ 3,216, uma "
+                "acomodação de R$ 0,013, com oferta e demanda mais equilibradas. Santa Catarina e Paraná "
+                "tiveram pequenas altas, enquanto Goiás, Rio Grande do Sul, São Paulo e Minas Gerais "
+                "registraram recuos discretos.\n\n"
+                "O movimento acompanha o reajuste divulgado pelo Conseleite/Mato Grosso, que aprovou alta "
+                "de 2% nos valores de referência do leite entregue em junho e pago em julho, válida em "
+                "todas as faixas de volume e qualidade monitoradas pelo colegiado."
+            ),
+            "link": "/news#milknews-2026-07-20b-01",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/leite-spot-registra-novo-ajuste-positivo-na-1-quinzena-de-julho-241420/",
+                "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/leite-spot-sinaliza-relativa-estabilidade-na-segunda-quinzena-de-julho-241559/",
+                "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/conseleitemt-registra-ajuste-positivo-de-2-no-leite-pago-em-julho-de-2026-241555/",
+                "https://cepea.org.br/br/indicador/leite.aspx",
+            ],
+        },
+        {
+            "manchete": "Antidumping do leite em pó fica suspenso e divide o setor",
+            "resumo": (
+                "O governo suspendeu, em caráter cautelar, as tarifas antidumping sobre o leite em pó "
+                "importado da Argentina e do Uruguai. O Gecex/Camex reconheceu o dumping (preço até 53% "
+                "menor), mas adiou a cobrança para avaliar efeitos na inflação; a FPA critica e a CNA "
+                "rebate. O tema volta à próxima reunião do colegiado. Dados: MilkPoint (07/2026)."
+            ),
+            "materia": (
+                "O governo federal suspendeu, em caráter cautelar, a aplicação de tarifas antidumping "
+                "sobre o leite em pó importado da Argentina e do Uruguai, decisão que gerou reação imediata "
+                "da bancada ruralista e contraponto técnico da CNA.\n\n"
+                "Segundo o MilkPoint, o Gecex/Camex reconheceu a existência de dumping nas importações — "
+                "com preço até 53% inferior ao praticado no Brasil, conforme apuração da Confederação da "
+                "Agricultura e Pecuária do Brasil (CNA) — mas decidiu suspender a cobrança para avaliar "
+                "possíveis efeitos sobre a inflação de alimentos e sobre a relação com o Mercosul. A Frente "
+                "Parlamentar da Agropecuária (FPA) criticou a decisão, citando queda de cerca de 20% no "
+                "preço recebido pelo produtor em estados como Minas Gerais, Paraná, Goiás, Rio Grande do "
+                "Sul e Santa Catarina.\n\n"
+                "Já a CNA argumenta, em nota técnica citada pelo MilkPoint, que a medida recairia apenas "
+                "sobre o leite em pó de uso industrial — presente majoritariamente em produtos "
+                "ultraprocessados, com peso de apenas 0,26% no IPCA — e não afetaria o leite consumido "
+                "diretamente pelas famílias. A entidade também destaca que, sem o antidumping vigente entre "
+                "2001 e 2017, o crescimento do setor caiu de 4,2% para 0,7% ao ano.\n\n"
+                "O tema deve voltar à pauta na próxima reunião do Gecex-Camex, que decidirá se as tarifas "
+                "serão restabelecidas."
+            ),
+            "link": "/news#milknews-2026-07-20b-02",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/fpa-cobra-governo-pela-suspensao-de-medida-antidumping-contra-leite-da-argentina-e-do-uruguai-241516/",
+            ],
+        },
+        {
+            "manchete": "Preço do soro de leite dispara no mundo e chega sem referência ao Brasil",
+            "resumo": (
+                "O concentrado proteico de soro (WPC) acumulou alta de mais de 100% em 12 meses na Europa, "
+                "chegando a €22 mil/t na faixa de 80% de proteína, puxado em parte pela demanda ligada aos "
+                "medicamentos GLP-1. No Brasil ainda não há referência de preço consolidada para o produto. "
+                "Dados: StoneX/USDA via MilkPoint (06-07/2026)."
+            ),
+            "materia": (
+                "O concentrado proteico de soro de leite (WPC), insumo antes tratado como subproduto do "
+                "queijo, acumulou alta superior a 100% em doze meses na Europa e hoje é descrito como um "
+                "dos ingredientes mais disputados da indústria global de alimentos, segundo reportagem do "
+                "MilkPoint.\n\n"
+                "De acordo com levantamento da StoneX citado pela publicação, o WPC com 80% de proteína "
+                "chegou a 22 mil euros por tonelada na União Europeia, enquanto dados semanais do USDA "
+                "mostram o produto negociado perto de treze dólares por libra nos Estados Unidos em meados "
+                "de junho — um patamar elevado e sustentado, não um pico isolado. Um dos fatores por trás "
+                "da demanda, segundo a reportagem, é a popularização de medicamentos da classe GLP-1, que "
+                "estimula maior consumo de proteína para preservar massa magra durante o emagrecimento.\n\n"
+                "No Brasil, ainda não existe uma referência de preço consolidada para o WPC, o que "
+                "dificulta tanto o planejamento de quem compra o insumo quanto a captura de margem por quem "
+                "tem capacidade de processá-lo. O MilkPoint informou que passará a mapear periodicamente os "
+                "preços do produto no mercado nacional para suprir essa lacuna de dado."
+            ),
+            "link": "/news#milknews-2026-07-20b-03",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/wpc-2026-o-que-a-crise-global-do-soro-de-leite-pode-significar-para-os-laticinios-no-brasil-241483/",
+            ],
+        },
+        {
+            "manchete": "Calor reduz produção de leite nos EUA e mercado global se reajusta",
+            "resumo": (
+                "O calor do verão americano reduz produção e componentes do leite em várias regiões dos "
+                "EUA, segundo o USDA/AMS. Na semana de 13 a 17/07, a manteiga Grade AA caiu a US$ 1,59/lb, "
+                "enquanto cheddar e dry whey subiram. No exterior, a Austrália produziu +5,4% em maio e a "
+                "Nova Zelândia exportou US$ 2,3 bi (+6,9%). Dados: USDA/AMS (17/07/2026)."
+            ),
+            "materia": (
+                "O relatório semanal do USDA/AMS Dairy Market News aponta queda na produção de leite em "
+                "várias regiões dos Estados Unidos por causa do calor intenso do verão americano, com "
+                "reflexos mistos nos preços das commodities lácteas.\n\n"
+                "Segundo o USDA, o calor persistente na região Central do país segue reduzindo o volume e "
+                "os componentes do leite, e Idaho registrou o fim de semana mais quente de 2026, afetando "
+                "o conforto térmico, a produção e a composição do leite das vacas. Ao mesmo tempo, a "
+                "demanda por leite fluido está mais fraca por causa do período de férias escolares, o que "
+                "tem direcionado parte do volume antes destinado ao envase para as classes de uso II e "
+                "IV.\n\n"
+                "Na semana de 13 a 17 de julho, a manteiga Grade AA fechou em queda, a US$ 1,59 por libra, "
+                "enquanto o queijo cheddar (blocos e barris) e o soro de leite seco (dry whey) subiram. No "
+                "cenário internacional, a produção de leite da Austrália em maio cresceu 5,4% frente ao "
+                "mesmo mês do ano anterior, e as exportações neozelandesas de leite em pó, manteiga e "
+                "queijo somaram US$ 2,3 bilhões, alta de 6,9%."
+            ),
+            "link": "/news#milknews-2026-07-20b-04",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.indexbox.io/blog/usda-dairy-market-report-mixed-cme-prices-and-summer-heat-impact-july-2026/",
+                "https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf",
+            ],
+        },
+        {
+            "manchete": "Antes do verão: como preparar o rebanho para o estresse térmico",
+            "resumo": (
+                "Ainda no inverno, especialistas já recomendam planejar o conforto térmico do rebanho "
+                "antes do verão. O estresse térmico começa com ITU acima de 68 e atinge antes as vacas de "
+                "alta produção (conforto ideal entre 8°C e 18°C), reduzindo produção, fertilidade e "
+                "imunidade. Ventilação, aspersão, sombra e água fresca são as medidas-chave. Dados: "
+                "Gadolando via Feed&Food (2026)."
+            ),
+            "materia": (
+                "Embora o Brasil esteja em pleno inverno, especialistas em bovinocultura leiteira já "
+                "alertam para a necessidade de planejar o manejo de conforto térmico do rebanho antes da "
+                "chegada do verão, quando o calor pode comprometer produção, fertilidade e saúde das vacas "
+                "de alta produção.\n\n"
+                "De acordo com a Associação dos Criadores de Gado Holandês do Rio Grande do Sul "
+                "(Gadolando), em reportagem da Feed&Food, o estresse térmico começa quando o Índice de "
+                "Temperatura e Umidade (ITU) ultrapassa a marca de 68 — patamar bem inferior ao que "
+                "normalmente se imagina como \"calor\". Vacas de alta produção, como as da raça Holandesa, "
+                "geram mais calor metabólico e por isso sentem o efeito da temperatura e da umidade antes "
+                "de outros animais, com conforto térmico ideal situado entre 8°C e 18°C.\n\n"
+                "Os sinais de estresse térmico aparecem no comportamento do rebanho: respiração ofegante, "
+                "salivação intensa e mais tempo em pé em vez de ruminando. Além da queda na produção de "
+                "leite pela redução no consumo de matéria seca, o calor também compromete a fertilidade e "
+                "enfraquece o sistema imunológico, aumentando a suscetibilidade a doenças.\n\n"
+                "Entre as medidas recomendadas estão ventiladores, exaustores e aspersão de água em "
+                "sistemas confinados, além de telhados com isolamento térmico e áreas sombreadas. A campo, "
+                "recomenda-se sombra natural ou artificial, acesso constante a água fresca e o ajuste dos "
+                "horários de manejo e alimentação para os períodos mais amenos do dia. O planejamento da "
+                "infraestrutura de resfriamento deve começar antes do pico do calor para evitar perdas na "
+                "safra de verão."
+            ),
+            "link": "/news#milknews-2026-07-20b-05",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://feedfood.com.br/estresse-termico-desafia-pecuaria-leiteira-e-exige-manejo-especifico-no-verao/",
+            ],
+        },
+    ],
 }
 
 
