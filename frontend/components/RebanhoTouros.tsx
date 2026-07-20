@@ -6,6 +6,7 @@ import type { AnimalRow } from "./AnimalModal";
 import { CAMPOS_NUMERICOS, parseDadosExtra, FormTouro, CAMPO_VAZIO } from "./CadastroTouros";
 import { TouroDetalheModal } from "./TouroDetalheModal";
 import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
+import { usePaginacao, Paginacao } from "./Paginacao";
 
 type EstoqueSemenItem = {
   id: number; touro_nome: string; codigo?: string | null; naab?: string | null;
@@ -201,6 +202,7 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
 
   const ordEstoque = useOrdenacao(estoqueFiltrado);
   const ordNaab = useOrdenacao(naabFiltrado);
+  const pagNaab = usePaginacao(ordNaab.linhasOrdenadas);
 
   const [erroExclusao, setErroExclusao] = useState("");
   const excluirDoEstoque = async (e: EstoqueSemenItem) => {
@@ -366,7 +368,7 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                     </tr>
                   </thead>
                   <tbody>
-                    {ordNaab.linhasOrdenadas.slice(0, 200).map((t) => (
+                    {pagNaab.linhasPagina.map((t) => (
                       <tr key={t.id ?? t.naab} style={{ cursor: "pointer" }} onClick={() => abrirDetalheNaab(t)} title="Ver detalhes do touro">
                         <td style={{ fontWeight: 700 }}>{t.naab}</td>
                         <td style={{ fontSize: "0.8rem" }}>{t.nome || "—"}</td>
@@ -386,8 +388,9 @@ export default function RebanhoTouros({ onAbrirFicha }: { onAbrirFicha?: (numero
                   </tbody>
                 </table>
               )}
-              {naab && naabFiltrado.length > 200 && (
-                <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>Mostrando 200 de {naabFiltrado.length} — refine a busca para ver mais.</p>
+              {naab && (
+                <Paginacao pagina={pagNaab.pagina} totalPaginas={pagNaab.totalPaginas} totalLinhas={pagNaab.totalLinhas}
+                  tamanhoPagina={pagNaab.tamanhoPagina} onMudarPagina={pagNaab.setPagina} onMudarTamanho={pagNaab.setTamanhoPagina} />
               )}
             </div>
           )}

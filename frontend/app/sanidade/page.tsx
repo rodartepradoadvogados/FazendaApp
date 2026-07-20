@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, LineChart, Line } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { MultiFiltro, TabBar, Indicador, SecaoRecolhivel } from "@/components/ui";
@@ -578,6 +579,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
       (fOrdemParto.length === 0 || (a.ordem_parto !== null && fOrdemParto.includes(String(a.ordem_parto))))
     );
   }, [regs, fCat, ini, fim, buscaProd, animaisSel, lotesSel, selDosLotes, categoriasAnimalSel, selDasCategorias, fOrdemParto]);
+  const pagAplicacoes = usePaginacao(filtrados);
 
   // Quando há filtro por período (de/até), as linhas SEM data ficam de fora — conta quantas para avisar o usuário.
   const semDataExcluidas = useMemo(() => {
@@ -731,7 +733,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
               <table className="fazenda-table">
                 <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
                 <tbody>
-                  {filtrados.slice(0, 300).map((a) => {
+                  {pagAplicacoes.linhasPagina.map((a) => {
                     const editando = editId === a.id;
                     const inp: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "5px", padding: "0.25rem 0.4rem", fontSize: "0.75rem", width: "100%" };
                     return (
@@ -801,7 +803,8 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                   })}
                 </tbody>
               </table>
-              {filtrados.length > 300 && <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginTop: "0.5rem" }}>Mostrando 300 de {filtrados.length} — refine os filtros.</p>}
+              <Paginacao pagina={pagAplicacoes.pagina} totalPaginas={pagAplicacoes.totalPaginas} totalLinhas={pagAplicacoes.totalLinhas}
+                tamanhoPagina={pagAplicacoes.tamanhoPagina} onMudarPagina={pagAplicacoes.setPagina} onMudarTamanho={pagAplicacoes.setTamanhoPagina} />
             </div>
           </div>
         </SecaoRecolhivel>

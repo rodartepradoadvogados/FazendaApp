@@ -4,6 +4,7 @@ import { Milk, AlertTriangle, Filter, TrendingUp, FlaskConical, Scale, Droplets,
 import { fetchControles, fetchQualidadeLeite, fetchRelatorioControleEntrega, fetchAnimais, fetchAgenda, fetchRelatorioBst, ehAdmin } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import { SecaoRecolhivel, MultiFiltro, Indicador } from "@/components/ui";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -176,6 +177,7 @@ function ProducaoLeiteira() {
     [qlFiltrados],
   );
   const qlBonificacaoUltima = qlRecentes.find((r) => r.bonificacao_por_litro != null)?.bonificacao_por_litro ?? null;
+  const pagQlRecentes = usePaginacao(qlRecentes);
 
   // Controle × Entregue — período próprio (default: últimos 30 dias até hoje).
   const hojeISO = new Date().toISOString().slice(0, 10);
@@ -488,7 +490,7 @@ function ProducaoLeiteira() {
                             </tr>
                           </thead>
                           <tbody>
-                            {qlRecentes.slice(0, 20).map((r) => (
+                            {pagQlRecentes.linhasPagina.map((r) => (
                               <tr key={r.id}>
                                 <td style={{ fontSize: "0.78rem" }}>{new Date(r.data_coleta + "T00:00:00").toLocaleDateString("pt-BR")}</td>
                                 <td style={{ fontSize: "0.78rem" }}>{r.numero_matriz ? `Vaca ${r.numero_matriz}` : "Tanque"}</td>
@@ -512,11 +514,8 @@ function ProducaoLeiteira() {
                           </tbody>
                         </table>
                       </div>
-                      {qlRecentes.length > 20 && (
-                        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem" }}>
-                          Mostrando as 20 coletas mais recentes do filtro ({qlRecentes.length} no total).
-                        </p>
-                      )}
+                      <Paginacao pagina={pagQlRecentes.pagina} totalPaginas={pagQlRecentes.totalPaginas} totalLinhas={pagQlRecentes.totalLinhas}
+                        tamanhoPagina={pagQlRecentes.tamanhoPagina} onMudarPagina={pagQlRecentes.setPagina} onMudarTamanho={pagQlRecentes.setTamanhoPagina} />
                     </>
                   )}
                 </div>
