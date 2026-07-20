@@ -349,6 +349,34 @@ export async function fetchSemenDisponivel() {
   if (!res.ok) throw new Error(`Sêmen disponível error: ${res.status}`);
   return res.json() as Promise<SemenDisponivel>;
 }
+
+// ── Acasalamento direcionado (sugestão de touro por vaca) ──
+export type SugestaoTouro = {
+  naab?: string | null;
+  nome?: string | null;
+  tpi?: number | null;
+  nm_dolar?: number | null;
+  leite_kg?: number | null;
+  doses?: number | null;
+  tipo?: "convencional" | "sexado" | "fazenda" | string;
+  score: number;
+  tem_ancestral_comum: boolean;
+  motivo: string;
+};
+export type SugestaoAcasalamento = {
+  numero_matriz: string;
+  criterios: string[];
+  sugestoes: SugestaoTouro[];
+  ancestrais_maternos_avaliados: boolean;
+};
+export async function fetchSugestaoAcasalamento(numeroMatriz: string): Promise<SugestaoAcasalamento> {
+  const res = await authFetch(`${API}/reproducao/acasalamento/sugestao?numero_matriz=${encodeURIComponent(numeroMatriz)}`, { cache: "no-store" });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || `Sugestão de acasalamento error: ${res.status}`);
+  }
+  return res.json() as Promise<SugestaoAcasalamento>;
+}
 export async function criarServicoLote(dados: {
   animais: string[]; data_servico: string; tipo: "cio_natural" | "iatf" | "monta_natural";
   reprodutor?: string; responsavel?: string; protocolo_lancamento_id?: number | null; auto_lancar_iatf?: boolean;

@@ -10,6 +10,7 @@ import {
   fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade, criarControlesLeiteiros, salvarDiagnostico, movimentarEstoque, criarAplicacaoSanidade, marcarEventoRealizado,
   fetchSecagemInfo, criarSecagem, sugestaoLoteEvento, criarMovimentacao, criarParto, formatDate,
   criarProtocoloIatf, criarServicoLote, fetchSemenDisponivel, fetchProtocolosIatfAtivos, fetchLancamentosIatf, adicionarAnimaisIatf,
+  fetchSugestaoAcasalamento,
   fetchEventosSanitarios, fetchDoencas, fetchPrincipiosAtivos, fetchCalendarioSanitario, criarCalendarioSanitario, atualizarCalendarioSanitario, excluirCalendarioSanitario, cadastrarPreventivo, fetchAgenda,
   fetchExames,
   atualizarEventoSanitario, criarEventoSanitario, fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
@@ -24,7 +25,7 @@ import {
   fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO,
   fetchPessoas,
 } from "@/lib/api";
-import type { ApresentacaoFarmacia, Touro, AgendaVetResposta } from "@/lib/api";
+import type { ApresentacaoFarmacia, Touro, AgendaVetResposta, SugestaoAcasalamento } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
@@ -430,6 +431,27 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
     [origemSelecao, vinculoInsem, selLoteInsem, sel]
   );
 
+  // Acasalamento direcionado: só faz sentido sugerir touro para UMA matriz por
+  // vez (seleção em lote pula a sugestão, para não complicar a tela) — busca
+  // assim que uma única matriz estiver selecionada. Falha de forma discreta
+  // (ex.: animal sem genealogia cadastrada) sem travar o resto do formulário.
+  const [sugestaoAcasalamento, setSugestaoAcasalamento] = useState<SugestaoAcasalamento | null>(null);
+  const [carregandoSugestao, setCarregandoSugestao] = useState(false);
+  const [erroSugestao, setErroSugestao] = useState<string | null>(null);
+  useEffect(() => {
+    if (alvoFinal.size !== 1) { setSugestaoAcasalamento(null); setErroSugestao(null); return; }
+    const numeroMatriz = Array.from(alvoFinal)[0];
+    let cancelado = false;
+    setCarregandoSugestao(true); setErroSugestao(null);
+    fetchSugestaoAcasalamento(numeroMatriz)
+      .then((r) => { if (!cancelado) setSugestaoAcasalamento(r); })
+      .catch((e) => {
+        if (!cancelado) { setSugestaoAcasalamento(null); setErroSugestao(e?.message || "Não foi possível calcular a sugestão de touro para esta matriz."); }
+      })
+      .finally(() => { if (!cancelado) setCarregandoSugestao(false); });
+    return () => { cancelado = true; };
+  }, [alvoFinal]);
+
   useEffect(() => {
     fetchSemenDisponivel().then(setSemen).catch(() => setSemen(null));
     fetchLancamentosIatf().then(setLancamentos).catch(() => setLancamentos([]));
@@ -585,6 +607,58 @@ function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
           </>
         )}
       </Campo>
+
+      {alvoFinal.size === 1 && (
+        <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
+          <p style={{ fontSize: "0.82rem", fontWeight: 700, marginBottom: "0.4rem" }}>
+            Acasalamento direcionado — sugestão de touro para {Array.from(alvoFinal)[0]}
+          </p>
+          {carregandoSugestao && <p style={nota}>Calculando sugestão…</p>}
+          {!carregandoSugestao && erroSugestao && (
+            <p style={{ ...nota, color: "var(--amber)" }}>{erroSugestao}</p>
+          )}
+          {!carregandoSugestao && sugestaoAcasalamento && (
+            <>
+              {/* Nota fixa, sempre visível: os 3 critérios usados na sugestão. */}
+              <ul style={{ fontSize: "0.72rem", color: "var(--text-muted)", margin: "0 0 0.6rem", paddingLeft: "1.1rem" }}>
+                {sugestaoAcasalamento.criterios.map((c, i) => <li key={i} style={{ marginBottom: 2 }}>{c}</li>)}
+              </ul>
+              {!sugestaoAcasalamento.sugestoes.length ? (
+                <p style={nota}>Nenhum touro com sêmen em estoque disponível para sugerir.</p>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                  {sugestaoAcasalamento.sugestoes.map((s) => (
+                    <div
+                      key={`${s.naab || ""}-${s.nome || ""}`}
+                      onClick={() => setTouro(s.nome || "")}
+                      className="row-clickable"
+                      title="Clique para usar este touro na inseminação"
+                      style={{
+                        cursor: "pointer", borderRadius: 8, padding: "0.5rem 0.7rem",
+                        border: `1px solid ${s.tem_ancestral_comum ? "var(--red)" : "var(--border)"}`,
+                        background: s.tem_ancestral_comum ? "rgba(220,38,38,0.08)" : "var(--surface)",
+                      }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: "0.6rem" }}>
+                        <span style={{ fontWeight: 700, fontSize: "0.82rem" }}>
+                          {s.nome}{s.naab ? ` · ${s.naab}` : ""}
+                        </span>
+                        <span style={{ fontSize: "0.72rem", color: "var(--text-muted)", flexShrink: 0, whiteSpace: "nowrap" }}>
+                          {s.tpi != null ? `TPI ${s.tpi} · ` : ""}
+                          {s.tipo === "fazenda" ? "monta natural" : `${s.doses ?? 0} dose(s)`}
+                        </span>
+                      </div>
+                      <p style={{ fontSize: "0.74rem", color: s.tem_ancestral_comum ? "var(--red)" : "var(--text-muted)", margin: "0.25rem 0 0" }}>
+                        {s.motivo}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Data da inseminação"><input type="date" style={inputStyle} value={dataServico} onChange={(e) => setDataServico(e.target.value)} /></Campo>
