@@ -69,7 +69,10 @@ def test_backfill_nao_roda_de_novo_se_email_for_trocado_depois():
         assert admin.email == "outro@exemplo.com"
 
 
-def test_backfill_nao_mexe_com_mais_de_um_usuario():
+def test_backfill_preenche_mesmo_com_varios_usuarios_cadastrados():
+    """Um sistema em produção real já tem vários usuários (operadores,
+    veterinário, funcionários) — o backfill precisa identificar o dono pelo
+    `username` (ADMIN_USER), não pela contagem total de usuários."""
     engine = _engine()
     with Session(engine) as s:
         s.add(Usuario(username="AlexandreRodarte", nome="Alexandre Rodarte", senha_hash=hash_senha("x"), papel="admin"))
@@ -81,7 +84,9 @@ def test_backfill_nao_mexe_com_mais_de_um_usuario():
 
     with Session(engine) as s:
         admin = s.exec(select(Usuario).where(Usuario.username == "AlexandreRodarte")).first()
-        assert admin.email is None
+        assert admin.email == EMAIL_DONO
+        operador = s.exec(select(Usuario).where(Usuario.username == "operador")).first()
+        assert operador.email is None
 
 
 def test_backfill_nao_sobrescreve_email_ja_preenchido():
@@ -106,4 +111,4 @@ def test_backfill_grava_seedflag_e_nao_reaplica():
 
     with Session(engine) as s:
         seed_email_dono_backfill(s)
-        assert s.get(SeedFlag, "email_dono_backfill_admin_inicial_202607") is not None
+        assert s.get(SeedFlag, "email_dono_backfill_por_username_202607b") is not None

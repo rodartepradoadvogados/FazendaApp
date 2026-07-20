@@ -195,19 +195,23 @@ def seed_admin(session: Session) -> None:
 def seed_email_dono_backfill(session: Session) -> None:
     """Uma única vez (SeedFlag): bancos já existentes (deploy anterior a esta
     mudança) têm o admin inicial sem e-mail — seed_admin() rodou antes de
-    passar a gravar `email=EMAIL_DONO`, então `exigir_dono`/`eh_dono` (aba
-    "Acessos e Auditoria", site e app) nunca fecham, mesmo sendo o único
-    usuário do sistema. Preenche o e-mail só quando há EXATAMENTE um usuário
-    cadastrado (sistema de fazenda única) e ele ainda está sem e-mail — nunca
-    sobrescreve um e-mail já definido, nem mexe se já houver mais de um
-    usuário (aí a decisão de qual é o dono deixa de ser óbvia)."""
-    chave = "email_dono_backfill_admin_inicial_202607"
+    passar a gravar `email=EMAIL_DONO`, então `exigir_dono`/`eh_dono`
+    (Controle de Acesso, Acessos e Auditoria — site e app) nunca fecham.
+    Identifica o dono pelo `username` do admin inicial (ADMIN_USER, mesmo
+    valor usado por seed_admin() — default "AlexandreRodarte"), não pela
+    contagem de usuários: um sistema em produção já tem vários usuários
+    cadastrados (operadores, veterinário, funcionários), então a condição
+    antiga ("só quando há exatamente 1 usuário") nunca disparava e o e-mail
+    do dono ficava para sempre em branco. Nunca sobrescreve um e-mail já
+    definido."""
+    chave = "email_dono_backfill_por_username_202607b"
     if session.get(SeedFlag, chave):
         return
-    usuarios = session.exec(select(Usuario)).all()
-    if len(usuarios) == 1 and not (usuarios[0].email or "").strip():
-        usuarios[0].email = EMAIL_DONO
-        session.add(usuarios[0])
+    username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
+    dono = session.exec(select(Usuario).where(Usuario.username == username)).first()
+    if dono and not (dono.email or "").strip():
+        dono.email = EMAIL_DONO
+        session.add(dono)
     session.add(SeedFlag(chave=chave))
     session.commit()
 
