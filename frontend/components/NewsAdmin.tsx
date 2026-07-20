@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Newspaper, AlertTriangle, Plus, Trash2, X, Check, Link as LinkIcon, CalendarDays, ShieldCheck, ClipboardCheck, Pencil, Ban } from "lucide-react";
 import { fetchTodasMaterias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias, type NoticiaNews } from "@/lib/api";
-import { estiloCardMateria } from "@/lib/newsVisual";
+import { imagemMateria } from "@/lib/newsVisual";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -230,32 +230,46 @@ export default function NewsAdmin() {
           {materiasPublicadas.length > 0 && (
             <div className="flex flex-col gap-3">
               {materiasPublicadas.map((n, i) => (
-                <div key={n.id} style={{ position: "relative", padding: "1rem 1.1rem", borderRadius: "12px", ...estiloCardMateria(i) }}>
-                  <div className="flex items-start justify-between gap-2">
-                    <p style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--dourado-light)", marginBottom: "0.3rem" }}>{n.manchete}</p>
-                    <button type="button" onClick={() => excluir(n)} disabled={excluindo === n.id || !podePublicar} title={podePublicar ? "Excluir matéria" : "Sem permissão para excluir"}
-                      style={{ background: "none", border: "none", cursor: podePublicar ? "pointer" : "not-allowed", color: "#F5B0B0", flexShrink: 0, opacity: podePublicar ? 1 : 0.4 }}>
-                      <Trash2 size={15} />
-                    </button>
+                <div key={n.id} className="rounded-xl overflow-hidden flex" style={{ border: "1px solid var(--border)", background: "var(--surface)" }}>
+                  <div className="relative" style={{ width: "140px", flexShrink: 0 }}>
+                    <img src={imagemMateria(n, i)} alt="" className="w-full h-full object-cover" style={{ minHeight: "100%" }} />
+                    {n.categoria && (
+                      <span className="absolute top-2 left-2" style={{
+                        fontSize: "0.6rem", fontWeight: 700, padding: "0.18rem 0.5rem", borderRadius: "999px",
+                        textTransform: "uppercase", letterSpacing: "0.03em", background: "var(--pill-active-bg, var(--vinho))",
+                        color: "var(--pill-active-fg, #fff)",
+                      }}>
+                        {n.categoria}
+                      </span>
+                    )}
                   </div>
-                  {(n.materia || n.resumo) && (
-                    <p style={{ color: "#F5ECDD", fontSize: "0.83rem", lineHeight: 1.55, marginBottom: "0.5rem", whiteSpace: "pre-wrap" }}>
-                      {n.materia || n.resumo}
-                    </p>
-                  )}
-                  <div className="flex items-center gap-2" style={{ flexWrap: "wrap", fontSize: "0.72rem" }}>
-                    <span style={{ color: "rgba(255,255,255,0.75)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                      <CalendarDays size={12} /> Publicado em {formatarData(n.data_publicacao)}
-                    </span>
-                    <span style={{ display: "flex", alignItems: "center", gap: "0.25rem", color: "#C8F5D0" }} title={n.revisado_final_por ? `Por ${n.revisado_final_por} em ${formatarDataHora(n.revisado_final_em)}` : undefined}>
-                      <ShieldCheck size={12} /> Revisão definitiva confirmada
-                    </span>
-                    {(n.fontes || []).map((url, i) => (
-                      <a key={i} href={url} target="_blank" rel="noopener noreferrer"
-                        style={{ display: "flex", alignItems: "center", gap: "0.25rem", color: "#FFE9B0", border: "1px solid rgba(255,233,176,0.4)", borderRadius: "999px", padding: "0.15rem 0.55rem", textDecoration: "none" }}>
-                        <LinkIcon size={11} /> {dominio(url)}
-                      </a>
-                    ))}
+                  <div style={{ padding: "1rem 1.1rem", flex: 1, minWidth: 0 }}>
+                    <div className="flex items-start justify-between gap-2">
+                      <p style={{ fontWeight: 700, fontSize: "0.95rem", color: "var(--dourado-light)", marginBottom: "0.3rem" }}>{n.manchete}</p>
+                      <button type="button" onClick={() => excluir(n)} disabled={excluindo === n.id || !podePublicar} title={podePublicar ? "Excluir matéria" : "Sem permissão para excluir"}
+                        style={{ background: "none", border: "none", cursor: podePublicar ? "pointer" : "not-allowed", color: "var(--red)", flexShrink: 0, opacity: podePublicar ? 1 : 0.4 }}>
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                    {(n.materia || n.resumo) && (
+                      <p className="line-clamp-3" style={{ color: "var(--text-muted)", fontSize: "0.83rem", lineHeight: 1.55, marginBottom: "0.5rem", whiteSpace: "pre-wrap" }}>
+                        {n.materia || n.resumo}
+                      </p>
+                    )}
+                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap", fontSize: "0.72rem" }}>
+                      <span style={{ color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                        <CalendarDays size={12} /> Publicado em {formatarData(n.data_publicacao)}
+                      </span>
+                      <span style={{ display: "flex", alignItems: "center", gap: "0.25rem", color: "var(--green-light)" }} title={n.revisado_final_por ? `Por ${n.revisado_final_por} em ${formatarDataHora(n.revisado_final_em)}` : undefined}>
+                        <ShieldCheck size={12} /> Revisão definitiva confirmada
+                      </span>
+                      {(n.fontes || []).map((url, i) => (
+                        <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                          style={{ display: "flex", alignItems: "center", gap: "0.25rem", color: "var(--text-muted)", border: "1px solid var(--border)", borderRadius: "999px", padding: "0.15rem 0.55rem", textDecoration: "none" }}>
+                          <LinkIcon size={11} /> {dominio(url)}
+                        </a>
+                      ))}
+                    </div>
                   </div>
                 </div>
               ))}

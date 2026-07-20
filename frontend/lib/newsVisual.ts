@@ -1,4 +1,5 @@
 import type { CSSProperties } from "react";
+import type { NoticiaNews } from "@/lib/api";
 
 // Visual compartilhado das matérias do News (site + app): fundo fotográfico
 // alternado entre TODAS as fotos temáticas do site (as 5 de
@@ -29,6 +30,15 @@ export function fundoMateria(index: number): string {
 
 export function corMateria(index: number): { cor: string; borda: string } {
   return CORES_MATERIA[index % CORES_MATERIA.length];
+}
+
+/** Ilustração de uma matéria (#news-redesign): foto do banco de imagens
+ * quando a matéria tem `imagem`; senão cai no fundo temático rotativo
+ * (mesma foto por índice, sempre a mesma combinação). Compartilhado entre
+ * a página pública (app/news/page.tsx), o admin do site (NewsAdmin.tsx) e o
+ * admin do app (mobile/menu/News.tsx) para as três telas ficarem consistentes. */
+export function imagemMateria(n: NoticiaNews, index: number): string {
+  return n.imagem || fundoMateria(index);
 }
 
 /** Estilo completo do cartão de matéria (site e app): foto + camada de cor

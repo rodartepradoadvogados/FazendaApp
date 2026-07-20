@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Newspaper, Link as LinkIcon, AlertTriangle, Loader2, RefreshCw, CalendarDays, ArrowRight } from "lucide-react";
 import { fetchNoticias, type NoticiaNews } from "@/lib/api";
-import { fundoMateria } from "@/lib/newsVisual";
+import { imagemMateria } from "@/lib/newsVisual";
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -13,13 +13,6 @@ function formatarData(iso?: string | null): string {
 
 function dominio(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
-}
-
-// Ilustração de uma matéria: foto do banco (#news-redesign) quando a matéria
-// tem `imagem`; senão cai no fundo temático rotativo já usado no resto do
-// site (mesma foto por índice, sempre a mesma combinação).
-function imagemMateria(n: NoticiaNews, index: number): string {
-  return n.imagem || fundoMateria(index);
 }
 
 export default function NewsPage() {
