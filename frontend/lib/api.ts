@@ -114,11 +114,25 @@ export async function login(username: string, senha: string) {
 
 // Preferência pessoal de paleta de cores (Vinho/Verde) — cada usuário guarda a sua.
 export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde") {
+  return salvarPreferencias({ paleta });
+}
+
+// Meu e-mail — QUALQUER usuário logado pode definir o próprio e-mail (não
+// precisa ser dono/admin, ver backend PUT /auth/preferencias). É o único jeito
+// self-service de o proprietário se identificar como tal (eh_dono compara com
+// EMAIL_DONO): sem isso, só um ajuste manual no banco resolvia. Depois de
+// salvar, eh_dono/pode_publicar_materias_blog já vêm atualizados na resposta
+// e são aplicados no localStorage na hora — sem precisar sair e entrar de novo.
+export async function salvarMeuEmail(email: string) {
+  return salvarPreferencias({ email });
+}
+
+async function salvarPreferencias(dados: { paleta?: "vinho" | "verde"; email?: string }) {
   const res = await fetch(`${API}/auth/preferencias`, {
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
-    body: JSON.stringify({ paleta }),
+    body: JSON.stringify(dados),
   });
-  if (!res.ok) throw new Error("Erro ao salvar preferência de paleta");
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar preferência"); }
   const usuario = await res.json();
   try {
     const atual = getUsuario();
