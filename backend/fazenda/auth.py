@@ -176,13 +176,39 @@ def exigir_modulo_qualquer(*modulos: str):
 # Seed do administrador inicial
 # ---------------------------------------------------------------------------
 def seed_admin(session: Session) -> None:
-    """Cria o admin inicial se ainda não houver nenhum usuário."""
+    """Cria o admin inicial se ainda não houver nenhum usuário. Já nasce com
+    e-mail = EMAIL_DONO — é o próprio proprietário — para que `exigir_dono`/
+    `eh_dono` (relatório de Acessos e Auditoria) funcionem desde o primeiro
+    login, sem precisar de um passo manual de cadastro depois."""
     existe = session.exec(select(Usuario)).first()
     if existe:
         return
     username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
     senha = os.environ.get("ADMIN_PASS", "820908")
-    session.add(Usuario(username=username, nome="Alexandre Rodarte", senha_hash=hash_senha(senha), papel="admin"))
+    session.add(Usuario(
+        username=username, nome="Alexandre Rodarte", senha_hash=hash_senha(senha),
+        papel="admin", email=EMAIL_DONO,
+    ))
+    session.commit()
+
+
+def seed_email_dono_backfill(session: Session) -> None:
+    """Uma única vez (SeedFlag): bancos já existentes (deploy anterior a esta
+    mudança) têm o admin inicial sem e-mail — seed_admin() rodou antes de
+    passar a gravar `email=EMAIL_DONO`, então `exigir_dono`/`eh_dono` (aba
+    "Acessos e Auditoria", site e app) nunca fecham, mesmo sendo o único
+    usuário do sistema. Preenche o e-mail só quando há EXATAMENTE um usuário
+    cadastrado (sistema de fazenda única) e ele ainda está sem e-mail — nunca
+    sobrescreve um e-mail já definido, nem mexe se já houver mais de um
+    usuário (aí a decisão de qual é o dono deixa de ser óbvia)."""
+    chave = "email_dono_backfill_admin_inicial_202607"
+    if session.get(SeedFlag, chave):
+        return
+    usuarios = session.exec(select(Usuario)).all()
+    if len(usuarios) == 1 and not (usuarios[0].email or "").strip():
+        usuarios[0].email = EMAIL_DONO
+        session.add(usuarios[0])
+    session.add(SeedFlag(chave=chave))
     session.commit()
 
 
