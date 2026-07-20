@@ -2336,6 +2336,7 @@ class EstoqueMetaIn(BaseModel):
     classificacao_medicamento: str | None = None
     # Vínculo com um touro do Estoque de Sêmen — ver `Estoque.estoque_semen_id`.
     estoque_semen_id: int | None = None
+    conta_gerencial_despesa_padrao: str | None = None
 
 
 @router.get("/estoque-itens")
@@ -2364,6 +2365,7 @@ def atualizar_meta_estoque(item_id: int, dados: EstoqueMetaIn, session: Session 
     item.principio_ativo_id = dados.principio_ativo_id
     item.classificacao_medicamento = dados.classificacao_medicamento
     item.estoque_semen_id = dados.estoque_semen_id
+    item.conta_gerencial_despesa_padrao = dados.conta_gerencial_despesa_padrao
     session.add(item)
     session.commit()
     session.refresh(item)

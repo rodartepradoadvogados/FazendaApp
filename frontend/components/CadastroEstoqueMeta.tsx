@@ -40,6 +40,7 @@ export default function CadastroEstoqueMeta() {
   const [medidaEmbalagem, setMedidaEmbalagem] = useState("");
   const [quantidadeEmbalagem, setQuantidadeEmbalagem] = useState("");
   const [fornecedorId, setFornecedorId] = useState("");
+  const [contaGerencial, setContaGerencial] = useState("");
   const [estocavel, setEstocavel] = useState(true);
   const [salvando, setSalvando] = useState(false);
   const [novoAberto, setNovoAberto] = useState(false);
@@ -60,6 +61,7 @@ export default function CadastroEstoqueMeta() {
     setMedidaEmbalagem(it.medida_embalagem ?? "");
     setQuantidadeEmbalagem(it.quantidade_embalagem?.toString() ?? "");
     setFornecedorId(it.fornecedor_id?.toString() ?? "");
+    setContaGerencial(it.conta_gerencial_despesa_padrao ?? "");
     setEstocavel(it.estocavel !== false);
   };
 
@@ -71,6 +73,7 @@ export default function CadastroEstoqueMeta() {
         medida_embalagem: medidaEmbalagem.trim() === "" ? null : medidaEmbalagem,
         quantidade_embalagem: quantidadeEmbalagem.trim() === "" ? null : Number(quantidadeEmbalagem),
         fornecedor_id: fornecedorId.trim() === "" ? null : Number(fornecedorId),
+        conta_gerencial_despesa_padrao: contaGerencial.trim() === "" ? null : contaGerencial,
         estocavel,
       });
       setEditando(null);
@@ -171,10 +174,20 @@ export default function CadastroEstoqueMeta() {
                           {fornecedores.map((f) => <option key={f.id} value={f.id}>{f.nome}</option>)}
                         </select>
                       </td>
-                      <td style={{ fontSize: "0.78rem" }}>{nomeConta(it.conta_gerencial_despesa_padrao)}</td>
+                      <td>
+                        <select style={inputStyle} value={contaGerencial} onChange={(e) => setContaGerencial(e.target.value)}>
+                          <option value="">—</option>
+                          {contas.map((c) => <option key={c.codigo} value={c.codigo}>{`${c.codigo} — ${c.nome}`}</option>)}
+                        </select>
+                      </td>
                       <td><input type="checkbox" checked={estocavel} onChange={(e) => setEstocavel(e.target.checked)} /></td>
                       <td>{entraNoRmca(it) ? "Sim" : "Não"}</td>
                       <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                        {unidadeEmbalagem === "Saca" && (medidaEmbalagem !== "kg/saca" || quantidadeEmbalagem.trim() === "") && (
+                          <span title="Para contar como ensacado na Alimentação, preencha também &quot;kg/saca&quot; e a quantidade por saca." style={{ marginRight: "0.4rem", display: "inline-flex", verticalAlign: "middle", color: "var(--warning, #d97706)" }}>
+                            <AlertTriangle size={14} />
+                          </span>
+                        )}
                         <button className="btn-primary" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem", marginRight: "0.3rem" }} onClick={() => salvar(it.id)} disabled={salvando}><Check size={13} /></button>
                         <button className="btn-ghost" style={{ fontSize: "0.72rem", padding: "0.25rem 0.5rem" }} onClick={() => setEditando(null)}><X size={13} /></button>
                       </td>

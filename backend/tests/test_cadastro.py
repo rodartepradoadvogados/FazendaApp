@@ -158,6 +158,29 @@ class TestMetaEstoque:
         assert r.status_code == 200
         assert r.json()["considerar_rmca"] is True
 
+    def test_conta_gerencial_despesa_padrao_e_editavel_e_persiste(self, client):
+        # Ao contrário do considerar_rmca legado (acima), a conta gerencial
+        # padrão do item é o campo que de fato controla a elegibilidade do
+        # RMCA físico — a API precisa aceitar e persistir essa mudança.
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Concentrado proteico", categoria="alimento", quantidade=50))
+            s.commit()
+        item_id = c.get("/cadastro/estoque-itens").json()[0]["id"]
+
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"conta_gerencial_despesa_padrao": "3.01.01"})
+        assert r.status_code == 200
+        assert r.json()["conta_gerencial_despesa_padrao"] == "3.01.01"
+
+        with Session(engine) as s:
+            item = s.get(Estoque, item_id)
+            assert item.conta_gerencial_despesa_padrao == "3.01.01"
+
+        # Limpando o campo (envia null) também deve funcionar.
+        r = c.put(f"/cadastro/estoque-itens/{item_id}", json={"conta_gerencial_despesa_padrao": None})
+        assert r.status_code == 200
+        assert r.json()["conta_gerencial_despesa_padrao"] is None
+
 
 class TestSindicanciaContaGerencialEstoque:
     """Sindicância automática: item de estoque -> conta gerencial padrão."""

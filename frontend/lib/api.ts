@@ -904,7 +904,7 @@ export async function atualizarItemEstoque(id: number, dados: Record<string, unk
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de estoque"); }
   return res.json();
 }
-export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {
+export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; conta_gerencial_despesa_padrao?: string | null; estocavel?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
