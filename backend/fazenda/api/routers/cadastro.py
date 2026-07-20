@@ -328,6 +328,12 @@ class FolhaPagamentoIn(BaseModel):
     percentual_ir: float = 0.0
     valor_inss: float = 0.0
     valor_ir: float = 0.0
+    # FGTS/DCTF — opcionais (ver `_calcular_encargo_projetado`): em branco, não
+    # afetam o lançamento nem entram na soma de `gerar-guias`.
+    percentual_fgts: float | None = None
+    valor_fgts: float | None = None
+    percentual_dctf: float | None = None
+    valor_dctf: float | None = None
     data_pagamento: date | None = None
     status: str = "pendente"
     observacao: str | None = None
@@ -340,6 +346,25 @@ def _competencia_seguinte(competencia: str) -> str:
     ano, mes = (int(x) for x in competencia.split("-"))
     ano, mes = (ano + 1, 1) if mes == 12 else (ano, mes + 1)
     return f"{ano:04d}-{mes:02d}"
+
+
+def _calcular_encargo_projetado(valor_bruto: float, percentual: Optional[float], valor: Optional[float]) -> Optional[float]:
+    """
+    Regra comum a FGTS e DCTF na folha: quando `valor` vem preenchido, ele tem
+    PRIORIDADE e é usado tal como informado (mutuamente exclusivo com o
+    percentual); senão, se `percentual` vier preenchido, o valor é calculado
+    como percentual×valor_bruto; se nenhum dos dois vier preenchido, retorna
+    None — o lançamento de folha segue funcionando normalmente, apenas sem
+    contribuir para a soma de `gerar-guias` daquela competência.
+    NÃO reproduz a fórmula legal real de FGTS (8% s/ remuneração) nem da guia
+    de DCTF — o percentual/valor é decidido pelo usuário/contador; aqui é só
+    a base para projeção interna de fluxo de caixa.
+    """
+    if valor is not None:
+        return round(valor, 2)
+    if percentual is not None:
+        return round(valor_bruto * percentual / 100, 2)
+    return None
 
 
 def _data_vencimento_folha(competencia: str, dia_vencimento: Optional[int]) -> date:
@@ -581,6 +606,8 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
     valor_liquido = round(dados.valor_bruto - descontos - valor_inss - valor_ir - valor_vale, 2)
     if valor_liquido <= 0:
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
+    valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
+    valor_dctf = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_dctf, dados.valor_dctf)
 
     # Gera também a conta a pagar correspondente — sem isso, a folha nunca
     # aparecia em Contas a Pagar nem na Agenda (só as competências seguintes,
@@ -592,6 +619,8 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         pessoa_id=dados.pessoa_id, competencia=dados.competencia, valor_bruto=dados.valor_bruto,
         descontos=descontos, percentual_inss=dados.percentual_inss, percentual_ir=dados.percentual_ir,
         valor_inss=valor_inss, valor_ir=valor_ir, valor_vale=valor_vale, valor_liquido=valor_liquido,
+        percentual_fgts=dados.percentual_fgts, valor_fgts=valor_fgts,
+        percentual_dctf=dados.percentual_dctf, valor_dctf=valor_dctf,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         recorrente=dados.recorrente, dia_vencimento=dados.dia_vencimento if dados.recorrente else None,
         numero_lancamento_gerado=numero_lancamento,
@@ -639,6 +668,8 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
         raise HTTPException(status_code=400, detail="Valor líquido deve ser positivo")
     if dados.recorrente and not (dados.dia_vencimento and 1 <= dados.dia_vencimento <= 28):
         raise HTTPException(status_code=400, detail="Informe o dia de vencimento (1 a 28) para lançamentos recorrentes")
+    valor_fgts = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_fgts, dados.valor_fgts)
+    valor_dctf = _calcular_encargo_projetado(dados.valor_bruto, dados.percentual_dctf, dados.valor_dctf)
     registro.pessoa_id = dados.pessoa_id
     registro.competencia = dados.competencia
     registro.valor_bruto = dados.valor_bruto
@@ -649,6 +680,10 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
     registro.valor_ir = valor_ir
     registro.valor_vale = valor_vale
     registro.valor_liquido = valor_liquido
+    registro.percentual_fgts = dados.percentual_fgts
+    registro.valor_fgts = valor_fgts
+    registro.percentual_dctf = dados.percentual_dctf
+    registro.valor_dctf = valor_dctf
     registro.data_pagamento = dados.data_pagamento
     registro.status = dados.status
     registro.observacao = dados.observacao
@@ -697,6 +732,162 @@ def excluir_folha_pagamento(registro_id: int, session: Session = Depends(get_ses
     session.delete(registro)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Guias consolidadas de FGTS/DCTF — projeção de contas a pagar somando o
+# `valor_fgts`/`valor_dctf` de TODOS os lançamentos de folha de uma
+# competência (todos os funcionários), fora de escopo qualquer fórmula legal
+# real ou integração com sistemas do governo: é só uma soma decidida pelo
+# usuário/contador, para antecipar o fluxo de caixa. As contas a pagar
+# geradas são registros comuns de ContaGerencial (mesmo padrão de Folha/
+# Férias/13º) — por isso já são editáveis (valor e vencimento) pelo fluxo
+# normal de "Contas a Pagar" / "Lançamentos", sem precisar de endpoint
+# especial de edição.
+# ---------------------------------------------------------------------------
+TIPO_DOCUMENTO_GUIA_FGTS = "Guia FGTS"
+TIPO_DOCUMENTO_GUIA_DCTF = "Guia DCTF"
+
+
+class GerarGuiasFgtsDctfIn(BaseModel):
+    competencia: str  # "AAAA-MM" — mesma competência dos lançamentos de folha somados
+    # Ajuste opcional do valor projetado (preview) antes de confirmar a
+    # geração — se omitido, usa a soma calculada dos lançamentos da folha.
+    valor_fgts: float | None = None
+    valor_dctf: float | None = None
+    # Vencimento das guias — se omitido, usa o dia 20 do mês SEGUINTE à
+    # competência (editável antes ou depois de gerar, nas duas contas).
+    data_vencimento: date | None = None
+    centro_custo: str = "Pecuária Leiteira"
+
+
+def _lancamentos_folha_competencia(session: Session, competencia: str) -> list[FolhaPagamento]:
+    """TODOS os lançamentos de folha (de qualquer funcionário) de uma
+    competência — usado para somar valor_fgts/valor_dctf; registros sem o
+    campo preenchido simplesmente não contribuem (ver
+    `_calcular_encargo_projetado`)."""
+    return session.exec(select(FolhaPagamento).where(FolhaPagamento.competencia == competencia)).all()
+
+
+def _guias_ja_geradas(session: Session, competencia: str) -> bool:
+    """
+    Proteção simples contra geração duplicada: as guias já existem para essa
+    competência se houver alguma ContaGerencial com tipo_documento "Guia FGTS"
+    ou "Guia DCTF" cuja data_competencia seja o 1º dia do mês da competência
+    informada — o mesmo campo/convenção já usado para vincular a folha
+    individual à sua competência (`data_competencia=date(ano, mes, 1)`).
+    """
+    ano, mes = (int(x) for x in competencia.split("-"))
+    primeiro_dia = date(ano, mes, 1)
+    existente = session.exec(
+        select(ContaGerencial).where(
+            ContaGerencial.tipo_documento.in_([TIPO_DOCUMENTO_GUIA_FGTS, TIPO_DOCUMENTO_GUIA_DCTF]),
+            ContaGerencial.data_competencia == primeiro_dia,
+        )
+    ).first()
+    return existente is not None
+
+
+@router.get("/folha-pagamento/guias-preview")
+def preview_guias_fgts_dctf(competencia: str, session: Session = Depends(get_session)) -> dict:
+    """
+    Pré-visualização da soma projetada de FGTS/DCTF de uma competência (todos
+    os funcionários) — usada pelo frontend para MOSTRAR os valores antes do
+    usuário confirmar a geração das guias (que ele ainda pode ajustar).
+    """
+    registros = _lancamentos_folha_competencia(session, competencia)
+    valor_fgts = round(sum(r.valor_fgts or 0.0 for r in registros), 2)
+    valor_dctf = round(sum(r.valor_dctf or 0.0 for r in registros), 2)
+    ano_venc, mes_venc = (int(x) for x in _competencia_seguinte(competencia).split("-"))
+    return {
+        "competencia": competencia,
+        "quantidade_lancamentos": len(registros),
+        "valor_fgts": valor_fgts,
+        "valor_dctf": valor_dctf,
+        "data_vencimento_sugerida": date(ano_venc, mes_venc, 20),
+        "ja_gerado": _guias_ja_geradas(session, competencia),
+    }
+
+
+@router.post("/folha-pagamento/gerar-guias")
+def gerar_guias_fgts_dctf(
+    dados: GerarGuiasFgtsDctfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+) -> dict:
+    """
+    Cria as DUAS contas a pagar consolidadas (Guia FGTS e Guia DCTF) de uma
+    competência, somando o valor_fgts/valor_dctf de todos os lançamentos de
+    folha daquela competência (a soma pode ser sobrescrita em `dados` — é só
+    o valor inicial sugerido). Vencimento padrão: dia 20 do mês seguinte à
+    competência, também sobrescrevível. Bloqueia geração duplicada — se as
+    guias já existirem para a competência, aponta para editá-las em Contas a
+    Pagar em vez de gerar de novo.
+    """
+    if _guias_ja_geradas(session, dados.competencia):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"As guias de FGTS/DCTF da competência {dados.competencia} já foram geradas. "
+                "Edite os lançamentos existentes em Contas a Pagar em vez de gerar novamente."
+            ),
+        )
+    registros = _lancamentos_folha_competencia(session, dados.competencia)
+    if not registros:
+        raise HTTPException(status_code=404, detail=f"Nenhum lançamento de folha encontrado para a competência {dados.competencia}")
+
+    valor_fgts = round(dados.valor_fgts, 2) if dados.valor_fgts is not None else round(sum(r.valor_fgts or 0.0 for r in registros), 2)
+    valor_dctf = round(dados.valor_dctf, 2) if dados.valor_dctf is not None else round(sum(r.valor_dctf or 0.0 for r in registros), 2)
+    if valor_fgts <= 0 and valor_dctf <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="Nenhum valor de FGTS/DCTF foi lançado nos funcionários dessa competência — informe percentual ou valor no lançamento de folha, ou preencha manualmente aqui.",
+        )
+
+    ano, mes = (int(x) for x in dados.competencia.split("-"))
+    ano_venc, mes_venc = (int(x) for x in _competencia_seguinte(dados.competencia).split("-"))
+    data_vencimento = dados.data_vencimento or date(ano_venc, mes_venc, 20)
+
+    contas_criadas: list[ContaGerencial] = []
+    if valor_fgts > 0:
+        numero_fgts = _proximo_numero_lancamento(session, ano)
+        conta_fgts = ContaGerencial(
+            numero_lancamento=numero_fgts,
+            descricao=f"Guia FGTS — {dados.competencia}",
+            data_vencimento=data_vencimento,
+            data_competencia=date(ano, mes, 1),
+            tipo_documento=TIPO_DOCUMENTO_GUIA_FGTS,
+            centro_custo=dados.centro_custo,
+            valor_total=valor_fgts,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            usuario_id=user.id,
+        )
+        session.add(conta_fgts)
+        contas_criadas.append(conta_fgts)
+    if valor_dctf > 0:
+        numero_dctf = _proximo_numero_lancamento(session, ano)
+        conta_dctf = ContaGerencial(
+            numero_lancamento=numero_dctf,
+            descricao=f"Guia DCTF — {dados.competencia}",
+            data_vencimento=data_vencimento,
+            data_competencia=date(ano, mes, 1),
+            tipo_documento=TIPO_DOCUMENTO_GUIA_DCTF,
+            centro_custo=dados.centro_custo,
+            valor_total=valor_dctf,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            usuario_id=user.id,
+        )
+        session.add(conta_dctf)
+        contas_criadas.append(conta_dctf)
+
+    session.commit()
+    for conta in contas_criadas:
+        session.refresh(conta)
+    return {
+        "competencia": dados.competencia,
+        "data_vencimento": data_vencimento,
+        "contas": [c.model_dump() for c in contas_criadas],
+    }
 
 
 @router.get("/folha-pagamento-unificada")

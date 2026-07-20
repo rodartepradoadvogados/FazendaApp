@@ -558,6 +558,9 @@ export async function fetchFolhaPagamento() {
 type FolhaPagamentoDados = {
   pessoa_id: number; competencia: string; valor_bruto: number; descontos?: number;
   percentual_inss?: number; percentual_ir?: number; valor_inss?: number; valor_ir?: number;
+  // FGTS/DCTF — opcionais, só para projeção (ver `gerarGuiasFgtsDctf` abaixo).
+  percentual_fgts?: number | null; valor_fgts?: number | null;
+  percentual_dctf?: number | null; valor_dctf?: number | null;
   data_pagamento?: string; status?: string; observacao?: string; recorrente?: boolean; dia_vencimento?: number | null;
 };
 export async function criarFolhaPagamento(dados: FolhaPagamentoDados) {
@@ -577,6 +580,39 @@ export async function atualizarFolhaPagamento(id: number, dados: FolhaPagamentoD
 export async function excluirFolhaPagamento(id: number) {
   const res = await authFetch(`${API}/cadastro/folha-pagamento/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir lançamento de folha"); }
+  return res.json();
+}
+
+// ── Guias consolidadas de FGTS/DCTF (projeção de contas a pagar somando o
+// valor_fgts/valor_dctf de todos os funcionários de uma competência) ──
+export type PreviewGuiasFgtsDctf = {
+  competencia: string;
+  quantidade_lancamentos: number;
+  valor_fgts: number;
+  valor_dctf: number;
+  data_vencimento_sugerida: string;
+  ja_gerado: boolean;
+};
+export async function fetchPreviewGuiasFgtsDctf(competencia: string): Promise<PreviewGuiasFgtsDctf> {
+  const res = await authFetch(
+    `${API}/cadastro/folha-pagamento/guias-preview?competencia=${competencia}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao pré-visualizar guias de FGTS/DCTF"); }
+  return res.json();
+}
+type GerarGuiasFgtsDctfDados = {
+  competencia: string;
+  valor_fgts?: number | null;
+  valor_dctf?: number | null;
+  data_vencimento?: string | null;
+  centro_custo?: string;
+};
+export async function gerarGuiasFgtsDctf(dados: GerarGuiasFgtsDctfDados) {
+  const res = await authFetch(`${API}/cadastro/folha-pagamento/gerar-guias`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar guias de FGTS/DCTF"); }
   return res.json();
 }
 
@@ -1204,6 +1240,35 @@ export async function fetchRelatorioCompraVendaAnimais(filtros: {
   const res = await authFetch(`${API}/relatorio-compra-venda-animais/?${params.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Relatório de compra/venda de animais error: ${res.status}`);
   return res.json() as Promise<LinhaRelatorioCompraVendaAnimal[]>;
+}
+
+// Rastreabilidade sanitária (Sanidade > Rastreabilidade) — linha do tempo de
+// GTA + aplicações + protocolos + exames + doenças, filtrável por animal,
+// período ou nº de GTA. Ver GET /relatorio-rastreabilidade-sanitaria/.
+export type LinhaRastreabilidadeSanitaria = {
+  numero_animal: string;
+  nome_animal: string | null;
+  tipo_evento: "Compra" | "Venda" | "Aplicação sanitária" | "Protocolo sanitário" | "Exame" | "Doença (ocorrência clínica)" | "Baixa";
+  data: string;
+  gta: string | null;
+  descricao: string | null;
+  contraparte: string | null;
+  produto: string | null;
+  resultado: string | null;
+  doenca: string | null;
+  responsavel: string | null;
+};
+export async function fetchRastreabilidadeSanitaria(filtros: {
+  numero?: string; gta?: string; dataDe?: string; dataAte?: string;
+}) {
+  const params = new URLSearchParams();
+  if (filtros.numero) params.set("numero", filtros.numero);
+  if (filtros.gta) params.set("gta", filtros.gta);
+  if (filtros.dataDe) params.set("data_de", filtros.dataDe);
+  if (filtros.dataAte) params.set("data_ate", filtros.dataAte);
+  const res = await authFetch(`${API}/relatorio-rastreabilidade-sanitaria/?${params.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Relatório de rastreabilidade sanitária error: ${res.status}`);
+  return res.json() as Promise<LinhaRastreabilidadeSanitaria[]>;
 }
 
 // ── Compra de sêmen (Lançamentos > Compra/Venda > Comprar sêmen) ──

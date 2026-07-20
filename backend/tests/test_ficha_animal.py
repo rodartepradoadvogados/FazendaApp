@@ -13,8 +13,9 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import (
-    Animal, BaixaAnimal, ColostragemBezerra, ControleLeiteiro, MovimentoLote, Parto, PesagemCorporal,
-    ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, Secagem, Servico,
+    Animal, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EventoSanitario, ExameResultado,
+    MovimentoLote, OcorrenciaClinica, Parto, PesagemCorporal,
+    ProtocoloSanitario, ProtocoloSanitarioLancamento, Sanidade, Secagem, Servico, VendaAnimal,
 )
 
 
@@ -103,6 +104,61 @@ class TestFichaAnimal:
         assert corpo["partos"] == []
         assert corpo["colostragem"] is None
         assert corpo["baixa"] is None
+        assert corpo["compras"] == []
+        assert corpo["vendas"] == []
+        assert corpo["gtas"] == []
+        assert corpo["ocorrencias_clinicas"] == []
+        assert corpo["exames_resultados"] == []
+        assert corpo["linha_tempo_sanitaria"] == []
+
+    def test_rastreabilidade_sanitaria_reune_gtas_exames_e_doencas(self, client):
+        """Um animal comprado e depois vendido (duas GTAs) com exame e doença
+        registrados deve aparecer na ficha com a cadeia sanitária completa:
+        GTAs, exames, doenças e a linha do tempo cronológica unificada."""
+        c, engine = client
+        with Session(engine) as s:
+            animal = Animal(numero="600", sexo="F", data_nasc=date(2023, 1, 1))
+            s.add(animal)
+            s.commit()
+            s.refresh(animal)
+
+            s.add(CompraAnimal(numero_animal="600", vendedor="Fazenda Boa Vista", valor=3000.0,
+                                tipo_valor="por_animal", data_compra=date(2024, 1, 10), gta="GTA-0001"))
+            s.add(VendaAnimal(numero_animal="600", comprador="Frigorífico Central", valor=4000.0,
+                               tipo_valor="por_animal", data_venda=date(2025, 6, 1), gta="GTA-0002"))
+            s.add(OcorrenciaClinica(numero_matriz="600", doenca="Mastite", data_ocorrencia=date(2024, 5, 1)))
+
+            evento = EventoSanitario(nome="Brucelose")
+            s.add(evento)
+            s.commit()
+            s.refresh(evento)
+            s.add(ExameResultado(numero_matriz="600", evento_sanitario_id=evento.id,
+                                  data_exame=date(2024, 3, 1), resultado="negativo"))
+            s.commit()
+
+        r = c.get("/animais/600/ficha")
+        assert r.status_code == 200
+        corpo = r.json()
+
+        assert len(corpo["compras"]) == 1
+        assert corpo["compras"][0]["gta"] == "GTA-0001"
+        assert len(corpo["vendas"]) == 1
+        assert corpo["vendas"][0]["gta"] == "GTA-0002"
+        assert corpo["gtas"] == ["GTA-0001", "GTA-0002"]
+
+        assert len(corpo["ocorrencias_clinicas"]) == 1
+        assert corpo["ocorrencias_clinicas"][0]["doenca"] == "Mastite"
+
+        assert len(corpo["exames_resultados"]) == 1
+        assert corpo["exames_resultados"][0]["resultado"] == "negativo"
+        assert corpo["exames_resultados"][0]["evento_sanitario_nome"] == "Brucelose"
+
+        # Linha do tempo cronológica: compra (jan/24) -> exame (mar/24) ->
+        # doença (mai/24) -> venda (jun/25).
+        tipos_em_ordem = [e["tipo_evento"] for e in corpo["linha_tempo_sanitaria"]]
+        assert tipos_em_ordem == ["Compra", "Exame", "Doença (ocorrência clínica)", "Venda"]
+        assert corpo["linha_tempo_sanitaria"][0]["gta"] == "GTA-0001"
+        assert corpo["linha_tempo_sanitaria"][-1]["gta"] == "GTA-0002"
 
 
 def test_estratificacao_rebanho():

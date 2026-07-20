@@ -969,6 +969,23 @@ class FolhaPagamento(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # FGTS/DCTF — projeção OPCIONAL por lançamento (mesmo par percentual/valor
+    # do INSS/IR, mas os quatro nascem em branco: se nada for preenchido, o
+    # lançamento de folha continua funcionando exatamente como antes, sem
+    # nenhum efeito. Diferente de INSS/IR (calculados no frontend e só
+    # armazenados aqui), o cálculo final destes — valor explícito tem
+    # prioridade sobre percentual×bruto quando os dois vierem preenchidos —
+    # é feito no backend (ver `_calcular_encargo_projetado` em
+    # `routers/cadastro.py`), para servir de base confiável à soma consolidada
+    # usada em `POST /folha-pagamento/gerar-guias`. NÃO é o cálculo legal real
+    # de FGTS (8% s/ remuneração) nem da guia de DCTF — o percentual/valor é
+    # decidido pelo usuário/contador; aqui só projetamos o fluxo de caixa,
+    # sem qualquer envio a sistemas do governo.
+    percentual_fgts: Optional[float] = None
+    valor_fgts: Optional[float] = None
+    percentual_dctf: Optional[float] = None
+    valor_dctf: Optional[float] = None
+
     # Recorrência mensal — marca este lançamento como o "modelo" a partir do
     # qual as competências seguintes são geradas automaticamente em Contas a
     # Pagar, sem precisar relançar a folha todo mês (dia_vencimento define o

@@ -6,7 +6,8 @@
 import { useEffect, useState } from "react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchRmca, firstDayOfMonth, today } from "@/lib/api";
-import { FiltroPeriodo, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
+import { fetchComCache } from "@/lib/offline";
+import { FiltroPeriodo, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
 
 type RmcaResp = {
   configurado: boolean;
@@ -40,16 +41,24 @@ export default function Rmca({ onVoltar }: { onVoltar: () => void }) {
   const [inicio, setInicio] = useState(firstDayOfMonth());
   const [fim, setFim] = useState(today());
   const [dados, setDados] = useState<RmcaResp | null>(null);
+  const [doCache, setDoCache] = useState(false);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState(false);
 
+  // Cada período (início/fim) tem sua própria cópia local — igual à visão de
+  // calendário da Agenda: sem internet, mostra o último cálculo já visto para
+  // esse mesmo período; períodos nunca abertos antes ficam sem dado offline.
   useEffect(() => {
     let vivo = true;
-    setCarregando(true); setErro(false);
-    fetchRmca(inicio, fim)
-      .then((d) => { if (vivo) setDados(d); })
-      .catch(() => { if (vivo) setErro(true); })
-      .finally(() => { if (vivo) setCarregando(false); });
+    setCarregando(true);
+    const chave = `menu_rmca_${inicio}_${fim}`;
+    fetchComCache<RmcaResp>(chave, () => fetchRmca(inicio, fim)).then((r) => {
+      if (!vivo) return;
+      setDados(r.dados);
+      setDoCache(r.doCache);
+      setErro(r.doCache && typeof navigator !== "undefined" && navigator.onLine);
+      setCarregando(false);
+    });
     return () => { vivo = false; };
   }, [inicio, fim]);
 
@@ -57,11 +66,14 @@ export default function Rmca({ onVoltar }: { onVoltar: () => void }) {
     <div>
       <MobVoltar titulo="RMCA" onVoltar={onVoltar} />
       <FiltroPeriodo inicio={inicio} fim={fim} onInicio={setInicio} onFim={setFim} />
+      <AvisoCopia chave={`menu_rmca_${inicio}_${fim}`} mostrar={doCache} />
 
-      {carregando ? (
+      {carregando && !dados ? (
         <Carregando />
-      ) : erro || !dados ? (
+      ) : erro && !dados ? (
         <Vazio>Sem internet para calcular o RMCA agora.</Vazio>
+      ) : !dados ? (
+        <Vazio>Sem dados salvos para este período. Conecte-se uma vez para baixar.</Vazio>
       ) : !dados.configurado ? (
         <Vazio>Configure as contas gerenciais de RMCA no site (Configurações › Parâmetros financeiros) para ver este relatório.</Vazio>
       ) : (

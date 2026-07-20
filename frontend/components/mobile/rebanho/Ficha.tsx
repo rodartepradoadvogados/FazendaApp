@@ -14,6 +14,9 @@ type Ficha = {
   animal: Record<string, unknown>;
   colostragem: Record<string, unknown> | null;
   compra: Record<string, unknown> | null;
+  compras: Record<string, unknown>[];
+  vendas: Record<string, unknown>[];
+  gtas: string[];
   baixa: Record<string, unknown> | null;
   pai: { nome: string | null; naab: string | null } | null;
   previsao_parto: string | null;
@@ -34,6 +37,8 @@ const SECOES: { chave: string; titulo: string; campos: Campo[] }[] = [
   { chave: "protocolos_sanitarios", titulo: "Protocolos sanitários", campos: [["data_inicio", "Data", true], ["protocolo_nome", "Protocolo"], ["classificacao_mastite", "Mastite"]] },
   { chave: "secagens", titulo: "Secagens", campos: [["data_secagem", "Data", true], ["motivo", "Motivo"]] },
   { chave: "eventos_agenda", titulo: "Agenda — eventos", campos: [["data_evento", "Data", true], ["descricao", "Descrição"], ["categoria", "Categoria"]] },
+  { chave: "exames_resultados", titulo: "Rastreabilidade — Exames", campos: [["data_exame", "Data", true], ["evento_sanitario_nome", "Exame"], ["resultado", "Resultado"]] },
+  { chave: "ocorrencias_clinicas", titulo: "Rastreabilidade — Doenças", campos: [["data_ocorrencia", "Data", true], ["doenca", "Doença"], ["observacao", "Observação"]] },
 ];
 
 function mostrarValor(v: unknown, data?: boolean): string {
@@ -276,17 +281,38 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
               )}
             </MobCard>
 
-          {compra && (
+          {!!ficha?.gtas?.length && (
             <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }}>
-              <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Compra</div>
-              <Grade>
-                <ParDado label="Data" valor={mostrarValor(compra.data_compra, true)} />
-                <ParDado label="Vendedor" valor={mostrarValor(compra.vendedor)} />
-                <ParDado label="Valor" valor={compra.valor != null ? `R$ ${compra.valor}` : "—"} />
-                <ParDado label="Responsável" valor={mostrarValor(compra.responsavel)} />
-              </Grade>
+              <div style={{ fontWeight: 700, marginBottom: "0.4rem" }}>GTA(s) do animal</div>
+              <div style={{ fontSize: "0.95rem", fontWeight: 600 }}>{ficha!.gtas.join(", ")}</div>
             </MobCard>
           )}
+
+          {(ficha?.compras || (compra ? [compra] : [])).map((c, i) => (
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }} key={`compra-${i}`}>
+              <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Compra</div>
+              <Grade>
+                <ParDado label="Data" valor={mostrarValor(c.data_compra, true)} />
+                <ParDado label="Vendedor" valor={mostrarValor(c.vendedor)} />
+                <ParDado label="Valor" valor={c.valor != null ? `R$ ${c.valor}` : "—"} />
+                <ParDado label="GTA" valor={mostrarValor(c.gta)} />
+                <ParDado label="Responsável" valor={mostrarValor(c.responsavel)} />
+              </Grade>
+            </MobCard>
+          ))}
+
+          {(ficha?.vendas || []).map((v, i) => (
+            <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem" }} key={`venda-${i}`}>
+              <div style={{ fontWeight: 700, marginBottom: "0.6rem" }}>Venda</div>
+              <Grade>
+                <ParDado label="Data" valor={mostrarValor(v.data_venda, true)} />
+                <ParDado label="Comprador" valor={mostrarValor(v.comprador)} />
+                <ParDado label="Valor" valor={v.valor != null ? `R$ ${v.valor}` : "—"} />
+                <ParDado label="GTA" valor={mostrarValor(v.gta)} />
+                <ParDado label="Responsável" valor={mostrarValor(v.responsavel)} />
+              </Grade>
+            </MobCard>
+          ))}
 
           {baixa && (
             <MobCard alt={proximoAlt()} style={{ marginBottom: "0.7rem", borderColor: "var(--mob-vermelho)" }}>
