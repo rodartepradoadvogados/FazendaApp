@@ -133,7 +133,7 @@ export default function CombinadorListas() {
                 <div style={{ maxHeight: 160, overflowY: "auto" }}>
                   <table className="fazenda-table" style={{ fontSize: "0.76rem" }}>
                     <tbody>
-                      {bloco.linhas.slice(0, 200).map((r: any, i: number) => (
+                      {bloco.linhas.map((r: any, i: number) => (
                         <tr key={i}>
                           <td>{r.numero_matriz}</td>
                           <td style={{ color: "var(--text-muted)" }}>{r.grupo || r.lote || r.categoria || r.motivo_exclusao || ""}</td>

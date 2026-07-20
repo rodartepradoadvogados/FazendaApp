@@ -6,8 +6,9 @@
 //  - Bolinha/corSemaforo: semáforo (vermelho/amarelo/verde/branco) dos relatórios.
 import { useCallback, useEffect, useState } from "react";
 import type { ReactNode } from "react";
-import { BarChart3 } from "lucide-react";
+import { BarChart3, ChevronLeft, ChevronRight } from "lucide-react";
 import { fetchComCache, cacheEm } from "@/lib/offline";
+export { usePaginacao } from "@/components/Paginacao";
 
 export function fmtCacheEm(iso: string): string {
   return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
@@ -88,6 +89,46 @@ export function NumAnimal({ children }: { children: ReactNode }) {
 export function brl(v?: number | null): string {
   if (v == null) return "—";
   return v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+}
+
+/** Rodapé de paginação (versão mobile, cores --mob-*) — usar com usePaginacao. */
+export function PaginacaoMob({
+  pagina, totalPaginas, totalLinhas, onMudarPagina,
+}: { pagina: number; totalPaginas: number; totalLinhas: number; onMudarPagina: (p: number) => void }) {
+  if (totalLinhas === 0) return null;
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", marginTop: "0.7rem" }}>
+      <span style={{ fontSize: "0.74rem", color: "var(--mob-muted)" }}>
+        Página {pagina} de {totalPaginas} ({totalLinhas})
+      </span>
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+        <button
+          type="button"
+          onClick={() => onMudarPagina(pagina - 1)}
+          disabled={pagina <= 1}
+          style={{
+            display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.74rem", padding: "0.3rem 0.55rem",
+            borderRadius: 8, border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
+            color: "var(--mob-text)", opacity: pagina <= 1 ? 0.5 : 1,
+          }}
+        >
+          <ChevronLeft size={13} /> Anterior
+        </button>
+        <button
+          type="button"
+          onClick={() => onMudarPagina(pagina + 1)}
+          disabled={pagina >= totalPaginas}
+          style={{
+            display: "flex", alignItems: "center", gap: "0.15rem", fontSize: "0.74rem", padding: "0.3rem 0.55rem",
+            borderRadius: 8, border: "1px solid var(--mob-border)", background: "var(--mob-surface-2)",
+            color: "var(--mob-text)", opacity: pagina >= totalPaginas ? 0.5 : 1,
+          }}
+        >
+          Próxima <ChevronRight size={13} />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /** Par de datas Início/Até — filtro de período obrigatório das telas de
