@@ -698,6 +698,10 @@ export default function AgendaPage() {
                         if (ev.evento_sanitario_id) p.set("evento_sanitario_id", String(ev.evento_sanitario_id));
                         if (numeroObrigatorio && e.numero_animal) p.set("numero_matriz", e.numero_animal);
                         if (e.data) p.set("data", e.data);
+                        // Pendência de uma regra do calendário sanitário JÁ existente
+                        // (tipo calendario_sanitario) — leva o id para não criar uma
+                        // regra nova duplicada ao dar baixa em Lançamentos.
+                        if (ev.tipo === "calendario_sanitario" && ev.calendario_id) p.set("calendario_id", String(ev.calendario_id));
                         return `/lancamentos?${p.toString()}`;
                       };
                       return (

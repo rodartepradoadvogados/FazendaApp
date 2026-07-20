@@ -9,10 +9,10 @@ from datetime import date, timedelta
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, Estoque, MovimentoLote, PrincipioAtivo, Sanidade
+from fazenda.models import Animal, CalendarioSanitario, Estoque, MovimentoLote, PrincipioAtivo, Sanidade
 
 
 @pytest.fixture
@@ -183,6 +183,64 @@ class TestCalendarioNaAgenda:
         rd = c.delete(f"/sanidade/calendario/{regra['id']}")
         assert rd.status_code == 200, rd.text
         assert not _agenda_calendario(c)
+
+
+class TestBaixaDeRegraExistenteComDiagnostico:
+    """Bug real: dar baixa (com diagnóstico) numa pendência que já vem de uma
+    regra do calendário sanitário existente (ex.: exame de tuberculose) tinha
+    que passar o id da regra (`calendario_id`) — sem isso, /cadastrar-preventivo
+    sempre criava uma regra NOVA duplicada e marcava a ocorrência realizada
+    dessa regra nova, deixando a pendência original (da regra antiga) presa na
+    Agenda para sempre, mesmo com o diagnóstico já registrado."""
+
+    def _cria_exame(self, c):
+        ev = c.post("/cadastro/eventos-sanitarios", json={"nome": "Exame de tuberculose", "categoria_preventiva": "exame"})
+        assert ev.status_code == 200, ev.text
+        r = c.post("/sanidade/calendario", json={
+            "evento_sanitario_id": ev.json()["id"], "categoria_alvo": "Rebanho",
+            "frequencia_valor": 1, "frequencia_unidade": "anos", "data_evento": HOJE.isoformat(),
+            "veterinario": "Dr. Carlos",
+        })
+        assert r.status_code == 200, r.text
+        return ev.json()["id"], r.json()["id"]
+
+    def test_calendario_id_da_baixa_sem_duplicar_regra(self, client):
+        c, engine = client
+        ev_id, regra_id = self._cria_exame(c)
+        assert _agenda_calendario(c)  # pendência do exame de hoje
+
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": HOJE.isoformat(), "animais": ["101"],
+            "calendario_id": regra_id, "resultado_exame": "negativo",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["regra"]["id"] == regra_id  # reaproveita a regra existente
+
+        with Session(engine) as s:
+            assert len(s.exec(select(CalendarioSanitario)).all()) == 1  # sem duplicar
+
+        rb = c.post("/agenda/realizados", json={"evento_id": f"calendario_sanitario_{regra_id}__{HOJE.isoformat()}"})
+        assert rb.status_code == 200, rb.text
+        assert not _agenda_calendario(c)
+
+    def test_calendario_id_de_outro_evento_da_404(self, client):
+        c, _ = client
+        ev_id, regra_id = self._cria_exame(c)
+        outro_ev = c.post("/cadastro/eventos-sanitarios", json={"nome": "Outra vacina"}).json()["id"]
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": outro_ev, "data_evento": HOJE.isoformat(), "animais": ["101"],
+            "calendario_id": regra_id,
+        })
+        assert r.status_code == 404
+
+    def test_calendario_id_inexistente_da_404(self, client):
+        c, _ = client
+        ev_id, _ = self._cria_exame(c)
+        r = c.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": HOJE.isoformat(), "animais": ["101"],
+            "calendario_id": 999999,
+        })
+        assert r.status_code == 404
 
 
 class TestPrincipioAtivoNaAgenda:

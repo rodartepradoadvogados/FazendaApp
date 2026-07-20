@@ -1796,6 +1796,10 @@ export type CadastrarPreventivoPayload = {
   // (relatório) + ação automática (positivo → A descartar).
   resultado_exame?: "positivo" | "negativo" | "indefinido" | null;
   resultado_numerico?: number | null;
+  // Baixa de uma ocorrência de uma regra do calendário sanitário já existente
+  // — quando informado, não cria regra nova nem redefine frequência, só marca
+  // a ocorrência como realizada (resolve a pendência da Agenda).
+  calendario_id?: number | null;
 };
 export async function cadastrarPreventivo(dados: CadastrarPreventivoPayload) {
   const res = await authFetch(`${API}/sanidade/calendario/cadastrar-preventivo`, {

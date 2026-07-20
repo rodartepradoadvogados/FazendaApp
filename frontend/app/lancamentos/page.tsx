@@ -2524,6 +2524,11 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   // Vindo da Agenda ("Dar baixa" de um evento/regra sanitária preventiva): ao
   // salvar, marca a pendência original como realizada para sumir da Agenda.
   const [eventoAgenda, setEventoAgenda] = useState<string | null>(null);
+  // Vindo da Agenda para uma pendência de uma regra do calendário sanitário JÁ
+  // existente (tipo "calendario_sanitario") — nesse caso não se cria uma regra
+  // nova nem se redefine frequência: é a baixa de uma ocorrência da regra
+  // apontada por este id (ver calendario_id em CadastrarPreventivoIn).
+  const [calendarioIdAgenda, setCalendarioIdAgenda] = useState<number | null>(null);
 
   // Diagnóstico do exame (positivo/negativo/indefinido) ou resultado numérico
   // — só para eventos categoria_preventiva == "exame". Nunca gera aplicação
@@ -2548,6 +2553,8 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
     const numero = qs.get("numero_matriz");
     if (numero) { setVinculo("animal"); setAnimaisSel(new Set([numero])); }
     setEventoAgenda(qs.get("evento_agenda"));
+    const calId = qs.get("calendario_id");
+    if (calId) setCalendarioIdAgenda(Number(calId));
   }, []);
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
@@ -2588,11 +2595,24 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
   useEffect(() => {
     setRegraExistente(null);
     setDecisaoRegra(null);
-    if (!eventoId || eventoAgenda) return;
+    if (!eventoId) return;
+    // Vindo da Agenda para uma pendência de uma regra já existente — não
+    // pergunta nada (a decisão já foi tomada ao clicar em "Dar baixa" na
+    // Agenda), só busca a regra para exibir a frequência real dela aqui.
+    if (calendarioIdAgenda != null) {
+      fetchCalendarioSanitario({ eventoSanitarioId: Number(eventoId) })
+        .then((regras: any[]) => {
+          const r = regras.find((x) => x.id === calendarioIdAgenda);
+          if (r) { setFreqValor(String(r.frequencia_valor)); setFreqUnidade(r.frequencia_unidade); }
+        })
+        .catch(() => {});
+      return;
+    }
+    if (eventoAgenda) return;
     fetchCalendarioSanitario({ eventoSanitarioId: Number(eventoId) })
       .then((regras: any[]) => { if (regras.length) setRegraExistente(regras[0]); })
       .catch(() => {});
-  }, [eventoId, eventoAgenda]);
+  }, [eventoId, eventoAgenda, calendarioIdAgenda]);
   const usarRegraExistente = () => {
     if (!regraExistente) return;
     setDataEvento(regraExistente.proxima_ocorrencia || regraExistente.data_evento);
@@ -2620,6 +2640,12 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
     setSalvando(true);
     try {
       const substituto = usarSubstituto && produtoSubstituto ? estoquePorNome.get(produtoSubstituto) : undefined;
+      // "Já existe uma regra agendada" → Realizar/aplicar o próximo evento: é a
+      // baixa de UMA OCORRÊNCIA da regra existente, não um novo cadastro — não
+      // se redefine frequência agora (calendario_id faz o backend ignorar
+      // frequencia_valor/unidade e só marcar a ocorrência como realizada, sem
+      // duplicar a regra recorrente).
+      const regraEscolhida = decisaoRegra === "existente" && regraExistente ? regraExistente.id : (calendarioIdAgenda ?? undefined);
       const r = await cadastrarPreventivo({
         evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
         frequencia_valor: freqValorNum, frequencia_unidade: freqUnidade,
@@ -2627,6 +2653,7 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
         produto: substituto?.nome, unidade: substituto?.unidade,
         resultado_exame: ehExame && !modoNumerico && diagnostico ? diagnostico : undefined,
         resultado_numerico: ehExame && modoNumerico && resultadoNumerico !== "" ? Number(resultadoNumerico) : undefined,
+        calendario_id: regraEscolhida,
       });
       // Para vacina/tratamento, "aplicado" já diz se aconteceu (some da Agenda) ou
       // não (continua pendente); exame usa o checkbox "realizado" independente.
@@ -2666,15 +2693,24 @@ function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalR
             onEventosRecarregados={() => fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {})} />
         </Campo>
         <Campo label="Data de referência"><input type="date" style={inputStyle} value={dataEvento} onChange={(e) => setDataEvento(e.target.value)} /></Campo>
-        <Campo label="Repetir a cada">
-          <div className="flex items-center gap-2">
-            <input type="number" min={0} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
-            <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
-              {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
-            </select>
-          </div>
-          <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>0 = não repetir — evento avulso, não entra no calendário sanitário.</p>
-        </Campo>
+        {decisaoRegra === "existente" || calendarioIdAgenda != null ? (
+          <Campo label="Repetir a cada">
+            <p style={{ fontSize: "0.82rem", marginTop: "0.4rem" }}>
+              A cada {freqValor} {FREQUENCIA_UNIDADES.find((u) => u.v === freqUnidade)?.l.toLowerCase() || freqUnidade} — herdado da regra já agendada.
+            </p>
+            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Esta é a baixa de uma ocorrência já agendada — não redefine a frequência da regra.</p>
+          </Campo>
+        ) : (
+          <Campo label="Repetir a cada">
+            <div className="flex items-center gap-2">
+              <input type="number" min={0} style={inputStyle} value={freqValor} onChange={(e) => setFreqValor(e.target.value)} />
+              <select style={inputStyle} value={freqUnidade} onChange={(e) => setFreqUnidade(e.target.value)}>
+                {FREQUENCIA_UNIDADES.map((u) => <option key={u.v} value={u.v}>{u.l}</option>)}
+              </select>
+            </div>
+            <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>0 = não repetir — evento avulso, não entra no calendário sanitário.</p>
+          </Campo>
+        )}
         {ehExame && (
           <Campo label="Veterinário (exame)">
             <select style={inputStyle} value={veterinario} onChange={(e) => setVeterinario(e.target.value)}>
