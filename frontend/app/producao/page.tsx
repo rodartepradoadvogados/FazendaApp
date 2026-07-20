@@ -86,7 +86,15 @@ type Qualidade = {
   id: number; numero_matriz: string | null; data_coleta: string;
   ccs: number | null; cbt: number | null; gordura_pct: number | null; proteina_pct: number | null;
   solidos_totais_pct: number | null; esd_pct: number | null; lactose_pct: number | null; nul: number | null; observacao: string | null;
+  // Bonificação/penalização estimada (#548) — comparação contra as faixas
+  // cadastradas em Configurações > Parâmetros; null = sem faixa ativa cadastrada.
+  bonificacao_por_litro?: number | null;
+  bonificacao_detalhe?: { indicador: string; valor: number; ajuste_por_litro: number }[];
 };
+
+function formatarReaisPorLitro(v: number) {
+  return `${v.toLocaleString("pt-BR", { style: "currency", currency: "BRL", minimumFractionDigits: 3, maximumFractionDigits: 4 })}/L`;
+}
 const INDICADORES_QUALIDADE = [
   { key: "ccs", label: "CCS", unidade: "mil céls./mL" },
   { key: "cbt", label: "CBT", unidade: "mil UFC/mL" },
@@ -125,6 +133,10 @@ function ProducaoLeiteira() {
 
   const [qualidade, setQualidade] = useState<Qualidade[] | null>(null);
   const [qualidadeErro, setQualidadeErro] = useState<string | null>(null);
+  // #548 — se não há nenhuma faixa de bonificação ativa cadastrada em
+  // Configurações > Parâmetros, a coluna de ajuste estimado mostra um aviso
+  // em vez de "R$ 0,00" (que seria um valor incorreto, não "sem bônus").
+  const [qlTemFaixasBonificacao, setQlTemFaixasBonificacao] = useState(true);
   const [qlIndicador, setQlIndicador] = useState<(typeof INDICADORES_QUALIDADE)[number]["key"]>("ccs");
   const [qlDe, setQlDe] = useState("");
   const [qlAte, setQlAte] = useState("");
@@ -134,7 +146,9 @@ function ProducaoLeiteira() {
   const [qlIndividual, setQlIndividual] = useState(true);
 
   useEffect(() => {
-    fetchQualidadeLeite().then((d) => setQualidade(d.registros)).catch((e) => setQualidadeErro(e.message));
+    fetchQualidadeLeite()
+      .then((d) => { setQualidade(d.registros); setQlTemFaixasBonificacao(!!d.tem_faixas_bonificacao); })
+      .catch((e) => setQualidadeErro(e.message));
   }, []);
 
   const qlFiltrados = useMemo(() => {
@@ -154,6 +168,14 @@ function ProducaoLeiteira() {
   }, [qlFiltrados, qlIndicador]);
   const qlAtual = qlSerie.length ? qlSerie[qlSerie.length - 1].total : null;
   const qlMedia = qlSerie.length ? media(qlSerie.map((d) => d.total)) : null;
+
+  // #548 — coletas ordenadas da mais recente para a mais antiga, para a
+  // tabela de bonificação estimada por lançamento (e para achar a última).
+  const qlRecentes = useMemo(
+    () => [...qlFiltrados].sort((a, b) => b.data_coleta.localeCompare(a.data_coleta)),
+    [qlFiltrados],
+  );
+  const qlBonificacaoUltima = qlRecentes.find((r) => r.bonificacao_por_litro != null)?.bonificacao_por_litro ?? null;
 
   // Controle × Entregue — período próprio (default: últimos 30 dias até hoje).
   const hojeISO = new Date().toISOString().slice(0, 10);
@@ -434,6 +456,70 @@ function ProducaoLeiteira() {
                   <Indicador categoria="producao" valor={`${qlMedia ?? "—"} ${qlMedia != null ? qlIndicadorInfo.unidade : ""}`} rotulo={`${qlIndicadorInfo.label} média no período`} />
                 </div>
                 {qlSerie.length ? <LineChart dados={qlSerie} /> : <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Sem coletas de qualidade do leite no filtro.</p>}
+
+                {/* #548 — bonificação/penalização estimada por qualidade, contra as
+                    faixas de CCS/CBT/gordura/proteína cadastradas em Configurações >
+                    Parâmetros (cada laticínio tem a sua própria tabela). */}
+                <div className="mt-4">
+                  <h4 style={{ fontSize: "0.82rem", fontWeight: 600, color: "var(--text-muted)", marginBottom: "0.5rem" }}>
+                    Bonificação/penalização estimada por qualidade
+                  </h4>
+                  {!qlTemFaixasBonificacao ? (
+                    <p style={{ color: "var(--text-muted)", fontSize: "0.82rem" }}>
+                      Nenhuma faixa de bonificação cadastrada — configure em <strong>Configurações &gt; Parâmetros</strong> as
+                      faixas de CCS, CBT, gordura e proteína do seu laticínio para ver aqui o valor estimado por litro.
+                    </p>
+                  ) : (
+                    <>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-3">
+                        <Indicador
+                          categoria="producao"
+                          valor={qlBonificacaoUltima != null ? formatarReaisPorLitro(qlBonificacaoUltima) : "—"}
+                          cor={qlBonificacaoUltima != null && qlBonificacaoUltima < 0 ? "var(--red)" : "var(--green-light)"}
+                          rotulo="Ajuste estimado (última coleta com faixa aplicável)"
+                        />
+                      </div>
+                      <div className="overflow-x-auto">
+                        <table className="fazenda-table">
+                          <thead>
+                            <tr>
+                              <th>Data</th><th>Tipo</th><th>CCS</th><th>CBT</th><th>Gordura %</th><th>Proteína %</th>
+                              <th>Ajuste estimado</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {qlRecentes.slice(0, 20).map((r) => (
+                              <tr key={r.id}>
+                                <td style={{ fontSize: "0.78rem" }}>{new Date(r.data_coleta + "T00:00:00").toLocaleDateString("pt-BR")}</td>
+                                <td style={{ fontSize: "0.78rem" }}>{r.numero_matriz ? `Vaca ${r.numero_matriz}` : "Tanque"}</td>
+                                <td style={{ textAlign: "right" }}>{r.ccs ?? "—"}</td>
+                                <td style={{ textAlign: "right" }}>{r.cbt ?? "—"}</td>
+                                <td style={{ textAlign: "right" }}>{r.gordura_pct ?? "—"}</td>
+                                <td style={{ textAlign: "right" }}>{r.proteina_pct ?? "—"}</td>
+                                <td style={{
+                                  textAlign: "right", fontWeight: 600,
+                                  color: r.bonificacao_por_litro != null && r.bonificacao_por_litro < 0 ? "var(--red)" : undefined,
+                                }}>
+                                  {r.bonificacao_por_litro != null ? formatarReaisPorLitro(r.bonificacao_por_litro) : "—"}
+                                </td>
+                              </tr>
+                            ))}
+                            {!qlRecentes.length && (
+                              <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>
+                                Sem coletas no filtro.
+                              </td></tr>
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                      {qlRecentes.length > 20 && (
+                        <p style={{ color: "var(--text-muted)", fontSize: "0.72rem", marginTop: "0.4rem" }}>
+                          Mostrando as 20 coletas mais recentes do filtro ({qlRecentes.length} no total).
+                        </p>
+                      )}
+                    </>
+                  )}
+                </div>
               </>
             )}
           </SecaoRecolhivel>

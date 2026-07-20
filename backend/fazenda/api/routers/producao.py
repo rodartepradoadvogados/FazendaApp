@@ -14,11 +14,11 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import get_current_user
+from fazenda.auth import exigir_admin, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
-    LancamentoItem, Lote,
+    FaixaBonificacaoQualidade, LancamentoItem, Lote,
     Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
     ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
@@ -26,6 +26,7 @@ from fazenda.ordenacao import chave_numero
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.alimentacao import calcular_consumo
 from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcular_bonificacao
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
@@ -482,12 +483,91 @@ class QualidadeLeiteIn(BaseModel):
 def listar_qualidade_leite(session: Session = Depends(get_session)) -> dict:
     registros = session.exec(select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)).all()
     nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
+    faixas = session.exec(select(FaixaBonificacaoQualidade)).all()
+    tem_faixas_bonificacao = any(f.ativo for f in faixas)
     linhas = []
     for r in registros:
         linha = r.model_dump()
         linha["usuario_nome"] = nomes.get(linha.pop("usuario_id"))
+        bonificacao = calcular_bonificacao(linha, faixas)
+        linha["bonificacao_por_litro"] = bonificacao["total_por_litro"]
+        linha["bonificacao_detalhe"] = bonificacao["detalhe"]
         linhas.append(linha)
-    return {"registros": linhas, "total": len(registros)}
+    return {"registros": linhas, "total": len(registros), "tem_faixas_bonificacao": tem_faixas_bonificacao}
+
+
+# ---------------------------------------------------------------------------
+# Faixas de bonificação/penalização por qualidade do leite (#548) — tabela
+# configurável em Configurações > Parâmetros, já que cada laticínio define a
+# própria tabela de faixas de CCS/CBT/gordura/proteína (não existe padrão
+# nacional único). Ver fazenda/rules/bonificacao_qualidade.py para o cálculo.
+# ---------------------------------------------------------------------------
+class FaixaBonificacaoQualidadeIn(BaseModel):
+    indicador: str
+    valor_min: float | None = None
+    valor_max: float | None = None
+    ajuste_por_litro: float
+    ativo: bool = True
+    observacao: str | None = None
+
+
+def _validar_faixa_bonificacao(dados: FaixaBonificacaoQualidadeIn) -> None:
+    if dados.indicador not in INDICADORES_BONIFICAVEIS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Indicador inválido. Use um de: {', '.join(INDICADORES_BONIFICAVEIS)}",
+        )
+    if dados.valor_min is not None and dados.valor_max is not None and dados.valor_min > dados.valor_max:
+        raise HTTPException(status_code=400, detail="Valor mínimo não pode ser maior que o valor máximo")
+
+
+@router.get("/faixas-bonificacao-qualidade")
+def listar_faixas_bonificacao_qualidade(session: Session = Depends(get_session)) -> dict:
+    faixas = session.exec(
+        select(FaixaBonificacaoQualidade).order_by(FaixaBonificacaoQualidade.indicador, FaixaBonificacaoQualidade.valor_min)
+    ).all()
+    return {"faixas": [f.model_dump() for f in faixas]}
+
+
+@router.post("/faixas-bonificacao-qualidade", status_code=201)
+def criar_faixa_bonificacao_qualidade(
+    dados: FaixaBonificacaoQualidadeIn, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    _validar_faixa_bonificacao(dados)
+    faixa = FaixaBonificacaoQualidade(**dados.model_dump())
+    session.add(faixa)
+    session.commit()
+    session.refresh(faixa)
+    return faixa.model_dump()
+
+
+@router.put("/faixas-bonificacao-qualidade/{faixa_id}")
+def atualizar_faixa_bonificacao_qualidade(
+    faixa_id: int, dados: FaixaBonificacaoQualidadeIn,
+    session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    faixa = session.get(FaixaBonificacaoQualidade, faixa_id)
+    if not faixa:
+        raise HTTPException(status_code=404, detail="Faixa de bonificação não encontrada")
+    _validar_faixa_bonificacao(dados)
+    for campo, valor in dados.model_dump().items():
+        setattr(faixa, campo, valor)
+    session.add(faixa)
+    session.commit()
+    session.refresh(faixa)
+    return faixa.model_dump()
+
+
+@router.delete("/faixas-bonificacao-qualidade/{faixa_id}")
+def excluir_faixa_bonificacao_qualidade(
+    faixa_id: int, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    faixa = session.get(FaixaBonificacaoQualidade, faixa_id)
+    if not faixa:
+        raise HTTPException(status_code=404, detail="Faixa de bonificação não encontrada")
+    session.delete(faixa)
+    session.commit()
+    return {"ok": True}
 
 
 @router.post("/qualidade-leite", status_code=201)

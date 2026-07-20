@@ -2762,3 +2762,23 @@ class PortalMensagem(SQLModel, table=True):
     # Quando tipo="tarefa", aponta para o evento correspondente na Agenda.
     agenda_manual_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FaixaBonificacaoQualidade(SQLModel, table=True):
+    """Faixa de bonificação/penalização por qualidade do leite, cadastrável em
+    Configurações > Parâmetros (#548). Cada laticínio tem sua própria tabela de
+    faixas para CCS/CBT/gordura/proteína — não existe padrão nacional único —
+    por isso aqui fica só a estrutura configurável (sem valores fixos no
+    código): um ajuste em R$/litro por faixa de um indicador, comparado contra
+    os lançamentos de Qualidade do leite (ver fazenda/rules/bonificacao_qualidade.py)."""
+
+    __tablename__ = "faixa_bonificacao_qualidade"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    indicador: str = Field(index=True)  # "ccs" | "cbt" | "gordura_pct" | "proteina_pct"
+    valor_min: Optional[float] = None  # None = sem limite inferior
+    valor_max: Optional[float] = None  # None = sem limite superior
+    ajuste_por_litro: float  # R$/litro — positivo = bônus, negativo = desconto/penalização
+    ativo: bool = True
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
