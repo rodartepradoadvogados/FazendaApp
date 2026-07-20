@@ -12,7 +12,7 @@ from sqlmodel import Session
 
 from fazenda.auth import (
     exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin,
-    seed_email_dono_backfill, seed_permissao_publicar_dono,
+    seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
@@ -126,6 +126,7 @@ async def lifespan(app: FastAPI):
     with Session(engine) as session:
         seed_admin(session)
         seed_email_dono_backfill(session)
+        seed_email_dono_correcao_202607c(session)
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
         seed_tipos_documento_formas_pagamento(session)

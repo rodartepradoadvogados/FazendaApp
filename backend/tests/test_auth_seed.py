@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from sqlmodel import Session, SQLModel, create_engine, select
 
-from fazenda.auth import EMAIL_DONO, hash_senha, seed_admin, seed_email_dono_backfill
+from fazenda.auth import EMAIL_DONO, hash_senha, seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c
 from fazenda.models import SeedFlag, Usuario
 
 
@@ -112,3 +112,45 @@ def test_backfill_grava_seedflag_e_nao_reaplica():
     with Session(engine) as s:
         seed_email_dono_backfill(s)
         assert s.get(SeedFlag, "email_dono_backfill_por_username_202607b") is not None
+
+
+def test_correcao_sobrescreve_email_diferente_do_username_admin():
+    """Diferente do backfill (só preenche se em branco), esta migração
+    força o e-mail do EMAIL_DONO atual mesmo que o admin já tenha outro
+    e-mail salvo (ex.: e-mail pessoal cadastrado via self-service que não
+    batia com o EMAIL_DONO vigente na época)."""
+    engine = _engine()
+    with Session(engine) as s:
+        s.add(Usuario(username="AlexandreRodarte", nome="Alexandre Rodarte", senha_hash=hash_senha("x"),
+                       papel="admin", email="pessoal@exemplo.com"))
+        s.commit()
+
+    with Session(engine) as s:
+        seed_email_dono_correcao_202607c(s)
+
+    with Session(engine) as s:
+        admin = s.exec(select(Usuario).where(Usuario.username == "AlexandreRodarte")).first()
+        assert admin.email == EMAIL_DONO
+
+
+def test_correcao_nao_reaplica_depois_de_rodar_uma_vez():
+    engine = _engine()
+    with Session(engine) as s:
+        s.add(Usuario(username="AlexandreRodarte", nome="Alexandre Rodarte", senha_hash=hash_senha("x"), papel="admin"))
+        s.commit()
+
+    with Session(engine) as s:
+        seed_email_dono_correcao_202607c(s)
+
+    with Session(engine) as s:
+        admin = s.exec(select(Usuario).where(Usuario.username == "AlexandreRodarte")).first()
+        admin.email = "trocado@depois.com"
+        s.add(admin)
+        s.commit()
+
+    with Session(engine) as s:
+        seed_email_dono_correcao_202607c(s)
+
+    with Session(engine) as s:
+        admin = s.exec(select(Usuario).where(Usuario.username == "AlexandreRodarte")).first()
+        assert admin.email == "trocado@depois.com"

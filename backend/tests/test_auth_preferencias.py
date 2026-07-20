@@ -95,3 +95,35 @@ def test_qualquer_usuario_pode_setar_email_pessoal_qualquer(client):
     with Session(engine) as s:
         op = s.exec(select(Usuario).where(Usuario.username == "operador")).first()
         assert op.email == "operador@fazenda.com"
+
+
+def test_admin_reivindica_via_flag_sem_precisar_saber_o_email(client):
+    """reivindicar_proprietario=True é o caminho preferido: o frontend nunca
+    precisa conhecer/enviar o valor de EMAIL_DONO — evita o erro comum de um
+    admin digitar o PRÓPRIO e-mail pessoal achando que é isso que o promove
+    (aquele caminho só salva um contato comum e nunca vira dono)."""
+    c, engine = client
+    token = _login(c, "admin_sem_email")
+    r = c.put("/auth/preferencias", json={"reivindicar_proprietario": True}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 200, r.text
+    assert r.json()["eh_dono"] is True
+    with Session(engine) as s:
+        admin = s.exec(select(Usuario).where(Usuario.username == "admin_sem_email")).first()
+        assert admin.email == EMAIL_DONO
+
+
+def test_operador_nao_pode_reivindicar_via_flag(client):
+    c, _ = client
+    token = _login(c, "operador")
+    r = c.put("/auth/preferencias", json={"reivindicar_proprietario": True}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403
+
+
+def test_nao_pode_reivindicar_via_flag_se_ja_existe_dono(client):
+    c, engine = client
+    with Session(engine) as s:
+        s.add(Usuario(username="dono_atual", nome="Dono", senha_hash=hash_senha("123"), papel="admin", email=EMAIL_DONO))
+        s.commit()
+    token = _login(c, "admin_sem_email")
+    r = c.put("/auth/preferencias", json={"reivindicar_proprietario": True}, headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 403

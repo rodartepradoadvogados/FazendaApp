@@ -117,17 +117,17 @@ export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde") {
   return salvarPreferencias({ paleta });
 }
 
-// Meu e-mail — QUALQUER usuário logado pode definir o próprio e-mail (não
-// precisa ser dono/admin, ver backend PUT /auth/preferencias). É o único jeito
-// self-service de o proprietário se identificar como tal (eh_dono compara com
-// EMAIL_DONO): sem isso, só um ajuste manual no banco resolvia. Depois de
-// salvar, eh_dono/pode_publicar_materias_blog já vêm atualizados na resposta
-// e são aplicados no localStorage na hora — sem precisar sair e entrar de novo.
-export async function salvarMeuEmail(email: string) {
-  return salvarPreferencias({ email });
+// Reivindicar o acesso de proprietário sem precisar saber/digitar o e-mail
+// exato que o backend usa como identificador (EMAIL_DONO) — evita o erro
+// comum de digitar o próprio e-mail pessoal ali, achando que é isso que
+// libera o Controle de Acesso (aquele fluxo antigo só salvava um contato
+// comum e nunca promovia ninguém). Backend aplica as mesmas travas de sempre
+// (precisa ser admin, e ninguém mais pode já ser dono).
+export async function reivindicarProprietario() {
+  return salvarPreferencias({ reivindicar_proprietario: true });
 }
 
-async function salvarPreferencias(dados: { paleta?: "vinho" | "verde"; email?: string }) {
+async function salvarPreferencias(dados: { paleta?: "vinho" | "verde"; email?: string; reivindicar_proprietario?: boolean }) {
   const res = await fetch(`${API}/auth/preferencias`, {
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),

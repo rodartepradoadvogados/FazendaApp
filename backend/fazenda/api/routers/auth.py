@@ -47,6 +47,7 @@ class EditarUsuario(BaseModel):
 class PreferenciasIn(BaseModel):
     paleta: str | None = None
     email: str | None = None
+    reivindicar_proprietario: bool = False
 
 
 def _publico(u: Usuario, session: Session | None = None) -> dict:
@@ -175,19 +176,26 @@ def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(
 def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
     """Preferências pessoais (paleta, e-mail) — cada usuário edita as suas, sem precisar ser admin.
 
-    O e-mail é o único jeito self-service de virar "dono" (eh_dono compara com
+    O e-mail é um jeito self-service de virar "dono" (eh_dono compara com
     EMAIL_DONO) — por isso, quando o valor enviado é EXATAMENTE o e-mail do
     proprietário, isso só é aceito como uma recuperação de acesso (nenhum
     usuário admin ainda é o dono) e só para quem já é admin. Sem essa dupla
     trava, qualquer usuário comum poderia se autopromover a dono digitando o
     e-mail certo. Qualquer outro e-mail (contato pessoal) é sempre livre.
+
+    `reivindicar_proprietario=True` é a via preferida para isso: o frontend
+    não precisa saber/enviar o valor de EMAIL_DONO (evita o erro comum de um
+    admin digitar o PRÓPRIO e-mail pessoal ali, achando que é isso que o
+    torna dono — aquilo só salva um contato comum e nunca promove ninguém).
+    Mesmas duas travas de sempre (admin + ninguém mais é dono) se aplicam.
     """
     if dados.paleta is not None:
         if dados.paleta not in ("vinho", "verde"):
             raise HTTPException(status_code=400, detail="Paleta inválida")
         user.paleta = dados.paleta
-    if dados.email is not None:
-        novo_email = dados.email.strip() or None
+    novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email
+    if novo_email is not None:
+        novo_email = novo_email.strip() or None
         if novo_email and novo_email.lower() == EMAIL_DONO:
             if user.papel != "admin":
                 raise HTTPException(status_code=403, detail="Somente um administrador pode assumir o e-mail do proprietário")

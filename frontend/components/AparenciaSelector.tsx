@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { Sun, Moon, Columns2, Wine, Leaf, Mail } from "lucide-react";
 import { TabBar } from "@/components/ui";
 import { aplicarTema, aplicarPaleta, type Paleta } from "@/components/ThemeSwitcher";
-import { ehAdmin, ehDono, salvarMeuEmail } from "@/lib/api";
+import { ehAdmin, ehDono, reivindicarProprietario } from "@/lib/api";
 
 type Tema = "claro" | "misto" | "escuro";
 
@@ -83,8 +83,7 @@ export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "ap
  */
 function ReivindicarProprietario({ variant }: { variant: "site" | "app" }) {
   const [pode, setPode] = useState(false);
-  const [aberto, setAberto] = useState(false);
-  const [email, setEmail] = useState("");
+  const [confirmando, setConfirmando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -93,42 +92,40 @@ function ReivindicarProprietario({ variant }: { variant: "site" | "app" }) {
 
   async function confirmar() {
     setErro(null);
-    if (!email.trim()) { setErro("Informe o e-mail."); return; }
     setSalvando(true);
     try {
-      await salvarMeuEmail(email.trim());
+      await reivindicarProprietario();
       location.reload(); // reflete eh_dono/menu na hora, sem precisar sair e entrar
     } catch (e: any) {
-      setErro(e.message || "Erro ao salvar e-mail");
+      setErro(e.message || "Erro ao assumir o acesso de proprietário");
       setSalvando(false);
     }
   }
 
   const corMuted = variant === "app" ? "var(--mob-muted)" : "var(--text-muted)";
   const corBorda = variant === "app" ? "var(--mob-border)" : "var(--border)";
-  const corTexto = variant === "app" ? "var(--mob-text)" : "var(--text)";
-  const corSurface = variant === "app" ? "var(--mob-surface)" : "var(--surface)";
 
   return (
     <div style={{ borderTop: `1px solid ${corBorda}`, paddingTop: "1rem", marginTop: variant === "app" ? 0 : "0.5rem" }}>
       <p style={{ fontSize: "0.72rem", textTransform: "uppercase", color: corMuted, marginBottom: "0.4rem" }}>Proprietário</p>
-      {!aberto ? (
-        <button type="button" onClick={() => setAberto(true)}
-          title="Cadastre o e-mail do proprietário para liberar Controle de Acesso e Acessos e Auditoria"
+      {!confirmando ? (
+        <button type="button" onClick={() => setConfirmando(true)}
+          title="Assuma o Controle de Acesso e o relatório de Acessos e Auditoria — só é possível se ninguém mais já for o proprietário"
           className="flex items-center gap-2"
           style={{ background: "none", border: `1px dashed ${corBorda}`, borderRadius: "10px", padding: "0.5rem 0.8rem", color: corMuted, cursor: "pointer", fontSize: "0.82rem" }}>
-          <Mail size={15} /> Sou o proprietário — cadastrar meu e-mail
+          <Mail size={15} /> Sou o proprietário — assumir Controle de Acesso
         </button>
       ) : (
         <div className="flex flex-col gap-2" style={{ maxWidth: 320 }}>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="seu e-mail de proprietário" autoFocus
-            style={{ fontSize: "0.85rem", padding: "0.45rem 0.6rem", borderRadius: "8px", border: `1px solid ${corBorda}`, background: corSurface, color: corTexto }} />
+          <p style={{ fontSize: "0.8rem", color: corMuted }}>
+            Confirma que você é o proprietário? Isso libera Controle de Acesso e Acessos e Auditoria para o seu login.
+          </p>
           {erro && <span style={{ color: "var(--red, #d33)", fontSize: "0.78rem" }}>{erro}</span>}
           <div className="flex items-center gap-2">
             <button onClick={confirmar} disabled={salvando} className={variant === "app" ? "mob-btn-2" : "btn-primary"} style={{ fontSize: "0.82rem" }}>
-              {salvando ? "Salvando…" : "Confirmar"}
+              {salvando ? "Confirmando…" : "Confirmar"}
             </button>
-            <button onClick={() => { setAberto(false); setErro(null); }} className="btn-ghost" style={{ fontSize: "0.82rem" }}>
+            <button onClick={() => { setConfirmando(false); setErro(null); }} className="btn-ghost" style={{ fontSize: "0.82rem" }}>
               Cancelar
             </button>
           </div>
