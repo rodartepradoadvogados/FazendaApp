@@ -2,10 +2,11 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   BarChart3, Filter, Wallet, BookOpen, FileText, Clock, CheckCircle2, Circle, Receipt, X, Check, Building2, Layers, Search, Users, Plus,
-  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2,
+  Paperclip, Pencil, ShoppingCart, Target, TrendingUp, Compass, Trash2, Wrench, AlertTriangle,
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
+  atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
   fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchCentrosCusto,
@@ -1172,13 +1173,37 @@ type ItemPatrimonio = {
   metodo_depreciacao: string | null; vida_util: string | null; valor_residual: number | null;
   quantidade: number | null; unidade: string | null; valor_total: number | null; data_baixa: string | null;
   depreciacao_acumulada: number | null; valor_atual: number | null; vida_util_anos: number | null; inconsistencia: string | null;
+  frequencia_manutencao_meses: number | null; data_ultima_manutencao: string | null;
+  data_proxima_manutencao: string | null; observacao_manutencao: string | null;
+  situacao_manutencao: "vencida" | "proxima" | "ok" | null; dias_para_manutencao: number | null;
 };
 type InconsistenciaPatrimonio = { item: string; numero: string | null; motivo: string };
+
+/** Selo da situação da manutenção — vermelho vencida, âmbar perto de vencer
+ * (até 15 dias, mesma janela do backend), neutro em dia, "—" sem plano. */
+function SeloManutencao({ item }: { item: ItemPatrimonio }) {
+  if (!item.data_proxima_manutencao) return <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Sem plano</span>;
+  const cor = item.situacao_manutencao === "vencida" ? "var(--red)" : item.situacao_manutencao === "proxima" ? "var(--amber)" : "var(--text-muted)";
+  const rotulo = item.situacao_manutencao === "vencida"
+    ? `Vencida há ${Math.abs(item.dias_para_manutencao ?? 0)} dia(s)`
+    : item.situacao_manutencao === "proxima"
+    ? `Em ${item.dias_para_manutencao} dia(s)`
+    : formatDate(item.data_proxima_manutencao);
+  return (
+    <span style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", color: cor, fontWeight: item.situacao_manutencao === "vencida" ? 700 : 500 }}>
+      {item.situacao_manutencao === "vencida" && <AlertTriangle size={12} />}
+      {rotulo}
+    </span>
+  );
+}
 
 function PatrimonioView() {
   const [dados, setDados] = useState<{ itens: ItemPatrimonio[]; total: number; valor_total: number; valor_atual_total: number; inconsistencias: InconsistenciaPatrimonio[] } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
-  useEffect(() => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); }, []);
+  const [itemManutencao, setItemManutencao] = useState<ItemPatrimonio | null>(null);
+
+  const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
+  useEffect(carregar, []);
 
   if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o LISTA_DE_PATRIMONIO.csv</a>.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
@@ -1194,6 +1219,9 @@ function PatrimonioView() {
     );
   }
 
+  const vencidas = dados.itens.filter((i) => i.situacao_manutencao === "vencida").length;
+  const proximas = dados.itens.filter((i) => i.situacao_manutencao === "proxima").length;
+
   return (
     <>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
@@ -1202,6 +1230,17 @@ function PatrimonioView() {
         <KPI v={formatBRL(dados.valor_atual_total)} l="Valor atual (após depreciação)" c="var(--dourado-light)" />
         <KPI v={String(dados.itens.filter((i) => i.data_baixa).length)} l="Com baixa" c="var(--text-muted)" />
       </div>
+      {(vencidas > 0 || proximas > 0) && (
+        <div className="card mb-4" style={{ borderColor: vencidas > 0 ? "var(--red)" : "var(--amber)" }}>
+          <div className="card-header mb-1 flex items-center gap-2" style={{ color: vencidas > 0 ? "var(--red)" : "var(--amber)" }}>
+            <Wrench size={14} /> Manutenção preventiva
+          </div>
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+            {vencidas > 0 && <>{vencidas} item(ns) com manutenção <strong style={{ color: "var(--red)" }}>vencida</strong>. </>}
+            {proximas > 0 && <>{proximas} item(ns) com manutenção <strong style={{ color: "var(--amber)" }}>próxima</strong> (até 15 dias).</>}
+          </p>
+        </div>
+      )}
       {dados.inconsistencias.length > 0 && (
         <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
           <div className="card-header mb-2" style={{ color: "var(--amber)" }}>Inconsistências na depreciação ({dados.inconsistencias.length})</div>
@@ -1221,7 +1260,8 @@ function PatrimonioView() {
                 <th>Tipo</th><th>Nome</th><th>Nº</th><th>Imobilização</th>
                 <th>Método</th><th>Vida útil</th><th style={{ textAlign: "right" }}>Vlr. residual</th>
                 <th style={{ textAlign: "right" }}>Qtd.</th><th style={{ textAlign: "right" }}>Vlr. total</th>
-                <th style={{ textAlign: "right" }}>Depreciação acum.</th><th style={{ textAlign: "right" }}>Valor atual</th><th>Baixa</th>
+                <th style={{ textAlign: "right" }}>Depreciação acum.</th><th style={{ textAlign: "right" }}>Valor atual</th>
+                <th>Baixa</th><th>Próxima manutenção</th><th></th>
               </tr>
             </thead>
             <tbody>
@@ -1241,13 +1281,189 @@ function PatrimonioView() {
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600, color: "var(--dourado-light)" }}>{i.valor_atual != null ? formatBRL(i.valor_atual) : "—"}</td>
                   <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{i.data_baixa ? formatDate(i.data_baixa) : "—"}</td>
+                  <td>{i.data_baixa ? <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>—</span> : <SeloManutencao item={i} />}</td>
+                  <td>
+                    {!i.data_baixa && (
+                      <button className="btn-ghost" title="Plano de manutenção" style={{ padding: "0.25rem" }} onClick={() => setItemManutencao(i)}>
+                        <Wrench size={14} />
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
+      {itemManutencao && (
+        <ModalManutencaoPatrimonio item={itemManutencao} onClose={() => setItemManutencao(null)} onSalvo={() => { carregar(); }} />
+      )}
     </>
+  );
+}
+
+/**
+ * Plano de manutenção preventiva de um item de patrimônio: frequência (em
+ * meses) + última/próxima data, registro de manutenção paga/realizada (com
+ * link opcional para Contas a Pagar) e histórico das manutenções já feitas.
+ */
+function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatrimonio; onClose: () => void; onSalvo: () => void }) {
+  const [frequencia, setFrequencia] = useState(item.frequencia_manutencao_meses != null ? String(item.frequencia_manutencao_meses) : "");
+  const [dataUltima, setDataUltima] = useState(item.data_ultima_manutencao || "");
+  const [dataProxima, setDataProxima] = useState(item.data_proxima_manutencao || "");
+  const [observacaoPlano, setObservacaoPlano] = useState(item.observacao_manutencao || "");
+  const [salvandoPlano, setSalvandoPlano] = useState(false);
+  const [erroPlano, setErroPlano] = useState("");
+
+  const [historico, setHistorico] = useState<any[] | null>(null);
+  useEffect(() => { fetchManutencoesPatrimonio(item.id).then(setHistorico).catch(() => setHistorico([])); }, [item.id]);
+
+  const [mostrarRegistro, setMostrarRegistro] = useState(false);
+  const [dataRealizacao, setDataRealizacao] = useState(new Date().toISOString().slice(0, 10));
+  const [descricaoServico, setDescricaoServico] = useState("");
+  const [fornecedor, setFornecedor] = useState("");
+  const [valor, setValor] = useState("");
+  const [statusManut, setStatusManut] = useState<"pago" | "pendente">("pago");
+  const [dataPagamento, setDataPagamento] = useState(new Date().toISOString().slice(0, 10));
+  const [gerarConta, setGerarConta] = useState(true);
+  const [salvandoRegistro, setSalvandoRegistro] = useState(false);
+  const [erroRegistro, setErroRegistro] = useState("");
+
+  const salvarPlano = async () => {
+    setSalvandoPlano(true); setErroPlano("");
+    try {
+      await atualizarPlanoManutencaoPatrimonio(item.id, {
+        frequencia_manutencao_meses: frequencia ? parseInt(frequencia, 10) : null,
+        data_ultima_manutencao: dataUltima || null,
+        data_proxima_manutencao: dataProxima || null,
+        observacao_manutencao: observacaoPlano || null,
+      });
+      onSalvo();
+    } catch (e: any) { setErroPlano(e.message); } finally { setSalvandoPlano(false); }
+  };
+
+  const registrarManutencao = async () => {
+    if (gerarConta && !valor) { setErroRegistro("Informe o valor para gerar a conta a pagar (ou desmarque a opção)."); return; }
+    setSalvandoRegistro(true); setErroRegistro("");
+    try {
+      await registrarManutencaoPatrimonio(item.id, {
+        data_realizacao: dataRealizacao, descricao: descricaoServico || null, fornecedor: fornecedor || null,
+        valor: valor ? parseFloat(valor.replace(",", ".")) : null, status: statusManut,
+        data_pagamento: statusManut === "pago" ? dataPagamento : null, gerar_conta_a_pagar: gerarConta,
+      });
+      setMostrarRegistro(false);
+      setDescricaoServico(""); setFornecedor(""); setValor("");
+      onSalvo();
+      fetchManutencoesPatrimonio(item.id).then(setHistorico).catch(() => {});
+      // O plano pode ter avançado (nova última/próxima data) — recarrega a modal com os dados atuais.
+      fetchPatrimonio().then((d: any) => {
+        const atualizado = d.itens.find((x: ItemPatrimonio) => x.id === item.id);
+        if (atualizado) { setDataUltima(atualizado.data_ultima_manutencao || ""); setDataProxima(atualizado.data_proxima_manutencao || ""); }
+      }).catch(() => {});
+    } catch (e: any) { setErroRegistro(e.message); } finally { setSalvandoRegistro(false); }
+  };
+
+  const inputStyle: React.CSSProperties = {
+    background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+    borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem", width: "100%",
+  };
+  const label: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
+
+  return (
+    <Modal title={`Manutenção preventiva — ${item.nome}`} onClose={onClose} width="640px">
+      <div className="space-y-4">
+        <div>
+          <div className="card-header mb-2" style={{ fontSize: "0.9rem" }}>Plano (opcional)</div>
+          <div className="grid grid-cols-2 gap-3">
+            <div><label style={label}>Frequência (meses)</label>
+              <input type="number" min={1} style={inputStyle} value={frequencia} onChange={(e) => setFrequencia(e.target.value)} placeholder="ex.: 6" /></div>
+            <div><label style={label}>Última manutenção</label>
+              <input type="date" style={inputStyle} value={dataUltima} onChange={(e) => setDataUltima(e.target.value)} /></div>
+            <div><label style={label}>Próxima manutenção {frequencia && dataUltima ? "(calculada — ajuste se quiser)" : ""}</label>
+              <input type="date" style={inputStyle} value={dataProxima} onChange={(e) => setDataProxima(e.target.value)} /></div>
+            <div><label style={label}>Observação</label>
+              <input style={inputStyle} value={observacaoPlano} onChange={(e) => setObservacaoPlano(e.target.value)} placeholder="ex.: troca de óleo, filtros…" /></div>
+          </div>
+          {erroPlano && <p style={{ color: "var(--red)", fontSize: "0.78rem", marginTop: "0.4rem" }}>{erroPlano}</p>}
+          <button className="btn-primary mt-2" style={{ fontSize: "0.8rem" }} onClick={salvarPlano} disabled={salvandoPlano}>
+            {salvandoPlano ? "Salvando…" : "Salvar plano"}
+          </button>
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
+          <div className="flex items-center justify-between mb-2">
+            <div className="card-header" style={{ margin: 0, fontSize: "0.9rem" }}>Registrar manutenção realizada</div>
+            {!mostrarRegistro && (
+              <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setMostrarRegistro(true)}>
+                <Plus size={13} /> Registrar
+              </button>
+            )}
+          </div>
+          {mostrarRegistro && (
+            <div className="space-y-2">
+              <div className="grid grid-cols-2 gap-3">
+                <div><label style={label}>Data da manutenção</label>
+                  <input type="date" style={inputStyle} value={dataRealizacao} onChange={(e) => setDataRealizacao(e.target.value)} /></div>
+                <div><label style={label}>Valor (R$)</label>
+                  <input style={inputStyle} value={valor} onChange={(e) => setValor(e.target.value)} placeholder="0,00" /></div>
+                <div><label style={label}>Fornecedor/Oficina</label>
+                  <input style={inputStyle} value={fornecedor} onChange={(e) => setFornecedor(e.target.value)} /></div>
+                <div><label style={label}>Descrição do serviço</label>
+                  <input style={inputStyle} value={descricaoServico} onChange={(e) => setDescricaoServico(e.target.value)} placeholder="ex.: troca de óleo e filtros" /></div>
+                <div><label style={label}>Status</label>
+                  <select style={inputStyle} value={statusManut} onChange={(e) => setStatusManut(e.target.value as "pago" | "pendente")}>
+                    <option value="pago">Pago</option>
+                    <option value="pendente">Pendente (fica em Contas a Pagar)</option>
+                  </select>
+                </div>
+                {statusManut === "pago" && (
+                  <div><label style={label}>Data do pagamento</label>
+                    <input type="date" style={inputStyle} value={dataPagamento} onChange={(e) => setDataPagamento(e.target.value)} /></div>
+                )}
+              </div>
+              <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>
+                <input type="checkbox" checked={gerarConta} onChange={(e) => setGerarConta(e.target.checked)} />
+                Gerar lançamento em Contas a Pagar
+              </label>
+              {erroRegistro && <p style={{ color: "var(--red)", fontSize: "0.78rem" }}>{erroRegistro}</p>}
+              <div className="flex gap-2">
+                <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={registrarManutencao} disabled={salvandoRegistro}>
+                  {salvandoRegistro ? "Salvando…" : "Confirmar manutenção"}
+                </button>
+                <button className="btn-ghost" style={{ fontSize: "0.8rem" }} onClick={() => setMostrarRegistro(false)}>Cancelar</button>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)", paddingTop: "1rem" }}>
+          <div className="card-header mb-2" style={{ fontSize: "0.9rem" }}>Histórico</div>
+          {historico == null ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Carregando…</p>
+          ) : historico.length === 0 ? (
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhuma manutenção registrada ainda.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor</th><th style={{ textAlign: "right" }}>Valor</th><th>Status</th><th>Lançamento</th></tr></thead>
+                <tbody>
+                  {historico.map((h) => (
+                    <tr key={h.id}>
+                      <td style={{ fontSize: "0.78rem" }}>{formatDate(h.data_realizacao)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{h.descricao || "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{h.fornecedor || "—"}</td>
+                      <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{h.valor != null ? formatBRL(h.valor) : "—"}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{h.status === "pago" ? "Pago" : "Pendente"}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{h.numero_lancamento_gerado || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+    </Modal>
   );
 }
 

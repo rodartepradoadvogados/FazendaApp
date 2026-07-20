@@ -1,9 +1,21 @@
 """
-Depreciação do patrimônio — linha reta (linear), a partir da vida útil
-cadastrada (texto livre, ex. "7 Anos" ou "60 Meses"), da data de imobilização
-e do valor residual. Quando a vida útil não pode ser interpretada (ou falta a
-data de imobilização), o item entra na resposta sem depreciação e com um
-aviso — não trava o cálculo dos demais itens.
+Depreciação e manutenção preventiva do patrimônio.
+
+Depreciação: linha reta (linear), a partir da vida útil cadastrada (texto
+livre, ex. "7 Anos" ou "60 Meses"), da data de imobilização e do valor
+residual. Quando a vida útil não pode ser interpretada (ou falta a data de
+imobilização), o item entra na resposta sem depreciação e com um aviso — não
+trava o cálculo dos demais itens.
+
+Manutenção preventiva: plano OPCIONAL por item, só por periodicidade de DATA
+(ex.: "a cada 6 meses"). Avaliamos cadastrar também por horas/uso, mas o
+sistema não rastreia horímetro nem horas de uso de nenhum equipamento hoje —
+não há de onde puxar esse dado sem inventar um cadastro novo inteiro (sensor,
+lançamento manual de horas etc.), o que é escopo maior do que "manutenção
+preventiva" pede agora. Por isso o plano por data cobre o caso de uso
+imediato (troca de óleo semestral, revisão anual...) e fica mais simples e
+viável; manutenção por uso pode ser adicionada depois como um campo a mais
+sem quebrar o que já existe.
 """
 from __future__ import annotations
 
@@ -62,3 +74,40 @@ def calcular_depreciacao(item: dict, hoje: date | None = None) -> dict:
         "vida_util_anos": vida_util_anos,
         "inconsistencia": None,
     }
+
+
+DIAS_ALERTA_MANUTENCAO_PROXIMA = 15  # "perto de vencer" — mesma janela usada no front para destacar
+
+
+def somar_meses(base: date, meses: int) -> date:
+    """Soma `meses` a `base`, ajustando o dia quando o mês de destino é mais
+    curto (ex.: 31/01 + 1 mês = 28 ou 29/02) — mesma lógica de
+    `agenda._proxima_ocorrencia`, duplicada aqui para manter esta regra sem
+    depender do router de agenda."""
+    import calendar as _calendar
+
+    mes_total = base.month - 1 + meses
+    ano = base.year + mes_total // 12
+    mes = mes_total % 12 + 1
+    dia = min(base.day, _calendar.monthrange(ano, mes)[1])
+    return date(ano, mes, dia)
+
+
+def status_manutencao(item: dict, hoje: date | None = None) -> dict:
+    """Recebe um dict com os campos de manutenção do Patrimonio (model_dump())
+    e devolve a situação do plano preventivo: None quando não há plano
+    cadastrado (sem data_proxima_manutencao), ou "vencida"/"proxima"/"ok" a
+    partir de quantos dias faltam para a próxima manutenção. Item já baixado
+    nunca alerta — não faz sentido agendar manutenção de bem baixado."""
+    hoje = hoje or date.today()
+    prox = item.get("data_proxima_manutencao")
+    if not prox or item.get("data_baixa"):
+        return {"situacao_manutencao": None, "dias_para_manutencao": None}
+    dias = (prox - hoje).days
+    if dias < 0:
+        situacao = "vencida"
+    elif dias <= DIAS_ALERTA_MANUTENCAO_PROXIMA:
+        situacao = "proxima"
+    else:
+        situacao = "ok"
+    return {"situacao_manutencao": situacao, "dias_para_manutencao": dias}

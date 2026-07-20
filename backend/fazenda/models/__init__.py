@@ -765,6 +765,50 @@ class Patrimonio(SQLModel, table=True):
     data_baixa: Optional[date] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Plano de manutenção preventiva (opcional) — periodicidade só por DATA
+    # (ex.: "a cada 6 meses"). O sistema hoje não rastreia horímetro/horas de
+    # uso de nenhum equipamento, então manutenção por uso fica fora de escopo
+    # por ora (ver ADR em rules/patrimonio.py). Sem plano cadastrado, os três
+    # campos ficam None e o item nunca gera alerta.
+    frequencia_manutencao_meses: Optional[int] = None
+    data_ultima_manutencao: Optional[date] = None
+    # Calculada (última + frequência) quando a manutenção é registrada, mas
+    # também editável manualmente — cobre o caso de plano novo sem histórico
+    # ainda, ou de o usuário querer antecipar/adiar a próxima data.
+    data_proxima_manutencao: Optional[date] = None
+    observacao_manutencao: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Manutenção de patrimônio (histórico de execuções do plano preventivo)
+# ---------------------------------------------------------------------------
+class ManutencaoPatrimonio(SQLModel, table=True):
+    """Um registro de manutenção preventiva realizada (ou agendada) em um item
+    de Patrimônio — histórico + link opcional para o lançamento em Contas a
+    Pagar (ContaGerencial) gerado automaticamente, mesmo padrão de
+    FeriasFuncionario/DecimoTerceiro (RH ampliado)."""
+
+    __tablename__ = "manutencao_patrimonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    patrimonio_id: int = Field(foreign_key="patrimonio.id", index=True)
+    data_realizacao: date
+    descricao: Optional[str] = None
+    fornecedor: Optional[str] = None
+    valor: Optional[float] = None
+    centro_custo: str = "Pecuária Leiteira"
+    # pendente = a conta a pagar segue em aberto; pago = já baixada na hora
+    # do registro (mesmo vocabulário de FeriasFuncionario/DecimoTerceiro).
+    status: str = "pago"
+    data_pagamento: Optional[date] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # nº do lançamento (LC-...) criado em Contas a Pagar quando
+    # `gerar_conta_a_pagar=True` foi pedido ao registrar — None quando o
+    # usuário optou por não lançar nada financeiro para esta manutenção.
+    numero_lancamento_gerado: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Estoque

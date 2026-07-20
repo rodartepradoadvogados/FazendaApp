@@ -32,6 +32,10 @@ ROTAS_PUBLICAS = {
     ("GET", "/docs"),
     ("GET", "/redoc"),
     ("GET", "/openapi.json"),
+    # Chave pública VAPID: o navegador precisa dela antes mesmo de terminar
+    # a inscrição de push (pushManager.subscribe) — não é segredo, é o valor
+    # que o protocolo Web Push exige circular publicamente por definição.
+    ("GET", "/push/chave-publica"),
 }
 
 
