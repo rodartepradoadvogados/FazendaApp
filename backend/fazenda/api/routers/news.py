@@ -283,7 +283,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             ],
         },
     ],
-    "milknews_20260720b": [
+    "milknews_20260720_b": [
         {
             "manchete": "Leite spot fecha julho estável após alta na primeira quinzena",
             "resumo": (
@@ -309,7 +309,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
                 "de 2% nos valores de referência do leite entregue em junho e pago em julho, válida em "
                 "todas as faixas de volume e qualidade monitoradas pelo colegiado."
             ),
-            "link": "/news#milknews-2026-07-20b-01",
+            "link": "/news#milknews-2026-07-20-b-01",
             "data_publicacao": "2026-07-20",
             "fontes": [
                 "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/leite-spot-registra-novo-ajuste-positivo-na-1-quinzena-de-julho-241420/",
@@ -345,7 +345,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
                 "O tema deve voltar à pauta na próxima reunião do Gecex-Camex, que decidirá se as tarifas "
                 "serão restabelecidas."
             ),
-            "link": "/news#milknews-2026-07-20b-02",
+            "link": "/news#milknews-2026-07-20-b-02",
             "data_publicacao": "2026-07-20",
             "fontes": [
                 "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/fpa-cobra-governo-pela-suspensao-de-medida-antidumping-contra-leite-da-argentina-e-do-uruguai-241516/",
@@ -375,7 +375,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
                 "tem capacidade de processá-lo. O MilkPoint informou que passará a mapear periodicamente os "
                 "preços do produto no mercado nacional para suprir essa lacuna de dado."
             ),
-            "link": "/news#milknews-2026-07-20b-03",
+            "link": "/news#milknews-2026-07-20-b-03",
             "data_publicacao": "2026-07-20",
             "fontes": [
                 "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/wpc-2026-o-que-a-crise-global-do-soro-de-leite-pode-significar-para-os-laticinios-no-brasil-241483/",
@@ -405,7 +405,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
                 "mesmo mês do ano anterior, e as exportações neozelandesas de leite em pó, manteiga e "
                 "queijo somaram US$ 2,3 bilhões, alta de 6,9%."
             ),
-            "link": "/news#milknews-2026-07-20b-04",
+            "link": "/news#milknews-2026-07-20-b-04",
             "data_publicacao": "2026-07-20",
             "fontes": [
                 "https://www.indexbox.io/blog/usda-dairy-market-report-mixed-cme-prices-and-summer-heat-impact-july-2026/",
@@ -443,7 +443,7 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
                 "infraestrutura de resfriamento deve começar antes do pico do calor para evitar perdas na "
                 "safra de verão."
             ),
-            "link": "/news#milknews-2026-07-20b-05",
+            "link": "/news#milknews-2026-07-20-b-05",
             "data_publicacao": "2026-07-20",
             "fontes": [
                 "https://feedfood.com.br/estresse-termico-desafia-pecuaria-leiteira-e-exige-manejo-especifico-no-verao/",
