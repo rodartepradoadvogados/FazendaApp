@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, ShieldCheck, Baby, Users,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -34,7 +34,6 @@ import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
 import News from "@/components/mobile/menu/News";
 import Estoque from "@/components/mobile/menu/Estoque";
-import Auditoria from "@/components/mobile/menu/Auditoria";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 
@@ -90,7 +89,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "auditoria" | "recria" | "controleAcesso" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -114,6 +113,24 @@ export default function Pagina() {
 
   const usuario = montado ? getUsuario() : null;
 
+  // News é uma tela única (sem 2º nível de itens), igual "Aparência". Checada
+  // ANTES de "sub" propositalmente: o ícone de News no cabeçalho só muda o
+  // hash (não a rota), então se o usuário já estava em Menu dentro de uma
+  // sub-tela (sub !== null), o componente não remonta — sem essa ordem o
+  // early-return de "sub" abaixo manteria a sub-tela antiga e o toque no
+  // ícone pareceria não fazer nada. Limpa o hash ao voltar, senão um 2º
+  // clique no ícone (mesmo href) não dispara "hashchange" e não reabre.
+  if (secaoAberta === "news") {
+    return (
+      <News
+        onVoltar={() => {
+          if (window.location.hash === "#news") history.replaceState(null, "", "/app/menu");
+          setSecaoAberta(null);
+        }}
+      />
+    );
+  }
+
   // Sub-tela aberta: mostra só ela (com o próprio botão voltar).
   if (sub) {
     const Sub = SUBTELAS[sub];
@@ -126,31 +143,12 @@ export default function Pagina() {
     ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
 
-  // News é uma tela única (sem 2º nível de itens), igual "Aparência". Limpa o
-  // hash ao voltar, senão um 2º clique no ícone do cabeçalho (mesmo href) não
-  // dispara "hashchange" e a sub-tela não reabre.
-  if (secaoAberta === "news") {
-    return (
-      <News
-        onVoltar={() => {
-          if (window.location.hash === "#news") history.replaceState(null, "", "/app/menu");
-          setSecaoAberta(null);
-        }}
-      />
-    );
-  }
-
   if (secaoAberta === "estoque") {
     return <Estoque onVoltar={() => setSecaoAberta(null)} />;
   }
 
   if (secaoAberta === "recria") {
     return <Recria onVoltar={() => setSecaoAberta(null)} />;
-  }
-
-  // Só o proprietário (ver ehDono()) — mesmo gate do backend (exigir_dono).
-  if (secaoAberta === "auditoria") {
-    return <Auditoria onVoltar={() => setSecaoAberta(null)} />;
   }
 
   // Qualquer admin (ver ehAdmin()) — mesmo gate do site (/usuarios via AuthShell).
@@ -179,14 +177,14 @@ export default function Pagina() {
   }
 
   // 1º nível: sessões, em quadrados coloridos. "Estoque" fica ao lado de
-  // "Financeiro" (mesma permissão do módulo /estoque do site). "Auditoria" só
-  // aparece para o proprietário (ver ehDono()).
+  // "Financeiro" (mesma permissão do módulo /estoque do site). "Controle de
+  // Acesso" só aparece para o proprietário (ver ehDono()) — já reúne últimos
+  // acessos + auditoria de atividade, então não há uma aba separada para isso.
   const secoesOpcoes: OpcaoAcao[] = [
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--mob-dourado)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--mob-dourado)" }] : []),
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--mob-vinho)" }] : []),
-    ...(montado && ehDono() ? [{ id: "auditoria", label: "Acessos e Auditoria", icone: <ShieldCheck size={26} />, cor: "var(--mob-vinho)" }] : []),
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
@@ -197,7 +195,7 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "auditoria" | "recria" | "controleAcesso")}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso")}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}

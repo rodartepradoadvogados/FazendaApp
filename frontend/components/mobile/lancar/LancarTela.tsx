@@ -42,8 +42,10 @@ export function LancarTela() {
   const [tela, setTela] = useState<Tela | null>(null);
   const [fixado, setFixado] = useState<Animal | null>(null);
   // Ao "gerar movimentação financeira" no Balanço de estoque, guarda qual
-  // pílula (despesa/receita) o Financeiro deve abrir já selecionada.
-  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita">("despesa");
+  // pílula (despesa/receita) o Financeiro deve abrir já selecionada. Fica
+  // undefined ao entrar por "Financeiro" direto, para o submenu aparecer
+  // primeiro (ver FormFinanceiroApp: tipoInicial ausente = mostra a grade).
+  const [tipoFinanceiroInicial, setTipoFinanceiroInicial] = useState<"despesa" | "receita" | undefined>(undefined);
   // Só sabemos a permissão real depois de montar (localStorage não existe no
   // servidor) — evita vazar os blocos de Financeiro/Estoque antes da hora.
   const [montado, setMontado] = useState(false);
@@ -97,7 +99,7 @@ export function LancarTela() {
         <MobBloco icone={<ArrowLeftRight size={24} />} label="Movimentar" cor="var(--mob-amarelo)" onClick={() => setTela("movimentar")} />
         <MobBloco icone={<Skull size={24} />} label="Baixar animal" cor="var(--mob-vermelho)" onClick={() => setTela("baixar")} />
         {montado && podeModulo("financeiro") && (
-          <MobBloco icone={<Landmark size={24} />} label="Financeiro" cor="var(--mob-vinho)" onClick={() => setTela("financeiro")} />
+          <MobBloco icone={<Landmark size={24} />} label="Financeiro" cor="var(--mob-vinho)" onClick={() => { setTipoFinanceiroInicial(undefined); setTela("financeiro"); }} />
         )}
         {montado && podeModulo("estoque") && (
           <MobBloco icone={<Boxes size={24} />} label="Balanço de estoque" cor="var(--mob-dourado)" onClick={() => setTela("estoque")} />

@@ -1,6 +1,6 @@
 "use client";
 // Últimos acessos + auditoria de atividade — extraído de app/usuarios/page.tsx
-// para ser reaproveitado também no app (ver components/mobile/menu/Auditoria.tsx).
+// para ser reaproveitado também no app (ver components/mobile/menu/ControleAcesso.tsx).
 // Ambas as seções são restritas ao proprietário (ver ehDono() e, no backend,
 // fazenda.auth.exigir_dono) — o backend bloqueia qualquer outro usuário, então
 // esconder aqui é só para não mostrar um card que sempre erra 403.
@@ -118,7 +118,10 @@ export function AuditoriaAtividade({ defaultAberta = true }: { defaultAberta?: b
           <div className="mb-3">
             <div className="flex items-center justify-between mb-1">
               <label style={lbl}>Tipos de lançamento (vazio = todos)</label>
-              {tipos.size > 0 && <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setTipos(new Set())}>Limpar seleção</button>}
+              <div className="flex items-center gap-2">
+                {tipos.size < opcoes.tipos.length && <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setTipos(new Set(opcoes.tipos.map((t) => t.chave)))}>Marcar todos</button>}
+                {tipos.size > 0 && <button className="btn-ghost" style={{ fontSize: "0.68rem" }} onClick={() => setTipos(new Set())}>Limpar seleção</button>}
+              </div>
             </div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-1" style={{ border: "1px solid var(--border)", borderRadius: "8px", padding: "0.5rem", maxHeight: "9rem", overflowY: "auto" }}>
               {opcoes.tipos.map((t) => (
