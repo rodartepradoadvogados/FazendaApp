@@ -450,6 +450,40 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             ],
         },
     ],
+    "milknews_20260720_c": [
+        {
+            "manchete": "GDT recua pela terceira vez seguida em julho, puxado por forte queda no queijo cheddar",
+            "resumo": (
+                "O índice do Global Dairy Trade (GDT) caiu 4,9% no leilão de julho, com a cesta de "
+                "produtos fechando em média de US$ 3.793 por tonelada — a terceira queda seguida do "
+                "indicador internacional. O tombo mais forte foi do queijo cheddar (-12,3%), seguido "
+                "por leite em pó desnatado (-7,0%), manteiga (-5,0%) e leite em pó integral (-4,4%); "
+                "mussarela e soro de leite em pó subiram no período. "
+                "Dados: MilkPoint/Cheese Reporter (08/07/2026)."
+            ),
+            "materia": (
+                "O índice do Global Dairy Trade (GDT), plataforma neozelandesa que reúne os principais "
+                "leilões internacionais de lácteos, caiu 4,9% no evento de julho, com a cesta de "
+                "produtos negociados fechando em média de US$ 3.793 por tonelada. Segundo o MilkPoint "
+                "e o Cheese Reporter, foi a terceira queda seguida do indicador, reforçando um cenário "
+                "de oferta global elevada pressionando os preços internacionais.\n\n"
+                "Entre os produtos acompanhados, o queijo cheddar teve o recuo mais acentuado, de "
+                "12,3%, seguido pelo leite em pó desnatado (-7,0%), pela manteiga (-5,0%) e pelo leite "
+                "em pó integral (-4,4%). Na contramão, a mussarela e o soro de leite em pó (buttermilk "
+                "powder) registraram alta no período, sinal de que a pressão de oferta não afeta "
+                "igualmente todas as categorias de derivados.\n\n"
+                "O movimento do GDT costuma servir de termômetro para o mercado internacional de "
+                "lácteos, e uma sequência de quedas como essa tende a repercutir também nas referências "
+                "domésticas de exportação e importação nos meses seguintes."
+            ),
+            "link": "/news#milknews-2026-07-20-c-01",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/gdt-404-apresenta-estabilidade-e-sugere-mercado-internacional-mais-equilibrado-241008/",
+                "https://cheesereporter.com/news/global-trade-tariffs/2026/07/08/global-dairy-trade-price-index-falls-4-9-cheddar-price-drops-12-3-mozz-rises-3-8/",
+            ],
+        },
+    ],
 }
 
 
