@@ -155,14 +155,16 @@
   --sidebar-logo-sub: rgba(245, 238, 241, 0.7);
   /* --sidebar-subnav-outline não é redefinido aqui: herda ouro escuro do :root
      base (a barra do misto é vinho sólido, então ouro escuro contrasta bem). */
-  /* Fundo da faixa de sub-abas — palha (paleta vinho, padrão) sobre a barra
-     lateral vinho sólida do misto; a paleta verde troca para cinza claro. */
-  --sidebar-subnav-bg: #F1E8CE;
-  /* Texto das sub-abas não selecionadas, sobre o fundo claro acima — vinho
-     sólido (não o --sidebar-muted translúcido, pensado para a barra lateral
-     vinho, que fica quase invisível aqui). A paleta verde troca para chumbo
-     (ver bloco data-paleta="verde" abaixo). */
-  --sidebar-subnav-muted: var(--vinho);
+  /* Fundo da faixa de sub-abas (paleta vinho, padrão) — um branco bem
+     translúcido por cima da barra lateral vinho sólida do misto, não um tom
+     estranho (palha) plantado ali: o resultado é um vinho um pouco mais claro,
+     na mesma família de cor da barra, em vez de destacar como um bloco à
+     parte. A paleta verde troca para cinza claro (ver bloco abaixo). */
+  --sidebar-subnav-bg: rgba(255, 255, 255, 0.14);
+  /* Texto das sub-abas não selecionadas: sem override aqui — herda o
+     --sidebar-muted translúcido claro (rgba(245,238,241,0.7), já definido
+     acima neste bloco), que lê bem sobre o vinho mais claro acima. A paleta
+     verde troca para chumbo (ver bloco data-paleta="verde" abaixo). */
   /* Conteúdo do misto é claro (cards brancos): mesma regra do tema claro. */
   --pill-active-bg: var(--vinho);
   --pill-active-fg: var(--dourado-light);
