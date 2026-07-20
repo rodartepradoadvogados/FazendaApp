@@ -608,6 +608,13 @@ class CadastrarPreventivoIn(BaseModel):
     data_evento: date
     frequencia_valor: int = 1               # 0 = não repetir (só esta aplicação, sem gerar agendamento futuro)
     frequencia_unidade: str = "meses"
+    # Quando informado, esta aplicação/diagnóstico é a baixa de uma ocorrência
+    # de uma regra do calendário sanitário JÁ existente (ex.: veio da Agenda ou
+    # de "Já existe uma regra agendada para este evento" em Lançamentos). Nesse
+    # caso não se cria uma regra nova nem se redefine a frequência agora — só
+    # se marca a ocorrência (data_evento) dessa regra como realizada, dando
+    # baixa na pendência da Agenda sem duplicar o agendamento recorrente.
+    calendario_id: int | None = None
     animais: list[str] = []                  # animais marcados (individual ou todos)
     aplicar: bool = False                    # também registrar a aplicação do produto padrão
     # "Já foi aplicado?" — só importa quando `aplicar` é True (vacina/tratamento;
@@ -663,21 +670,34 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
     # (ou o que foi confirmado/ajustado na hora de dar baixa). "Repetir a cada"
     # = 0 significa que o usuário não quer gerar agendamento futuro: só a
     # aplicação de agora é registrada (passo 2), sem criar a regra recorrente.
-    regra = None
-    if dados.frequencia_valor > 0:
-        dosagem = None
-        if dose is not None:
-            dosagem = f"{dose:g} {unidade}".strip() if unidade else f"{dose:g}"
-        regra = CalendarioSanitario(
-            evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
-            produto=produto, principio_ativo_id=dados.principio_ativo_id, dosagem=dosagem, unidade=unidade,
-            veterinario=dados.veterinario,
-            frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
-            data_evento=dados.data_evento, observacao=dados.observacao,
-        )
-        session.add(regra)
-        session.commit()
-        session.refresh(regra)
+    #
+    # Quando `calendario_id` é informado, esta é a baixa de uma ocorrência de
+    # uma regra JÁ existente — nunca se cria uma regra nova (senão duplicaria o
+    # agendamento) nem se considera `frequencia_valor`/`frequencia_unidade` do
+    # request. Reaproveita a MESMA regra (devolvida em "regra" na resposta) para
+    # que o chamador marque a ocorrência (data_evento) como realizada contra o
+    # id correto — é essa referência trocada por uma regra nova que fazia a
+    # pendência original na Agenda nunca sumir.
+    if dados.calendario_id is not None:
+        regra = session.get(CalendarioSanitario, dados.calendario_id)
+        if not regra or regra.evento_sanitario_id != ev.id:
+            raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
+    else:
+        regra = None
+        if dados.frequencia_valor > 0:
+            dosagem = None
+            if dose is not None:
+                dosagem = f"{dose:g} {unidade}".strip() if unidade else f"{dose:g}"
+            regra = CalendarioSanitario(
+                evento_sanitario_id=ev.id, categoria_alvo=dados.categoria_alvo, doenca_id=ev.doenca_id,
+                produto=produto, principio_ativo_id=dados.principio_ativo_id, dosagem=dosagem, unidade=unidade,
+                veterinario=dados.veterinario,
+                frequencia_valor=dados.frequencia_valor, frequencia_unidade=dados.frequencia_unidade,
+                data_evento=dados.data_evento, observacao=dados.observacao,
+            )
+            session.add(regra)
+            session.commit()
+            session.refresh(regra)
 
     # 2) Aplicação do produto (padrão ou confirmado/ajustado) nos animais marcados (opcional).
     aplicacao = None
