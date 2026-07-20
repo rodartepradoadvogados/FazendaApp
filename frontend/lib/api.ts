@@ -2326,6 +2326,22 @@ export async function fetchCustoLitroLeite(dataInicio: string, dataFim: string) 
   return res.json();
 }
 
+export async function fetchCustoHectare(dataInicio: string, dataFim: string, centroCusto?: string) {
+  const qs = new URLSearchParams({ data_inicio: dataInicio, data_fim: dataFim });
+  if (centroCusto) qs.set("centro_custo", centroCusto);
+  const res = await authFetch(`${API}/financeiro/custo-hectare?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Custo por hectare error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCustoVacaLote(dataInicio: string, dataFim: string, centroCusto?: string) {
+  const qs = new URLSearchParams({ data_inicio: dataInicio, data_fim: dataFim });
+  if (centroCusto) qs.set("centro_custo", centroCusto);
+  const res = await authFetch(`${API}/financeiro/custo-vaca-lote?${qs.toString()}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Custo por vaca/lote error: ${res.status}`);
+  return res.json();
+}
+
 // ── Contas correntes (Configurações > Parâmetros financeiros) ──
 export async function fetchContasCorrentes() {
   const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });

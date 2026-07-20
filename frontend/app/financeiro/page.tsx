@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
-  fetchPessoas, fetchRmca, fetchCustoLitroLeite, formatBRL, formatDate,
+  fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
@@ -56,7 +56,7 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -64,6 +64,8 @@ const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "extrato", label: "Extrato completo", icon: Receipt, desc: "Todos os lançamentos, com ou sem baixa" },
   { id: "rmca", label: "RMCA", icon: BarChart3, desc: "Receita do leite menos custo de alimentação — gerencial e físico lado a lado" },
   { id: "custo_litro_leite", label: "Custo p/L de leite", icon: BarChart3, desc: "Custo de alimentação do período dividido pelos litros de leite entregues" },
+  { id: "custo_hectare", label: "Custo por hectare", icon: BarChart3, desc: "Despesas do período divididas pela área total da fazenda" },
+  { id: "custo_vaca_lote", label: "Custo por vaca/lote", icon: BarChart3, desc: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
   { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
@@ -478,6 +480,8 @@ export default function FinanceiroPage() {
           : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView />
           : rel === "folha_relatorio" ? <RelatorioFolhaPagamentoView /> : rel === "rmca" ? <RmcaView />
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
+          : rel === "custo_hectare" ? <CustoHectareView />
+          : rel === "custo_vaca_lote" ? <CustoVacaLoteView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
@@ -2104,6 +2108,163 @@ function CustoLitroLeiteView() {
             </div>
             {dados.contas_custo.length > 0 && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Custo: {dados.contas_custo.join(", ")}</p>}
           </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type CustoHectareResp = {
+  periodo: { inicio: string; fim: string }; centro_custo: string | null; area_configurada: boolean;
+  area_hectares: number | null; despesas_total: number; custo_por_hectare: number | null;
+};
+
+function CustoHectareView() {
+  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [centroCusto, setCentroCusto] = useState("");
+  const [centros, setCentros] = useState<string[]>([]);
+  const [dados, setDados] = useState<CustoHectareResp | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchCustoHectare(dataInicio, dataFim, centroCusto || undefined).then(setDados).catch((e) => setErro(e.message));
+  }, [dataInicio, dataFim, centroCusto]);
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Centro de custo</label>
+            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+              <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
+            </select></div>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (
+        <>
+          {!dados.area_configurada && (
+            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
+                Área total da fazenda ainda não foi cadastrada — o custo por hectare fica indefinido até a configuração ser feita.
+                Cadastre em <strong>Configurações → Parâmetros → Estrutura da fazenda</strong>.
+              </p>
+            </div>
+          )}
+          <div className="card">
+            <div className="card-header mb-3">Custo por hectare</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : ""})
+              dividido pela área total da fazenda em hectares.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
+              <KPI v={dados.area_hectares != null ? `${dados.area_hectares.toLocaleString("pt-BR")} ha` : "—"} l="Área total" c="var(--dourado-light)" />
+              <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type CustoVacaLoteResp = {
+  periodo: { inicio: string; fim: string }; centro_custo: string | null; tem_vacas_no_periodo: boolean;
+  num_vacas: number; despesas_total: number; custo_por_vaca: number | null;
+  por_lote: { lote: string; num_vacas: number; custo_alocado: number; custo_por_vaca: number }[];
+};
+
+function CustoVacaLoteView() {
+  const [dataInicio, setDataInicio] = useState(() => primeiroDiaDoMes());
+  const [dataFim, setDataFim] = useState(() => new Date().toISOString().slice(0, 10));
+  const [centroCusto, setCentroCusto] = useState("");
+  const [centros, setCentros] = useState<string[]>([]);
+  const [dados, setDados] = useState<CustoVacaLoteResp | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => { fetchCentrosCusto().then((d) => setCentros(d.filter((c: any) => c.ativo).map((c: any) => c.nome))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchCustoVacaLote(dataInicio, dataFim, centroCusto || undefined).then(setDados).catch((e) => setErro(e.message));
+  }, [dataInicio, dataFim, centroCusto]);
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Período</div>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={labelStyleLote}>Início</label><input type="date" style={selStyleLote} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Fim</label><input type="date" style={selStyleLote} value={dataFim} onChange={(e) => setDataFim(e.target.value)} /></div>
+          <div><label style={labelStyleLote}>Centro de custo</label>
+            <select style={selStyleLote} value={centroCusto} onChange={(e) => setCentroCusto(e.target.value)}>
+              <option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}
+            </select></div>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+      {!dados && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {dados && (
+        <>
+          {!dados.tem_vacas_no_periodo && (
+            <div className="card mb-4" style={{ borderColor: "var(--amber)" }}>
+              <p style={{ fontSize: "0.85rem", color: "var(--amber)" }}>
+                Nenhuma vaca com Controle leiteiro lançado no período — o custo por vaca fica indefinido.
+                Lance em <strong>Lançamentos → Produção → Controle leiteiro</strong>.
+              </p>
+            </div>
+          )}
+          <div className="card mb-4">
+            <div className="card-header mb-3">Custo por vaca</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Despesas do período (ContaGerencial, por competência{dados.centro_custo ? `, centro de custo "${dados.centro_custo}"` : ""})
+              dividido pelo número de vacas com ao menos um Controle leiteiro lançado no período.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-3">
+              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
+              <KPI v={String(dados.num_vacas)} l="Vacas em lactação" c="var(--dourado-light)" />
+              <KPI v={dados.custo_por_vaca != null ? formatBRL(dados.custo_por_vaca) : "—"} l="Custo por vaca" c="var(--green-light)" />
+            </div>
+          </div>
+          {dados.por_lote.length > 0 && (
+            <div className="card">
+              <div className="card-header mb-3">Custo por lote</div>
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+                Rateio proporcional ao número de vacas de cada lote sobre o total — não há vínculo direto
+                entre lançamento financeiro e lote/animal, então cada lote recebe sua fatia do custo total
+                pelo peso de cabeças.
+              </p>
+              <table className="w-full" style={{ fontSize: "0.82rem" }}>
+                <thead>
+                  <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
+                    <th style={{ padding: "0.3rem 0.5rem" }}>Lote</th>
+                    <th style={{ padding: "0.3rem 0.5rem" }}>Vacas</th>
+                    <th style={{ padding: "0.3rem 0.5rem" }}>Custo alocado</th>
+                    <th style={{ padding: "0.3rem 0.5rem" }}>Custo por vaca</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dados.por_lote.map((l) => (
+                    <tr key={l.lote} style={{ borderTop: "1px solid var(--border)" }}>
+                      <td style={{ padding: "0.3rem 0.5rem" }}>{l.lote}</td>
+                      <td style={{ padding: "0.3rem 0.5rem" }}>{l.num_vacas}</td>
+                      <td style={{ padding: "0.3rem 0.5rem" }}>{formatBRL(l.custo_alocado)}</td>
+                      <td style={{ padding: "0.3rem 0.5rem" }}>{formatBRL(l.custo_por_vaca)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </>
       )}
     </div>
