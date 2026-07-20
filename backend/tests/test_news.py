@@ -823,6 +823,31 @@ class TestPublicarLotesMilknews:
             assert noticia.manchete == "Matéria sem fontes ainda"
             assert json.loads(noticia.fontes) == ["https://cepea.esalq.usp.br/br/indicador/leite.aspx"]
 
+    def test_lote_com_materia_grava_corpo_completo(self, client, monkeypatch):
+        """Lote pode opcionalmente trazer `materia` (corpo completo do texto,
+        além do `resumo` curto) — usado quando o post do /milknews é maior
+        que cabe no resumo."""
+        from fazenda.api.routers import news as news_module
+
+        c, engine = client
+        lotes = {
+            "milknews_20260720": [{
+                "manchete": "Matéria com corpo completo",
+                "resumo": "Resumo curto.",
+                "materia": "Corpo completo da matéria, bem mais longo que o resumo.",
+                "link": "/news#milknews-2026-07-20-01",
+                "data_publicacao": "2026-07-20",
+            }],
+        }
+        monkeypatch.setattr(news_module, "MILKNEWS_LOTES", lotes)
+
+        with Session(engine) as s:
+            news_module.publicar_lotes_milknews(s)
+
+        with Session(engine) as s:
+            noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "/news#milknews-2026-07-20-01")).first()
+            assert noticia.materia == "Corpo completo da matéria, bem mais longo que o resumo."
+
     def test_backfill_nao_sobrescreve_fontes_ja_preenchidas(self, client, monkeypatch):
         """Se a matéria já tem `fontes` (preenchida manualmente ou por um
         backfill anterior), rodar de novo não troca o valor já salvo."""

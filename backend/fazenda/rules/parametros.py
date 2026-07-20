@@ -31,6 +31,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "producao_descarte": "Produção e descarte",
     "estoque_semen": "Estoque de sêmen",
     "folha_rh": "Folha de pagamento / RH",
+    "estrutura_fazenda": "Estrutura da fazenda",
 }
 
 # Sementes iniciais — só usadas por `seed_parametros()` na primeira vez que
@@ -102,6 +103,13 @@ DEFINICOES: list[dict] = [
     # sem envio ao eSocial) ----------------------------------------------------
     {"chave": "percentual_terco_constitucional_ferias", "grupo": "folha_rh", "label": "1/3 constitucional de férias", "valor": 0.3333, "tipo": "float", "unidade": "fração"},
     {"chave": "dias_ferias_padrao", "grupo": "folha_rh", "label": "Dias de férias padrão", "valor": 30, "unidade": "dias"},
+
+    # ---- Estrutura da fazenda — usado pelo indicador "Custo por hectare"
+    # (Financeiro > Relatórios), que divide as despesas do período por este
+    # valor. Sem cadastro de área em nenhum outro lugar do sistema hoje
+    # (nem em Lote, nem em models já existentes), então entra aqui como um
+    # parâmetro simples, editável em Configurações > Parâmetros.
+    {"chave": "area_total_hectares", "grupo": "estrutura_fazenda", "label": "Área total da fazenda", "valor": 0, "tipo": "float", "unidade": "ha"},
 ]
 
 
@@ -304,6 +312,13 @@ def dias_ferias_padrao() -> int:
     """Dias de férias padrão (direito integral por período aquisitivo) —
     sugestão inicial no lançamento de férias, sempre editável."""
     return int(get_param("dias_ferias_padrao", 30) or 30)
+
+
+def area_total_hectares() -> float:
+    """Área total da fazenda em hectares (Configurações > Parâmetros >
+    Estrutura da fazenda). Denominador do indicador "Custo por hectare"
+    (`fazenda.rules.custo_hectare`); 0 até o usuário cadastrar."""
+    return float(get_param("area_total_hectares", 0) or 0)
 
 
 def minimos_semen_por_tipo() -> dict[str, int]:

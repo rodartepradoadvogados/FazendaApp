@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Search, Check } from "lucide-react";
 import {
   ContaPlano, nivelDaConta, estiloNivel, ehFolha, prefixoDoTipo, filhosDiretos, normalizar,
@@ -32,6 +33,16 @@ export function SeletorContaGerencial({
   const [termo, setTermo] = useState("");
   const [expandidos, setExpandidos] = useState<Set<string>>(new Set());
   const ref = useRef<HTMLDivElement>(null);
+  const botaoRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  // A lista abre num Portal (renderizada em document.body, position: fixed)
+  // em vez de position: absolute dentro deste componente — isso evita que ela
+  // seja cortada quando um ancestral tem overflow não-visível (ex.: `.card`
+  // tem `overflow-x: auto`, que por spec do CSS também vira `overflow-y: auto`
+  // quando o outro eixo não é "visible", recortando qualquer filho que
+  // ultrapasse a altura do card — como este seletor costuma fazer dentro de
+  // um item de nota ou de um modal).
+  const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   // Só as contas do tipo certo (receita "2" / despesa "3"), ativas, e —
   // quando `natureza` for informado — restritas às folhas compatíveis.
@@ -70,12 +81,48 @@ export function SeletorContaGerencial({
     setExpandidos(new Set(raizes.map((r) => r.codigo)));
   }, [raizes]);
 
-  // Fecha ao clicar fora.
+  // Fecha ao clicar fora (do botão OU da lista — que agora mora num Portal,
+  // fora da árvore DOM deste componente).
   useEffect(() => {
     if (!aberto) return;
-    const fora = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setAberto(false); };
+    const fora = (e: MouseEvent) => {
+      const alvo = e.target as Node;
+      if (ref.current?.contains(alvo)) return;
+      if (popupRef.current?.contains(alvo)) return;
+      setAberto(false);
+    };
     document.addEventListener("mousedown", fora);
     return () => document.removeEventListener("mousedown", fora);
+  }, [aberto]);
+
+  // Recalcula a posição/tamanho da lista (ancorada no botão) sempre que abrir,
+  // e ao rolar/redimensionar — inclusive rolagem de um container ancestral
+  // (ex.: o conteúdo interno de um Modal), por isso o listener de scroll usa
+  // `capture: true`.
+  useLayoutEffect(() => {
+    if (!aberto) return;
+    function calcular() {
+      const el = botaoRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      const espacoAbaixo = window.innerHeight - r.bottom - 8;
+      const espacoAcima = r.top - 8;
+      const abrirParaCima = espacoAbaixo < 160 && espacoAcima > espacoAbaixo;
+      const maxHeight = Math.max(160, Math.min(352, abrirParaCima ? espacoAcima : espacoAbaixo));
+      setPos({
+        top: abrirParaCima ? r.top - maxHeight - 4 : r.bottom + 4,
+        left: r.left,
+        width: r.width,
+        maxHeight,
+      });
+    }
+    calcular();
+    window.addEventListener("resize", calcular);
+    window.addEventListener("scroll", calcular, true);
+    return () => {
+      window.removeEventListener("resize", calcular);
+      window.removeEventListener("scroll", calcular, true);
+    };
   }, [aberto]);
 
   function toggle(cod: string) {
@@ -138,9 +185,58 @@ export function SeletorContaGerencial({
 
   const rotulo = codigo ? `${codigo} — ${nome}` : nome || "";
 
+  const lista = aberto && pos && typeof document !== "undefined" ? createPortal(
+    <div
+      ref={popupRef}
+      style={{
+        position: "fixed", zIndex: 1000, top: pos.top, left: pos.left, width: pos.width,
+        background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+        boxShadow: "0 8px 28px rgba(0,0,0,0.28)", padding: "0.5rem", maxHeight: pos.maxHeight, overflowY: "auto",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.15rem 0.35rem 0.5rem" }}>
+        <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
+        <input
+          autoFocus value={termo} onChange={(e) => setTermo(e.target.value)}
+          placeholder="Buscar conta por nome ou código…"
+          style={{ width: "100%", background: "transparent", border: "none", outline: "none",
+            color: "var(--text)", fontSize: "0.82rem" }}
+        />
+      </div>
+      {termo.trim() ? (
+        resultadosBusca.length ? (
+          resultadosBusca.map((c) => {
+            const selecionada = c.codigo === codigo;
+            return (
+              <button key={c.codigo} type="button" onClick={() => escolher(c)} className="row-clickable"
+                style={{ ...rowBase, background: selecionada ? "var(--pill-active-bg)" : undefined,
+                  color: selecionada ? "var(--pill-active-fg)" : "var(--text)" }}>
+                <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0 }}>{c.codigo}</span>
+                <span style={estiloNivel(nivelDaConta(c.codigo))}>{c.nome}</span>
+                {selecionada && <Check size={13} style={{ marginLeft: "auto", flexShrink: 0 }} />}
+              </button>
+            );
+          })
+        ) : (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", padding: "0.4rem 0.5rem" }}>
+            Nenhuma conta encontrada para “{termo}”.
+          </p>
+        )
+      ) : raizes.length ? (
+        raizes.map((r) => <Linha key={r.codigo} c={r} />)
+      ) : (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", padding: "0.4rem 0.5rem" }}>
+          Nenhuma conta gerencial de {tipo === "receita" ? "receita" : "despesa"} cadastrada.
+        </p>
+      )}
+    </div>,
+    document.body,
+  ) : null;
+
   return (
     <div ref={ref} style={{ position: "relative" }}>
       <button
+        ref={botaoRef}
         type="button"
         onClick={() => setAberto((v) => !v)}
         title="Escolher a conta gerencial (só o galho mais baixo é selecionável)"
@@ -157,51 +253,7 @@ export function SeletorContaGerencial({
         <ChevronDown size={15} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
       </button>
 
-      {aberto && (
-        <div
-          style={{
-            position: "absolute", zIndex: 40, top: "calc(100% + 4px)", left: 0, right: 0,
-            background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
-            boxShadow: "0 8px 28px rgba(0,0,0,0.28)", padding: "0.5rem", maxHeight: "22rem", overflowY: "auto",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: "0.4rem", padding: "0.15rem 0.35rem 0.5rem" }}>
-            <Search size={14} style={{ color: "var(--text-muted)", flexShrink: 0 }} />
-            <input
-              autoFocus value={termo} onChange={(e) => setTermo(e.target.value)}
-              placeholder="Buscar conta por nome ou código…"
-              style={{ width: "100%", background: "transparent", border: "none", outline: "none",
-                color: "var(--text)", fontSize: "0.82rem" }}
-            />
-          </div>
-          {termo.trim() ? (
-            resultadosBusca.length ? (
-              resultadosBusca.map((c) => {
-                const selecionada = c.codigo === codigo;
-                return (
-                  <button key={c.codigo} type="button" onClick={() => escolher(c)} className="row-clickable"
-                    style={{ ...rowBase, background: selecionada ? "var(--pill-active-bg)" : undefined,
-                      color: selecionada ? "var(--pill-active-fg)" : "var(--text)" }}>
-                    <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0 }}>{c.codigo}</span>
-                    <span style={estiloNivel(nivelDaConta(c.codigo))}>{c.nome}</span>
-                    {selecionada && <Check size={13} style={{ marginLeft: "auto", flexShrink: 0 }} />}
-                  </button>
-                );
-              })
-            ) : (
-              <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", padding: "0.4rem 0.5rem" }}>
-                Nenhuma conta encontrada para “{termo}”.
-              </p>
-            )
-          ) : raizes.length ? (
-            raizes.map((r) => <Linha key={r.codigo} c={r} />)
-          ) : (
-            <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", padding: "0.4rem 0.5rem" }}>
-              Nenhuma conta gerencial de {tipo === "receita" ? "receita" : "despesa"} cadastrada.
-            </p>
-          )}
-        </div>
-      )}
+      {lista}
     </div>
   );
 }

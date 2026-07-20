@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Calendar,
   Heart,
@@ -21,6 +21,7 @@ import {
   MessageSquare,
   Menu,
   X,
+  Search,
 } from "lucide-react";
 import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
@@ -70,6 +71,10 @@ export function Sidebar() {
   // dá pra navegar dentro da página atual sem nunca perder acesso direto às
   // outras abas do menu principal.
   const subNav = useSubNav();
+  // Busca dentro da sub-navegação — atalho para árvores com muitos grupos/
+  // sub-abas (ex.: Financeiro, Lançamentos): em vez de abrir grupo por grupo
+  // até achar a sub-aba certa, digita um pedaço do nome e pula direto nela.
+  const [buscaSubNav, setBuscaSubNav] = useState("");
 
   useEffect(() => {
     // Filtra o menu conforme as permissões do usuário logado.
@@ -89,8 +94,18 @@ export function Sidebar() {
     };
   }, []);
 
-  // Fecha o menu ao trocar de página (no mobile).
-  useEffect(() => { setAberto(false); }, [path]);
+  // Fecha o menu ao trocar de página (no mobile) e limpa a busca de sub-navegação.
+  useEffect(() => { setAberto(false); setBuscaSubNav(""); }, [path]);
+
+  // Busca só aparece em árvores "pesadas" (muitas sub-abas) — em módulos com
+  // poucas sub-abas não vale o espaço extra na tela.
+  const folhasSubNav = useMemo(() => (subNav ? achatarFolhas(subNav.tree) : []), [subNav]);
+  const totalFolhasSubNav = subNav ? contarFolhas(subNav.tree) : 0;
+  const resultadosBuscaSubNav = useMemo(() => {
+    const termo = normalizarBusca(buscaSubNav.trim());
+    if (!termo) return null;
+    return folhasSubNav.filter((f) => normalizarBusca(f.label).includes(termo) || normalizarBusca(f.caminho).includes(termo));
+  }, [folhasSubNav, buscaSubNav]);
 
   const statusLabel =
     online === null ? "Verificando..." : online ? "API conectada" : "API offline";
@@ -151,7 +166,53 @@ export function Sidebar() {
       <nav className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
         {subNav && (
           <div className="p-3" style={{ background: "var(--sidebar-subnav-bg)", maxHeight: "55%", overflowY: "auto", flexShrink: 0, borderBottom: "4px double var(--sidebar-border)" }}>
-            <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
+            {totalFolhasSubNav > 6 && (
+              <div style={{ position: "relative", marginBottom: "0.5rem" }}>
+                <Search size={12} style={{ position: "absolute", left: 7, top: 7, color: "var(--sidebar-muted)", pointerEvents: "none" }} />
+                <input
+                  value={buscaSubNav}
+                  onChange={(e) => setBuscaSubNav(e.target.value)}
+                  placeholder="Buscar sub-aba…"
+                  title="Digite parte do nome para pular direto a uma sub-aba, sem abrir grupo por grupo"
+                  style={{
+                    width: "100%", boxSizing: "border-box", padding: "0.3rem 0.5rem 0.3rem 1.6rem", fontSize: "10px",
+                    borderRadius: "6px", border: "1px solid var(--sidebar-border)",
+                    background: "var(--sidebar-bg)", color: "var(--sidebar-fg)",
+                  }}
+                />
+              </div>
+            )}
+            {resultadosBuscaSubNav ? (
+              <div className="space-y-1">
+                {resultadosBuscaSubNav.length === 0 && (
+                  <p style={{ fontSize: "10px", color: "var(--sidebar-muted)", padding: "0.3rem 0.2rem" }}>Nenhuma sub-aba encontrada.</p>
+                )}
+                {resultadosBuscaSubNav.map((f) => {
+                  const Icon = f.icon;
+                  const ativo = f.id === subNav.activeId;
+                  return (
+                    <button key={f.id} onClick={() => { subNav.onSelect(f.id); setBuscaSubNav(""); }}
+                      title={f.caminho ? `${f.caminho} › ${f.label}` : f.label}
+                      style={{
+                        width: "100%", display: "flex", alignItems: "center", gap: "0.5rem", textAlign: "left", cursor: "pointer",
+                        padding: "0.4rem 0.6rem", borderRadius: "8px",
+                        border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
+                        background: ativo ? "var(--sidebar-active-bg)" : "transparent",
+                        color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
+                        fontSize: "10px", fontWeight: ativo ? 700 : 500,
+                      }}>
+                      <Icon size={13} />
+                      <span>
+                        {f.label}
+                        {f.caminho && <span style={{ display: "block", fontSize: "9px", fontWeight: 400, opacity: 0.7 }}>{f.caminho}</span>}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
+            )}
           </div>
         )}
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
@@ -242,6 +303,22 @@ function caminhoAte(nodes: SubNavNode[], alvoId: string): string[] | null {
   }
   return null;
 }
+
+// Lista achatada de folhas (id + rótulo + caminho de grupos até ela) — usada
+// pela busca da sub-navegação para pular direto numa sub-aba, sem precisar
+// abrir grupo por grupo em árvores fundas (ex.: Financeiro, Lançamentos).
+function achatarFolhas(nodes: SubNavNode[], caminho: string[] = []): { id: string; label: string; caminho: string; icon: any }[] {
+  return nodes.flatMap((n) =>
+    n.children?.length
+      ? achatarFolhas(n.children, [...caminho, n.label])
+      : [{ id: n.id, label: n.label, caminho: caminho.join(" › "), icon: n.icon }]
+  );
+}
+function contarFolhas(nodes: SubNavNode[]): number {
+  return nodes.reduce((acc, n) => acc + (n.children?.length ? contarFolhas(n.children) : 1), 0);
+}
+// Comparação sem acento/maiúscula — "recebi" acha "Recebidas", "a pagar" etc.
+const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
 
 // Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
 // da lista de módulos quando a página atual registra uma (piloto: Lançamentos).

@@ -10,7 +10,10 @@ from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
-from fazenda.auth import exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin, seed_permissao_publicar_dono
+from fazenda.auth import (
+    exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin,
+    seed_email_dono_backfill, seed_permissao_publicar_dono,
+)
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
@@ -41,6 +44,8 @@ from fazenda.api.routers import (
     producao,
     recria,
     relatorio_compra_venda_animal,
+    relatorio_custo_hectare,
+    relatorio_custo_producao,
     relatorio_rastreabilidade_sanitaria,
     relatorios,
     reproducao,
@@ -96,6 +101,7 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     with Session(engine) as session:
         seed_admin(session)
+        seed_email_dono_backfill(session)
         seed_motivos_movimentacao(session)
         seed_parametros_financeiros(session)
         seed_tipos_documento_formas_pagamento(session)
@@ -229,6 +235,8 @@ app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"
 app.include_router(agenda.router, dependencies=_protegido)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro"))])
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # — mesmo módulo. Pedidos é módulo próprio (não mexe em Estoque/Financeiro
 # sozinho — só quando um lançamento/movimento é vinculado a ele).

@@ -434,6 +434,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       const dados = await lerDocumentoFinanceiro(file);
       aplicarExtracaoDocumento(dados);
       setXmlAberto(false);
+      // O PDF/JPEG/PNG que acabou de ser lido (a nota/recibo em si) também
+      // fica marcado para subir como anexo do lançamento — antes disso o
+      // arquivo era usado só para preencher os campos e depois descartado,
+      // então não sobrava nenhum documento anexado ao lançamento salvo.
+      setBoletoFiles((arr) => [...arr, file]);
     } catch (e: any) {
       setErroXml(e.message || "Erro ao ler o documento");
     } finally {
@@ -818,42 +823,46 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
             <p style={{ fontSize: "0.7rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
               Cada parcela nasce em aberto (conta a {tipo === "despesa" ? "pagar" : "receber"}) — dê baixa individualmente quando for paga/recebida.
             </p>
-
-            {/* Anexar o(s) boleto(s) deste parcelamento — sobe junto ao salvar o lançamento */}
-            <div
-              onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); }}
-              onDragOver={(e) => e.preventDefault()}
-              className="card mt-3"
-              style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
-            >
-              <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
-                <FileText size={15} style={{ color: "var(--dourado-light)" }} />
-                <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Arraste o(s) boleto(s) deste parcelamento aqui, ou</span>
-                <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => boletoInputRef.current?.click()}>
-                  <Upload size={12} /> selecionar arquivo(s)
-                </button>
-              </div>
-              <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
-                onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
-                style={{ display: "none" }} />
-              {boletoFiles.length > 0 && (
-                <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem" }}>
-                  {boletoFiles.map((f, i) => (
-                    <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
-                      <span>{f.name}</span>
-                      <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
-                        <X size={12} style={{ color: "var(--red)" }} />
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-              <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
-                Opcional — fica disponível para consulta neste lançamento; não altera valores nem parcelas.
-              </p>
-            </div>
           </div>
         )}
+      </div>
+
+      {/* Anexar documento(s) a este lançamento — boleto, nota, comprovante etc.
+          Sempre visível (não só quando parcelado): sobe junto ao salvar o
+          lançamento, chamando `anexarArquivoLancamento` uma vez por arquivo. */}
+      <div
+        onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); }}
+        onDragOver={(e) => e.preventDefault()}
+        className="card mt-3"
+        style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
+      >
+        <div className="flex items-center justify-center gap-2" style={{ flexWrap: "wrap" }}>
+          <FileText size={15} style={{ color: "var(--dourado-light)" }} />
+          <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
+            Arraste o(s) documento(s) deste lançamento aqui (boleto, nota, comprovante — PDF/JPEG/PNG), ou
+          </span>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => boletoInputRef.current?.click()}>
+            <Upload size={12} /> selecionar arquivo(s)
+          </button>
+        </div>
+        <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
+          onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+          style={{ display: "none" }} />
+        {boletoFiles.length > 0 && (
+          <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem" }}>
+            {boletoFiles.map((f, i) => (
+              <li key={i} className="flex items-center justify-between" style={{ padding: "0.15rem 0" }}>
+                <span>{f.name}</span>
+                <button type="button" className="btn-ghost" title="Remover" onClick={() => setBoletoFiles((arr) => arr.filter((_, j) => j !== i))} style={{ padding: "0.1rem 0.3rem" }}>
+                  <X size={12} style={{ color: "var(--red)" }} />
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
+          Opcional — fica disponível para consulta neste lançamento; não altera valores nem parcelas.
+        </p>
       </div>
 
       {/* Pagamento imediato (só para lançamento não parcelado) */}
