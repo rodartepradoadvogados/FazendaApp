@@ -12,7 +12,7 @@ import {
   type NoticiaNews,
 } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
-import { estiloCardMateria } from "@/lib/newsVisual";
+import { imagemMateria } from "@/lib/newsVisual";
 
 function formatarData(iso?: string | null): string {
   if (!iso) return "";
@@ -211,40 +211,54 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
             <Vazio>Nenhuma matéria publicada ainda.</Vazio>
           ) : (
             materiasPublicadas.map((n: NoticiaNews, i: number) => (
-              <MobCard key={n.id} style={{ ...estiloCardMateria(i), marginBottom: "0.7rem" }}>
-                <div className="flex items-start gap-2">
-                  <Newspaper size={15} style={{ color: "#FFE9B0", flexShrink: 0, marginTop: "0.15rem" }} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.5rem" }}>
-                      <p style={{ fontWeight: 700, fontSize: "0.94rem", color: "#FFE9B0" }}>{n.manchete}</p>
-                      <button type="button" onClick={() => excluir(n)} disabled={excluindo === n.id || !podePublicar}
-                        title={podePublicar ? "Excluir matéria" : "Sem permissão para excluir"}
-                        style={{ background: "none", border: "none", cursor: podePublicar ? "pointer" : "not-allowed", color: "#F5B0B0", flexShrink: 0, opacity: podePublicar ? 1 : 0.4 }}>
-                        <Trash2 size={15} />
-                      </button>
-                    </div>
-                    {(n.materia || n.resumo) && (
-                      <p style={{ fontSize: "0.82rem", color: "#F5ECDD", marginTop: "0.3rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
-                        {n.materia || n.resumo}
-                      </p>
-                    )}
-                    <div className="flex items-center gap-2" style={{ flexWrap: "wrap", marginTop: "0.45rem", fontSize: "0.7rem" }}>
-                      <span style={{ color: "rgba(255,255,255,0.75)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
-                        <CalendarDays size={11} /> {formatarData(n.data_publicacao)}
-                      </span>
-                      <span style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "#C8F5D0" }}>
-                        <ShieldCheck size={11} /> revisada
-                      </span>
-                      {(n.fontes || []).map((url, j) => (
-                        <a key={j} href={url} target="_blank" rel="noopener noreferrer"
-                          style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "#FFE9B0", border: "1px solid rgba(255,233,176,0.4)", borderRadius: "999px", padding: "0.1rem 0.45rem", textDecoration: "none" }}>
-                          <LinkIcon size={10} /> {dominio(url)}
-                        </a>
-                      ))}
+              <div key={n.id} className="mob-card" style={{ overflow: "hidden", marginBottom: "0.7rem" }}>
+                <div className="relative">
+                  <img src={imagemMateria(n, i)} alt="" style={{ width: "100%", height: "120px", objectFit: "cover", display: "block" }} />
+                  {n.categoria && (
+                    <span className="absolute top-2 left-2" style={{
+                      fontSize: "0.62rem", fontWeight: 700, padding: "0.2rem 0.55rem", borderRadius: "999px",
+                      textTransform: "uppercase", letterSpacing: "0.03em",
+                      background: "var(--mob-vinho)", color: "#fff",
+                    }}>
+                      {n.categoria}
+                    </span>
+                  )}
+                </div>
+                <div style={{ padding: "0.95rem 1rem" }}>
+                  <div className="flex items-start gap-2">
+                    <Newspaper size={15} style={{ color: "var(--mob-dourado-2)", flexShrink: 0, marginTop: "0.15rem" }} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.5rem" }}>
+                        <p style={{ fontWeight: 700, fontSize: "0.94rem", color: "var(--mob-dourado-2)" }}>{n.manchete}</p>
+                        <button type="button" onClick={() => excluir(n)} disabled={excluindo === n.id || !podePublicar}
+                          title={podePublicar ? "Excluir matéria" : "Sem permissão para excluir"}
+                          style={{ background: "none", border: "none", cursor: podePublicar ? "pointer" : "not-allowed", color: "var(--mob-vermelho)", flexShrink: 0, opacity: podePublicar ? 1 : 0.4 }}>
+                          <Trash2 size={15} />
+                        </button>
+                      </div>
+                      {(n.materia || n.resumo) && (
+                        <p className="line-clamp-3" style={{ fontSize: "0.82rem", color: "var(--mob-text)", marginTop: "0.3rem", lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+                          {n.materia || n.resumo}
+                        </p>
+                      )}
+                      <div className="flex items-center gap-2" style={{ flexWrap: "wrap", marginTop: "0.45rem", fontSize: "0.7rem" }}>
+                        <span style={{ color: "var(--mob-muted)", display: "flex", alignItems: "center", gap: "0.25rem" }}>
+                          <CalendarDays size={11} /> {formatarData(n.data_publicacao)}
+                        </span>
+                        <span style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "var(--mob-verde)" }}>
+                          <ShieldCheck size={11} /> revisada
+                        </span>
+                        {(n.fontes || []).map((url, j) => (
+                          <a key={j} href={url} target="_blank" rel="noopener noreferrer"
+                            style={{ display: "flex", alignItems: "center", gap: "0.2rem", color: "var(--mob-muted)", border: "1px solid var(--mob-border)", borderRadius: "999px", padding: "0.1rem 0.45rem", textDecoration: "none" }}>
+                            <LinkIcon size={10} /> {dominio(url)}
+                          </a>
+                        ))}
+                      </div>
                     </div>
                   </div>
                 </div>
-              </MobCard>
+              </div>
             ))
           )}
         </>
