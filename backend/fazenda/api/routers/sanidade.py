@@ -778,7 +778,7 @@ class ProtocoloLancamentoIn(BaseModel):
 
 
 def _serializar_lancamento_protocolo(
-    session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, str], nomes: dict[int, str] | None = None,
+    session: Session, lanc: ProtocoloSanitarioLancamento, protocolos: dict[int, ProtocoloSanitario], nomes: dict[int, str] | None = None,
 ) -> dict:
     aplicacoes = session.exec(
         select(ProtocoloSanitarioAplicacao)
@@ -787,9 +787,15 @@ def _serializar_lancamento_protocolo(
     ).all()
     etapas = {e.id: e for e in session.exec(select(ProtocoloSanitarioEtapa)).all()}
     nomes = nomes if nomes is not None else mapa_usuarios(session, {lanc.usuario_id})
+    protocolo = protocolos.get(lanc.protocolo_id)
     return {
         **lanc.model_dump(),
-        "protocolo_nome": protocolos.get(lanc.protocolo_id, "—"),
+        "protocolo_nome": protocolo.nome if protocolo else "—",
+        # Rótulo D exibido = etapa.dia - protocolo_dia_inicial (mesma convenção
+        # de CadastroSanitario.tsx) — sem isso, a listagem de lançamentos
+        # sempre mostraria o dia bruto (D1, D2...) mesmo para protocolos já
+        # cadastrados em base D0.
+        "protocolo_dia_inicial": protocolo.dia_inicial if protocolo else 1,
         "usuario_nome": nomes.get(lanc.usuario_id),
         "aplicacoes": [
             {**a.model_dump(), "etapa": etapas[a.etapa_id].model_dump() if a.etapa_id in etapas else None}
@@ -800,7 +806,7 @@ def _serializar_lancamento_protocolo(
 
 @router.get("/protocolos/lancamentos")
 def listar_lancamentos_protocolo(session: Session = Depends(get_session)) -> list[dict]:
-    protocolos = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
+    protocolos = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
     lancamentos = session.exec(select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).all()
     nomes = mapa_usuarios(session, {l.usuario_id for l in lancamentos})
     return [_serializar_lancamento_protocolo(session, l, protocolos, nomes) for l in lancamentos]
@@ -848,7 +854,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
     if dados.grau_mastite is not None and dados.grau_mastite not in GRAUS_MASTITE:
         raise HTTPException(status_code=400, detail="Grau de mastite inválido (aceitos: 1, 2 ou 3)")
 
-    protocolos = {protocolo.id: protocolo.nome}
+    protocolos = {protocolo.id: protocolo}
     lancamentos_criados = []
     avisos: list[str] = []
     for numero in numeros:

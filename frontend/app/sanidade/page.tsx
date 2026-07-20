@@ -933,7 +933,7 @@ function DoencaMotivoView() {
 type EtapaProtocolo = { id: number; dia: number; produto: string; dosagem: number; unidade: string; via: string | null; observacao: string | null };
 type AplicacaoProtocolo = { id: number; data_prevista: string; produto: string | null; realizada: boolean; data_realizacao: string | null; etapa: EtapaProtocolo | null };
 type LancamentoProtocolo = {
-  id: number; protocolo_id: number; protocolo_nome: string; numero_matriz: string; data_inicio: string;
+  id: number; protocolo_id: number; protocolo_nome: string; protocolo_dia_inicial?: number; numero_matriz: string; data_inicio: string;
   responsavel: string | null; observacao: string | null;
   classificacao_mastite: string | null; grau_mastite: number | null; agente: string | null;
   resultado_cmt: string | null; tetos_afetados: string | null; usuario_nome?: string | null;
@@ -1026,7 +1026,7 @@ function ProtocolosSanitariosView() {
                           <tbody>
                             {l.aplicacoes.slice().sort((a, b) => (a.etapa?.dia ?? 0) - (b.etapa?.dia ?? 0)).map((a) => (
                               <tr key={a.id}>
-                                <td>{a.etapa ? `D${a.etapa.dia}` : "—"}</td>
+                                <td>{a.etapa ? `D${a.etapa.dia - (l.protocolo_dia_inicial ?? 1)}` : "—"}</td>
                                 <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(a.data_prevista)}</td>
                                 <td style={{ fontSize: "0.75rem" }}>{a.produto || a.etapa?.produto || "—"}</td>
                                 <td style={{ textAlign: "right", fontSize: "0.75rem" }}>{a.etapa ? `${a.etapa.dosagem} ${a.etapa.unidade}` : "—"}</td>
