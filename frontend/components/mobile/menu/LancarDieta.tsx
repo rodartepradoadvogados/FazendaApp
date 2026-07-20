@@ -7,7 +7,8 @@
 import { useEffect, useState } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { MobVoltar, MobCampo, MobCard, MobAviso } from "@/components/mobile/ui";
-import { fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, criarDieta, type ContextoDieta } from "@/lib/api";
+import { fetchLotes, fetchAlimentosPadrao, fetchContextoDieta, type ContextoDieta } from "@/lib/api";
+import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
@@ -37,15 +38,21 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
   const [salvando, setSalvando] = useState(false);
   const [aviso, setAviso] = useState<{ tipo: "ok" | "offline" | "erro"; msg: string } | null>(null);
 
+  // Listas do formulário (lotes, alimentos) e contexto do lote: cache local —
+  // sem internet, o funcionário ainda enxerga a última cópia vista e pode
+  // lançar a dieta (entra na fila de envio).
   useEffect(() => {
-    fetchLotes().then((ls: LoteRow[]) => setLotes(ls.filter((l) => /^\d\d/.test(l.codigo)))).catch(() => {});
-    fetchAlimentosPadrao().then(setAlimentos).catch(() => {});
+    fetchComCache<LoteRow[]>("menu_lancar_dieta_lotes", () => fetchLotes() as Promise<LoteRow[]>)
+      .then((r) => setLotes((r.dados || []).filter((l) => /^\d\d/.test(l.codigo))));
+    fetchComCache<string[]>("menu_lancar_dieta_alimentos", () => fetchAlimentosPadrao() as Promise<string[]>)
+      .then((r) => setAlimentos(r.dados || []));
   }, []);
 
   useEffect(() => {
     setCtx(null);
     if (!loteSel) return;
-    fetchContextoDieta(Number(loteSel)).then(setCtx).catch(() => setCtx(null));
+    fetchComCache<ContextoDieta>(`menu_lancar_dieta_ctx_${loteSel}`, () => fetchContextoDieta(Number(loteSel)))
+      .then((r) => setCtx(r.dados));
   }, [loteSel]);
 
   const nAnimais = ctx?.qtd_animais ?? lotes.find((l) => l.codigo.slice(0, 2) === loteSel)?.qtd_animais ?? 0;
@@ -67,15 +74,17 @@ export default function LancarDieta({ onVoltar }: { onVoltar: () => void }) {
     }
     setSalvando(true);
     try {
-      await criarDieta({
+      const { enviado } = await enviarOuEnfileirar("/alimentacao/dietas", {
         lote: Number(loteSel), data_abertura: dataInicio, data_prevista_encerramento: dataFim || undefined,
         itens: validos.map((it) => ({ alimento: it.alimento, quantidade: Number(it.quantidade), unidade: it.unidade })),
         encerrar_anterior: encerrar,
-      });
-      setAviso({ tipo: "ok", msg: `Dieta salva para o lote ${loteSel}.` });
+      }, `Dieta lote ${loteSel}`, "POST");
+      setAviso(enviado
+        ? { tipo: "ok", msg: `Dieta salva para o lote ${loteSel}.` }
+        : { tipo: "offline", msg: "Sem internet — guardado, será enviado automaticamente ao conectar." });
       setItens([{ alimento: "", quantidade: "", unidade: "kg" }]);
       setDataFim("");
-      fetchContextoDieta(Number(loteSel)).then(setCtx).catch(() => {});
+      if (enviado) fetchContextoDieta(Number(loteSel)).then(setCtx).catch(() => {});
     } catch (e) {
       setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar a dieta." });
     } finally {

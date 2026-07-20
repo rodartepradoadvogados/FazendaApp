@@ -25,6 +25,12 @@ type Ficha = {
   eventos_agenda: Record<string, unknown>[];
   baixa: Record<string, unknown> | null;
   compra: Record<string, unknown> | null;
+  compras: Record<string, unknown>[];
+  vendas: Record<string, unknown>[];
+  gtas: string[];
+  ocorrencias_clinicas: Record<string, unknown>[];
+  exames_resultados: Record<string, unknown>[];
+  linha_tempo_sanitaria: { data: string | null; tipo_evento: string; descricao: string | null; gta: string | null; responsavel: string | null }[];
 };
 
 function classeColostro(brix: number | null): string {
@@ -86,6 +92,13 @@ const SECOES: { chave: keyof Ficha; titulo: string; colunas: ColunaExport[] }[] 
   { chave: "secagens", titulo: "Secagem", colunas: [
     { header: "Data", key: "data_secagemFmt" }, { header: "Motivo", key: "motivo" }, { header: "Escore corporal", key: "escore_condicao_corporal" },
   ] },
+  { chave: "exames_resultados", titulo: "Rastreabilidade sanitária — Exames", colunas: [
+    { header: "Data", key: "data_exameFmt" }, { header: "Exame", key: "evento_sanitario_nome" }, { header: "Resultado", key: "resultado" },
+    { header: "Valor", key: "valor_numerico" }, { header: "Faixa", key: "banda" }, { header: "Veterinário", key: "veterinario" },
+  ] },
+  { chave: "ocorrencias_clinicas", titulo: "Rastreabilidade sanitária — Doenças (ocorrências clínicas)", colunas: [
+    { header: "Data", key: "data_ocorrenciaFmt" }, { header: "Doença", key: "doenca" }, { header: "Observação", key: "observacao" }, { header: "Origem", key: "origem" },
+  ] },
   { chave: "eventos_agenda", titulo: "Agenda — eventos manuais", colunas: [
     { header: "Data", key: "data_eventoFmt" }, { header: "Descrição", key: "descricao" }, { header: "Categoria", key: "categoria" },
     { header: "Tipo", key: "tipo_evento" },
@@ -96,6 +109,7 @@ const DATA_KEYS: Record<string, string> = {
   partos: "data_parto", servicos: "data_servico", protocolos_iatf: "data_prevista", movimentos_lote: "data_movimento",
   controles_leiteiros: "data_controle", pesagens_corporais: "data_pesagem", qualidade_leite: "data_coleta",
   aplicacoes_sanitarias: "data_aplicacao", protocolos_sanitarios: "data_inicio", secagens: "data_secagem", eventos_agenda: "data_evento",
+  exames_resultados: "data_exame", ocorrencias_clinicas: "data_ocorrencia",
 };
 const DATA_KEYS_EXTRA: Record<string, string[]> = {
   servicos: ["data_diagnostico"], protocolos_iatf: ["data_realizacao"],
@@ -277,7 +291,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
         <div className="card-header mb-3 flex items-center gap-2"><FileText size={16} /> Ficha do animal</div>
         <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
           Todos os lançamentos já registrados para o animal escolhido — reprodução, partos, colostragem/IgG,
-          produção, sanidade, movimentação de lote, compra/baixa e agenda — reunidos em uma única ficha.
+          produção, sanidade (aplicações, protocolos, exames e doenças), GTA de compra/venda, movimentação de
+          lote, baixa e agenda — reunidos em uma única ficha, com a linha do tempo de rastreabilidade sanitária.
         </p>
         <div style={{ maxWidth: "420px" }}>
           <label style={labelStyle}>Animal</label>
@@ -386,17 +401,44 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             )}
           </div>
 
-          {ficha.compra && (
+          {!!ficha.gtas?.length && (
             <div className="card" style={cardStyle}>
-              <div className="card-header mb-3">Compra</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3" style={{ fontSize: "0.8rem" }}>
-                <div><span style={labelStyle}>Data</span><br />{formatDate(ficha.compra.data_compra as string)}</div>
-                <div><span style={labelStyle}>Vendedor</span><br />{String(ficha.compra.vendedor)}</div>
-                <div><span style={labelStyle}>Valor</span><br />R$ {String(ficha.compra.valor)}</div>
-                <div><span style={labelStyle}>Responsável</span><br />{String(ficha.compra.responsavel || "—")}</div>
+              <div className="card-header mb-3">GTA(s) do animal</div>
+              <div className="flex flex-wrap gap-2">
+                {ficha.gtas.map((g) => (
+                  <span key={g} style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.2rem 0.6rem", borderRadius: "999px", background: "rgba(198,162,74,0.15)", color: "var(--dourado-light)" }}>
+                    GTA {g}
+                  </span>
+                ))}
               </div>
             </div>
           )}
+
+          {ficha.compras?.map((c, i) => (
+            <div className="card" style={cardStyle} key={`compra-${i}`}>
+              <div className="card-header mb-3">Compra{ficha.compras.length > 1 ? ` (${i + 1}/${ficha.compras.length})` : ""}</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Data</span><br />{formatDate(c.data_compra as string)}</div>
+                <div><span style={labelStyle}>Vendedor</span><br />{String(c.vendedor)}</div>
+                <div><span style={labelStyle}>Valor</span><br />R$ {String(c.valor)}</div>
+                <div><span style={labelStyle}>GTA</span><br />{String(c.gta || "—")}</div>
+                <div><span style={labelStyle}>Responsável</span><br />{String(c.responsavel || "—")}</div>
+              </div>
+            </div>
+          ))}
+
+          {ficha.vendas?.map((v, i) => (
+            <div className="card" style={cardStyle} key={`venda-${i}`}>
+              <div className="card-header mb-3">Venda{ficha.vendas.length > 1 ? ` (${i + 1}/${ficha.vendas.length})` : ""}</div>
+              <div className="grid grid-cols-2 md:grid-cols-5 gap-3" style={{ fontSize: "0.8rem" }}>
+                <div><span style={labelStyle}>Data</span><br />{formatDate(v.data_venda as string)}</div>
+                <div><span style={labelStyle}>Comprador</span><br />{String(v.comprador)}</div>
+                <div><span style={labelStyle}>Valor</span><br />R$ {String(v.valor)}</div>
+                <div><span style={labelStyle}>GTA</span><br />{String(v.gta || "—")}</div>
+                <div><span style={labelStyle}>Responsável</span><br />{String(v.responsavel || "—")}</div>
+              </div>
+            </div>
+          ))}
 
           {ficha.baixa && (
             <div className="card" style={{ ...cardStyle, borderColor: "var(--red)" }}>
@@ -408,6 +450,27 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                 <div><span style={labelStyle}>Valor</span><br />{ficha.baixa.valor != null ? `R$ ${ficha.baixa.valor}` : "—"}</div>
               </div>
             </div>
+          )}
+
+          {!!ficha.linha_tempo_sanitaria?.length && (
+            <SecaoRecolhivel titulo="Rastreabilidade sanitária — linha do tempo" badge={String(ficha.linha_tempo_sanitaria.length)}>
+              <div className="overflow-x-auto">
+                <table className="fazenda-table">
+                  <thead><tr><th>Data</th><th>Evento</th><th>Descrição</th><th>GTA</th><th>Responsável</th></tr></thead>
+                  <tbody>
+                    {ficha.linha_tempo_sanitaria.map((e, i) => (
+                      <tr key={i}>
+                        <td style={{ fontSize: "0.78rem" }}>{e.data ? formatDate(e.data) : "—"}</td>
+                        <td style={{ fontSize: "0.78rem", fontWeight: 600 }}>{e.tipo_evento}</td>
+                        <td style={{ fontSize: "0.78rem" }}>{e.descricao || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: e.gta ? "var(--dourado-light)" : "var(--text-muted)", fontWeight: e.gta ? 700 : 400 }}>{e.gta || "—"}</td>
+                        <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{e.responsavel || "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </SecaoRecolhivel>
           )}
 
           {SECOES.map((s) => {
@@ -446,7 +509,8 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             );
           })}
 
-          {SECOES.every((s) => !((ficha[s.chave] as unknown[]) || []).length) && !ficha.colostragem && !ficha.compra && !ficha.baixa && (
+          {SECOES.every((s) => !((ficha[s.chave] as unknown[]) || []).length) && !ficha.colostragem && !ficha.compra && !ficha.baixa
+            && !ficha.compras?.length && !ficha.vendas?.length && (
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento encontrado para este animal.</p>
           )}
         </>

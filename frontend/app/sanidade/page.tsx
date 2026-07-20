@@ -1,11 +1,12 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent } from "lucide-react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, type ExameResultado,
   fetchMedicamentos,
+  fetchRastreabilidadeSanitaria, type LinhaRastreabilidadeSanitaria,
 } from "@/lib/api";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
@@ -1172,10 +1173,139 @@ function TaxaCuraView() {
   );
 }
 
-type AbaSanidade = "curativa" | "preventiva";
+const inputStyleRastreabilidade: React.CSSProperties = {
+  background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
+  borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem",
+};
+const COLUNAS_RASTREABILIDADE = [
+  { header: "Animal", key: "numero_animal" }, { header: "Nome", key: "nome_animal" },
+  { header: "Tipo de evento", key: "tipo_evento" }, { header: "Data", key: "dataFmt" },
+  { header: "GTA", key: "gta" }, { header: "Descrição", key: "descricao" },
+  { header: "Produto", key: "produto" }, { header: "Resultado", key: "resultado" },
+  { header: "Doença", key: "doenca" }, { header: "Responsável", key: "responsavel" },
+  { header: "Contraparte", key: "contraparte" },
+];
+
+/**
+ * Rastreabilidade sanitária (Sanidade > Rastreabilidade) — a resposta a "esse
+ * animal, com essa GTA, teve qual histórico sanitário?": linha do tempo com
+ * as GTAs de compra/venda do animal, aplicações, protocolos sanitários,
+ * exames e doenças/ocorrências clínicas, filtrável por animal, período ou
+ * número de GTA. Não emite GTA (documento oficial do órgão estadual) — só
+ * consulta o que já foi lançado em Lançamentos > Compra/Venda de animal e
+ * nas telas de Sanidade.
+ */
+function RastreabilidadeSanitariaView() {
+  const [numero, setNumero] = useState("");
+  const [gta, setGta] = useState("");
+  const [dataDe, setDataDe] = useState("");
+  const [dataAte, setDataAte] = useState("");
+  const [linhas, setLinhas] = useState<LinhaRastreabilidadeSanitaria[] | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const [carregando, setCarregando] = useState(false);
+  const [buscou, setBuscou] = useState(false);
+
+  const buscar = () => {
+    setCarregando(true); setErro(null); setBuscou(true);
+    fetchRastreabilidadeSanitaria({ numero, gta, dataDe, dataAte })
+      .then(setLinhas)
+      .catch((e) => setErro(e.message))
+      .finally(() => setCarregando(false));
+  };
+
+  const linhasExport = useMemo(() => (linhas ?? []).map((l) => ({ ...l, dataFmt: formatDate(l.data) })), [linhas]);
+  const animaisDistintos = useMemo(() => new Set((linhas ?? []).map((l) => l.numero_animal)).size, [linhas]);
+  const gtasEncontrados = useMemo(() => Array.from(new Set((linhas ?? []).map((l) => l.gta).filter(Boolean))) as string[], [linhas]);
+
+  const CORES_EVENTO: Record<string, string> = {
+    "Compra": "var(--red)", "Venda": "var(--green-light)", "Aplicação sanitária": "var(--dourado-light)",
+    "Protocolo sanitário": "var(--blue)", "Exame": "var(--amber)", "Doença (ocorrência clínica)": "var(--red)", "Baixa": "var(--text-muted)",
+  };
+
+  return (
+    <>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+        <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+          Reconstrói a cadeia sanitária de um animal (ou de uma GTA): compra/venda com GTA, aplicações
+          sanitárias, protocolos, exames e doenças registradas — em ordem cronológica. Informe ao menos
+          o número do animal, a GTA ou um período.
+        </p>
+        <div className="flex flex-wrap gap-3 items-end">
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Número do animal</label>
+            <input style={inputStyleRastreabilidade} value={numero} onChange={(e) => setNumero(e.target.value)} placeholder="ex.: 950" /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>GTA</label>
+            <input style={inputStyleRastreabilidade} value={gta} onChange={(e) => setGta(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>De</label>
+            <input type="date" style={inputStyleRastreabilidade} value={dataDe} onChange={(e) => setDataDe(e.target.value)} /></div>
+          <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Até</label>
+            <input type="date" style={inputStyleRastreabilidade} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
+          <button className="btn-primary" style={{ fontSize: "0.8rem" }} onClick={buscar} disabled={carregando}>
+            <Search size={13} /> {carregando ? "Buscando…" : "Buscar"}
+          </button>
+        </div>
+      </div>
+
+      {erro && <div className="alert-critico mb-4"><span>{erro}</span></div>}
+
+      {!buscou && !erro && (
+        <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Informe um filtro e clique em Buscar.</p>
+      )}
+
+      {linhas && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-4">
+            <Indicador categoria="geral" valor={String(linhas.length)} rotulo="Eventos" />
+            <Indicador categoria="geral" valor={String(animaisDistintos)} rotulo="Animais" />
+            <Indicador categoria="geral" valor={String(gtasEncontrados.length)} rotulo="GTAs distintas" />
+          </div>
+          <div className="card">
+            <div className="flex items-center justify-between mb-3">
+              <div className="card-header" style={{ margin: 0 }}>Linha do tempo sanitária</div>
+              <ExportarBotoes titulo="Rastreabilidade sanitária" colunas={COLUNAS_RASTREABILIDADE} linhas={linhasExport} nomeArquivoBase="rastreabilidade_sanitaria" disabled={!linhas.length} />
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <th>Animal</th><th>Evento</th><th>Data</th><th>GTA</th><th>Descrição</th><th>Produto</th>
+                  <th>Resultado</th><th>Doença</th><th>Responsável</th><th>Contraparte</th>
+                </tr></thead>
+                <tbody>
+                  {linhas.map((l, i) => (
+                    <tr key={i}>
+                      <td style={{ fontWeight: 700 }}>{l.numero_animal}{l.nome_animal ? ` · ${l.nome_animal}` : ""}</td>
+                      <td>
+                        <span style={{
+                          fontSize: "0.72rem", padding: "0.15rem 0.5rem", borderRadius: "999px", fontWeight: 700,
+                          color: CORES_EVENTO[l.tipo_evento] || "var(--text)",
+                        }}>{l.tipo_evento}</span>
+                      </td>
+                      <td style={{ fontSize: "0.8rem" }}>{formatDate(l.data)}</td>
+                      <td style={{ fontSize: "0.78rem", fontWeight: l.gta ? 700 : 400, color: l.gta ? "var(--dourado-light)" : "var(--text-muted)" }}>{l.gta || "—"}</td>
+                      <td style={{ fontSize: "0.8rem" }}>{l.descricao || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.produto || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.resultado || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.doenca || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.responsavel || "—"}</td>
+                      <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.contraparte || "—"}</td>
+                    </tr>
+                  ))}
+                  {!linhas.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", padding: "1rem" }}>Nenhum evento sanitário encontrado para o filtro.</td></tr>}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+type AbaSanidade = "curativa" | "preventiva" | "rastreabilidade";
 const ABAS_SANIDADE = [
   { id: "curativa", label: "Curativa", icon: HeartPulse, title: "Tratamentos curativos: aplicações, doença/motivo e protocolos" },
   { id: "preventiva", label: "Preventiva", icon: Shield, title: "Manejo preventivo: aplicações e calendário sanitário" },
+  { id: "rastreabilidade", label: "Rastreabilidade", icon: Route, title: "Rastreabilidade sanitária/GTA: linha do tempo por animal ou por GTA" },
 ] as const satisfies readonly { id: AbaSanidade; label: string; icon: any; title: string }[];
 
 type AbaCurativa = "curativo" | "doenca" | "protocolos" | "taxa_cura";
@@ -1247,6 +1377,7 @@ export default function SanidadePage() {
           {abaPrev === "calendario" && <CalendarioSanitarioView />}
         </>
       )}
+      {aba === "rastreabilidade" && <RastreabilidadeSanitariaView />}
     </div>
   );
 }

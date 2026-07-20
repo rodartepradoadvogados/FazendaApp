@@ -10,9 +10,10 @@ from sqlmodel import Session, select
 
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen, MovimentoLote, Parto,
+    Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen,
+    EventoSanitario, ExameResultado, MovimentoLote, OcorrenciaClinica, Parto,
     PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloSanitario, ProtocoloSanitarioLancamento, QualidadeLeite,
-    Sanidade, Secagem, Servico, Touro,
+    Sanidade, Secagem, Servico, Touro, VendaAnimal,
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.parametros import get_param
@@ -306,7 +307,70 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
     ]
 
     baixa = session.exec(select(BaixaAnimal).where(BaixaAnimal.numero_animal == numero)).first()
-    compra = session.exec(select(CompraAnimal).where(CompraAnimal.numero_animal == numero)).first()
+    # Rastreabilidade sanitária/GTA: TODAS as compras e vendas do animal (não só
+    # a primeira) — um animal pode ter mais de uma GTA ao longo da vida (ex.:
+    # comprado e, mais tarde, revendido). `compra` é mantido por compatibilidade
+    # (primeira compra registrada); `compras`/`vendas` trazem a lista completa.
+    compras = session.exec(select(CompraAnimal).where(CompraAnimal.numero_animal == numero).order_by(CompraAnimal.data_compra)).all()
+    vendas = session.exec(select(VendaAnimal).where(VendaAnimal.numero_animal == numero).order_by(VendaAnimal.data_venda)).all()
+    compra = compras[0] if compras else None
+    gtas = sorted({c.gta for c in compras if c.gta} | {v.gta for v in vendas if v.gta})
+
+    ocorrencias_clinicas = session.exec(
+        select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero).order_by(OcorrenciaClinica.data_ocorrencia)
+    ).all()
+
+    eventos_sanitarios_nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
+    exames_resultados_rows = session.exec(
+        select(ExameResultado).where(ExameResultado.numero_matriz == numero).order_by(ExameResultado.data_exame)
+    ).all()
+    exames_resultados = [
+        {**e.model_dump(), "evento_sanitario_nome": eventos_sanitarios_nomes.get(e.evento_sanitario_id)}
+        for e in exames_resultados_rows
+    ]
+
+    # Linha do tempo de rastreabilidade sanitária: todos os eventos com
+    # relevância sanitária/documental (GTA de compra/venda, aplicações,
+    # protocolos, exames, doenças e baixa) numa única lista cronológica —
+    # responde "esse animal, com essa GTA, teve qual histórico sanitário?"
+    # sem precisar cruzar seção por seção.
+    linha_tempo_sanitaria: list[dict] = []
+    for c in compras:
+        linha_tempo_sanitaria.append({
+            "data": c.data_compra, "tipo_evento": "Compra", "descricao": f"Compra de {c.vendedor}",
+            "gta": c.gta, "responsavel": c.responsavel,
+        })
+    for v in vendas:
+        linha_tempo_sanitaria.append({
+            "data": v.data_venda, "tipo_evento": "Venda", "descricao": f"Venda para {v.comprador}",
+            "gta": v.gta, "responsavel": v.responsavel,
+        })
+    for s in aplicacoes_sanitarias:
+        linha_tempo_sanitaria.append({
+            "data": s.data_aplicacao, "tipo_evento": "Aplicação sanitária", "descricao": s.produto,
+            "gta": None, "responsavel": s.responsavel,
+        })
+    for p in protocolos_sanitarios_rows:
+        linha_tempo_sanitaria.append({
+            "data": p.data_inicio, "tipo_evento": "Protocolo sanitário",
+            "descricao": protocolos_nomes.get(p.protocolo_id, "—"), "gta": None, "responsavel": p.responsavel,
+        })
+    for e in exames_resultados:
+        linha_tempo_sanitaria.append({
+            "data": e["data_exame"], "tipo_evento": "Exame", "descricao": e.get("evento_sanitario_nome") or "—",
+            "gta": None, "responsavel": e.get("veterinario"),
+        })
+    for o in ocorrencias_clinicas:
+        linha_tempo_sanitaria.append({
+            "data": o.data_ocorrencia, "tipo_evento": "Doença (ocorrência clínica)", "descricao": o.doenca,
+            "gta": None, "responsavel": None,
+        })
+    if baixa:
+        linha_tempo_sanitaria.append({
+            "data": baixa.data_baixa, "tipo_evento": "Baixa", "descricao": f"{baixa.tipo_baixa} — {baixa.motivo}",
+            "gta": None, "responsavel": baixa.responsavel,
+        })
+    linha_tempo_sanitaria.sort(key=lambda e: e["data"] or date.min)
 
     # Previsão de parto / secagem: gestação em curso = último serviço positivo
     # (sem perda registrada) posterior ao último parto — mesma regra usada nas
@@ -345,4 +409,10 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         "eventos_agenda": _dump(eventos_agenda),
         "baixa": baixa.model_dump() if baixa else None,
         "compra": compra.model_dump() if compra else None,
+        "compras": _dump(compras),
+        "vendas": _dump(vendas),
+        "gtas": gtas,
+        "ocorrencias_clinicas": _dump(ocorrencias_clinicas),
+        "exames_resultados": exames_resultados,
+        "linha_tempo_sanitaria": linha_tempo_sanitaria,
     }

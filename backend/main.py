@@ -41,6 +41,7 @@ from fazenda.api.routers import (
     producao,
     recria,
     relatorio_compra_venda_animal,
+    relatorio_rastreabilidade_sanitaria,
     relatorios,
     reproducao,
     sanidade,
@@ -242,6 +243,7 @@ app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("repro
 app.include_router(estoque.router, dependencies=_protegido)
 app.include_router(farmacia.router, dependencies=_protegido)
 app.include_router(sanidade.router, dependencies=_protegido)
+app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_protegido)
 app.include_router(recria.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
