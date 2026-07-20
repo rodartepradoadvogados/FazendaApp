@@ -47,7 +47,7 @@ from fazenda.database import get_session
 from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews, SeedFlag, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
 
-RESUMO_MAX = 500
+RESUMO_MAX = 800
 
 router = APIRouter(prefix="/news", tags=["news"])
 
@@ -129,7 +129,11 @@ NOME_FONTE_MILKNEWS = "robô Milknews"
 # única vez (SeedFlag em publicar_lotes_milknews), sob a fonte manual
 # "robô Milknews". A rotina agendada só precisa acrescentar uma chave nova
 # "milknews_<AAAAMMDD>" com uma lista de 1 matéria (manchete, resumo, link,
-# data_publicacao); nunca altera lotes já existentes.
+# data_publicacao); nunca altera lotes já existentes. `resumo` aceita até
+# RESUMO_MAX (800) caracteres. `materia` é opcional — corpo completo do texto
+# (título/lide/parágrafos), usado quando o post do /milknews é mais longo que
+# cabe no resumo; se ausente, a matéria fica só com o resumo mesmo (igual ao
+# comportamento anterior).
 MILKNEWS_LOTES: dict[str, list[dict]] = {
     "milknews_20260718": [{
         "manchete": "Preço do leite recua em junho após alta do 1º semestre, aponta Cepea",
@@ -181,6 +185,104 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             "https://girodoboi.canalrural.com.br/pecuaria/comercializacao-de-semen-bovino-cresce-177-no-primeiro-trimestre-de-2026",
         ],
     }],
+    "milknews_20260720_aprovadas": [
+        {
+            "manchete": "Leite spot avança na primeira quinzena de julho com oferta mais restrita",
+            "resumo": (
+                "O preço do leite spot subiu em todos os estados pesquisados na primeira quinzena "
+                "de julho, impulsionado por demanda mais firme por derivados e uma oferta mais "
+                "enxuta no campo. Dados: MilkPoint (17/07/2026)."
+            ),
+            "materia": (
+                "O preço do leite spot subiu em todos os estados pesquisados na primeira quinzena de "
+                "julho, impulsionado por demanda mais firme por derivados e uma oferta mais enxuta no "
+                "campo.\n\n"
+                "Segundo o MilkPoint, a média nacional do leite spot chegou a R$ 3,229 por litro, alta "
+                "de R$ 0,170 frente ao levantamento anterior. São Paulo registrou a maior média entre "
+                "os estados pesquisados, R$ 3,460 (+R$ 0,185), seguido por Minas Gerais (R$ 3,361), "
+                "Santa Catarina (R$ 3,240), Paraná (R$ 3,235), Goiás (R$ 3,222) e Rio Grande do Sul "
+                "(R$ 2,981).\n\n"
+                "De acordo com a publicação, o movimento de alta reflete vendas de derivados lácteos "
+                "em níveis considerados confortáveis e a preços melhores, o que aumentou a procura por "
+                "leite in natura por parte da indústria. Essa demanda mais aquecida, somada a uma "
+                "oferta mais restrita de leite no campo, explica o reajuste generalizado observado nos "
+                "estados acompanhados.\n\n"
+                "O movimento também aparece de forma mais ampla no acompanhamento do Cepea/Esalq, que "
+                "vem registrando reação nos preços pagos ao produtor ao longo de 2026, após um período "
+                "prolongado de queda — conforme detalhado no Boletim do Leite de julho, divulgado pela "
+                "instituição."
+            ),
+            "link": "/news#milknews-2026-07-20-01",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/leite-spot-registra-novo-ajuste-positivo-na-1-quinzena-de-julho-241420/",
+                "https://www.cepea.org.br/br/releases/o-boletim-do-leite-de-julho-ja-esta-disponivel-2.aspx",
+            ],
+        },
+        {
+            "manchete": "Interleite Brasil 2026 reúne gestores para debater bastidores da gestão leiteira",
+            "resumo": (
+                "O MilkPoint promoveu uma live reunindo gestores de operações leiteiras de destaque no "
+                "país para compartilhar lições práticas de gestão, no embalo do Fórum MilkPoint Mercado "
+                "e do Interleite Brasil 2026. Dados: MilkPoint (2026)."
+            ),
+            "materia": (
+                "O MilkPoint promoveu uma live reunindo gestores de operações leiteiras de destaque no "
+                "país para compartilhar lições práticas de gestão, no embalo do Fórum MilkPoint Mercado "
+                "e do Interleite Brasil 2026.\n\n"
+                "O encontro trouxe três gestores à frente de operações leiteiras reconhecidas no "
+                "Brasil, discutindo decisões do dia a dia da produção — de planejamento financeiro a "
+                "organização de equipe — em um formato de troca direta de experiência entre pares do "
+                "setor.\n\n"
+                "O Fórum MilkPoint Mercado, citado como pano de fundo do debate, também trouxe à tona "
+                "tendências para os \"bastidores\" do setor leiteiro, sinalizando um momento de "
+                "transição na forma como produtores encaram a gestão do negócio, e não só a produção "
+                "em si.\n\n"
+                "Esse tipo de discussão ganha peso justamente num momento em que os preços do leite "
+                "mostram recuperação — o que reforça, segundo o próprio debate, a importância de uma "
+                "gestão eficiente para efetivamente captar essa margem, em vez de apenas repassá-la a "
+                "custos operacionais mais altos."
+            ),
+            "link": "/news#milknews-2026-07-20-02",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/tres-gestores-uma-live-e-muitas-licoes-sobre-gestao-na-producao-de-leite-241467/",
+                "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/um-setor-em-virada-os-bastidores-e-tendencias-revelados-no-forum-milkpoint-mercado-240647/",
+            ],
+        },
+        {
+            "manchete": "Genética Semex ganha espaço na Expogrande 2026 com foco em heterose",
+            "resumo": (
+                "A genética bovina da Semex esteve entre os destaques da Expogrande 2026, com "
+                "produtores cada vez mais atentos ao impacto direto da escolha genética sobre "
+                "produtividade, carcaça e rentabilidade do rebanho. Dados: cobertura do evento (2026)."
+            ),
+            "materia": (
+                "A genética bovina da Semex esteve entre os destaques da Expogrande 2026, com "
+                "produtores cada vez mais atentos ao impacto direto da escolha genética sobre "
+                "produtividade, carcaça e rentabilidade do rebanho.\n\n"
+                "De acordo com cobertura do evento, o tema da heterose — o ganho de desempenho obtido "
+                "pelo cruzamento estratégico entre raças — e da avaliação técnica dos animais entraram "
+                "no centro das conversas durante a feira, reforçando uma tendência de produtores "
+                "buscarem decisões genéticas mais embasadas, e não apenas guiadas por preferência "
+                "racial.\n\n"
+                "A Semex opera no Brasil desde 1995 como distribuidora exclusiva da Semex Alliance "
+                "canadense, comercializando genética bovina com foco em ganhos de produtividade e "
+                "eficiência para o produtor. O movimento acompanha um ano ativo para o mercado de "
+                "genética leiteira no país como um todo: tanto a Alta Genetics quanto a ABS têm "
+                "reforçado portfólio de touros, avaliações genéticas e serviços de manejo reprodutivo "
+                "voltados a elevar a rentabilidade do rebanho — sinal de que a discussão sobre "
+                "genética aplicada segue ganhando espaço entre os pecuaristas de leite brasileiros."
+            ),
+            "link": "/news#milknews-2026-07-20-03",
+            "data_publicacao": "2026-07-20",
+            "fontes": [
+                "https://www.rcn67.com.br/agronegocio/genetica-bovina-da-semex-ganha-forca-na-expogrande-2026/",
+                "https://semex.com.br/sobre",
+                "https://altagenetics.com.br/",
+            ],
+        },
+    ],
 }
 
 
@@ -237,9 +339,10 @@ def publicar_lotes_milknews(session: Session) -> None:
             resumo = (item.get("resumo") or "").strip() or None
             if resumo and len(resumo) > RESUMO_MAX:
                 resumo = resumo[: RESUMO_MAX - 1].rstrip() + "…"
+            materia = (item.get("materia") or "").strip() or None
             fonte = fonte or _fonte_milknews(session)
             session.add(NoticiaNews(
-                fonte_id=fonte.id, manchete=manchete, resumo=resumo,
+                fonte_id=fonte.id, manchete=manchete, resumo=resumo, materia=materia,
                 link=link, data_publicacao=data_publicacao,
                 fontes=json.dumps(urls) if urls else None,
             ))
