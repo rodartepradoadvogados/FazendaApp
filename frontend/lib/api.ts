@@ -859,6 +859,57 @@ export async function excluirDecimoTerceiro(id: number) {
   return res.json();
 }
 
+// ── Rescisão (Financeiro > Ações > Folha de Pagamento > Férias / 13º / Rescisão) ──
+// Verbas rescisórias da CLT (saldo de salário, aviso prévio, férias
+// vencidas/proporcionais, 13º proporcional, multa de FGTS estimada) para as
+// 4 modalidades mais comuns. Sem eSocial/TRCT oficial (fora de escopo, mesma
+// linha de férias/13º). Diferente de férias/13º, não há registro de
+// acompanhamento dedicado — só o lançamento em Contas a Pagar.
+export type TipoRescisao = "sem_justa_causa" | "pedido_demissao" | "justa_causa" | "acordo_mutuo";
+export type RescisaoDados = {
+  pessoa_id: number; tipo_rescisao: TipoRescisao; data_desligamento: string;
+  dias_ferias_vencidas?: number; aviso_previo_trabalhado?: boolean;
+  data_pagamento?: string; status?: string; observacao?: string; centro_custo?: string;
+};
+export type CalculoRescisao = {
+  tipo_rescisao: TipoRescisao;
+  saldo_salario: { dias_trabalhados_mes: number; valor: number };
+  aviso_previo: { devido: boolean; dias: number; dias_indenizados: number; trabalhado: boolean; valor: number };
+  ferias_vencidas: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number };
+  ferias_proporcionais: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number; meses: number };
+  decimo_terceiro_proporcional: { meses: number; valor: number };
+  fgts: {
+    estimativa: boolean; percentual_mensal_estimado: number; meses_considerados: number;
+    deposito_total_estimado: number; percentual_multa: number; multa: number; percentual_saque_permitido: number;
+  };
+  data_referencia_tempo_servico: string;
+  valor_total: number;
+};
+export type RegistroRescisao = {
+  id: number; numero_lancamento: string | null; descricao: string; fornecedor_cliente: string | null;
+  valor_total: number; data_competencia: string; data_vencimento: string | null; valor_pago: number | null;
+};
+
+export async function simularRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
+  const res = await authFetch(`${API}/cadastro/rescisao/calcular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular rescisão"); }
+  return res.json();
+}
+export async function criarRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
+  const res = await authFetch(`${API}/cadastro/rescisao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar rescisão"); }
+  return res.json();
+}
+export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
+  const res = await authFetch(`${API}/cadastro/rescisao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rescisão error: ${res.status}`);
+  return res.json();
+}
+
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
@@ -904,7 +955,7 @@ export async function atualizarItemEstoque(id: number, dados: Record<string, unk
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar item de estoque"); }
   return res.json();
 }
-export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; estocavel?: boolean | null }) {
+export async function atualizarMetaEstoque(id: number, dados: { unidade_embalagem?: string | null; medida_embalagem?: string | null; quantidade_embalagem?: number | null; fornecedor_id?: number | null; conta_gerencial_despesa_padrao?: string | null; estocavel?: boolean | null }) {
   const res = await authFetch(`${API}/cadastro/estoque-itens/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -3145,6 +3196,10 @@ export type NoticiaNews = {
   id: number; fonte_id: number; manchete: string; resumo?: string | null; link: string;
   data_publicacao?: string | null; capturado_em: string; materia?: string | null; fontes?: string[];
   revisado_final: boolean; revisado_final_em?: string | null; revisado_final_por?: string | null;
+  // Ilustração + rótulo curto (#news-redesign) — caminho público em
+  // /news-images/ e pílula de tema, respectivamente; ambos opcionais (nulo
+  // em matérias antigas — a tela cai no fundo temático rotativo já existente).
+  imagem?: string | null; categoria?: string | null;
 };
 export type NewsFeed = { janela_dias: number; fontes: { fonte: { id: number; nome: string; url: string; erro?: string | null }; noticias: NoticiaNews[] }[] };
 
@@ -3154,9 +3209,9 @@ export const fetchNoticias = (verTudo = false): Promise<NewsFeed> => _rGet(`/new
 // revisadas (visão pública).
 export const fetchTodasMaterias = (): Promise<NoticiaNews[]> => _rGet(`/news/materias`);
 
-export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[] };
+export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[]; imagem?: string; categoria?: string };
 export const criarMateriaBlog = (d: MateriaBlogIn): Promise<NoticiaNews> => _rSend(`/news/materias`, "POST", d);
-export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: string; fontes: string[] };
+export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: string; fontes: string[]; imagem?: string; categoria?: string };
 export const atualizarMateriaBlog = (id: number, d: MateriaBlogEditIn): Promise<NoticiaNews> => _rSend(`/news/materias/${id}`, "PUT", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
 export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");

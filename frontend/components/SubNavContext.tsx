@@ -1,11 +1,13 @@
 "use client";
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
 
-// Piloto da navegação em drill-down (Lançamentos): uma página registra sua
-// árvore de sub-abas aqui, e é a barra lateral (Sidebar) — não o conteúdo —
-// quem desenha os níveis de navegação, substituindo a lista de módulos
-// enquanto a página estiver montada. `tree`/`onSelect` devem ser memoizados
-// pelo chamador (useMemo/useCallback) para não reabrir o registro a cada render.
+// Navegação em drill-down, usada por várias páginas (Lançamentos, Rebanho,
+// Reprodução, Sanidade, Financeiro, Recria, Relatórios, Alimentação,
+// Configurações…): cada página registra sua árvore de sub-abas aqui, e é a
+// barra lateral (Sidebar) — não o conteúdo — quem desenha os níveis de
+// navegação, substituindo a lista de módulos enquanto a página estiver
+// montada. `tree`/`onSelect` devem ser memoizados pelo chamador
+// (useMemo/useCallback) para não reabrir o registro a cada render.
 export type SubNavNode = { id: string; label: string; icon: any; children?: SubNavNode[] };
 export type SubNavValue = { tree: SubNavNode[]; activeId: string; onSelect: (id: string) => void } | null;
 

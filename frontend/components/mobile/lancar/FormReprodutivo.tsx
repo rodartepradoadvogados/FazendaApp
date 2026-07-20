@@ -6,7 +6,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { fetchEstoqueSemen, fetchTouros, fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO, type Touro, type AgendaVetResposta } from "@/lib/api";
-import { enviarOuEnfileirar } from "@/lib/offline";
+import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import {
   type Animal, type Semen, useCache, useEnvio, hoje, rotuloAnimal,
@@ -111,7 +111,9 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
             onChange={(e) => {
               setIncluirSemEstoque(e.target.checked);
               setTouro("");
-              if (e.target.checked && !catalogoTouros.length) fetchTouros().then(setCatalogoTouros).catch(() => {});
+              if (e.target.checked && !catalogoTouros.length) {
+                fetchComCache<Touro[]>("touros_naab", () => fetchTouros()).then(({ dados }) => { if (dados) setCatalogoTouros(dados); });
+              }
             }} />
           Incluir touros sem estoque (catálogo NAAB)
         </label>
@@ -167,7 +169,9 @@ function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixad
   useEffect(() => {
     if (vinculo === "agenda" && !agendaVet && !agendaCarregando) {
       setAgendaCarregando(true);
-      fetchAgendaVeterinario().then(setAgendaVet).catch(() => {}).finally(() => setAgendaCarregando(false));
+      fetchComCache<AgendaVetResposta>("reproducao_agenda_vet_diagnostico", () => fetchAgendaVeterinario())
+        .then(({ dados }) => { if (dados) setAgendaVet(dados); })
+        .finally(() => setAgendaCarregando(false));
     }
   }, [vinculo, agendaVet, agendaCarregando]);
   const numerosDaAgenda = useMemo(() => {

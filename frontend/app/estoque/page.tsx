@@ -8,7 +8,7 @@ import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
-import { Indicador } from "@/components/ui";
+import { Indicador, SecaoRecolhivel } from "@/components/ui";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -208,13 +208,11 @@ export default function EstoquePage() {
           </div>
 
           {movimentos && (
-            <div className="card mt-4">
-              <div className="card-header mb-3 flex items-center justify-between">
-                <span>Movimentos (entradas/saídas manuais)</span>
-                <div className="flex items-center gap-3">
-                  <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{movimentos.length}</span>
-                  <ExportarBotoes titulo="Movimentos de estoque" nomeArquivoBase="movimentos_estoque" colunas={COLUNAS_MOVIMENTOS} linhas={movimentos} />
-                </div>
+            <SecaoRecolhivel titulo="Movimentos (entradas/saídas manuais)" icon={Package}
+              badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{movimentos.length}</span>}
+              descricao="Histórico de entradas e saídas manuais do estoque">
+              <div className="flex justify-end mb-2">
+                <ExportarBotoes titulo="Movimentos de estoque" nomeArquivoBase="movimentos_estoque" colunas={COLUNAS_MOVIMENTOS} linhas={movimentos} />
               </div>
               <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
                 <table className="fazenda-table">
@@ -239,7 +237,7 @@ export default function EstoquePage() {
                 <Paginacao pagina={pagMovimentos.pagina} totalPaginas={pagMovimentos.totalPaginas} totalLinhas={pagMovimentos.totalLinhas}
                   tamanhoPagina={pagMovimentos.tamanhoPagina} onMudarPagina={pagMovimentos.setPagina} onMudarTamanho={pagMovimentos.setTamanhoPagina} />
               </div>
-            </div>
+            </SecaoRecolhivel>
           )}
         </>
       )}

@@ -9,6 +9,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Syringe, ClipboardList, Bandage, ShieldCheck, CalendarClock, Droplets } from "lucide-react";
 import { MobCampo, MobAviso, MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchEstoque, fetchProtocolosSanitarios, fetchMedicamentos, fetchPrincipiosAtivos, fetchDoencas, fetchEventosSanitarios, fetchAgenda, fetchCategoriasManejo, formatDate } from "@/lib/api";
+import { fetchComCache } from "@/lib/offline";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 import {
   type Animal, type EstoqueItem, useCache, useEnvio, hoje,
@@ -121,8 +122,10 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
   const [doencasNomes, setDoencasNomes] = useState<string[]>([]);
   const [medicamentosFiltrados, setMedicamentosFiltrados] = useState<string[] | null>(null);
   useEffect(() => {
-    fetchPrincipiosAtivos().then((d: any[]) => setPrincipiosNomes(d.map((p) => p.nome))).catch(() => {});
-    fetchDoencas().then((d: any[]) => setDoencasNomes(d.map((x) => x.nome))).catch(() => {});
+    fetchComCache<string[]>("sanidade_principios_ativos_nomes", () => fetchPrincipiosAtivos().then((d: any[]) => d.map((p) => p.nome)))
+      .then(({ dados }) => setPrincipiosNomes(dados || []));
+    fetchComCache<string[]>("sanidade_doencas_nomes", () => fetchDoencas().then((d: any[]) => d.map((x) => x.nome)))
+      .then(({ dados }) => setDoencasNomes(dados || []));
   }, []);
   useEffect(() => {
     if (filtrarPor === "todos" || !criterio) { setMedicamentosFiltrados(null); return; }
@@ -321,7 +324,10 @@ function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; ani
   const [animal, setAnimal] = useState(animalFixado || "");
   const [lote, setLote] = useState("");
 
-  useEffect(() => { fetchEventosSanitarios().then((d: any[]) => setEventos(d.filter((e) => e.ativo))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
+      .then(({ dados }) => setEventos(dados || []));
+  }, []);
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
@@ -417,8 +423,14 @@ function PreventivoCalendario({ estoque }: { estoque: EstoqueItem[] }) {
   const [data, setData] = useState(hoje());
   const [obs, setObs] = useState("");
 
-  useEffect(() => { fetchEventosSanitarios().then((d: any[]) => setEventos(d.filter((e) => e.ativo))).catch(() => {}); }, []);
-  useEffect(() => { fetchCategoriasManejo().then((d) => setCategoriasVida(d.filter((c) => c.ativo).map((c) => c.nome))).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
+      .then(({ dados }) => setEventos(dados || []));
+  }, []);
+  useEffect(() => {
+    fetchComCache<string[]>("sanidade_categorias_manejo_ativas", () => fetchCategoriasManejo().then((d) => d.filter((c) => c.ativo).map((c) => c.nome)))
+      .then(({ dados }) => setCategoriasVida(dados || []));
+  }, []);
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
   const compativeis = useMemo(() => unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade), [estoque, produto]);

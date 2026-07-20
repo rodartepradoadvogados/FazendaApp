@@ -13,6 +13,7 @@ import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { BotoesEscolha, GradeAcoes, type Animal, useEnvio, hoje, SeletorAnimal } from "./comum";
 import { type EstoqueItem } from "@/components/lancamentos/comumForms";
 import { fetchAgenda, fetchEstoque, fetchSanidade } from "@/lib/api";
+import { fetchComCache } from "@/lib/offline";
 
 // Cada sub-aba só baixa seu próprio formulário quando aberta pela 1ª vez —
 // importante em conexão de campo, onde o app roda mais.
@@ -33,7 +34,9 @@ const TITULOS_SUB: Record<Sub, string> = {
 export function FormProducao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const [sub, setSub] = useState<Sub | null>(null);
   const [agenda, setAgenda] = useState<any>(null);
-  const carregarAgenda = () => { fetchAgenda().then(setAgenda).catch(() => {}); };
+  const carregarAgenda = () => {
+    fetchComCache<any>("producao_agenda_bst", () => fetchAgenda()).then(({ dados }) => { if (dados) setAgenda(dados); });
+  };
   useEffect(() => { if (sub === "bst" && !agenda) carregarAgenda(); }, [sub]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Estoque e produtos já lançados em Sanidade — só a Secagem precisa (lista
@@ -45,8 +48,11 @@ export function FormProducao({ animais, animalFixado }: { animais: Animal[]; ani
   useEffect(() => {
     if (sub !== "secagem" || estoqueCarregado) return;
     setEstoqueCarregado(true);
-    fetchEstoque().then((d) => setEstoque(d.itens || [])).catch(() => {});
-    fetchSanidade().then((d) => setProdutosSanidade(Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])).catch(() => {});
+    fetchComCache<{ itens: EstoqueItem[] }>("estoque_itens_completo", () => fetchEstoque())
+      .then(({ dados }) => setEstoque(dados?.itens || []));
+    fetchComCache<string[]>("producao_secagem_produtos_sanidade", () =>
+      fetchSanidade().then((d) => Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[])
+    ).then(({ dados }) => setProdutosSanidade(dados || []));
   }, [sub, estoqueCarregado]);
 
   if (!sub) {

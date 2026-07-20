@@ -218,11 +218,39 @@ def url_destino(item: dict) -> str:
     return "/agenda"
 
 
+# ---------------------------------------------------------------------------
+# Categorização do push: o usuário passou a ver 3 "canais" de push
+# (Agenda do dia / Pendências / Comunicados) em vez de um título por item
+# (antes era item.get("categoria"), o que fragmentava a notificação em
+# dezenas de títulos diferentes). "Comunicado" = item que só informa, sem
+# gerar movimentação/ação do usuário (mensagem do Portal, ou aviso
+# informativo de agenda tipo "nova dieta" — ver COMUNICADO_PREFIXOS/
+# "comunicado" em agenda.py; aqui chega achatado em tipo="agenda", então a
+# palavra "dieta" na categoria/descrição é o sinal disponível). Todo o resto
+# (exclusão pendente, conta vencendo, estoque baixo, demais eventos de
+# agenda) é "pendência" — item acionável.
+TITULOS_PUSH = {
+    "comunicado": "Comunicados",
+    "pendencia": "Pendências",
+}
+
+
+def _categoria_push(item: dict) -> str:
+    if (item.get("tipo") or "") == "portal_mensagem":
+        return "comunicado"
+    texto = f"{item.get('categoria') or ''} {item.get('descricao') or ''}".lower()
+    if "dieta" in texto:
+        return "comunicado"
+    return "pendencia"
+
+
 def notificar_push_para_itens(usuario_id: int, itens: list[dict], session: Session) -> None:
     """Ponto único chamado pelo rewire (notificacoes.py) e pela varredura
     periódica: para cada item já decidido como alerta hoje, dispara push
     (deduplicado) SE o usuário tiver ao menos uma subscription ativa —
-    consulta rápida (sem pywebpush) evita gastar uma chamada de rede à toa."""
+    consulta rápida (sem pywebpush) evita gastar uma chamada de rede à toa.
+    O título é fixo por categoria de push (Pendências/Comunicados), não mais
+    o `categoria` do item individual — ver _categoria_push."""
     tem_subscription = session.exec(
         select(PushSubscription.id).where(PushSubscription.usuario_id == usuario_id)
     ).first()
@@ -243,12 +271,67 @@ def notificar_push_para_itens(usuario_id: int, itens: list[dict], session: Sessi
             continue
         enviar_push(
             usuario_id=usuario_id,
-            titulo=item.get("categoria") or "Fazenda Estreito Ponte de Pedra",
+            titulo=TITULOS_PUSH[_categoria_push(item)],
             corpo=item.get("descricao") or "",
             url=url_destino(item),
             session=session,
         )
         session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=chave, data_referencia=hoje))
+        session.commit()
+
+
+# Chave fixa (não é hash de conteúdo, ao contrário de _chave_item): o
+# resumo é 1x por usuário por dia por definição, então não há "conteúdo"
+# variável a deduplicar — a mera existência de uma linha com esta chave e a
+# data de hoje já basta para saber que o resumo de hoje já foi enviado.
+_CHAVE_AGENDA_DO_DIA = "agenda_do_dia"
+
+
+def despachar_agenda_do_dia(session: Session) -> None:
+    """Varredura diária (mesmo loop de despachar_push_pendentes; a dedup por
+    usuário+dia abaixo evita reenviar a cada checagem): manda, para cada
+    usuário ativo com subscription, UM push-resumo ("Agenda do dia") com a
+    contagem de itens da Agenda que caem em hoje — não um push por item.
+    Reaproveita calcular_agenda (fazenda/api/routers/agenda.py, que por sua
+    vez usa fazenda.rules.agenda_engine.AgendaEngine.calcular — mesmíssima
+    função que monta a Agenda em si e alimenta montar_itens_notificacoes) só
+    para CONTAR os itens de hoje; não recalcula nenhuma regra da agenda."""
+    from fazenda.api.routers.agenda import calcular_agenda
+
+    hoje = date.today()
+    usuarios_com_subscription = session.exec(
+        select(Usuario.id).join(PushSubscription, PushSubscription.usuario_id == Usuario.id).where(Usuario.ativo == True)  # noqa: E712
+    ).all()
+    for usuario_id in set(usuarios_com_subscription):
+        usuario = session.get(Usuario, usuario_id)
+        if not usuario or not usuario.ativo:
+            continue
+        ja_enviado = session.exec(
+            select(PushNotificacaoEnviada).where(
+                PushNotificacaoEnviada.usuario_id == usuario_id,
+                PushNotificacaoEnviada.chave == _CHAVE_AGENDA_DO_DIA,
+                PushNotificacaoEnviada.data_referencia == hoje,
+            )
+        ).first()
+        if ja_enviado:
+            continue
+        try:
+            agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario)
+            total = sum(1 for e in agenda["eventos"] if e["data"] == hoje.isoformat())
+        except Exception:
+            logger.exception("Falha ao calcular agenda do dia para usuário %s", usuario_id)
+            continue
+        if total == 0:
+            continue  # sem itens hoje: não manda push vazio (e não marca como enviado — se
+            # algum item surgir mais tarde no mesmo dia, a próxima checagem ainda pode avisar)
+        enviar_push(
+            usuario_id=usuario_id,
+            titulo="Agenda do dia",
+            corpo=f"Você tem {total} atividade{'s' if total != 1 else ''} na agenda hoje",
+            url="/agenda",
+            session=session,
+        )
+        session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=_CHAVE_AGENDA_DO_DIA, data_referencia=hoje))
         session.commit()
 
 

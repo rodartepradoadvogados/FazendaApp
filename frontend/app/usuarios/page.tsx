@@ -72,7 +72,7 @@ export default function UsuariosPage() {
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Users size={22} style={{ color: "var(--dourado-light)" }} /> Usuários</h1>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Users size={22} style={{ color: "var(--dourado-light)" }} /> Controle de Acesso</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Cadastre usuários e defina a que cada um tem acesso. Só administradores veem esta tela.</p>
       </div>
 
@@ -176,8 +176,8 @@ export default function UsuariosPage() {
         </div>
       </div>
 
-      {ehDono() && <div className="mt-4"><RelatorioAcessos /></div>}
-      {ehDono() && <div className="mt-4"><AuditoriaAtividade /></div>}
+      {ehDono() && <div className="mt-4"><RelatorioAcessos defaultAberta={false} /></div>}
+      {ehDono() && <div className="mt-4"><AuditoriaAtividade defaultAberta={false} /></div>}
 
       {editando && (
         <EditarUsuarioModal

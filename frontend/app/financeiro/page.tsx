@@ -1773,8 +1773,10 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
     valor: (r) => r.valor,
     pago: (r) => r.valor_pago ?? 0,
   });
+  const pagContas = usePaginacao(ordenados);
 
-  // Somatórios refletem a lista já filtrada (o que está visível na tabela).
+  // Somatórios refletem a lista já filtrada (o que está visível na tabela,
+  // antes de paginar) — não devem cair para a soma só da página atual.
   const total = filtradosLocal.reduce((a, r) => a + r.valor, 0);
   const totalPago = filtradosLocal.reduce((a, r) => a + (r.valor_pago ?? 0), 0);
   const totalDesconto = filtradosLocal.reduce((a, r) => a + (r.desconto_acrescimo ?? 0), 0);
@@ -1844,7 +1846,7 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
               </tr>
             </thead>
             <tbody>
-              {ordenados.map((r) => {
+              {pagContas.linhasPagina.map((r) => {
                 const vencido = emAberto && r.data_vencimento && r.data_vencimento < hoje;
                 return (
                   <tr key={r.id}>
@@ -1872,6 +1874,12 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
             </tbody>
           </table>
         </div>
+        {ordenados.length > 0 && (
+          <div style={{ padding: "0 0.9rem 0.6rem" }}>
+            <Paginacao pagina={pagContas.pagina} totalPaginas={pagContas.totalPaginas} totalLinhas={pagContas.totalLinhas}
+              tamanhoPagina={pagContas.tamanhoPagina} onMudarPagina={pagContas.setPagina} onMudarTamanho={pagContas.setTamanhoPagina} />
+          </div>
+        )}
       </div>
     </>
   );

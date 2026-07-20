@@ -12,11 +12,16 @@ import {
 } from "@/lib/api";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
+import { SecaoRecolhivel } from "@/components/ui";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
-export function RelatorioAcessos() {
+// `defaultAberta` deixa o chamador decidir: no app (tela dedicada "Acessos e
+// Auditoria") o conteúdo é a própria razão da tela e começa aberto; em
+// Configurações > Usuários é uma seção secundária abaixo do cadastro de
+// usuários, então começa recolhida (ver app/usuarios/page.tsx).
+export function RelatorioAcessos({ defaultAberta = true }: { defaultAberta?: boolean }) {
   const [acessos, setAcessos] = useState<UsuarioAcesso[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
 
@@ -25,38 +30,39 @@ export function RelatorioAcessos() {
   const fmt = (iso: string | null) => iso ? new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" }) : "Nunca";
 
   return (
-    <div className="card" style={{ maxWidth: "40rem" }}>
-      <div className="card-header mb-3 flex items-center gap-2"><ShieldCheck size={14} /> Últimos acessos</div>
-      <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>Visível só para você.</p>
-      {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
-      {!acessos && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-      {acessos && (
-        <table className="fazenda-table">
-          <thead><tr><th>Login</th><th>Nome</th><th><Clock size={12} style={{ display: "inline", marginRight: "0.25rem" }} />Últimos 3 acessos</th></tr></thead>
-          <tbody>
-            {acessos.map((a) => (
-              <tr key={a.id}>
-                <td style={{ fontWeight: 700, verticalAlign: "top" }}>{a.username}{!a.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
-                <td style={{ fontSize: "0.8rem", verticalAlign: "top" }}>{a.nome || "—"}</td>
-                <td style={{ fontSize: "0.8rem" }}>
-                  {a.ultimos_acessos.length === 0 ? (
-                    <span style={{ color: "var(--text-muted)" }}>Nunca</span>
-                  ) : (
-                    a.ultimos_acessos.map((iso, i) => (
-                      <div key={i} style={{ color: i === 0 ? "var(--text)" : "var(--text-muted)", fontWeight: i === 0 ? 700 : 400 }}>{fmt(iso)}</div>
-                    ))
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+    <div style={{ maxWidth: "40rem" }}>
+      <SecaoRecolhivel titulo="Últimos acessos" icon={ShieldCheck} defaultAberta={defaultAberta} descricao="Visível só para você">
+        <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>Visível só para você.</p>
+        {erro && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erro}</span></div>}
+        {!acessos && !erro && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+        {acessos && (
+          <table className="fazenda-table">
+            <thead><tr><th>Login</th><th>Nome</th><th><Clock size={12} style={{ display: "inline", marginRight: "0.25rem" }} />Últimos 3 acessos</th></tr></thead>
+            <tbody>
+              {acessos.map((a) => (
+                <tr key={a.id}>
+                  <td style={{ fontWeight: 700, verticalAlign: "top" }}>{a.username}{!a.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
+                  <td style={{ fontSize: "0.8rem", verticalAlign: "top" }}>{a.nome || "—"}</td>
+                  <td style={{ fontSize: "0.8rem" }}>
+                    {a.ultimos_acessos.length === 0 ? (
+                      <span style={{ color: "var(--text-muted)" }}>Nunca</span>
+                    ) : (
+                      a.ultimos_acessos.map((iso, i) => (
+                        <div key={i} style={{ color: i === 0 ? "var(--text)" : "var(--text-muted)", fontWeight: i === 0 ? 700 : 400 }}>{fmt(iso)}</div>
+                      ))
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </SecaoRecolhivel>
     </div>
   );
 }
 
-export function AuditoriaAtividade() {
+export function AuditoriaAtividade({ defaultAberta = true }: { defaultAberta?: boolean }) {
   const [opcoes, setOpcoes] = useState<{ tipos: AuditoriaTipo[]; usuarios: AuditoriaUsuario[] } | null>(null);
   const [erroOpcoes, setErroOpcoes] = useState<string | null>(null);
   useEffect(() => { fetchAuditoriaOpcoes().then(setOpcoes).catch((e) => setErroOpcoes(e.message)); }, []);
@@ -89,8 +95,9 @@ export function AuditoriaAtividade() {
   const fmtData = (iso: string | null) => iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—";
 
   return (
-    <div className="card" style={{ maxWidth: "48rem" }}>
-      <div className="card-header mb-3 flex items-center gap-2"><History size={14} /> Auditoria de atividade</div>
+    <div style={{ maxWidth: "48rem" }}>
+      <SecaoRecolhivel titulo="Auditoria de atividade" icon={History} defaultAberta={defaultAberta}
+        descricao="Lançamentos feitos por um usuário, em qualquer módulo — visível só para você">
       <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>Lançamentos feitos por um usuário, em qualquer módulo. Visível só para você.</p>
       {erroOpcoes && <div className="alert-critico mb-3"><AlertTriangle size={16} /><span>{erroOpcoes}</span></div>}
       {!opcoes && !erroOpcoes && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
@@ -164,6 +171,7 @@ export function AuditoriaAtividade() {
           )}
         </>
       )}
+      </SecaoRecolhivel>
     </div>
   );
 }

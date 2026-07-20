@@ -103,6 +103,10 @@ DEFINICOES: list[dict] = [
     # sem envio ao eSocial) ----------------------------------------------------
     {"chave": "percentual_terco_constitucional_ferias", "grupo": "folha_rh", "label": "1/3 constitucional de férias", "valor": 0.3333, "tipo": "float", "unidade": "fração"},
     {"chave": "dias_ferias_padrao", "grupo": "folha_rh", "label": "Dias de férias padrão", "valor": 30, "unidade": "dias"},
+    # Estimativa de depósito mensal de FGTS (8% do salário) — usada só para
+    # estimar a multa rescisória de 40%/20% quando não há extrato real do
+    # FGTS cadastrado (ver `fazenda.rules.folha_rh.calcular_rescisao`).
+    {"chave": "percentual_estimado_fgts_mensal", "grupo": "folha_rh", "label": "Estimativa de depósito mensal de FGTS", "valor": 0.08, "tipo": "float", "unidade": "fração"},
 
     # ---- Estrutura da fazenda — usado pelo indicador "Custo por hectare"
     # (Financeiro > Relatórios), que divide as despesas do período por este
@@ -312,6 +316,13 @@ def dias_ferias_padrao() -> int:
     """Dias de férias padrão (direito integral por período aquisitivo) —
     sugestão inicial no lançamento de férias, sempre editável."""
     return int(get_param("dias_ferias_padrao", 30) or 30)
+
+
+def percentual_estimado_fgts_mensal() -> float:
+    """Estimativa de depósito mensal de FGTS (padrão 8% do salário) — usada
+    só por `fazenda.rules.folha_rh.calcular_rescisao` para estimar a multa
+    rescisória, já que o sistema não guarda o extrato real do FGTS."""
+    return float(get_param("percentual_estimado_fgts_mensal", 0.08) or 0.08)
 
 
 def area_total_hectares() -> float:

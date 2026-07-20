@@ -84,6 +84,32 @@ def test_estoque_data_inicio_controle_recorta_custo_fisico():
     assert fisico["custo_total"] == 60.0  # só 30 × 2,00
 
 
+def test_calcular_custo_fisico_so_inclui_conta_gerencial_3_01_01():
+    # Unidade pura de calcular_custo_fisico (sem DB): só entram no custo
+    # físico do RMCA os itens cuja conta_gerencial_despesa_padrao começa com
+    # "3.01.01" — os demais, mesmo com movimento de "Saída de ajuste" no
+    # período, ficam de fora.
+    estoque = {
+        "Ração concentrada": {"nome": "Ração concentrada", "valor_unitario": 2.0,
+                               "conta_gerencial_despesa_padrao": "3.01.01"},
+        "Milho moído": {"nome": "Milho moído", "valor_unitario": 1.5,
+                        "conta_gerencial_despesa_padrao": "3.01.01.02"},  # dentro de 3.01.01 → conta
+        "Medicamento X": {"nome": "Medicamento X", "valor_unitario": 10.0,
+                          "conta_gerencial_despesa_padrao": "3.02.01"},  # fora → não conta
+        "Item sem conta": {"nome": "Item sem conta", "valor_unitario": 5.0,
+                           "conta_gerencial_despesa_padrao": None},  # sem conta → não conta
+    }
+    movimentos = [
+        {"nome_item": "Ração concentrada", "quantidade": 100, "data_movimento": None},
+        {"nome_item": "Milho moído", "quantidade": 40, "data_movimento": None},
+        {"nome_item": "Medicamento X", "quantidade": 5, "data_movimento": None},
+        {"nome_item": "Item sem conta", "quantidade": 3, "data_movimento": None},
+    ]
+    fisico = calcular_custo_fisico(movimentos, estoque)
+    assert fisico["custo_total"] == 260.0  # 100×2,00 + 40×1,50 = 200 + 60
+    assert sorted(i["ingrediente"] for i in fisico["itens"]) == ["Milho moído", "Ração concentrada"]
+
+
 def test_opcoes_traz_centros_canonicos(client):
     c, _ = client
     r = c.get("/financeiro/opcoes")

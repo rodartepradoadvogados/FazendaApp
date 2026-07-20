@@ -79,7 +79,7 @@ from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
-from fazenda.api.routers.push import despachar_push_pendentes
+from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
 
 # Confere a cada 6h se já passou 1 semana desde o último backup automático
 # bem-sucedido (ver fazenda.rules.backup) — não uma tarefa agendada em
@@ -110,6 +110,10 @@ async def _loop_despacho_push() -> None:
         try:
             with Session(engine) as session:
                 despachar_push_pendentes(session)
+                # "Agenda do dia": resumo 1x/dia (não 1 push por item) — dedup
+                # por usuário+dia em despachar_agenda_do_dia já evita reenvio
+                # a cada volta deste mesmo loop de 30 min.
+                despachar_agenda_do_dia(session)
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)

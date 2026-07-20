@@ -3,7 +3,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { LogIn } from "lucide-react";
-import { getToken, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -42,7 +42,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
-    if (path === "/usuarios" && !ehAdmin()) { router.replace("/"); return; }
+    if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
     // Configurações tem a aba "Aparência" (tema/paleta) liberada para todo mundo,
     // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }

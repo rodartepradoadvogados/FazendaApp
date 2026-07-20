@@ -4,8 +4,8 @@
 // completa (só leitura) numa sub-tela, com seções recolhíveis. Offline: ficha
 // via cache por animal (chave "ficha_<numero>").
 import { useEffect, useState } from "react";
-import { fetchAnimais, fetchFichaAnimal, formatDate, registrarColostragem } from "@/lib/api";
-import { fetchComCache, cacheEm } from "@/lib/offline";
+import { fetchAnimais, fetchFichaAnimal, formatDate } from "@/lib/api";
+import { fetchComCache, cacheEm, enviarOuEnfileirar } from "@/lib/offline";
 import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
 import { estiloSexado } from "@/lib/constants";
 import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
@@ -155,20 +155,31 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
     setSalvando(true); setAviso(null);
     try {
       const f = formColostro;
-      await registrarColostragem({
-        numero_animal: numero,
-        tomou_colostro: f.tomou_colostro === "" ? undefined : f.tomou_colostro === "true",
-        litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
-        brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
-        data_colostro: f.data_colostro || undefined,
-        brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
-        data_teste_sangue: f.data_teste_sangue || undefined,
-        observacao: f.observacao || undefined,
-      });
-      setEditColostro(false); setAviso("Colostragem/IgG salvos.");
+      // Via fila offline (enviarOuEnfileirar): sem internet no curral/maternidade
+      // (cenário comum logo após o parto), o lançamento fica guardado e some
+      // sozinho quando a conexão voltar — igual aos demais lançamentos do app.
+      const { enviado } = await enviarOuEnfileirar(
+        "/sanidade/colostragem",
+        {
+          numero_animal: numero,
+          tomou_colostro: f.tomou_colostro === "" ? undefined : f.tomou_colostro === "true",
+          litros_colostro: f.litros_colostro === "" ? undefined : Number(f.litros_colostro),
+          brix_colostro: f.brix_colostro === "" ? undefined : Number(f.brix_colostro),
+          data_colostro: f.data_colostro || undefined,
+          brix_soro: f.brix_soro === "" ? undefined : Number(f.brix_soro),
+          data_teste_sangue: f.data_teste_sangue || undefined,
+          observacao: f.observacao || undefined,
+        },
+        `Colostragem/IgG — brinco ${numero}`,
+        "POST",
+      );
+      setEditColostro(false);
+      setAviso(enviado ? "Colostragem/IgG salvos." : "Sem internet — guardado, será enviado ao conectar.");
       setDestacar(null);
-      const { dados } = await fetchComCache<Ficha>(`ficha_${numero}`, () => fetchFichaAnimal(numero));
-      if (dados) setFicha(dados);
+      if (enviado) {
+        const { dados } = await fetchComCache<Ficha>(`ficha_${numero}`, () => fetchFichaAnimal(numero));
+        if (dados) setFicha(dados);
+      }
     } catch (e) {
       setAviso(e instanceof Error ? e.message : "Erro ao salvar.");
     } finally {
@@ -232,7 +243,11 @@ export function FichaDetalhe({ numero, onVoltar, destacarInicial }: { numero: st
                 </p>
               )}
 
-              {aviso && <MobAviso tipo={aviso.includes("Erro") || aviso.includes("erro") ? "erro" : "ok"}>{aviso}</MobAviso>}
+              {aviso && (
+                <MobAviso tipo={aviso.includes("Erro") || aviso.includes("erro") ? "erro" : aviso.startsWith("Sem internet") ? "offline" : "ok"}>
+                  {aviso}
+                </MobAviso>
+              )}
 
               {!editColostro ? (
                 <Grade>

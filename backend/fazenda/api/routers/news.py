@@ -77,6 +77,8 @@ class MateriaBlogIn(BaseModel):
     manchete: str
     materia: str
     fontes: list[str] = []
+    imagem: str | None = None
+    categoria: str | None = None
 
 
 NOME_FONTE_BLOG_PROPRIO = "Blog CowData"
@@ -541,11 +543,14 @@ def publicar_lotes_milknews(session: Session) -> None:
             if resumo and len(resumo) > RESUMO_MAX:
                 resumo = resumo[: RESUMO_MAX - 1].rstrip() + "…"
             materia = (item.get("materia") or "").strip() or None
+            imagem = (item.get("imagem") or "").strip() or None
+            categoria = (item.get("categoria") or "").strip() or None
             fonte = fonte or _fonte_milknews(session)
             session.add(NoticiaNews(
                 fonte_id=fonte.id, manchete=manchete, resumo=resumo, materia=materia,
                 link=link, data_publicacao=data_publicacao,
                 fontes=json.dumps(urls) if urls else None,
+                imagem=imagem, categoria=categoria,
             ))
         if not ja_publicado:
             session.add(SeedFlag(chave=chave))
@@ -802,6 +807,8 @@ def criar_materia_blog(
         fontes=json.dumps(urls) if urls else None,
         link=urls[0] if urls else f"blog://{uuid4().hex}",
         data_publicacao=datetime.utcnow(),
+        imagem=(dados.imagem or "").strip() or None,
+        categoria=(dados.categoria or "").strip() or None,
     )
     session.add(noticia)
     session.commit()
@@ -845,6 +852,8 @@ class MateriaBlogEditIn(BaseModel):
     materia: str | None = None
     resumo: str | None = None
     fontes: list[str] = []
+    imagem: str | None = None
+    categoria: str | None = None
 
 
 @router.get("/materias")
@@ -877,6 +886,10 @@ def atualizar_materia_blog(
         noticia.materia = dados.materia.strip() or None
     if dados.resumo is not None:
         noticia.resumo = dados.resumo.strip() or None
+    if dados.imagem is not None:
+        noticia.imagem = dados.imagem.strip() or None
+    if dados.categoria is not None:
+        noticia.categoria = dados.categoria.strip() or None
     noticia.fontes = json.dumps(urls) if urls else None
     session.add(noticia)
     session.commit()

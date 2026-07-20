@@ -259,6 +259,138 @@ class TestNotificarPushParaItens:
         assert len(chamadas) == 2
 
 
+# ---------------------------------------------------------------------------
+# Categorização do push (#542): 3 canais (Agenda do dia / Pendências /
+# Comunicados) em vez de um título por item.
+# ---------------------------------------------------------------------------
+class TestCategoriaPush:
+    def test_portal_mensagem_e_comunicado(self):
+        item = {"tipo": "portal_mensagem", "categoria": "Portal", "descricao": "Mensagem de Fulano: oi"}
+        assert push_module._categoria_push(item) == "comunicado"
+
+    def test_aviso_de_nova_dieta_e_comunicado(self):
+        # tipo continua "agenda" (achatado por montar_itens_notificacoes) — o
+        # sinal disponível é a palavra "dieta" na categoria/descrição.
+        item = {"tipo": "agenda", "categoria": "alimentacao", "descricao": "Atenção — nova dieta HOJE — lote 3"}
+        assert push_module._categoria_push(item) == "comunicado"
+
+    def test_item_acionavel_comum_e_pendencia(self):
+        item = {"tipo": "agenda", "categoria": "Gestão/Financeiro", "descricao": "Conta a pagar: Luz"}
+        assert push_module._categoria_push(item) == "pendencia"
+
+    def test_exclusao_pendente_e_pendencia(self):
+        item = {"tipo": "exclusao_pendente", "categoria": "Aprovação pendente", "descricao": "Exclusão de X"}
+        assert push_module._categoria_push(item) == "pendencia"
+
+    def test_notificar_push_usa_titulo_fixo_comunicados_para_portal_mensagem(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            itens = [{"tipo": "portal_mensagem", "categoria": "Portal", "descricao": "Mensagem de Fulano: oi"}]
+            push_module.notificar_push_para_itens(1, itens, session)
+
+        assert len(chamadas) == 1
+        assert chamadas[0]["titulo"] == "Comunicados"
+
+    def test_notificar_push_usa_titulo_fixo_pendencias_para_item_comum(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            itens = [{"tipo": "agenda", "categoria": "Gestão/Financeiro", "descricao": "Conta a pagar: Luz"}]
+            push_module.notificar_push_para_itens(1, itens, session)
+
+        assert len(chamadas) == 1
+        assert chamadas[0]["titulo"] == "Pendências"
+
+
+# ---------------------------------------------------------------------------
+# Agenda do dia (#542): 1 push-resumo por usuário por dia, não 1 por item.
+# ---------------------------------------------------------------------------
+class TestDespacharAgendaDoDia:
+    def _usuario_admin(self, session) -> Usuario:
+        usuario = Usuario(username="admin_teste", senha_hash="x", papel="admin", ativo=True)
+        session.add(usuario)
+        session.commit()
+        session.refresh(usuario)
+        return usuario
+
+    def _mock_calcular_agenda(self, monkeypatch, n_eventos_hoje: int) -> None:
+        # despachar_agenda_do_dia reaproveita calcular_agenda (import local,
+        # resolvido a cada chamada) só para CONTAR os eventos de hoje — mocka
+        # aqui para o teste não depender de dados de seed/parametros (ex.:
+        # alerta padrão de estoque de sêmen abaixo do mínimo) nem duplicar a
+        # lógica de agenda.
+        import fazenda.api.routers.agenda as agenda_module
+
+        eventos = [
+            {"data": date.today().isoformat(), "categoria": "Atividades", "descricao": f"Evento {i}"}
+            for i in range(n_eventos_hoje)
+        ]
+        monkeypatch.setattr(agenda_module, "calcular_agenda", lambda **kwargs: {"eventos": eventos})
+
+    def test_envia_um_resumo_com_a_contagem_de_hoje(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        self._mock_calcular_agenda(monkeypatch, 3)
+
+        with Session(engine) as session:
+            usuario = self._usuario_admin(session)
+            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            push_module.despachar_agenda_do_dia(session)
+
+        assert len(chamadas) == 1
+        assert chamadas[0]["titulo"] == "Agenda do dia"
+        assert chamadas[0]["url"] == "/agenda"
+        assert chamadas[0]["corpo"] == "Você tem 3 atividades na agenda hoje"
+
+    def test_nao_envia_de_novo_no_mesmo_dia(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        self._mock_calcular_agenda(monkeypatch, 1)
+
+        with Session(engine) as session:
+            usuario = self._usuario_admin(session)
+            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            # Simula duas voltas do loop periódico de 30 min.
+            push_module.despachar_agenda_do_dia(session)
+            push_module.despachar_agenda_do_dia(session)
+
+        assert len(chamadas) == 1
+        assert chamadas[0]["corpo"] == "Você tem 1 atividade na agenda hoje"
+
+        with Session(engine) as session:
+            registros = session.exec(
+                select(PushNotificacaoEnviada).where(PushNotificacaoEnviada.chave == "agenda_do_dia")
+            ).all()
+            assert len(registros) == 1
+
+    def test_nao_envia_push_vazio_quando_nao_ha_itens_hoje(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "enviar_push", lambda **kwargs: chamadas.append(kwargs))
+        self._mock_calcular_agenda(monkeypatch, 0)
+
+        with Session(engine) as session:
+            usuario = self._usuario_admin(session)
+            session.add(PushSubscription(usuario_id=usuario.id, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            push_module.despachar_agenda_do_dia(session)
+
+        assert chamadas == []
+
+
 class TestUrlDestino:
     def test_financeiro(self):
         assert push_module.url_destino({"categoria": "Gestão/Financeiro", "tipo": "agenda"}) == "/financeiro"

@@ -6,6 +6,7 @@
 // (Diária) — ver `_aplicar_vale_avulso` em cadastro.py.
 import { useState } from "react";
 import { criarValeAvulso } from "@/lib/api";
+import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 
 const FORMAS_VALE_AVULSO = [
   { id: "dinheiro", label: "Dinheiro" },
@@ -13,12 +14,6 @@ const FORMAS_VALE_AVULSO = [
   { id: "transferencia", label: "Transferência" },
   { id: "desconto_proximo_pagamento", label: "Descontar do próximo pagamento" },
 ];
-
-const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
-const inputSm: React.CSSProperties = {
-  fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
-};
 
 export type OrigemVale = { id: number; label: string };
 

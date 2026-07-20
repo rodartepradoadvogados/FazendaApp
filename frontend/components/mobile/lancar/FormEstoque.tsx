@@ -11,6 +11,7 @@ import { MobCampo, MobAviso } from "@/components/mobile/ui";
 import { fetchEstoque, fetchPlanoContas } from "@/lib/api";
 import { pedirLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
 import { type EstoqueItem, useCache, useEnvio, hoje, MobPill, LinhaPills } from "./comum";
+import { fetchComCache } from "@/lib/offline";
 
 const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"];
 const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
@@ -28,7 +29,9 @@ export function FormEstoque({ onIrParaFinanceiro }: { onIrParaFinanceiro?: (tipo
   const [fPrincipioAtivo, setFPrincipioAtivo] = useState("");
   const [fContaGerencial, setFContaGerencial] = useState("");
   const [planoContas, setPlanoContas] = useState<{ codigo: string; nome: string }[]>([]);
-  useEffect(() => { fetchPlanoContas().then(setPlanoContas).catch(() => {}); }, []);
+  useEffect(() => {
+    fetchComCache<{ codigo: string; nome: string }[]>("plano_contas", () => fetchPlanoContas()).then(({ dados }) => setPlanoContas(dados || []));
+  }, []);
   const nomeConta = (codigo: string) => planoContas.find((c) => c.codigo === codigo)?.nome || codigo;
   const [tipo, setTipo] = useState<"entrada" | "saida">("entrada");
   const [mov, setMov] = useState("");

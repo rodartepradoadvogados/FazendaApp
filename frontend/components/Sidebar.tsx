@@ -19,11 +19,12 @@ import {
   CheckCheck,
   ShoppingCart,
   MessageSquare,
+  Users,
   Menu,
   X,
   Search,
 } from "lucide-react";
-import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ROTA_MODULO } from "@/lib/api";
+import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -63,6 +64,7 @@ export function Sidebar() {
   const [aberto, setAberto] = useState(false); // drawer no mobile
   const [visiveis, setVisiveis] = useState(links);
   const [admin, setAdmin] = useState(false);
+  const [dono, setDono] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
 
@@ -80,6 +82,7 @@ export function Sidebar() {
     // Filtra o menu conforme as permissões do usuário logado.
     setVisiveis(links.filter((l) => podeModulo(ROTA_MODULO[l.href] || l.href)));
     setAdmin(ehAdmin());
+    setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
   }, [path]);
 
@@ -219,6 +222,7 @@ export function Sidebar() {
           {(() => {
             const todos = [...visiveis,
               ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram", grupo: "Administração" }] : []),
+              ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
             ];
