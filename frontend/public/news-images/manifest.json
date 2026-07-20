@@ -1,4 +1,80 @@
 {
-  "_comentario": "Banco de fotos para ilustrar matérias do blog News (#news-redesign). Cada entrada aponta para um arquivo em frontend/public/news-images/ (mesma pasta deste manifesto) e lista tags em português que descrevem o que a foto mostra — a skill /milknews usa essas tags para casar a foto com o assunto da matéria do dia, sem repetir nenhuma foto usada nas últimas 5 publicações. Ao adicionar uma foto nova: 1) salve o arquivo aqui com um nome descritivo (sem espaços/acentos, ex. 'ordenha-robotica-01.jpg'); 2) acrescente uma entrada abaixo com o mesmo nome de arquivo e tags relevantes.",
-  "fotos": []
+  "_comentario": "Banco de fotos para ilustrar matérias do blog News (#news-redesign). Cada entrada aponta para um arquivo em frontend/public/news-images/ (mesma pasta deste manifesto) e lista tags em português que descrevem o que a foto mostra — a skill /milknews usa essas tags para casar a foto com o assunto da matéria do dia, sem repetir nenhuma foto usada nas últimas 5 publicações. O campo 'generico' marca fotos de banco de imagens/internet (não são da fazenda do usuário) — quando uma foto real da fazenda e uma genérica servem igualmente bem para a pauta, prefira sempre a real. Ao adicionar uma foto nova: 1) salve o arquivo aqui com um nome descritivo (sem espaços/acentos, ex. 'ordenha-robotica-01.jpg'); 2) acrescente uma entrada abaixo com o mesmo nome de arquivo, tags relevantes e 'generico': false (foto real da fazenda) ou true (banco de imagens).",
+  "fotos": [
+    {
+      "arquivo": "ordenha-teteiras-close.jpg",
+      "tags": ["ordenha", "sala de ordenha", "teteiras", "conjunto de ordenha", "úbere", "close-up"],
+      "generico": false
+    },
+    {
+      "arquivo": "ordenha-ubere-close-01.jpg",
+      "tags": ["úbere", "pernas", "palha", "sala de ordenha", "vaca leiteira", "close-up"],
+      "generico": false
+    },
+    {
+      "arquivo": "ordenha-ubere-close-02.jpg",
+      "tags": ["úbere", "pernas", "palha", "sala de ordenha", "vaca leiteira", "close-up"],
+      "generico": false
+    },
+    {
+      "arquivo": "cochos-headlock-janelas.jpg",
+      "tags": ["cocho", "headlock", "trato", "alimentação", "galpão", "instalações", "Holstein"],
+      "generico": false
+    },
+    {
+      "arquivo": "feed-yard-lama-tag45.jpg",
+      "tags": ["feed yard", "piquete de trato", "lama", "brinco", "identificação", "manejo", "rebanho"],
+      "generico": false
+    },
+    {
+      "arquivo": "rebanho-descanso-compost-barn.jpg",
+      "tags": ["compost barn", "descanso", "conforto animal", "rebanho", "galpão", "bem-estar"],
+      "generico": false
+    },
+    {
+      "arquivo": "cochos-headlock-luz-dourada.jpg",
+      "tags": ["cocho", "headlock", "trato", "alimentação", "pôr do sol", "instalações"],
+      "generico": false
+    },
+    {
+      "arquivo": "ordenha-espinha-peixe-observacao.webp",
+      "tags": ["ordenha", "sala de ordenha espinha de peixe", "supervisão", "manejo", "qualidade do leite", "equipe"],
+      "generico": false
+    },
+    {
+      "arquivo": "cochos-headlock-ventiladores-01.jpg",
+      "tags": ["cocho", "headlock", "ventilação", "conforto térmico", "alimentação", "galpão", "veterinário"],
+      "generico": false
+    },
+    {
+      "arquivo": "banco-vaca-pasto-generico.jpg",
+      "tags": ["vaca no pasto", "pastagem", "brinco", "genérica", "internacional"],
+      "generico": true
+    },
+    {
+      "arquivo": "banco-compost-barn-generico.jpg",
+      "tags": ["compost barn", "instalações", "genérica"],
+      "generico": true
+    },
+    {
+      "arquivo": "banco-ordenha-teteiras-generico.jpg",
+      "tags": ["ordenha", "teteiras", "úbere", "genérica", "qualidade do leite"],
+      "generico": true
+    },
+    {
+      "arquivo": "banco-ordenha-rotativa-silos-generico.jpg",
+      "tags": ["ordenha rotativa", "silos", "escala industrial", "logística", "mercado", "genérica"],
+      "generico": true
+    },
+    {
+      "arquivo": "banco-galpao-freestall-generico.jpg",
+      "tags": ["free stall", "instalações", "arquitetura", "conforto animal", "genérica"],
+      "generico": true
+    },
+    {
+      "arquivo": "banco-cochos-bokeh-generico.jpg",
+      "tags": ["cocho", "headlock", "alimentação", "genérica"],
+      "generico": true
+    }
+  ]
 }
