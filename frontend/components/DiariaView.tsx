@@ -5,6 +5,7 @@ import { fetchPessoas, fetchDiarias, criarDiaria, registrarPagamentoDiaria, form
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
 import ValeAvulsoSection from "@/components/ValeAvulsoSection";
+import { lbl, inputSm } from "@/components/estiloCampoAvulso";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
 type Pagamento = { id: number; data_pagamento: string; valor: number; observacao: string | null };
@@ -13,12 +14,6 @@ type Diaria = {
   id: number; pessoa_id: number; pessoa_nome: string; valor_diaria: number; data_inicio: string; status: string;
   numero_diarias: number; total_ate_hoje: number; valor_pago: number; valor_vale: number; saldo_devedor: number;
   pagamentos: Pagamento[]; vales: ValeAvulso[];
-};
-
-const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.2rem" };
-const inputSm: React.CSSProperties = {
-  fontSize: "0.82rem", background: "var(--surface-2)", color: "var(--text)",
-  border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", width: "100%",
 };
 
 export default function DiariaView() {
