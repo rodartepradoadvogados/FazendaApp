@@ -1,0 +1,377 @@
+"""
+Financeiro — contas gerenciais, plano de contas, orçamento/planejamento, pedidos e patrimônio.
+
+Submódulo de fazenda.models — parte da camada de dados SQLModel (tabelas
+SQLite/PostgreSQL + validação Pydantic). Ver fazenda/models/__init__.py para
+o re-export consolidado usado pelo resto do código.
+"""
+from __future__ import annotations
+
+from datetime import date, datetime
+from typing import Optional
+
+from sqlmodel import Field, SQLModel
+
+# ---------------------------------------------------------------------------
+# Conta Gerencial (Financeiro)
+# ---------------------------------------------------------------------------
+class ContaGerencial(SQLModel, table=True):
+    """Uma movimentação financeira do CONTA_GERENCIAL.csv."""
+
+    __tablename__ = "conta_gerencial"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: Optional[str] = Field(default=None, index=True)  # referência do lançamento (ex.: LC-2026-00001), igual em todas as parcelas
+    codigo_conta: Optional[str] = None
+    descricao: Optional[str] = None
+    data_vencimento: Optional[date] = None
+    data_pagamento: Optional[date] = None
+    data_competencia: Optional[date] = None
+    data_emissao: Optional[date] = None
+    data_prevista_entrada: Optional[date] = None
+    data_pedido: Optional[date] = None
+    entregue: Optional[bool] = None
+    fornecedor_cliente: Optional[str] = None
+    numero_nota: Optional[str] = None  # número do documento (nota fiscal, recibo, fatura...)
+    tipo_documento: Optional[str] = None  # nota fiscal | recibo | folha de pagamento | fatura | contrato
+    # Item de consulta À PARTE do número do documento — nº da ordem de serviço
+    # (OS) ou do orçamento que originou a compra, quando houver.
+    numero_os_orcamento: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None
+    conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None  # pix | transferencia | boleto | credito
+    data_vencimento_cartao: Optional[date] = None  # só quando forma_pagamento == "credito"
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
+    valor_total: Optional[float] = None
+    valor_pago: Optional[float] = None
+    desconto_acrescimo: Optional[float] = None
+    parcela_num: Optional[int] = None
+    parcela_total: Optional[int] = None
+    # Linha digitável/número do boleto DESTA parcela — opcional para o usuário
+    # preencher, mas o sistema tenta extrair sozinho ao importar um boleto
+    # (ver rules/leitura_documento.py); nunca bloqueia o lançamento se faltar.
+    numero_boleto: Optional[str] = None
+    responsavel: Optional[str] = None
+    centro_custo: Optional[str] = None
+    tipo: Optional[str] = None
+    origem: Optional[str] = "csv"  # "csv" (upload) | "manual" (lançamento pela tela)
+    # Desconto/acréscimo negociado NA NOTA (produtos → valor bruto → líquido pago/recebido).
+    # Diferente de desconto_acrescimo acima, que é a diferença apurada só na baixa do pagamento.
+    desconto_nota: Optional[float] = None
+    acrescimo_nota: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Vínculo opcional ao Pedido que esta nota fiscal/recibo está atendendo —
+    # é só quando esse vínculo existe que o Pedido passa a refletir em Financeiro.
+    pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
+
+
+# ---------------------------------------------------------------------------
+# Item de lançamento financeiro (produto/serviço) — uma nota pode ter vários
+# ---------------------------------------------------------------------------
+class LancamentoItem(SQLModel, table=True):
+    """Um produto/serviço de um lançamento financeiro manual (várias linhas por nota)."""
+
+    __tablename__ = "lancamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: str = Field(index=True)
+    tipo: Optional[str] = None  # herdado do lançamento (despesa/receita), útil p/ consultas
+    data_competencia: Optional[date] = None  # herdado, p/ DRE por conta
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    produto: str
+    tipo_item: Optional[str] = None  # "produto" | "servico" — escolha exclusiva no lançamento
+    descricao: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario: Optional[float] = None
+    valor_total: float
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Anexo de lançamento financeiro (ex.: boleto de um parcelamento) — o conteúdo
+# fica no próprio banco (bytes), sem depender de disco persistente no deploy.
+# ---------------------------------------------------------------------------
+class LancamentoAnexo(SQLModel, table=True):
+    __tablename__ = "lancamento_anexo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_lancamento: str = Field(index=True)
+    nome_arquivo: str
+    mime_type: str
+    tamanho_bytes: int
+    conteudo: bytes
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+
+
+# ---------------------------------------------------------------------------
+# Plano de Contas Gerenciais
+# ---------------------------------------------------------------------------
+class PlanoContaGerencial(SQLModel, table=True):
+    """Hierarquia do plano de contas gerenciais — LISTA_DE_PLANO_DE_CONTAS_GERENCIAIS.csv."""
+
+    __tablename__ = "plano_conta_gerencial"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    codigo: str = Field(index=True, unique=True)
+    nome: str
+    ativa: bool = True
+    participa_atividade: Optional[bool] = None
+    fluxo: Optional[bool] = None
+    tipo_fixo_variavel: Optional[str] = None  # "Fixa" | "Variável"
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+    # Marcação para o indicador RMCA (Receita Menos Custo com Alimentação) —
+    # versão "gerencial", ver Configurações > Parâmetros financeiros.
+    rmca_receita_leite: Optional[bool] = None
+    rmca_custo_alimentacao: Optional[bool] = None
+
+    # Natureza do lançamento aceito por esta conta — "servico" | "produto" | "ambos".
+    # Restringe, em Financeiro > Contas a pagar/a receber, se o item do lançamento
+    # pode ser um serviço, um produto, ou os dois (ver FormFinanceiro/SeletorContaGerencial).
+    natureza: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
+# lista fixa em Python (CONTAS_BANCARIAS); usada em lançamentos/baixas.
+# ---------------------------------------------------------------------------
+class ContaCorrente(SQLModel, table=True):
+    __tablename__ = "conta_corrente"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    banco: str
+    agencia: str
+    numero_conta: str
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Centro de custo (Configurações > Parâmetros financeiros) — antes era só
+# sugestão (distinct dos valores já usados em ContaGerencial.centro_custo).
+# ---------------------------------------------------------------------------
+class CentroCusto(SQLModel, table=True):
+    __tablename__ = "centro_custo"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Tipo de documento e forma de pagamento (Configurações > Parâmetros
+# financeiros) — antes eram listas fixas em Python (TIPOS_DOCUMENTO,
+# FORMAS_PAGAMENTO em fazenda.api.routers.financeiro); agora cadastráveis,
+# no mesmo padrão de CentroCusto/ContaCorrente.
+# ---------------------------------------------------------------------------
+class TipoDocumento(SQLModel, table=True):
+    __tablename__ = "tipo_documento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class FormaPagamentoCadastro(SQLModel, table=True):
+    __tablename__ = "forma_pagamento_cadastro"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str = Field(index=True, unique=True)
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Orçamento (Financeiro > Planejamento > Orçamento) — uma linha por
+# ano/mês/conta gerencial/centro de custo. Comparado contra o realizado
+# (ContaGerencial/LancamentoItem já existentes) para o relatório orçado x
+# realizado; não tem efeito nenhum sobre Estoque nem sobre lançamentos.
+# ---------------------------------------------------------------------------
+class OrcamentoItem(SQLModel, table=True):
+    __tablename__ = "orcamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    ano: int = Field(index=True)
+    mes: int  # 1-12
+    codigo_conta_gerencial: str
+    centro_custo: Optional[str] = None
+    tipo: str  # "receita" | "despesa"
+    valor_orcado: float
+    observacao: Optional[str] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Planejamento financeiro (Financeiro > Planejamento > Planejamento
+# financeiro) — cenários de simulação (otimista/realista/pessimista ou
+# personalizado) com linhas de receita/despesa projetadas mês a mês, para
+# montar uma projeção de fluxo de caixa "e se". Também sem efeito sobre
+# Estoque/lançamentos — é só simulação.
+# ---------------------------------------------------------------------------
+class PlanejamentoCenario(SQLModel, table=True):
+    __tablename__ = "planejamento_cenario"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str
+    tipo: str = "personalizado"  # "otimista" | "realista" | "pessimista" | "personalizado"
+    observacao: Optional[str] = None
+    ativo: bool = True
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PlanejamentoItem(SQLModel, table=True):
+    __tablename__ = "planejamento_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    cenario_id: int = Field(foreign_key="planejamento_cenario.id", index=True)
+    mes_competencia: str  # "YYYY-MM"
+    codigo_conta_gerencial: str
+    centro_custo: Optional[str] = None
+    tipo: str  # "receita" | "despesa"
+    valor_previsto: float
+    observacao: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Pedidos — intenção de compra/venda que NÃO mexe em Estoque nem gera
+# lançamento financeiro sozinha; só quando uma nota fiscal/recibo é lançada
+# em Financeiro (ou uma entrada/saída em Estoque) e vinculada a este pedido é
+# que ele passa a refletir nesses dois módulos (ver `pedido_id` em
+# ContaGerencial e MovimentoEstoque, mais abaixo).
+# ---------------------------------------------------------------------------
+class Pedido(SQLModel, table=True):
+    __tablename__ = "pedido"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    numero_pedido: str = Field(index=True, unique=True)
+    tipo: str  # "compra" | "venda"
+    fornecedor_cliente: Optional[str] = None
+    centro_custo: Optional[str] = None
+    data_pedido: date
+    data_prevista: Optional[date] = None
+    status: str = "aberto"  # "aberto" | "parcialmente_atendido" | "atendido" | "cancelado"
+    observacao: Optional[str] = None
+    responsavel: Optional[str] = None
+    # Rastro de onde este pedido nasceu, se veio de "Importar para Pedidos"
+    # em Orçamento/Planejamento financeiro (ver planejamento.py).
+    origem_tipo: Optional[str] = None  # "orcamento" | "planejamento_financeiro"
+    origem_item_id: Optional[int] = None
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PedidoItem(SQLModel, table=True):
+    __tablename__ = "pedido_item"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    pedido_id: int = Field(foreign_key="pedido.id", index=True)
+    tipo_item: str  # "produto" | "servico"
+    produto_servico: str
+    codigo_conta_gerencial: Optional[str] = None
+    nome_conta_gerencial: Optional[str] = None
+    quantidade: Optional[float] = None
+    valor_unitario_estimado: Optional[float] = None
+    valor_total_estimado: float
+    # Quanto desse item já foi coberto por lançamentos/movimentos vinculados.
+    quantidade_atendida: float = 0
+    valor_atendido: float = 0
+
+
+# ---------------------------------------------------------------------------
+# Patrimônio
+# ---------------------------------------------------------------------------
+class Patrimonio(SQLModel, table=True):
+    """Item de patrimônio/imobilizado — LISTA_DE_PATRIMONIO.csv."""
+
+    __tablename__ = "patrimonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    tipo: Optional[str] = None
+    nome: str
+    numero: Optional[str] = None
+    atividade_cultura: Optional[str] = None
+    data_imobilizacao: Optional[date] = None
+    metodo_depreciacao: Optional[str] = None
+    vida_util: Optional[str] = None  # texto livre (ex.: "7 Anos")
+    valor_residual: Optional[float] = None
+    quantidade: Optional[float] = None
+    unidade: Optional[str] = None
+    valor_total: Optional[float] = None
+    data_baixa: Optional[date] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+    # Plano de manutenção preventiva (opcional) — periodicidade só por DATA
+    # (ex.: "a cada 6 meses"). O sistema hoje não rastreia horímetro/horas de
+    # uso de nenhum equipamento, então manutenção por uso fica fora de escopo
+    # por ora (ver ADR em rules/patrimonio.py). Sem plano cadastrado, os três
+    # campos ficam None e o item nunca gera alerta.
+    frequencia_manutencao_meses: Optional[int] = None
+    data_ultima_manutencao: Optional[date] = None
+    # Calculada (última + frequência) quando a manutenção é registrada, mas
+    # também editável manualmente — cobre o caso de plano novo sem histórico
+    # ainda, ou de o usuário querer antecipar/adiar a próxima data.
+    data_proxima_manutencao: Optional[date] = None
+    observacao_manutencao: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Manutenção de patrimônio (histórico de execuções do plano preventivo)
+# ---------------------------------------------------------------------------
+class ManutencaoPatrimonio(SQLModel, table=True):
+    """Um registro de manutenção preventiva realizada (ou agendada) em um item
+    de Patrimônio — histórico + link opcional para o lançamento em Contas a
+    Pagar (ContaGerencial) gerado automaticamente, mesmo padrão de
+    FeriasFuncionario/DecimoTerceiro (RH ampliado)."""
+
+    __tablename__ = "manutencao_patrimonio"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    patrimonio_id: int = Field(foreign_key="patrimonio.id", index=True)
+    data_realizacao: date
+    descricao: Optional[str] = None
+    fornecedor: Optional[str] = None
+    valor: Optional[float] = None
+    centro_custo: str = "Pecuária Leiteira"
+    # pendente = a conta a pagar segue em aberto; pago = já baixada na hora
+    # do registro (mesmo vocabulário de FeriasFuncionario/DecimoTerceiro).
+    status: str = "pago"
+    data_pagamento: Optional[date] = None
+    observacao: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # nº do lançamento (LC-...) criado em Contas a Pagar quando
+    # `gerar_conta_a_pagar=True` foi pedido ao registrar — None quando o
+    # usuário optou por não lançar nada financeiro para esta manutenção.
+    numero_lancamento_gerado: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# Curva ABC (análise de compras / Pareto)
+# ---------------------------------------------------------------------------
+class CurvaABC(SQLModel, table=True):
+    """Linha da CURVA_ABC.csv — classificação A/B/C de produtos/serviços por valor."""
+
+    __tablename__ = "curva_abc"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    item: Optional[int] = None
+    classificacao: Optional[str] = None          # A, B ou C
+    produto: Optional[str] = None
+    unidade: Optional[str] = None
+    preco_unitario: Optional[float] = None
+    quantidade: Optional[float] = None
+    valor_compra: Optional[float] = None
+    valor_acumulado: Optional[float] = None
+    perc_acumulado: Optional[float] = None
+    perc_total: Optional[float] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)

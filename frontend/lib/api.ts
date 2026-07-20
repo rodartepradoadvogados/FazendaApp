@@ -784,7 +784,11 @@ export async function fetchDiarias() {
   if (!res.ok) throw new Error(`Diárias error: ${res.status}`);
   return res.json();
 }
-export async function criarDiaria(dados: { pessoa_id: number; valor_diaria: number; data_inicio: string; observacao?: string }) {
+export async function criarDiaria(dados: {
+  pessoa_id: number; valor_diaria: number; data_inicio: string; observacao?: string;
+  conta_dia_a_dia?: boolean; auditar_periodicamente?: boolean | null;
+  frequencia_auditoria?: string | null; dia_semana_auditoria?: number | null; intervalo_dias_auditoria?: number | null;
+}) {
   const res = await authFetch(`${API}/cadastro/diarias`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -796,6 +800,30 @@ export async function registrarPagamentoDiaria(diariaId: number, dados: { data_p
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar pagamento"); }
+  return res.json();
+}
+
+export type ParametroDiariaPadrao = {
+  auditar_periodicamente: boolean; frequencia_auditoria: string;
+  dia_semana_auditoria: number; intervalo_dias_auditoria: number;
+};
+export async function fetchParametroDiariaPadrao(): Promise<ParametroDiariaPadrao> {
+  const res = await authFetch(`${API}/cadastro/diarias/parametro-padrao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Parâmetro padrão de diária error: ${res.status}`);
+  return res.json();
+}
+export async function salvarParametroDiariaPadrao(dados: ParametroDiariaPadrao) {
+  const res = await authFetch(`${API}/cadastro/diarias/parametro-padrao`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro padrão"); }
+  return res.json();
+}
+export async function responderAuditoriaDiaria(auditoriaId: number, diasTrabalhados: number) {
+  const res = await authFetch(`${API}/cadastro/diarias/auditorias/${auditoriaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dias_trabalhados: diasTrabalhados }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao responder auditoria"); }
   return res.json();
 }
 

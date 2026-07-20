@@ -11,7 +11,7 @@ import {
   fetchRecriaDossie, fetchRecriaDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo, fetchRecriaOcorrencias,
   type RecriaDossie, type RecriaCurva, type RecriaOcorrencia,
 } from "@/lib/api";
-import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
 
 type Aba = "resumo" | "saude" | "crescimento" | "casos";
 const ABAS: { chave: Aba; rotulo: string }[] = [
@@ -185,13 +185,14 @@ function AbaCrescimento() {
 // ── Casos recentes — últimas ocorrências lançadas (site + app) ─────────────
 function AbaCasos() {
   const { dados, carregando } = useCarregar<RecriaOcorrencia[]>("menu_recria_ocorrencias", () => fetchRecriaOcorrencias());
-  const lista = (dados || []).slice(0, 20);
+  const lista = dados || [];
+  const pagLista = usePaginacao(lista);
   if (carregando && !dados) return <Carregando />;
   if (!lista.length) return <Vazio>Nenhum caso registrado ainda.</Vazio>;
 
   return (
     <div>
-      {lista.map((o) => (
+      {pagLista.linhasPagina.map((o) => (
         <div key={o.id} className="mob-card" style={{ padding: "0.7rem 0.9rem", marginBottom: "0.5rem" }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: "0.5rem" }}>
             <span style={{ fontWeight: 800, fontSize: "1rem" }}>Nº {o.numero_matriz}</span>
@@ -201,6 +202,7 @@ function AbaCasos() {
           {o.observacao && <div style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{o.observacao}</div>}
         </div>
       ))}
+      <PaginacaoMob pagina={pagLista.pagina} totalPaginas={pagLista.totalPaginas} totalLinhas={pagLista.totalLinhas} onMudarPagina={pagLista.setPagina} />
     </div>
   );
 }

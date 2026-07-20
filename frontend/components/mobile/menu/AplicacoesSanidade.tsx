@@ -9,7 +9,7 @@ import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import {
   fetchSanidade, editarAplicacaoSanidade, excluirAplicacaoSanidade, ehAdmin, formatDate, fetchMedicamentos,
 } from "@/lib/api";
-import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
 
 type Aplic = {
@@ -51,8 +51,9 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
     const filt = q
       ? todas.filter((a) => a.numero.toLowerCase().includes(q) || a.produto.toLowerCase().includes(q))
       : todas;
-    return filt.slice(0, 200);
+    return filt;
   }, [dados, busca]);
+  const pagLista = usePaginacao(lista);
 
   const iniciar = (a: Aplic) => {
     setEditId(a.id);
@@ -116,7 +117,8 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
           ) : lista.length === 0 ? (
             <Vazio>Nenhuma aplicação encontrada.</Vazio>
           ) : (
-            lista.map((a) => {
+            <>
+            {pagLista.linhasPagina.map((a) => {
               const editando = editId === a.id;
               return (
                 <MobCard key={a.id} style={{ marginBottom: "0.6rem" }}>
@@ -192,7 +194,9 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
                   )}
                 </MobCard>
               );
-            })
+            })}
+            <PaginacaoMob pagina={pagLista.pagina} totalPaginas={pagLista.totalPaginas} totalLinhas={pagLista.totalLinhas} onMudarPagina={pagLista.setPagina} />
+            </>
           )}
         </>
       )}

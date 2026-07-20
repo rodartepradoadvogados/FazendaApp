@@ -196,7 +196,14 @@ _COLUNAS_NOVAS: dict[str, list[tuple[str, str]]] = {
     ],
     "empreitada": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
     "contrato": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
-    "diaria": [("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'")],
+    "diaria": [
+        ("centro_custo", "VARCHAR DEFAULT 'Pecuária Leiteira'"),
+        ("conta_dia_a_dia", "BOOLEAN DEFAULT true"),
+        ("auditar_periodicamente", "BOOLEAN DEFAULT false"),
+        ("frequencia_auditoria", "VARCHAR"),
+        ("dia_semana_auditoria", "INTEGER"),
+        ("intervalo_dias_auditoria", "INTEGER"),
+    ],
     "lote": [
         ("status_lactacao", "VARCHAR"),
         ("categorias", "VARCHAR"),

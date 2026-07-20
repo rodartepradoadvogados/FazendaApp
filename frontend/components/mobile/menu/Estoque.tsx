@@ -9,7 +9,7 @@ import { Search, Warehouse, Database, Trash2, Wheat, Pill, Dna, Package } from "
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { LinhaPills, MobPill, GradeAcoes } from "@/components/mobile/lancar/comum";
 import { fetchEstoque, fetchEstoqueSemen, fetchTouros, excluirEstoqueSemen, type Touro } from "@/lib/api";
-import { useCarregar, AvisoCopia, Carregando, Vazio, brl } from "@/components/mobile/menu/comum";
+import { useCarregar, AvisoCopia, Carregando, Vazio, brl, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
 
 type ItemEstoque = {
   nome: string; categoria: string | null; finalidade: string | null; quantidade: number | null;
@@ -151,6 +151,7 @@ function SemenView() {
     const base = naabReq.dados || [];
     return q ? base.filter((t) => `${t.nome || ""} ${t.naab} ${t.central || ""} ${t.raca || ""}`.toLowerCase().includes(q)) : base;
   }, [naabReq.dados, q]);
+  const pagNaab = usePaginacao(naabFiltrado);
 
   async function excluir(e: ItemSemen) {
     if (!window.confirm(`Excluir "${e.touro_nome}" do estoque de sêmen?`)) return;
@@ -221,7 +222,7 @@ function SemenView() {
           ) : naabFiltrado.length === 0 ? (
             <Vazio>Nenhum touro do catálogo NAAB encontrado.</Vazio>
           ) : (
-            naabFiltrado.slice(0, 100).map((t, idx) => (
+            pagNaab.linhasPagina.map((t, idx) => (
               <MobCard key={t.id ?? t.naab} alt={(idx % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: "0.6rem" }}>
                   <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>{t.nome || t.naab}</span>
@@ -233,8 +234,8 @@ function SemenView() {
               </MobCard>
             ))
           )}
-          {naabReq.dados && naabFiltrado.length > 100 && (
-            <p style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginTop: "0.4rem" }}>Mostrando 100 de {naabFiltrado.length} — refine a busca para ver mais.</p>
+          {naabReq.dados && (
+            <PaginacaoMob pagina={pagNaab.pagina} totalPaginas={pagNaab.totalPaginas} totalLinhas={pagNaab.totalLinhas} onMudarPagina={pagNaab.setPagina} />
           )}
         </>
       )}

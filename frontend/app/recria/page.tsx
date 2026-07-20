@@ -10,6 +10,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { exportarFichaPDF, type SecaoFicha } from "@/lib/export";
 import { UploadPlanilha } from "@/components/UploadPlanilha";
 import { SecaoRecolhivel } from "@/components/ui";
+import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import {
   fetchAnimais, fetchRecriaDoencas, fetchDoencas, fetchRecriaCurva, fetchRecriaPesoAlvoResumo,
   fetchRecriaOcorrencias, criarRecriaOcorrencia, excluirRecriaOcorrencia, fetchRecriaBenchmark,
@@ -556,6 +557,7 @@ function AbaRegistrar() {
   const [msg, setMsg] = useState<{ tipo: "ok" | "erro"; txt: string } | null>(null);
   const [salvando, setSalvando] = useState(false);
   const admin = ehAdmin();
+  const pagCasos = usePaginacao(lista || []);
 
   const carregar = () => fetchRecriaOcorrencias().then(setLista).catch(() => setLista([]));
   useEffect(() => {
@@ -612,7 +614,7 @@ function AbaRegistrar() {
             <table className="fazenda-table">
               <thead><tr><th>Data</th><th>Animal</th><th>Doença</th><th>Obs.</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th></th></tr></thead>
               <tbody>
-                {lista.slice(0, 100).map((o) => (
+                {pagCasos.linhasPagina.map((o) => (
                   <tr key={o.id}>
                     <td>{o.data_ocorrencia.split("-").reverse().join("/")}</td>
                     <td style={{ fontWeight: 600 }}>{o.numero_matriz}</td>
@@ -626,6 +628,8 @@ function AbaRegistrar() {
                 ))}
               </tbody>
             </table>
+            <Paginacao pagina={pagCasos.pagina} totalPaginas={pagCasos.totalPaginas} totalLinhas={pagCasos.totalLinhas}
+              tamanhoPagina={pagCasos.tamanhoPagina} onMudarPagina={pagCasos.setPagina} onMudarTamanho={pagCasos.setTamanhoPagina} />
           </div>
         )}
       </SecaoRecolhivel>
