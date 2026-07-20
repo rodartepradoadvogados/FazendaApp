@@ -26,8 +26,11 @@ PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
 
 # E-mail do proprietário — único com acesso ao relatório de últimos acessos
-# (ver /auth/usuarios/acessos). Fixo por enquanto, sem UI de gestão.
-EMAIL_DONO = "rodartepradoadvogados@gmail.com"
+# (ver /auth/usuarios/acessos). Fixo por enquanto, sem UI de gestão. E-mail de
+# acesso principal do proprietário; rodartepradoadvogados@gmail.com continua
+# funcionando como login/contato alternativo da mesma pessoa, só não é mais o
+# valor que `eh_dono` compara.
+EMAIL_DONO = "jairodarte@gmail.com"
 
 
 # ---------------------------------------------------------------------------
@@ -210,6 +213,29 @@ def seed_email_dono_backfill(session: Session) -> None:
     username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
     dono = session.exec(select(Usuario).where(Usuario.username == username)).first()
     if dono and not (dono.email or "").strip():
+        dono.email = EMAIL_DONO
+        session.add(dono)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def seed_email_dono_correcao_202607c(session: Session) -> None:
+    """Uma única vez (SeedFlag): corrige à força o e-mail do admin inicial
+    (ADMIN_USER, default "AlexandreRodarte") para o EMAIL_DONO atual —
+    diferente de seed_email_dono_backfill (que só preenche se estivesse em
+    branco), esta SOBRESCREVE mesmo que o campo já tenha outro valor. Motivo:
+    o próprio proprietário usou o fluxo self-service "Sou o proprietário" e
+    cadastrou seu e-mail pessoal (jairodarte@gmail.com) — que na época não
+    batia com o EMAIL_DONO então vigente (rodartepradoadvogados@gmail.com),
+    então salvou como e-mail comum e NÃO virou dono. EMAIL_DONO passou a ser
+    jairodarte@gmail.com nesta mesma mudança; esta migração garante que o
+    dono fique correto sem precisar de mais nenhum passo manual dele."""
+    chave = "email_dono_correcao_202607c"
+    if session.get(SeedFlag, chave):
+        return
+    username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
+    dono = session.exec(select(Usuario).where(Usuario.username == username)).first()
+    if dono:
         dono.email = EMAIL_DONO
         session.add(dono)
     session.add(SeedFlag(chave=chave))
