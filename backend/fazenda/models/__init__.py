@@ -2694,6 +2694,16 @@ class NoticiaNews(SQLModel, table=True):
     revisado_final: bool = False
     revisado_final_em: Optional[datetime] = None
     revisado_final_por: Optional[str] = None
+    # Ilustração da matéria (#news-redesign) — caminho público dentro de
+    # frontend/public/news-images/ (ex.: "/news-images/compost-barn-01.jpg"),
+    # escolhido a partir do banco de fotos + manifesto de tags (ver
+    # frontend/public/news-images/manifest.json). Nula para matérias antigas
+    # ou sem foto correspondente no banco — a tela cai no fundo temático
+    # rotativo já existente (newsVisual.ts) nesse caso.
+    imagem: Optional[str] = None
+    # Rótulo curto (pílula na tela, ex.: "Instalações", "Genética", "Qualidade
+    # do Leite") — livre, sem lista fixa; nulo não mostra pílula.
+    categoria: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

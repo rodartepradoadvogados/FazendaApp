@@ -3196,6 +3196,10 @@ export type NoticiaNews = {
   id: number; fonte_id: number; manchete: string; resumo?: string | null; link: string;
   data_publicacao?: string | null; capturado_em: string; materia?: string | null; fontes?: string[];
   revisado_final: boolean; revisado_final_em?: string | null; revisado_final_por?: string | null;
+  // Ilustração + rótulo curto (#news-redesign) — caminho público em
+  // /news-images/ e pílula de tema, respectivamente; ambos opcionais (nulo
+  // em matérias antigas — a tela cai no fundo temático rotativo já existente).
+  imagem?: string | null; categoria?: string | null;
 };
 export type NewsFeed = { janela_dias: number; fontes: { fonte: { id: number; nome: string; url: string; erro?: string | null }; noticias: NoticiaNews[] }[] };
 
@@ -3205,9 +3209,9 @@ export const fetchNoticias = (verTudo = false): Promise<NewsFeed> => _rGet(`/new
 // revisadas (visão pública).
 export const fetchTodasMaterias = (): Promise<NoticiaNews[]> => _rGet(`/news/materias`);
 
-export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[] };
+export type MateriaBlogIn = { manchete: string; materia: string; fontes: string[]; imagem?: string; categoria?: string };
 export const criarMateriaBlog = (d: MateriaBlogIn): Promise<NoticiaNews> => _rSend(`/news/materias`, "POST", d);
-export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: string; fontes: string[] };
+export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: string; fontes: string[]; imagem?: string; categoria?: string };
 export const atualizarMateriaBlog = (id: number, d: MateriaBlogEditIn): Promise<NoticiaNews> => _rSend(`/news/materias/${id}`, "PUT", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
 export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");

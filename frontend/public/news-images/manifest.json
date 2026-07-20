@@ -1,0 +1,4 @@
+{
+  "_comentario": "Banco de fotos para ilustrar matérias do blog News (#news-redesign). Cada entrada aponta para um arquivo em frontend/public/news-images/ (mesma pasta deste manifesto) e lista tags em português que descrevem o que a foto mostra — a skill /milknews usa essas tags para casar a foto com o assunto da matéria do dia, sem repetir nenhuma foto usada nas últimas 5 publicações. Ao adicionar uma foto nova: 1) salve o arquivo aqui com um nome descritivo (sem espaços/acentos, ex. 'ordenha-robotica-01.jpg'); 2) acrescente uma entrada abaixo com o mesmo nome de arquivo e tags relevantes.",
+  "fotos": []
+}
