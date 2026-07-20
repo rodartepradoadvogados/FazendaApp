@@ -20,6 +20,38 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+// Web Push: notificação nativa mesmo com o app fechado, para os MESMOS
+// alertas do sininho (contas vencendo, estoque baixo, pendências de agenda
+// etc. — ver backend/fazenda/api/routers/push.py, que decide o quê/quando).
+self.addEventListener("push", (event) => {
+  let dados = { title: "Fazenda Estreito Ponte de Pedra", body: "Você tem uma nova pendência.", url: "/agenda" };
+  try {
+    if (event.data) dados = { ...dados, ...event.data.json() };
+  } catch (e) { /* payload não veio em JSON — usa os padrões acima */ }
+  event.waitUntil(
+    self.registration.showNotification(dados.title, {
+      body: dados.body,
+      icon: "/icons/icone-192.png",
+      badge: "/icons/icone-192.png",
+      data: { url: dados.url || "/agenda" },
+    })
+  );
+});
+
+// Clique na notificação: foca uma aba já aberta no destino (ou abre uma nova).
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = (event.notification.data && event.notification.data.url) || "/agenda";
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
+      for (const client of clientList) {
+        if (client.url.includes(url) && "focus" in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow(url);
+    })
+  );
+});
+
 self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;

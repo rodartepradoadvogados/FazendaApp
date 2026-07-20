@@ -2284,6 +2284,35 @@ export async function fetchPatrimonio() {
   return res.json();
 }
 
+export async function atualizarPlanoManutencaoPatrimonio(itemId: number, dados: {
+  frequencia_manutencao_meses?: number | null; data_ultima_manutencao?: string | null;
+  data_proxima_manutencao?: string | null; observacao_manutencao?: string | null;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao-plano`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar o plano de manutenção"); }
+  return res.json();
+}
+
+export async function fetchManutencoesPatrimonio(itemId: number) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Histórico de manutenção error: ${res.status}`);
+  return res.json();
+}
+
+export async function registrarManutencaoPatrimonio(itemId: number, dados: {
+  data_realizacao: string; descricao?: string | null; fornecedor?: string | null; valor?: number | null;
+  centro_custo?: string; status?: string; data_pagamento?: string | null; observacao?: string | null;
+  gerar_conta_a_pagar?: boolean;
+}) {
+  const res = await authFetch(`${API}/financeiro/patrimonio/${itemId}/manutencao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar a manutenção"); }
+  return res.json();
+}
+
 export async function fetchOpcoesFinanceiro() {
   const res = await authFetch(`${API}/financeiro/opcoes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Opções financeiro error: ${res.status}`);
@@ -2863,6 +2892,29 @@ export async function rejeitarExclusao(id: number, motivo?: string) {
 export async function fetchNotificacoes() {
   const res = await authFetch(`${API}/notificacoes/`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Notificações error: ${res.status}`);
+  return res.json();
+}
+
+// ── Push nativo (Web Push, PWA) ──
+export async function fetchPushChavePublica(): Promise<{ chave_publica: string }> {
+  const res = await fetch(`${API}/push/chave-publica`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Chave pública do push error: ${res.status}`);
+  return res.json();
+}
+
+export async function subscribePush(dados: { endpoint: string; keys: { p256dh: string; auth: string }; user_agent?: string }) {
+  const res = await authFetch(`${API}/push/subscribe`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao ativar notificações"); }
+  return res.json();
+}
+
+export async function unsubscribePush(endpoint?: string) {
+  const res = await authFetch(`${API}/push/subscribe`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ endpoint: endpoint || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desativar notificações"); }
   return res.json();
 }
 

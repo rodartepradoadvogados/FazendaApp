@@ -2651,6 +2651,43 @@ class NoticiaNews(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Notificações push (Web Push API) — canal adicional de entrega para os
+# MESMOS alertas do sininho (/notificacoes), funcionando com o app fechado.
+# Ver fazenda/api/routers/push.py.
+# ---------------------------------------------------------------------------
+class PushSubscription(SQLModel, table=True):
+    """Uma inscrição de push do navegador (PushSubscription da Web Push API)
+    vinculada ao usuário logado que a criou. Um usuário pode ter mais de uma
+    (um por navegador/dispositivo em que clicou "Ativar notificações")."""
+
+    __tablename__ = "push_subscription"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    endpoint: str = Field(index=True)  # URL única do serviço de push do navegador
+    p256dh: str
+    auth: str
+    user_agent: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+class PushNotificacaoEnviada(SQLModel, table=True):
+    """Registro de deduplicação: evita reenviar o mesmo alerta (mesma
+    `chave`) via push para o mesmo usuário mais de uma vez por dia — a
+    lógica de "quando gerar o alerta" continua 100% em calcular_agenda()/
+    notificacoes.py; isto só impede reenvio no canal de entrega novo, já
+    que o sininho é reconsultado a cada poll do app aberto."""
+
+    __tablename__ = "push_notificacao_enviada"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    chave: str = Field(index=True)
+    data_referencia: date = Field(index=True)
+    enviado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Administração > Portal > Comunicação — mensagens internas e tarefas
 # delegadas entre usuários, com sinalização na central de alertas (#513-515).
 # ---------------------------------------------------------------------------

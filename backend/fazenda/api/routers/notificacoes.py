@@ -5,24 +5,29 @@ filtrando por módulo/permissão. Alimenta o sininho fixo do topo.
 """
 from __future__ import annotations
 
+import logging
 from datetime import date
 
 from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from fazenda.api.routers.agenda import calcular_agenda
+from fazenda.api.routers.push import notificar_push_para_itens
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fazenda.models import PortalMensagem, SolicitacaoExclusao, Usuario
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/notificacoes", tags=["notificacoes"])
 
 
-@router.get("/")
-def notificacoes_hoje(
-    user: Usuario = Depends(get_current_user),
-    session: Session = Depends(get_session),
-) -> dict:
+def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
+    """A lógica de "quando avisar" do sininho — inalterada. Extraída para
+    função própria só para ser reaproveitada também pela varredura periódica
+    de push (fazenda/api/routers/push.py:despachar_push_pendentes), sem
+    duplicar nada: o endpoint /notificacoes/ abaixo chama exatamente esta
+    mesma função."""
     hoje = date.today()
     itens: list[dict] = []
 
@@ -79,5 +84,24 @@ def notificacoes_hoje(
             "portal_mensagem_id": m.id,
             "pede_retorno": m.pede_retorno,
         })
+
+    return itens
+
+
+@router.get("/")
+def notificacoes_hoje(
+    user: Usuario = Depends(get_current_user),
+    session: Session = Depends(get_session),
+) -> dict:
+    itens = montar_itens_notificacoes(user, session)
+
+    # Rewire do push (#web-push): MESMOS itens que o sino já decidiu mostrar
+    # — só adiciona o canal de entrega novo (notificação nativa do
+    # navegador), deduplicado por dia, para quem tiver subscription ativa.
+    # Nunca deixa uma falha aqui derrubar o carregamento do sino.
+    try:
+        notificar_push_para_itens(user.id, itens, session)
+    except Exception:
+        logger.exception("Falha ao despachar push a partir de /notificacoes/")
 
     return {"itens": itens, "total": len(itens)}
