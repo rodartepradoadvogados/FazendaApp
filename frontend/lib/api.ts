@@ -859,6 +859,57 @@ export async function excluirDecimoTerceiro(id: number) {
   return res.json();
 }
 
+// ── Rescisão (Financeiro > Ações > Folha de Pagamento > Férias / 13º / Rescisão) ──
+// Verbas rescisórias da CLT (saldo de salário, aviso prévio, férias
+// vencidas/proporcionais, 13º proporcional, multa de FGTS estimada) para as
+// 4 modalidades mais comuns. Sem eSocial/TRCT oficial (fora de escopo, mesma
+// linha de férias/13º). Diferente de férias/13º, não há registro de
+// acompanhamento dedicado — só o lançamento em Contas a Pagar.
+export type TipoRescisao = "sem_justa_causa" | "pedido_demissao" | "justa_causa" | "acordo_mutuo";
+export type RescisaoDados = {
+  pessoa_id: number; tipo_rescisao: TipoRescisao; data_desligamento: string;
+  dias_ferias_vencidas?: number; aviso_previo_trabalhado?: boolean;
+  data_pagamento?: string; status?: string; observacao?: string; centro_custo?: string;
+};
+export type CalculoRescisao = {
+  tipo_rescisao: TipoRescisao;
+  saldo_salario: { dias_trabalhados_mes: number; valor: number };
+  aviso_previo: { devido: boolean; dias: number; dias_indenizados: number; trabalhado: boolean; valor: number };
+  ferias_vencidas: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number };
+  ferias_proporcionais: { valor_ferias: number; valor_terco_constitucional: number; valor_abono: number; valor_total: number; meses: number };
+  decimo_terceiro_proporcional: { meses: number; valor: number };
+  fgts: {
+    estimativa: boolean; percentual_mensal_estimado: number; meses_considerados: number;
+    deposito_total_estimado: number; percentual_multa: number; multa: number; percentual_saque_permitido: number;
+  };
+  data_referencia_tempo_servico: string;
+  valor_total: number;
+};
+export type RegistroRescisao = {
+  id: number; numero_lancamento: string | null; descricao: string; fornecedor_cliente: string | null;
+  valor_total: number; data_competencia: string; data_vencimento: string | null; valor_pago: number | null;
+};
+
+export async function simularRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
+  const res = await authFetch(`${API}/cadastro/rescisao/calcular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular rescisão"); }
+  return res.json();
+}
+export async function criarRescisao(dados: RescisaoDados): Promise<CalculoRescisao> {
+  const res = await authFetch(`${API}/cadastro/rescisao`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar rescisão"); }
+  return res.json();
+}
+export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
+  const res = await authFetch(`${API}/cadastro/rescisao`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Rescisão error: ${res.status}`);
+  return res.json();
+}
+
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;

@@ -36,8 +36,13 @@ from fazenda.api.routers.estoque import _validar_embalagem
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
-from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias
-from fazenda.rules.parametros import dias_ferias_padrao, minimos_semen_por_tipo, percentual_terco_constitucional_ferias
+from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
+from fazenda.rules.parametros import (
+    dias_ferias_padrao,
+    minimos_semen_por_tipo,
+    percentual_estimado_fgts_mensal,
+    percentual_terco_constitucional_ferias,
+)
 
 FORMAS_PAGAMENTO_VALE = ["dinheiro", "pix", "transferencia", "desconto_integral_folha"]
 
@@ -1334,6 +1339,122 @@ def excluir_decimo_terceiro(registro_id: int, session: Session = Depends(get_ses
     session.delete(registro)
     session.commit()
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Rescisão contratual (CLT) — cálculo das verbas rescisórias (saldo de
+# salário, aviso prévio, férias vencidas/proporcionais, 13º proporcional,
+# multa do FGTS estimada) para as 4 modalidades mais comuns. Sem eSocial/TRCT
+# oficial (fora de escopo, mesma linha de férias/13º). Diferente de férias/
+# 13º, não existe uma tabela de acompanhamento dedicada — o registro fica só
+# no lançamento em Contas a Pagar (`tipo_documento == "Rescisão"`), reusado
+# pela listagem abaixo.
+# ---------------------------------------------------------------------------
+LABELS_TIPO_RESCISAO = {
+    "sem_justa_causa": "Dispensa sem justa causa",
+    "pedido_demissao": "Pedido de demissão",
+    "justa_causa": "Dispensa por justa causa",
+    "acordo_mutuo": "Acordo mútuo (distrato)",
+}
+
+
+class RescisaoIn(BaseModel):
+    pessoa_id: int
+    tipo_rescisao: str  # sem_justa_causa | pedido_demissao | justa_causa | acordo_mutuo
+    data_desligamento: date
+    dias_ferias_vencidas: int = 0
+    aviso_previo_trabalhado: bool = False
+    data_pagamento: date | None = None
+    status: str = "pendente"
+    observacao: str | None = None
+    centro_custo: str = "Pecuária Leiteira"
+
+
+def _validar_rescisao(dados: RescisaoIn, pessoa: Pessoa) -> None:
+    if dados.status not in ("pendente", "pago"):
+        raise HTTPException(status_code=400, detail="Status inválido")
+    if dados.tipo_rescisao not in LABELS_TIPO_RESCISAO:
+        raise HTTPException(status_code=400, detail="Tipo de rescisão inválido")
+    if dados.data_desligamento < pessoa.data_admissao:
+        raise HTTPException(status_code=400, detail="Data de desligamento não pode ser anterior à data de admissão")
+    limite_ferias_vencidas = dias_ferias_padrao()
+    if dados.dias_ferias_vencidas < 0 or dados.dias_ferias_vencidas > limite_ferias_vencidas:
+        raise HTTPException(status_code=400, detail=f"Dias de férias vencidas deve estar entre 0 e {limite_ferias_vencidas}")
+
+
+def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session) -> tuple[Pessoa, dict]:
+    pessoa = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa:
+        raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    if not pessoa.salario_base:
+        raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
+    if not pessoa.data_admissao:
+        raise HTTPException(status_code=400, detail="Pessoa não tem data de admissão cadastrada")
+    _validar_rescisao(dados, pessoa)
+
+    calculo = calcular_rescisao(
+        pessoa.salario_base,
+        pessoa.data_admissao,
+        dados.data_desligamento,
+        dados.tipo_rescisao,
+        dados.dias_ferias_vencidas,
+        dados.aviso_previo_trabalhado,
+        percentual_terco_constitucional_ferias(),
+        percentual_estimado_fgts_mensal(),
+    )
+    return pessoa, calculo
+
+
+@router.post("/rescisao/calcular")
+def simular_rescisao(dados: RescisaoIn, session: Session = Depends(get_session)) -> dict:
+    """Só calcula e devolve o detalhamento das verbas — não gera lançamento
+    financeiro nenhum (usado pela tela para o usuário conferir antes de
+    lançar em `POST /cadastro/rescisao`)."""
+    pessoa, calculo = _calcular_rescisao_pessoa(dados, session)
+    return {**calculo, "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome}
+
+
+@router.get("/rescisao")
+def listar_rescisoes(session: Session = Depends(get_session)) -> list[dict]:
+    contas = session.exec(
+        select(ContaGerencial)
+        .where(ContaGerencial.tipo_documento == "Rescisão")
+        .order_by(ContaGerencial.data_competencia.desc())
+    ).all()
+    return [c.model_dump() for c in contas]
+
+
+@router.post("/rescisao")
+def criar_rescisao(dados: RescisaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+    pessoa, calculo = _calcular_rescisao_pessoa(dados, session)
+
+    numero_lancamento = _proximo_numero_lancamento(session, dados.data_desligamento.year)
+    conta = ContaGerencial(
+        numero_lancamento=numero_lancamento,
+        descricao=f"Rescisão — {LABELS_TIPO_RESCISAO[dados.tipo_rescisao]} — {pessoa.nome} ({dados.data_desligamento.isoformat()})",
+        data_vencimento=dados.data_pagamento or dados.data_desligamento,
+        data_competencia=dados.data_desligamento,
+        fornecedor_cliente=pessoa.nome,
+        tipo_documento="Rescisão",
+        centro_custo=dados.centro_custo,
+        valor_total=calculo["valor_total"],
+        parcela_num=1, parcela_total=1,
+        tipo="despesa", origem="auto",
+        data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
+        valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+    )
+    session.add(conta)
+    session.commit()
+    session.refresh(conta)
+    return {
+        **calculo,
+        "pessoa_id": pessoa.id,
+        "pessoa_nome": pessoa.nome,
+        "observacao": dados.observacao,
+        "status": dados.status,
+        "numero_lancamento_gerado": numero_lancamento,
+        **conta.model_dump(),
+    }
 
 
 # ---------------------------------------------------------------------------
