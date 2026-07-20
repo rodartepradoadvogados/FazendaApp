@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.auth import hash_senha
+from fazenda.auth import EMAIL_DONO, hash_senha
 from fazenda.models import Pessoa, Usuario
 
 
@@ -20,7 +20,9 @@ def client():
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     SQLModel.metadata.create_all(engine)
     with Session(engine) as s:
-        s.add(Usuario(username="admin", nome="Admin", senha_hash=hash_senha("123"), papel="admin"))
+        # /auth/usuarios (listar/criar/editar) é restrito ao proprietário
+        # (exigir_dono) — o admin de teste precisa do e-mail do dono.
+        s.add(Usuario(username="admin", nome="Admin", senha_hash=hash_senha("123"), papel="admin", email=EMAIL_DONO))
         s.add(Pessoa(nome="João Silva", tipo="Funcionário"))
         s.add(Pessoa(nome="Maria Souza", tipo="Funcionário"))
         s.commit()

@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from datetime import datetime
 
-from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_admin, exigir_dono, get_current_user, hash_senha, verificar_senha
+from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_dono, get_current_user, hash_senha, verificar_senha
 from fazenda.database import get_session
 from fazenda.models import LoginAcesso, Pessoa, Usuario
 
@@ -93,7 +93,7 @@ def me(user: Usuario = Depends(get_current_user), session: Session = Depends(get
 
 
 @router.get("/usuarios")
-def listar_usuarios(_: Usuario = Depends(exigir_admin), session: Session = Depends(get_session)) -> list[dict]:
+def listar_usuarios(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
     return [_publico(u, session) for u in session.exec(select(Usuario)).all()]
 
 
@@ -123,7 +123,7 @@ def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
 
 
 @router.post("/usuarios")
-def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_admin), session: Session = Depends(get_session)) -> dict:
+def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
     pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id)
@@ -138,7 +138,7 @@ def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_admin), sessio
 
 
 @router.put("/usuarios/{user_id}")
-def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_admin), session: Session = Depends(get_session)) -> dict:
+def editar_usuario(user_id: int, dados: EditarUsuario, admin: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
     u = session.get(Usuario, user_id)
     if not u:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
