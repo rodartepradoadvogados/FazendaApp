@@ -65,7 +65,10 @@ export function PublicPage({ variant = "institucional", children }: { variant?: 
         .login-nav-link { transition: color 0.15s ease; }
         .login-nav-link:hover { color: #ffffff !important; }
         @media (max-width: 860px) {
-          .login-hero-grid { grid-template-columns: 1fr !important; }
+          /* minmax(0, 1fr), não só 1fr — um "1fr" puro tem mínimo "auto" (o
+             min-content do conteúdo), então a coluna estoura a largura da
+             tela em vez de encolher para caber no mobile. */
+          .login-hero-grid { grid-template-columns: minmax(0, 1fr) !important; }
           .login-card-offset { transform: none !important; }
         }
       `}</style>
