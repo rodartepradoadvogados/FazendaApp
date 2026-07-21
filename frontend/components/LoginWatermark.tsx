@@ -8,7 +8,8 @@
 // topo do W, e o topo do fim do W emenda no topo-esquerda do D — sem
 // quebra entre as três letras. "Milk" (cursivo, fonte --font-script) fica
 // na parte de baixo da barriga do D. Aprovado por simulação antes de entrar
-// aqui (ver histórico da conversa).
+// aqui (ver histórico da conversa). C, W e "Milk" em branco — só o D fica
+// dourado, igual ao CwdMilkMark do cabeçalho (ver components/CwdMilkMark.tsx).
 export function LoginWatermark() {
   return (
     <div aria-hidden="true" style={{ position: "absolute", inset: 0, overflow: "hidden", pointerEvents: "none", zIndex: 0 }}>
@@ -18,14 +19,14 @@ export function LoginWatermark() {
           width: "clamp(300px, 45vw, 640px)", opacity: 0.16,
         }}
       >
-        <svg viewBox="0 0 1160 400" width="100%" height="auto">
+        <svg viewBox="0 0 1160 400" width="100%" style={{ height: "auto", display: "block" }}>
           <path d="M240,305 A140,140 0 1 1 240,75"
-            fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" stroke="#ffffff" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M240,75 L380,305 L520,75 L660,305 L920,75"
-            fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
+            fill="none" stroke="#ffffff" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
           <path d="M920,75 L920,305 A150,150 0 1,0 920,74.9"
             fill="none" stroke="var(--dourado-fixo)" strokeWidth="36" strokeLinecap="round" strokeLinejoin="round" />
-          <text x="1015" y="272" textAnchor="middle" className="font-script" fontSize="60" fill="var(--vinho)">Milk</text>
+          <text x="1015" y="272" textAnchor="middle" className="font-script" fontSize="60" fill="#ffffff">Milk</text>
         </svg>
       </div>
 

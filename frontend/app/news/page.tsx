@@ -45,7 +45,7 @@ export default function NewsPage() {
       <div className="mb-6 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Newspaper size={22} style={{ color: "var(--dourado)" }} /> News — Nosso blog de Pecuária Leiteira
+            <Newspaper size={22} style={{ color: "var(--dourado)" }} /> Milk News — Nosso blog de Pecuária Leiteira
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Matérias escritas por nós sobre leite, produtor de leite, pecuária leiteira, ordenha, Compost Barn e Free Stall.
