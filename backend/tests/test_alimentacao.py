@@ -89,6 +89,44 @@ class TestNecessidadeMensal:
         assert item["necessidade_mes"] == 1200.0  # 40kg/dia * 30
         assert item["sacos_mes"] == 48  # 1200 / 25
 
+    def test_deriva_sacos_da_unidade_saca_30kg_sem_precisar_do_cadastro_de_embalagem(self, client):
+        """O item de estoque só tem `unidade="saca 30kg"` — o campo que quem
+        cadastra o produto realmente preenche — sem preencher à parte o trio
+        unidade_embalagem/medida_embalagem/quantidade_embalagem."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Animal(numero="2", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Ração", quantidade=5.0, unidade="kg"))
+            s.add(Estoque(nome="Ração", categoria="alimento", quantidade=1000.0, unidade="saca 30kg"))
+            s.commit()
+
+        r = c.get("/alimentacao/necessidade-mensal")
+        assert r.status_code == 200
+        item = next(i for i in r.json()["itens"] if i["ingrediente"] == "Ração")
+        assert item["necessidade_mes"] == 300.0  # 5kg/cabeça * 2 animais * 30
+        assert item["ensacado"] is True
+        assert item["kg_por_saco"] == 30.0
+        assert item["sacos_mes"] == 10
+
+    def test_cadastro_de_embalagem_tem_prioridade_sobre_a_unidade(self, client):
+        """Se o trio de embalagem foi preenchido manualmente com um peso
+        diferente do que a `unidade` sugere, o trio explícito vence."""
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="1", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Alta", ativo=True))
+            s.add(Dieta(lote=1, categoria="Vaca", ingrediente="Ração", quantidade=6.0, unidade="kg"))
+            s.add(Estoque(nome="Ração", categoria="alimento", quantidade=1000.0, unidade="saca 30kg",
+                          unidade_embalagem="Saca", medida_embalagem="kg/saca", quantidade_embalagem=25.0))
+            s.commit()
+
+        r = c.get("/alimentacao/necessidade-mensal")
+        assert r.status_code == 200
+        item = next(i for i in r.json()["itens"] if i["ingrediente"] == "Ração")
+        assert item["necessidade_mes"] == 180.0  # 6kg/cabeça * 1 animal * 30
+        assert item["kg_por_saco"] == 25.0
+        assert item["sacos_mes"] == 8  # ceil(180 / 25)
+
 
 class TestBaixaAutomatica:
     def test_primeira_chamada_so_estabelece_baseline_sem_baixar(self, client):

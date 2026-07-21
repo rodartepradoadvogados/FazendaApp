@@ -129,8 +129,8 @@ function NecessidadeMensal() {
     <div className="card">
       <div className="card-header mb-3">Necessidade mensal (30 dias)</div>
       <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
-        Projeção simples: consumo diário × 30. Itens marcados como ensacados em Configurações {"›"} Cadastro {"›"} Itens de estoque
-        aparecem convertidos em sacos (arredondado para cima).
+        Projeção simples: consumo diário × 30. Itens de estoque cadastrados com unidade "saca 30kg"/"saca 60kg" (ou com o cadastro
+        de embalagem preenchido em Configurações {"›"} Cadastro {"›"} Itens de estoque) aparecem convertidos em sacos (arredondado para cima).
       </p>
       <table className="fazenda-table">
         <thead><tr><th>Ingrediente</th><th style={{ textAlign: "right" }}>Necessidade (30d)</th><th style={{ textAlign: "right" }}>Sacos (30d)</th><th>Vínculo com estoque</th></tr></thead>
