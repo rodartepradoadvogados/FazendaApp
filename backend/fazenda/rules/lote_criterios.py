@@ -150,6 +150,62 @@ def lote_tem_criterio(lote) -> bool:
     return any(getattr(lote, campo, None) for campo in _CAMPOS_CRITERIO)
 
 
+def _motivos_atendimento(
+    lote,
+    animal: dict,
+    hoje: date,
+    peso_por_animal: dict[str, float],
+    servicos_por_animal: dict[str, list[dict]],
+    sanidades_por_animal: dict[str, list[dict]],
+) -> list[str]:
+    """Descreve, em texto, os critérios do `lote` que o animal atende — chamado só
+    depois que `animal_atende_criterios` já confirmou o atendimento, então cada
+    critério preenchido abaixo necessariamente já passou."""
+    numero = animal["numero"]
+    categoria = _categoria_normalizada(animal)
+    dpp = dias_para_parto(numero, servicos_por_animal, hoje)
+    motivos = []
+
+    if lote.status_lactacao:
+        motivos.append("Em lactação" if lote.status_lactacao == "lactacao" else "Seca")
+
+    if lote.categorias and categoria:
+        motivos.append(f"Categoria: {categoria}")
+
+    if lote.pre_parto and dpp is not None:
+        motivos.append(f"Pré-parto: faltam {dpp} dia(s) para o parto")
+
+    peso = peso_por_animal.get(numero)
+    if (lote.peso_min is not None or lote.peso_max is not None) and peso is not None:
+        motivos.append(f"Peso: {peso:g} kg")
+
+    producao = animal.get("ult_cl_kg")
+    if (lote.producao_min is not None or lote.producao_max is not None) and producao is not None:
+        motivos.append(f"Produção: {producao:g} kg/dia")
+
+    del_dias = animal.get("del_dias")
+    if (lote.del_min is not None or lote.del_max is not None) and del_dias is not None:
+        motivos.append(f"DEL: {del_dias} dia(s)")
+
+    if (lote.dias_para_parto_min is not None or lote.dias_para_parto_max is not None) and dpp is not None:
+        motivos.append(f"Dias para o parto: {dpp}")
+
+    if lote.em_tratamento:
+        motivos.append("Em tratamento")
+
+    idade_dias = (hoje - animal["data_nasc"]).days if animal.get("data_nasc") else None
+    if (lote.idade_dias_min is not None or lote.idade_dias_max is not None) and idade_dias is not None:
+        motivos.append(f"Idade: {idade_dias} dia(s)")
+
+    gestante = (animal.get("sit_rep") or "") == "Ges." or (animal.get("diagnostico") or "").strip().upper() == "POSITIVO"
+    if lote.novilhas_inseminadas:
+        motivos.append("Novilha inseminada (não gestante)")
+    if lote.novilhas_gestantes:
+        motivos.append("Novilha gestante")
+
+    return motivos
+
+
 def sugerir_movimentacoes(
     lotes: list,
     animais: list[dict],
@@ -181,9 +237,23 @@ def sugerir_movimentacoes(
         if codigo_atual in {l.codigo for l in atende}:
             continue
 
+        lotes_sugeridos = []
+        motivos_combinados: list[str] = []
+        for l in atende:
+            motivos_lote = _motivos_atendimento(l, animal, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+            lotes_sugeridos.append({
+                "codigo": l.codigo, "nome": l.nome, "rotulo": f"{l.codigo} - {l.nome}",
+                "motivo": "; ".join(motivos_lote) or None,
+            })
+            for m in motivos_lote:
+                rotulado = f"{l.codigo} - {m}" if len(atende) > 1 else m
+                if rotulado not in motivos_combinados:
+                    motivos_combinados.append(rotulado)
+
         sugestoes.append({
             "numero_matriz": numero,
             "lote_atual": grupo or None,
-            "lotes_sugeridos": [{"codigo": l.codigo, "nome": l.nome, "rotulo": f"{l.codigo} - {l.nome}"} for l in atende],
+            "lotes_sugeridos": lotes_sugeridos,
+            "motivo": "; ".join(motivos_combinados) or None,
         })
     return sugestoes

@@ -1,7 +1,15 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
-import { Layers, Plus, Pencil, AlertTriangle, Check, X, Users } from "lucide-react";
-import { fetchLotes, criarLote, atualizarLote, previewCriteriosLote } from "@/lib/api";
+import { Layers, Plus, Pencil, AlertTriangle, Check, X, Users, CalendarClock } from "lucide-react";
+import {
+  fetchLotes, criarLote, atualizarLote, previewCriteriosLote,
+  fetchParametroAgendamentoMovimentacao, salvarParametroAgendamentoMovimentacao, type ParametroAgendamentoMovimentacao,
+} from "@/lib/api";
+
+const DIAS_SEMANA = [
+  { v: 0, l: "Segunda" }, { v: 1, l: "Terça" }, { v: 2, l: "Quarta" }, { v: 3, l: "Quinta" },
+  { v: 4, l: "Sexta" }, { v: 5, l: "Sábado" }, { v: 6, l: "Domingo" },
+];
 
 type Lote = {
   id: number; codigo: string; nome: string; rotulo: string; qtd_animais: number;
@@ -66,9 +74,24 @@ export default function CadastroLotes() {
   const [form, setForm] = useState<Form>(formVazio);
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
+  const [parametroAgendamento, setParametroAgendamento] = useState<ParametroAgendamentoMovimentacao | null>(null);
+  const [salvandoAgendamento, setSalvandoAgendamento] = useState(false);
 
   const carregar = () => fetchLotes().then(setLotes).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  useEffect(() => { fetchParametroAgendamentoMovimentacao().then(setParametroAgendamento).catch(() => {}); }, []);
+
+  async function salvarAgendamento(novo: ParametroAgendamentoMovimentacao) {
+    setParametroAgendamento(novo);
+    setSalvandoAgendamento(true);
+    try {
+      await salvarParametroAgendamentoMovimentacao(novo);
+    } catch {
+      // silencioso — o select volta ao valor salvo no próximo carregamento
+    } finally {
+      setSalvandoAgendamento(false);
+    }
+  }
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (l: Lote) => {
@@ -119,6 +142,42 @@ export default function CadastroLotes() {
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!lotes && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {parametroAgendamento && (
+        <div className="card mb-4">
+          <div className="card-header mb-2 flex items-center gap-2">
+            <CalendarClock size={16} style={{ color: "var(--dourado)" }} /> Agendamento das sugestões de movimentação
+          </div>
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+            Após um animal atingir o critério de mudança de lote (acima), a sugestão de troca aparece na Agenda:
+          </p>
+          <div className="flex items-center gap-4" style={{ flexWrap: "wrap" }}>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+              <input
+                type="radio" checked={parametroAgendamento.modo === "na_data_parametro"}
+                onChange={() => salvarAgendamento({ ...parametroAgendamento, modo: "na_data_parametro" })}
+              />
+              No próprio dia em que o animal passa a atender o parâmetro
+            </label>
+            <label className="flex items-center gap-2" style={{ fontSize: "0.82rem" }}>
+              <input
+                type="radio" checked={parametroAgendamento.modo === "dia_fixo_semana"}
+                onChange={() => salvarAgendamento({ ...parametroAgendamento, modo: "dia_fixo_semana" })}
+              />
+              Em um dia fixo da semana
+            </label>
+            {parametroAgendamento.modo === "dia_fixo_semana" && (
+              <select
+                style={inputStyle} value={parametroAgendamento.dia_semana}
+                onChange={(e) => salvarAgendamento({ ...parametroAgendamento, dia_semana: Number(e.target.value) })}
+              >
+                {DIAS_SEMANA.map((d) => <option key={d.v} value={d.v}>{d.l}</option>)}
+              </select>
+            )}
+            {salvandoAgendamento && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Salvando…</span>}
+          </div>
+        </div>
+      )}
 
       {lotes && (
         <div className="card">

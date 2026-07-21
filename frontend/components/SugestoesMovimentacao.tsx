@@ -4,8 +4,8 @@ import { Sparkles, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSugestoesMovimentacao, criarMovimentacao, fetchMotivosMovimentacao, fetchAnimais } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 
-type LoteSugerido = { codigo: string; nome: string; rotulo: string };
-type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[] };
+type LoteSugerido = { codigo: string; nome: string; rotulo: string; motivo: string | null };
+type Sugestao = { numero_matriz: string; lote_atual: string | null; lotes_sugeridos: LoteSugerido[]; motivo: string | null };
 
 const selStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -122,13 +122,14 @@ export default function SugestoesMovimentacao() {
           )}
           {sugestoesFiltradas.length > 0 && (
         <table className="fazenda-table">
-          <thead><tr><th>Matriz</th><th>Lote atual</th><th>Lote(s) sugerido(s)</th><th></th></tr></thead>
+          <thead><tr><th>Matriz</th><th>Lote atual</th><th>Lote(s) sugerido(s)</th><th>Motivo</th><th></th></tr></thead>
           <tbody>
             {sugestoesFiltradas.map((s) => (
               <tr key={s.numero_matriz}>
                 <td style={{ fontWeight: 700 }}>{s.numero_matriz}</td>
                 <td style={{ fontSize: "0.8rem" }}>{s.lote_atual || "—"}</td>
                 <td style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{s.lotes_sugeridos.map((l) => l.rotulo).join(" ou ")}</td>
+                <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{s.motivo || "—"}</td>
                 <td>
                   {movendo === s.numero_matriz ? (
                     <FormMover sugestao={s} motivos={motivos} onFeito={() => { setMovendo(null); carregar(); }} onCancelar={() => setMovendo(null)} />

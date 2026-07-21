@@ -1,11 +1,12 @@
 "use client";
 
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch } from "lucide-react";
+import { Calendar, Filter, Plus, RefreshCw, ChevronDown, ChevronRight, ChevronLeft, AlertTriangle, CheckCircle2, Check, X, Syringe, Wheat, Wallet, RotateCcw, ExternalLink, Megaphone, User, FileSpreadsheet, FileText, PackageSearch, Layers } from "lucide-react";
 import {
   fetchAgenda, addEventoManual, marcarEventoRealizado, desmarcarEventoRealizado,
   fetchProtocoloInducaoConcluidos, fetchAnimais, fetchLotes, today, fetchPrincipiosAtivos, fetchEventosSanitarios,
   cadastrarPreventivo, marcarCuraAplicacao, marcarCuraProtocolo, fetchProtocolosIatfAtivos,
+  criarMovimentacao, fetchMotivosMovimentacao,
 } from "@/lib/api";
 import { exportarExcel, exportarPDF } from "@/lib/export";
 import { VIAS_APLICACAO } from "@/lib/constants";
@@ -157,6 +158,54 @@ export default function AgendaPage() {
     atual.has(numero) ? atual.delete(numero) : atual.add(numero);
     return { ...p, [id]: atual };
   });
+  // Sugestão de movimentação entre lotes: clicar na linha abre uma janela
+  // suspensa com 3 opções — aceitar (move para o 1º lote sugerido), mudar
+  // para outro lote (qualquer lote cadastrado, não só os sugeridos) ou
+  // cancelar (dispensa a sugestão — mesma mecânica de "descartar" usada em
+  // outras pendências, some até o animal mudar de lote de novo).
+  const [sugestaoMovAberta, setSugestaoMovAberta] = useState<any | null>(null);
+  const [lotesTodosMov, setLotesTodosMov] = useState<any[]>([]);
+  const [motivosMov, setMotivosMov] = useState<string[]>([]);
+  const [destinoMov, setDestinoMov] = useState("");
+  const [salvandoSugestaoMov, setSalvandoSugestaoMov] = useState(false);
+  const abrirSugestaoMov = (e: any) => {
+    setSugestaoMovAberta(e);
+    setDestinoMov(e.lotes_sugeridos?.[0]?.codigo ?? "");
+    if (!lotesTodosMov.length) fetchLotes().then(setLotesTodosMov).catch(() => {});
+    if (!motivosMov.length) fetchMotivosMovimentacao().then(setMotivosMov).catch(() => {});
+  };
+  const fecharSugestaoMov = () => setSugestaoMovAberta(null);
+  const aceitarSugestaoMov = async () => {
+    if (!sugestaoMovAberta || !destinoMov) return;
+    setSalvandoSugestaoMov(true);
+    try {
+      await criarMovimentacao({
+        data_movimento: today(), motivo: motivosMov.includes("Aptidão") ? "Aptidão" : (motivosMov[0] || "Aptidão"),
+        lote_destino_codigo: destinoMov, animais: [sugestaoMovAberta.numero_animal],
+      });
+      setSugestaoMovAberta(null);
+      await carregar();
+      mostrarFeedback("Movido para o lote sugerido.");
+    } catch (e: any) {
+      mostrarFeedback(e?.message || "Erro ao mover o animal.");
+    } finally {
+      setSalvandoSugestaoMov(false);
+    }
+  };
+  const cancelarSugestaoMov = async () => {
+    if (!sugestaoMovAberta) return;
+    setSalvandoSugestaoMov(true);
+    try {
+      await marcarEventoRealizado(sugestaoMovAberta.id);
+      setSugestaoMovAberta(null);
+      await carregar();
+    } catch (e: any) {
+      mostrarFeedback(e?.message || "Erro ao dispensar a sugestão.");
+    } finally {
+      setSalvandoSugestaoMov(false);
+    }
+  };
+
   // "Deseja cumprir essa atividade?" — confirmação antes de marcar realizado,
   // em vez de agir no primeiro clique.
   const [confirmando, setConfirmando] = useState<Set<string>>(new Set());
@@ -704,16 +753,24 @@ export default function AgendaPage() {
                         if (ev.tipo === "calendario_sanitario" && ev.calendario_id) p.set("calendario_id", String(ev.calendario_id));
                         return `/lancamentos?${p.toString()}`;
                       };
+                      const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
                       return (
                         <React.Fragment key={i}>
-                          <tr>
+                          <tr
+                            style={ehSugestaoMov ? { cursor: "pointer" } : undefined}
+                            onClick={ehSugestaoMov ? () => abrirSugestaoMov(e) : undefined}
+                          >
                             {tdAccent(e.categoria)}
                             <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                             <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                            <td>
-                              {(e as any).tipo === "colostragem_pendente" || (e as any).tipo === "igg_pendente" ? (
+                            <td onClick={ehSugestaoMov ? (ev) => ev.stopPropagation() : undefined}>
+                              {ehSugestaoMov ? (
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirSugestaoMov(e)}>
+                                  <Layers size={12} /> Ver sugestão
+                                </button>
+                              ) : (e as any).tipo === "colostragem_pendente" || (e as any).tipo === "igg_pendente" ? (
                                 // Sem "Cumpriu? Sim/Não" aqui de propósito: essa pendência só
                                 // desaparece de verdade quando o dado é preenchido na ficha (o
                                 // backend recalcula a falta a partir do registro de colostragem,
@@ -1695,6 +1752,44 @@ export default function AgendaPage() {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Modal sugestão de movimentação entre lotes */}
+      {sugestaoMovAberta && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 50, padding: "1rem" }}>
+          <div className="card" style={{ width: "480px", maxWidth: "95vw" }}>
+            <div className="card-header mb-3 flex items-center gap-2"><Layers size={16} style={{ color: "var(--dourado)" }} /> Sugestão de movimentação de lote</div>
+            <p style={{ fontSize: "0.85rem", marginBottom: "0.25rem" }}>
+              Matriz <strong>{sugestaoMovAberta.numero_animal}</strong> — lote atual: {sugestaoMovAberta.lote || "—"}
+            </p>
+            {sugestaoMovAberta.motivo && (
+              <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.9rem" }}>Motivo: {sugestaoMovAberta.motivo}</p>
+            )}
+            <label style={{ fontSize: "0.75rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" }}>
+              Aceitar sugestão / mudar para outro lote:
+            </label>
+            <select
+              value={destinoMov} onChange={(e) => setDestinoMov(e.target.value)}
+              style={{ width: "100%", background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.7rem", color: "var(--text)", fontSize: "0.875rem", marginBottom: "1rem" }}
+            >
+              {sugestaoMovAberta.lotes_sugeridos?.map((l: any) => (
+                <option key={l.codigo} value={l.codigo}>{l.rotulo} (sugerido)</option>
+              ))}
+              {lotesTodosMov
+                .filter((l: any) => !sugestaoMovAberta.lotes_sugeridos?.some((s: any) => s.codigo === l.codigo))
+                .map((l: any) => <option key={l.codigo} value={l.codigo}>{l.rotulo}</option>)}
+            </select>
+            <div className="flex items-center gap-2">
+              <button className="btn-primary" style={{ fontSize: "0.8rem", display: "flex", alignItems: "center", gap: "0.35rem" }} disabled={salvandoSugestaoMov || !destinoMov} onClick={aceitarSugestaoMov}>
+                <Check size={14} /> {salvandoSugestaoMov ? "Movendo…" : "Confirmar movimentação"}
+              </button>
+              <button className="btn-ghost" style={{ fontSize: "0.8rem", color: "var(--red)", display: "flex", alignItems: "center", gap: "0.35rem" }} disabled={salvandoSugestaoMov} onClick={cancelarSugestaoMov}>
+                <X size={14} /> Cancelar sugestão
+              </button>
+              <button className="btn-ghost" style={{ fontSize: "0.8rem", marginLeft: "auto" }} onClick={fecharSugestaoMov}>Fechar</button>
+            </div>
+          </div>
         </div>
       )}
 

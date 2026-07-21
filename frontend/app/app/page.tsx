@@ -10,7 +10,7 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ChevronRight, ChevronLeft, Check } from "lucide-react";
 import { MobCard, MobTitulo, MobCheck, MobAviso, RotuloCategoria, IconeCategoria, corCategoria } from "@/components/mobile/ui";
-import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, today, type ApresentacaoDieta } from "@/lib/api";
+import { fetchAgenda, fetchApresentacaoDieta, fetchPrincipiosAtivos, fetchEventosSanitarios, fetchLotes, fetchMotivosMovimentacao, today, type ApresentacaoDieta } from "@/lib/api";
 import { fetchComCache, cacheEm, enviarOuEnfileirar, useOnline } from "@/lib/offline";
 import { VIAS_APLICACAO } from "@/lib/constants";
 
@@ -227,6 +227,39 @@ export default function AgendaMovel() {
   // lançamento retroativo feito por fora) — mesmo mecanismo do "Realizado"
   // (POST direto em /agenda/realizados), sem passar por cadastrar-preventivo,
   // então nunca cria Sanidade nem baixa estoque. Espelha o botão do site.
+  // Sugestão de movimentação entre lotes: cartão expansível (mesmo padrão de
+  // elegivelBaixaInline) — toque abre a escolha de lote (sugerido ou
+  // qualquer outro) e os botões aceitar/cancelar, sem sair da Agenda.
+  const [sugestaoMovAberta, setSugestaoMovAberta] = useState<Set<string>>(new Set());
+  const [destinoMov, setDestinoMov] = useState<Record<string, string>>({});
+  const [lotesTodosMov, setLotesTodosMov] = useState<any[]>([]);
+  const [motivosMov, setMotivosMov] = useState<string[]>([]);
+  const [salvandoSugestaoMov, setSalvandoSugestaoMov] = useState<Set<string>>(new Set());
+  function abrirSugestaoMov(e: Evento) {
+    setSugestaoMovAberta((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; });
+    setDestinoMov((p) => (p[e.id] ? p : { ...p, [e.id]: (e as any).lotes_sugeridos?.[0]?.codigo ?? "" }));
+    if (!lotesTodosMov.length) fetchLotes().then(setLotesTodosMov).catch(() => {});
+    if (!motivosMov.length) fetchMotivosMovimentacao().then(setMotivosMov).catch(() => {});
+  }
+  async function aceitarSugestaoMov(e: Evento) {
+    const destino = destinoMov[e.id];
+    if (!destino) return;
+    setSalvandoSugestaoMov((p) => new Set(p).add(e.id));
+    try {
+      const r = await enviarOuEnfileirar("/movimentacoes/mover", {
+        data_movimento: today(), motivo: motivosMov.includes("Aptidão") ? "Aptidão" : (motivosMov[0] || "Aptidão"),
+        lote_destino_codigo: destino, animais: [e.numero_animal],
+      }, `Mover ${e.numero_animal} para o lote ${destino}`, "POST");
+      setFeitos((p) => new Set(p).add(e.id));
+      setSugestaoMovAberta((p) => { const n = new Set(p); n.delete(e.id); return n; });
+      setAviso(r.enviado ? { tipo: "ok", msg: "Animal movido para o lote sugerido." } : { tipo: "offline", msg: "Guardado — será enviado quando conectar." });
+    } catch (err) {
+      setAviso({ tipo: "erro", msg: err instanceof Error ? err.message : "Não foi possível mover o animal." });
+    } finally {
+      setSalvandoSugestaoMov((p) => { const n = new Set(p); n.delete(e.id); return n; });
+    }
+  }
+
   const [confirmandoDescarte, setConfirmandoDescarte] = useState<Set<string>>(new Set());
   const [descartando, setDescartando] = useState<Set<string>>(new Set());
   async function descartarPendencia(e: Evento) {
@@ -750,6 +783,65 @@ export default function AgendaMovel() {
               <div style={{ marginTop: "0.7rem", display: "flex", justifyContent: "flex-end" }}>
                 <MobCheck feito={feito} onClick={() => alternar(e)} />
               </div>
+            </div>
+          )}
+        </MobCard>
+      );
+    }
+
+    // Sugestão de movimentação entre lotes: toque expande o cartão com a
+    // escolha do lote (sugerido ou outro) e os botões aceitar/cancelar.
+    if (e.tipo === "sugestao_movimentacao") {
+      const aberto = sugestaoMovAberta.has(e.id);
+      const sugeridos: any[] = (e as any).lotes_sugeridos || [];
+      const outros = lotesTodosMov.filter((l: any) => !sugeridos.some((s) => s.codigo === l.codigo));
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => abrirSugestaoMov(e)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>
+                Nº {e.numero_animal}
+              </div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>{e.descricao}</div>
+              {e.observacao && (
+                <div style={{ fontSize: "0.78rem", color: "var(--mob-muted)", marginTop: "0.1rem" }}>{e.observacao}</div>
+              )}
+            </div>
+            {feito ? <span style={{ fontSize: "0.8rem", fontWeight: 700, color: "var(--mob-verde)" }}>✓ Feito</span> : (
+              <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+            )}
+          </button>
+
+          {aberto && !feito && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              <label style={{ fontSize: "0.72rem", color: "var(--mob-muted)", display: "block", marginBottom: "0.2rem" }}>Aceitar sugestão / mudar para outro lote</label>
+              <select className="mob-input" style={{ marginBottom: "0.6rem" }}
+                value={destinoMov[e.id] ?? ""} onChange={(ev) => setDestinoMov((p) => ({ ...p, [e.id]: ev.target.value }))}>
+                {sugeridos.map((l) => <option key={l.codigo} value={l.codigo}>{l.rotulo} (sugerido)</option>)}
+                {outros.map((l: any) => <option key={l.codigo} value={l.codigo}>{l.rotulo}</option>)}
+              </select>
+              <button type="button" className="mob-btn" disabled={salvandoSugestaoMov.has(e.id) || !destinoMov[e.id]} onClick={() => aceitarSugestaoMov(e)}>
+                <Check size={14} style={{ marginRight: 6 }} /> {salvandoSugestaoMov.has(e.id) ? "Movendo…" : "Confirmar movimentação"}
+              </button>
+
+              {confirmandoDescarte.has(e.id) ? (
+                <div style={{ marginTop: "0.6rem", display: "flex", alignItems: "center", gap: "0.6rem", fontSize: "0.8rem" }}>
+                  <span style={{ color: "var(--mob-muted)" }}>Cancelar a sugestão?</span>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ width: "auto", padding: "0.35rem 0.8rem", color: "var(--mob-vermelho)" }}
+                    disabled={descartando.has(e.id)} onClick={() => descartarPendencia(e)}>Sim</button>
+                  <button type="button" className="mob-btn mob-btn-sec" style={{ width: "auto", padding: "0.35rem 0.8rem" }}
+                    onClick={() => setConfirmandoDescarte((p) => { const n = new Set(p); n.delete(e.id); return n; })}>Não</button>
+                </div>
+              ) : (
+                <button type="button" className="mob-btn mob-btn-sec" style={{ marginTop: "0.6rem", color: "var(--mob-muted)" }}
+                  disabled={descartando.has(e.id)} title="Dispensa esta sugestão — some até o animal mudar de lote de novo"
+                  onClick={() => setConfirmandoDescarte((p) => new Set(p).add(e.id))}>
+                  Cancelar sugestão
+                </button>
+              )}
             </div>
           )}
         </MobCard>

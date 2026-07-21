@@ -1079,6 +1079,21 @@ export async function criarMovimentacao(dados: {
   return res.json();
 }
 
+// ── Parâmetro de agendamento das sugestões de movimentação (Configurações > Cadastro > Lotes) ──
+export type ParametroAgendamentoMovimentacao = { modo: "na_data_parametro" | "dia_fixo_semana"; dia_semana: number };
+export async function fetchParametroAgendamentoMovimentacao(): Promise<ParametroAgendamentoMovimentacao> {
+  const res = await authFetch(`${API}/movimentacoes/parametro-agendamento`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Parâmetro de agendamento error: ${res.status}`);
+  return res.json();
+}
+export async function salvarParametroAgendamentoMovimentacao(dados: ParametroAgendamentoMovimentacao) {
+  const res = await authFetch(`${API}/movimentacoes/parametro-agendamento`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  return res.json();
+}
+
 // ── Motivos de movimentação (Configurações > Cadastro) ──
 export async function fetchMotivosMovimentacao() {
   const res = await authFetch(`${API}/movimentacoes/motivos`, { cache: "no-store" });
