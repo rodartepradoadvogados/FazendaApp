@@ -1,4 +1,5 @@
 import type { MetadataRoute } from "next";
+import { COR_TOPO } from "@/lib/themeColorTopo";
 
 // Manifesto PWA — permite "Adicionar à tela inicial" com ícone e tela cheia.
 // O app do campo mora em /app; o site completo continua em /.
@@ -11,8 +12,8 @@ export default function manifest(): MetadataRoute.Manifest {
     scope: "/",
     display: "standalone",
     orientation: "portrait",
-    background_color: "#4A1525",
-    theme_color: "#4A1525",
+    background_color: COR_TOPO.vinho.clara,
+    theme_color: COR_TOPO.vinho.clara,
     icons: [
       { src: "/icons/icone-192.png", sizes: "192x192", type: "image/png" },
       { src: "/icons/icone-512.png", sizes: "512x512", type: "image/png" },

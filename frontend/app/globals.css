@@ -1,5 +1,36 @@
 @import "tailwindcss";
 
+/* ── CowData — tokens de marca (fonte única) ──
+   Não mudam por tema nem por paleta: são a identidade CowData em si. Os tokens
+   legados --vinho/--dourado (paleta "vinho", abaixo) e --mob-vinho/--mob-dourado
+   (app de campo) referenciam estes valores em vez de repetir hex — mudar a
+   marca passa a ser editar só este bloco. A paleta "verde" (escolha do usuário
+   em Configurações/Menu) continua redefinindo --vinho/--dourado localmente
+   para quem prefere a variante verde; isso não muda. */
+:root {
+  --ink:       #150B10;
+  --ink-2:     #1E0F16;
+  --wine:      #3A0F1A;
+  --wine-2:    #521826;
+  --wine-lt:   #7A2233;
+  --gold:      #E0A63C;
+  --gold-deep: #B9831F;
+  --gold-pale: #F0C874;
+  --cream:     #F3E7D3;
+  --pasture:   #4E7A5A;
+
+  /* Cores de categoria — fixas por módulo em TODO o produto (Agenda,
+     Indicadores, menu do app, landing). Nunca variam por tema ou paleta. */
+  --cat-reproducao:  #8B7FF0;
+  --cat-sanidade:    #4E7A5A;
+  --cat-alimentacao: #E0A63C;
+  --cat-gestao:      #5B8FB0;
+  --cat-financeiro:  #7A2233;
+  --cat-estoque:     #C98A2A;
+  --cat-recria:      #B0894A;
+  --cat-acesso:      #9A5560;
+}
+
 /* ── Design system tokens ──
    O tema é escolhido em document.documentElement[data-theme] = "claro" | "misto"
    | "escuro". O :root abaixo é o tema ESCURO (padrão, aplicado quando não há
@@ -9,14 +40,14 @@
    (cabeçalhos de card/tabela) para que possam clarear nos temas claros. */
 :root, :root[data-theme="escuro"] {
   color-scheme: dark;
-  --vinho:       #5E1A2E;
-  --vinho-light: #7A2340;
-  --vinho-dark:  #3D1120;
-  --dourado:     #B8860B;
-  --dourado-light: #D4A017;
+  --vinho:       var(--wine);
+  --vinho-light: var(--wine-lt);
+  --vinho-dark:  color-mix(in srgb, var(--wine) 55%, var(--ink) 45%);
+  --dourado:     var(--gold-deep);
+  --dourado-light: var(--gold);
   /* Ouro fixo — não acompanha a paleta (o D do logo CWD milk fica sempre
      dourado, mesmo na paleta verde, ao contrário de --dourado/--dourado-light). */
-  --dourado-fixo: #D4A017;
+  --dourado-fixo: var(--gold);
   /* Fundo escuro tingido pela paleta ativa (vinho→avermelhado, verde→esverdeado)
      — deriva de var(--vinho), que já troca de cor no bloco data-paleta="verde"
      abaixo, então o degradê de tons escuros aqui acompanha sozinho. */
@@ -230,6 +261,22 @@
   --color-fazenda-red:      var(--red);
   --color-fazenda-amber:    var(--amber);
   --color-fazenda-blue:     var(--blue);
+  /* Tokens de marca CowData, disponíveis também como utilitário Tailwind
+     (ex.: bg-fazenda-ink, text-fazenda-gold) além de var(--...) inline. */
+  --color-fazenda-ink:      var(--ink);
+  --color-fazenda-ink2:     var(--ink-2);
+  --color-fazenda-wine:     var(--wine);
+  --color-fazenda-gold:     var(--gold);
+  --color-fazenda-cream:    var(--cream);
+  --color-fazenda-pasture:  var(--pasture);
+  --color-fazenda-cat-reproducao:  var(--cat-reproducao);
+  --color-fazenda-cat-sanidade:    var(--cat-sanidade);
+  --color-fazenda-cat-alimentacao: var(--cat-alimentacao);
+  --color-fazenda-cat-gestao:      var(--cat-gestao);
+  --color-fazenda-cat-financeiro:  var(--cat-financeiro);
+  --color-fazenda-cat-estoque:     var(--cat-estoque);
+  --color-fazenda-cat-recria:      var(--cat-recria);
+  --color-fazenda-cat-acesso:      var(--cat-acesso);
 }
 
 /* ── Base ── */
@@ -524,11 +571,11 @@ html, body { max-width: 100%; overflow-x: hidden; }
   --mob-text:      #101828;
   --mob-muted:     #5B6470;
   --mob-border:    #E4E7EC;
-  --mob-header:    linear-gradient(160deg, #4A1525, #38101D);
+  --mob-header:    linear-gradient(160deg, var(--wine), var(--ink-2));
   --mob-header-fg: #F5EEF1;
-  --mob-vinho:     #5E1A2E;
-  --mob-dourado:   #B8860B;
-  --mob-dourado-2: #D4A017;
+  --mob-vinho:     var(--wine);
+  --mob-dourado:   var(--gold-deep);
+  --mob-dourado-2: var(--gold);
   /* Dourado sempre marca "ativo"/destaque — cor de marca estável entre temas
      (antes vinho no claro/misto, dourado só no escuro; agora dourado nos dois). */
   --mob-acao:      var(--mob-dourado);   /* #B8860B */
@@ -546,7 +593,7 @@ html, body { max-width: 100%; overflow-x: hidden; }
      do animal) no modo escuro. Ao contrário de --mob-vinho, NÃO são trocados
      pelo bloco de paleta "verde" abaixo: o contorno alterna vinho/verde sempre,
      independentemente da paleta que o usuário escolheu. */
-  --mob-vinho-fixo: #5E1A2E;
+  --mob-vinho-fixo: var(--wine);
   --mob-verde-fixo: #047857;
 
   min-height: 100dvh;

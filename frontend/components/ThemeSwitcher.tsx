@@ -2,6 +2,7 @@
 import { useEffect, useState } from "react";
 import { Sun, Moon, Columns2 } from "lucide-react";
 import { salvarPreferenciaPaleta } from "@/lib/api";
+import { corTopo } from "@/lib/themeColorTopo";
 
 type Tema = "claro" | "misto" | "escuro";
 const CICLO: Tema[] = ["claro", "misto", "escuro"];
@@ -18,8 +19,7 @@ const META: Record<Tema, { label: string; icon: typeof Sun }> = {
 function sincronizarCorTopo() {
   const escuro = document.documentElement.getAttribute("data-theme") === "escuro";
   const verde = document.documentElement.getAttribute("data-paleta") === "verde";
-  const cor = verde ? (escuro ? "#16402B" : "#1F5C3D") : (escuro ? "#340F1C" : "#4A1525");
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", cor);
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", corTopo(escuro, verde));
 }
 
 export function aplicarTema(t: Tema) {
