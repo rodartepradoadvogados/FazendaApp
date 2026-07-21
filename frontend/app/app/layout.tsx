@@ -11,6 +11,7 @@ import { aplicarTema } from "@/components/ThemeSwitcher";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
 import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
 import { CowIcon } from "@/components/CowIcon";
@@ -67,6 +68,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", maxWidth: 560, margin: "0 auto" }}>
           <div>
             <p style={{ display: "flex", alignItems: "center", gap: "0.45rem" }}>
+              <CowDataMark size={22} />
               <CowDataWordmark size="1rem" cowColor="var(--mob-header-fg)" dataColor="var(--mob-dourado-2)" />
               {/* Bolinha de conexão: verde luminoso online, vermelha offline */}
               <span

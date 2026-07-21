@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter, Dancing_Script } from "next/font/google";
 import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
+import { COR_TOPO } from "@/lib/themeColorTopo";
 
 const inter = Inter({ subsets: ["latin"] });
 // Só para o "milk" cursivo da marca d'água da tela de login (ver LoginWatermark).
@@ -19,7 +20,7 @@ export const viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover" as const,
-  themeColor: "#4A1525",
+  themeColor: COR_TOPO.vinho.clara,
 };
 
 export default function RootLayout({
@@ -37,7 +38,9 @@ export default function RootLayout({
             ficava sempre vinho mesmo com a paleta verde escolhida. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){t='misto';document.documentElement.setAttribute('data-theme','misto');}try{var p=localStorage.getItem('paleta');if(p!=='vinho'&&p!=='verde')p='vinho';document.documentElement.setAttribute('data-paleta',p);}catch(e){p='vinho';document.documentElement.setAttribute('data-paleta','vinho');}try{var m=document.querySelector('meta[name="theme-color"]');if(m){var escuro=t==='escuro';var cor=p==='verde'?(escuro?'#16402B':'#1F5C3D'):(escuro?'#340F1C':'#4A1525');m.setAttribute('content',cor);}}catch(e){}})();`,
+            // Cores geradas a partir de COR_TOPO (lib/themeColorTopo.ts) — fonte
+            // única também usada por manifest.ts e ThemeSwitcher.tsx.
+            __html: `(function(){try{var t=localStorage.getItem('tema');if(t!=='claro'&&t!=='misto'&&t!=='escuro')t='misto';document.documentElement.setAttribute('data-theme',t);}catch(e){t='misto';document.documentElement.setAttribute('data-theme','misto');}try{var p=localStorage.getItem('paleta');if(p!=='vinho'&&p!=='verde')p='vinho';document.documentElement.setAttribute('data-paleta',p);}catch(e){p='vinho';document.documentElement.setAttribute('data-paleta','vinho');}try{var m=document.querySelector('meta[name="theme-color"]');if(m){var escuro=t==='escuro';var CT={vinho:{clara:'${COR_TOPO.vinho.clara}',escura:'${COR_TOPO.vinho.escura}'},verde:{clara:'${COR_TOPO.verde.clara}',escura:'${COR_TOPO.verde.escura}'}};var paleta=p==='verde'?CT.verde:CT.vinho;m.setAttribute('content',escuro?paleta.escura:paleta.clara);}}catch(e){}})();`,
           }}
         />
       </head>

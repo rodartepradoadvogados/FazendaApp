@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
-import { CwdMilkMark } from "@/components/CwdMilkMark";
+import { CowDataMark } from "@/components/brand/CowDataMark";
 
 // Casca compartilhada das páginas públicas (sem login): a página de entrada
 // (/login) e as páginas institucionais (/sobre/*). Extraída daqui para que
@@ -29,7 +29,7 @@ export function PublicHeader({ variant = "institucional" }: { variant?: "login" 
       borderBottom: "1px solid rgba(255,255,255,0.08)", flexWrap: "wrap", gap: "0.6rem",
     }}>
       <Link href="/login" style={{ display: "flex", alignItems: "center", gap: "0.55rem", textDecoration: "none" }}>
-        <CwdMilkMark size={30} color="#F5EEF1" />
+        <CowDataMark size={30} />
         <div>
           <CowDataWordmark size="1rem" cowColor="#F5EEF1" />
           <p style={{ margin: 0, fontSize: "0.65rem", color: "rgba(245,238,241,0.6)" }}>Estreito Ponte de Pedra · Jairo Nasser</p>

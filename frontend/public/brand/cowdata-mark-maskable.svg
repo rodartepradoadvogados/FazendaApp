@@ -1,0 +1,15 @@
+<svg width="120" height="120" viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="CowData">
+  <!-- Variante "maskable": fundo cobre a borda inteira (sem cantos arredondados
+       próprios) e o desenho fica dentro da zona segura, porque o sistema
+       operacional aplica sua própria máscara (círculo, squircle etc.) por
+       cima — ver https://web.dev/maskable-icon/. -->
+  <defs>
+    <linearGradient id="cowdata-curva-mask" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0%" stop-color="#B9831F"/>
+      <stop offset="100%" stop-color="#F0C874"/>
+    </linearGradient>
+  </defs>
+  <rect width="120" height="120" fill="#1E0F16"/>
+  <path d="M28 86 C36 83 42 55 53 50 C59 47 62 47 67 50 C78 55 84 80 92 84" fill="none" stroke="url(#cowdata-curva-mask)" stroke-width="5" stroke-linecap="round"/>
+  <circle cx="59" cy="48.5" r="4" fill="#F3E7D3"/>
+</svg>
