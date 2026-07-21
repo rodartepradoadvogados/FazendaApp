@@ -1163,7 +1163,8 @@ export default function AgendaPage() {
   const estoqueAlertasRef = useRef<HTMLDivElement>(null);
   const abrirAlertasEstoque = () => {
     setPaineis((p) => new Set(p).add("estoqueAlertas"));
-    estoqueAlertasRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    estoqueAlertasRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
   };
 
   const ordIatf = useOrdenacao(candidatas);

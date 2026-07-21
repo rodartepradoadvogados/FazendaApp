@@ -20,7 +20,8 @@ export default function AssistenteClaude() {
   const fimRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fimRef.current?.scrollIntoView({ behavior: "smooth" });
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    fimRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth" });
   }, [mensagens, aberto]);
 
   const enviar = async () => {
