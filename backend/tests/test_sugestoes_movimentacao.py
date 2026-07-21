@@ -107,3 +107,41 @@ class TestSugestoes:
         r = c.get("/movimentacoes/sugestoes")
         assert r.status_code == 200
         assert not any(s["numero_matriz"] == "103" for s in r.json()["sugestoes"])
+
+    def test_motivo_explica_o_criterio_que_bateu(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="01", nome="Recém-chegadas"))
+            s.add(Lote(codigo="02", nome="Aptas", peso_min=300, categorias="vaca"))
+            s.add(Animal(numero="104", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Recém-chegadas", ativo=True))
+            s.commit()
+            from fazenda.models import PesagemCorporal
+            from datetime import date
+            s.add(PesagemCorporal(numero_matriz="104", data_pesagem=date.today(), peso_kg=350))
+            s.commit()
+
+        r = c.get("/movimentacoes/sugestoes")
+        sug = next(s for s in r.json()["sugestoes"] if s["numero_matriz"] == "104")
+        # Motivo combinado (nível da sugestão) e por lote sugerido — ambos
+        # devem mencionar os critérios que efetivamente bateram (peso e categoria).
+        assert sug["motivo"] is not None and "Peso" in sug["motivo"]
+        lote_sugerido = next(l for l in sug["lotes_sugeridos"] if l["codigo"] == "02")
+        assert lote_sugerido["motivo"] is not None and "Peso" in lote_sugerido["motivo"] and "Categoria" in lote_sugerido["motivo"]
+
+    def test_lote_sem_criterio_preenchido_para_aquele_campo_nao_aparece_no_motivo(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Lote só filtra por categoria — peso não é critério aqui, então
+            # não deve aparecer no motivo mesmo que o animal tenha peso registrado.
+            s.add(Lote(codigo="03", nome="Novilhas", categorias="novilha"))
+            s.add(Animal(numero="105", categoria_abrev="Novilha", sexo="F", grupo_primario="01 - Sem lote", ativo=True))
+            s.commit()
+            from fazenda.models import PesagemCorporal
+            from datetime import date
+            s.add(PesagemCorporal(numero_matriz="105", data_pesagem=date.today(), peso_kg=280))
+            s.commit()
+
+        r = c.get("/movimentacoes/sugestoes")
+        sug = next(s for s in r.json()["sugestoes"] if s["numero_matriz"] == "105")
+        assert "Peso" not in (sug["motivo"] or "")
+        assert "Categoria" in (sug["motivo"] or "")

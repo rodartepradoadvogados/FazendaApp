@@ -15,15 +15,17 @@ from fazenda.auth import Usuario, get_current_user, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Diaria,
-    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, MovimentoEstoque, Parto,
+    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, MovimentoEstoque, ParametroSugestaoMovimentacao, Parto,
     Patrimonio, Pessoa, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
     SeedFlag, Servico,
 )
+from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
+from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
@@ -45,6 +47,7 @@ MODULO_POR_CATEGORIA = {
     "sanidade": "sanidade",
     "Sanidade": "sanidade",
     "Atividades": "agenda",
+    "Rebanho": "rebanho",
 }
 
 # Prefixos de eventos "comunicado" (aviso informativo, ex.: nova dieta) — ao
@@ -635,6 +638,36 @@ def calcular_agenda(
                     "animais": sorted(alvo, key=chave_numero),
                 })
 
+    # Sugestão automática de movimentação entre lotes (Rebanho > Sugestões de
+    # movimentação): aparece na Agenda no dia definido pelo parâmetro
+    # (Configurações > Parâmetros) — no próprio dia em que o animal passa a
+    # atender outro lote, ou só no dia fixo da semana escolhido (ex.: toda
+    # sexta), agrupando as sugestões pendentes daquela semana. A chave inclui
+    # o lote atual do animal: se ele mudar de lote (aceitando a sugestão ou
+    # manualmente), uma eventual nova sugestão a partir do novo lote é tratada
+    # como uma pendência nova, mesmo que o animal já tenha dispensado uma
+    # sugestão antes a partir do lote anterior.
+    parametro_movimentacao = session.get(ParametroSugestaoMovimentacao, 1) or ParametroSugestaoMovimentacao(id=1)
+    eventos_movimentacao = []
+    mostra_hoje = (
+        parametro_movimentacao.modo == "dia_fixo_semana" and data.weekday() == parametro_movimentacao.dia_semana
+    ) or parametro_movimentacao.modo != "dia_fixo_semana"
+    if mostra_hoje:
+        lotes_mov = session.exec(select(Lote)).all()
+        animais_mov, servicos_mov, sanidades_mov, peso_mov = coletar_dados_criterios(session)
+        for s in sugerir_movimentacoes(lotes_mov, animais_mov, data, peso_mov, servicos_mov, sanidades_mov):
+            chave = f"sugestao_movimentacao_{s['numero_matriz']}_{s['lote_atual'] or 'sem_lote'}"
+            if chave in realizados:
+                continue
+            nomes_sugeridos = ", ".join(l["rotulo"] for l in s["lotes_sugeridos"])
+            eventos_movimentacao.append({
+                "id": chave, "data": data.isoformat(), "categoria": "Rebanho",
+                "descricao": f"Sugestão de mudança de lote — matriz {s['numero_matriz']} → {nomes_sugeridos}",
+                "numero_animal": s["numero_matriz"], "observacao": s["motivo"],
+                "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "sugestao_movimentacao",
+                "lote": s["lote_atual"], "lotes_sugeridos": s["lotes_sugeridos"], "motivo": s["motivo"],
+            })
+
     # Estoque mínimo de sêmen POR CATEGORIA — abaixo do mínimo, um alerta
     # DIÁRIO na agenda (a chave inclui a data → reaparece todo dia até a NF
     # repor). Mínimos editáveis em Configurações > Cadastro > Central de
@@ -709,7 +742,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

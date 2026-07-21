@@ -208,6 +208,24 @@ class MotivoMovimentacao(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
+# Parâmetro de agendamento das sugestões de movimentação entre lotes
+# (Configurações > Parâmetros) — mesmo padrão de linha única (id=1) do
+# `ParametroDiariaPadrao`. Define quando uma sugestão (animal que atende a
+# outro lote, calculada em `sugerir_movimentacoes`) aparece na Agenda: no
+# próprio dia em que o parâmetro do lote passa a ser atendido, ou só no
+# próximo dia fixo da semana (ex.: toda sexta), agrupando as sugestões da
+# semana.
+# ---------------------------------------------------------------------------
+class ParametroSugestaoMovimentacao(SQLModel, table=True):
+    __tablename__ = "parametro_sugestao_movimentacao"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    modo: str = "na_data_parametro"  # "na_data_parametro" | "dia_fixo_semana"
+    dia_semana: int = 4  # 0=segunda ... 6=domingo (padrão: sexta)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
 # Baixa de animal (Rebanho > Baixar animal) — morte/descarte, distinto da
 # movimentação entre lotes. Ao registrar, o animal é marcado inativo.
 # ---------------------------------------------------------------------------

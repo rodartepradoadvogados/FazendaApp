@@ -11,9 +11,9 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
-from fazenda.auth import get_current_user
+from fazenda.auth import exigir_admin, get_current_user
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, Usuario
+from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, ParametroSugestaoMovimentacao, Usuario
 from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
@@ -131,6 +131,46 @@ def sugestoes_movimentacao(session: Session = Depends(get_session)) -> dict:
         "total": len(sugestoes),
         "lotes_com_criterio": sum(1 for l in lotes if lote_tem_criterio(l)),
     }
+
+
+def _parametro_sugestao_movimentacao(session: Session) -> ParametroSugestaoMovimentacao:
+    """Linha única (id=1, mesmo padrão de `ParametroDiariaPadrao`) com a
+    configuração de quando as sugestões de troca de lote aparecem na Agenda."""
+    parametro = session.get(ParametroSugestaoMovimentacao, 1)
+    if not parametro:
+        parametro = ParametroSugestaoMovimentacao(id=1)
+        session.add(parametro)
+        session.commit()
+        session.refresh(parametro)
+    return parametro
+
+
+@router.get("/parametro-agendamento")
+def obter_parametro_agendamento(session: Session = Depends(get_session)) -> dict:
+    return _parametro_sugestao_movimentacao(session).model_dump()
+
+
+class ParametroAgendamentoIn(BaseModel):
+    modo: str  # "na_data_parametro" | "dia_fixo_semana"
+    dia_semana: int = 4
+
+
+@router.put("/parametro-agendamento")
+def salvar_parametro_agendamento(
+    dados: ParametroAgendamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)
+) -> dict:
+    if dados.modo not in ("na_data_parametro", "dia_fixo_semana"):
+        raise HTTPException(status_code=400, detail="Modo inválido")
+    if not 0 <= dados.dia_semana <= 6:
+        raise HTTPException(status_code=400, detail="Dia da semana inválido")
+    parametro = _parametro_sugestao_movimentacao(session)
+    parametro.modo = dados.modo
+    parametro.dia_semana = dados.dia_semana
+    parametro.atualizado_em = datetime.utcnow()
+    session.add(parametro)
+    session.commit()
+    session.refresh(parametro)
+    return parametro.model_dump()
 
 
 @router.get("/")
