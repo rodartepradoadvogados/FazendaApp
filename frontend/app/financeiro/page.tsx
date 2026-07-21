@@ -194,6 +194,11 @@ export default function FinanceiroPage() {
   const [rel, setRel] = useState<Rel>("a_pagar");
   const [inicio, setInicio] = useState("");
   const [fim, setFim] = useState("");
+  // Único filtro de período das sub-abas de Contas (a pagar/receber/pagas/
+  // recebidas/extrato) — antes eram 2-3 filtros de data sobrepostos e
+  // ambíguos (um sem rótulo de campo + vencimento + pagamento dentro de
+  // TabelaContas); agora é um seletor de campo + um único De/Até.
+  const [campoPeriodoContas, setCampoPeriodoContas] = useState<"emissao" | "vencimento" | "pagamento">("emissao");
   const [centro, setCentro] = useState("");
   const [contaBanco, setContaBanco] = useState("");
   const [exp, setExp] = useState<Set<string>>(new Set());
@@ -304,12 +309,22 @@ export default function FinanceiroPage() {
     }
   }, [regs, rel]);
 
-  // Data relevante por aba: DRE = competência; a pagar/receber = vencimento; pagas/recebidas = pagamento; fluxo/livro = pagamento.
+  // "Pagamento" não existe em contas ainda em aberto — se o usuário estava
+  // numa aba que tem esse campo e troca para a_pagar/a_receber, volta para
+  // o padrão (emissão) em vez de manter um filtro que nunca bate com nada.
+  useEffect(() => {
+    if ((rel === "a_pagar" || rel === "a_receber") && campoPeriodoContas === "pagamento") setCampoPeriodoContas("emissao");
+  }, [rel, campoPeriodoContas]);
+
+  // Data relevante por aba: DRE = competência; Contas = campo escolhido no
+  // filtro único de período (emissão por padrão); fluxo/livro = pagamento.
   const campoData = (r: Lanc) => {
     if (rel === "dre") return r.data_competencia;
-    if (rel === "a_pagar" || rel === "a_receber") return r.data_vencimento || r.data_competencia;
-    if (rel === "pagas" || rel === "recebidas") return r.data_pagamento;
-    if (rel === "extrato") return r.data_pagamento || r.data_vencimento || r.data_competencia;
+    if (CONTAS_IDS.has(rel)) {
+      if (campoPeriodoContas === "emissao") return r.data_emissao || r.data_competencia;
+      if (campoPeriodoContas === "vencimento") return r.data_vencimento || r.data_competencia;
+      return r.data_pagamento;
+    }
     return r.data_pagamento;
   };
   const campoMes = (r: Lanc) => (rel === "dre" ? r.mes_competencia : r.mes_caixa);
@@ -338,7 +353,7 @@ export default function FinanceiroPage() {
       if (!casaContaGerencial(r, relConta)) return false;
       return true;
     });
-  }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta]);
+  }, [regs, contasBase, rel, inicio, fim, centro, contaBanco, relTipo, relFornecedor, relProduto, relDocumento, relConta, campoPeriodoContas]);
 
   const receitas = filtrados.filter((r) => r.tipo === "receita").reduce((a, r) => a + r.valor, 0);
   const despesas = filtrados.filter((r) => r.tipo === "despesa").reduce((a, r) => a + r.valor, 0);
@@ -490,8 +505,23 @@ export default function FinanceiroPage() {
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
           <div className="flex flex-wrap gap-3 items-end">
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
-            <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+            {CONTAS_IDS.has(rel) ? (
+              <div>
+                <label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Período por</label>
+                <div className="flex gap-2">
+                  <select style={inputStyle} value={campoPeriodoContas} onChange={(e) => setCampoPeriodoContas(e.target.value as any)}>
+                    <option value="emissao">Emissão</option>
+                    <option value="vencimento">Vencimento</option>
+                    {rel !== "a_pagar" && rel !== "a_receber" && <option value="pagamento">Pagamento</option>}
+                  </select>
+                  <input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} title="De" />
+                  <input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} title="Até" />
+                </div>
+              </div>
+            ) : <>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Início</label><input type="date" style={inputStyle} value={inicio} onChange={(e) => setInicio(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Fim</label><input type="date" style={inputStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
+            </>}
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)", display: "block" }}>Centro de custo</label>
               <select style={inputStyle} value={centro} onChange={(e) => setCentro(e.target.value)}><option value="">Todos</option>{centros.map((c) => <option key={c}>{c}</option>)}</select></div>
             {CONTAS_IDS.has(rel) && (
@@ -1730,19 +1760,16 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
     rel === "a_receber" || rel === "recebidas" ? ["receita"]
     : rel === "extrato" ? ["despesa", "receita"] : ["despesa"];
 
-  // Filtros próprios da lista (além do período/centro globais): produto/serviço,
-  // fornecedor/cliente, nº do documento, conta gerencial, tipo (extrato) e faixas
-  // de vencimento e de pagamento. Todos client-side.
+  // Filtros próprios da lista (além do período/centro globais, já filtrados
+  // pelo período único de Contas antes de chegar em `itens`): produto/serviço,
+  // fornecedor/cliente, nº do documento, conta gerencial e tipo (extrato).
+  // Todos client-side.
   const [fProduto, setFProduto] = useState("");
   const [fContraparte, setFContraparte] = useState("");
   const [fDocumento, setFDocumento] = useState("");
   const [fConta, setFConta] = useState("");
   const [fContaNome, setFContaNome] = useState("");
   const [fTipo, setFTipo] = useState<"" | "receita" | "despesa">("");
-  const [fVencDe, setFVencDe] = useState("");
-  const [fVencAte, setFVencAte] = useState("");
-  const [fPagDe, setFPagDe] = useState("");
-  const [fPagAte, setFPagAte] = useState("");
 
   const opcoesProdutoServico = useMemo(() => {
     const s = new Set<string>();
@@ -1760,10 +1787,8 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
     (!fContraparte || r.fornecedor === fContraparte) &&
     (!fDocumento || (r.numero_documento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_lancamento || "").toLowerCase().includes(fDocumento.toLowerCase()) || (r.numero_os_orcamento || "").toLowerCase().includes(fDocumento.toLowerCase())) &&
     casaContaGerencial(r, fConta) &&
-    (rel !== "extrato" || !fTipo || r.tipo === fTipo) &&
-    (!fVencDe || (r.data_vencimento || "") >= fVencDe) && (!fVencAte || (r.data_vencimento || "") <= fVencAte) &&
-    (!fPagDe || (r.data_pagamento || "") >= fPagDe) && (!fPagAte || (r.data_pagamento || "") <= fPagAte)
-  ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel, fVencDe, fVencAte, fPagDe, fPagAte]);
+    (rel !== "extrato" || !fTipo || r.tipo === fTipo)
+  ), [itens, fProduto, fContraparte, fDocumento, fConta, fTipo, rel]);
 
   const { ordenados, sortKey, sortDir, ordenar } = useOrdenacao(filtradosLocal, {
     numero: (r) => (r.numero_lancamento || "").toLowerCase(),
@@ -1808,12 +1833,6 @@ function TabelaContas({ rel, itens, planoContas, onTratar, onEditar, onRecibo }:
           <div><label style={labelStyleLote}>Conta gerencial</label>
             <FiltroContaGerencial contas={planoContas} tipos={tiposConta}
               codigo={fConta} nome={fContaNome} onChange={(c, n) => { setFConta(c); setFContaNome(n); }} /></div>
-          <div><label style={labelStyleLote}>Vencimento — de</label><input type="date" style={selStyleLote} value={fVencDe} onChange={(e) => setFVencDe(e.target.value)} /></div>
-          <div><label style={labelStyleLote}>Vencimento — até</label><input type="date" style={selStyleLote} value={fVencAte} onChange={(e) => setFVencAte(e.target.value)} /></div>
-          {!emAberto && <>
-            <div><label style={labelStyleLote}>Pagamento — de</label><input type="date" style={selStyleLote} value={fPagDe} onChange={(e) => setFPagDe(e.target.value)} /></div>
-            <div><label style={labelStyleLote}>Pagamento — até</label><input type="date" style={selStyleLote} value={fPagAte} onChange={(e) => setFPagAte(e.target.value)} /></div>
-          </>}
         </div>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
