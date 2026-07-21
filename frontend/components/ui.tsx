@@ -6,19 +6,19 @@ import { ChevronDown, ChevronRight, Check, Cog, HeartPulse, Milk, Wallet, Syring
 
 /**
  * Indicador — cartão de KPI com um círculo de ícone colorido por categoria,
- * ecoando os ícones circulares já usados no Menu do app. Uma única cor por
- * categoria em todo o site, no lugar da barra de topo com cor decidida
- * caso a caso: geral = dourado, reprodutivo = verde, produção = azul,
- * financeiro = vinho, sanidade = também dourado (mesma família da marca).
+ * ecoando os ícones circulares já usados no Menu do app. Cores de categoria
+ * fixas da marca CowData (--cat-*), iguais em Agenda, menu do app e landing.
+ * "Produção" não é uma das 8 categorias fixas da marca; mantém azul (sem
+ * mudança). "Geral" continua dourado (não é uma categoria de módulo).
  */
 export type CategoriaIndicador = "geral" | "reprodutivo" | "producao" | "financeiro" | "sanidade";
 
 const CATEGORIA_COR: Record<CategoriaIndicador, string> = {
   geral: "var(--dourado)",
-  reprodutivo: "var(--green-light)",
+  reprodutivo: "var(--cat-reproducao)",
   producao: "var(--blue)",
-  financeiro: "var(--vinho-light)",
-  sanidade: "var(--dourado)",
+  financeiro: "var(--cat-financeiro)",
+  sanidade: "var(--cat-sanidade)",
 };
 const CATEGORIA_ICONE: Record<CategoriaIndicador, any> = {
   geral: Cog,
