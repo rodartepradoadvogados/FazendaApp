@@ -73,6 +73,13 @@ class TestModelosCategoriasNovas:
                 s.add(Estoque(nome=cfg["exemplo"][0], categoria="alimento", quantidade=1000))
                 s.commit()
 
+        if categoria == "animais_genealogia":
+            # Ao contrário de animais_cadastro, este importador é só para
+            # atualizar animal já cadastrado — precisa existir antes.
+            with Session(engine) as s:
+                s.add(Animal(numero=cfg["exemplo"][0], sexo="F"))
+                s.commit()
+
         if categoria == "baixas_pendencias_agenda":
             # A linha de exemplo é do tipo evento_sanitario/gatilho=nascimento — a
             # matriz 464 precisa existir e ter nascido em 10/04/2026 (mesma data
