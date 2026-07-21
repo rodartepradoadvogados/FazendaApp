@@ -29,7 +29,7 @@ type Animal = {
   numero: string; grupo_primario: string | null; categoria_abrev: string | null;
   categoria_completa: string | null; raca: string | null; sit_rep: string | null;
   del_dias: number | null; ult_cl_kg: number | null; diagnostico: string | null;
-  a_descartar?: boolean; sexo?: string | null;
+  a_descartar?: boolean; sexo?: string | null; observacoes?: string | null;
 };
 
 const SIT_CORES: Record<string, string> = {
@@ -130,39 +130,71 @@ function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtuali
     }
   };
 
-  if (!marcados.length) return null;
-
   return (
     <div className="card mb-4">
       <div className="card-header mb-3 flex items-center justify-between">
-        <span className="flex items-center gap-2"><Skull size={14} style={{ color: "var(--red)" }} /> Animais marcados a descartar ({marcados.length})</span>
-        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
-          {sel.size === marcados.length && marcados.length ? "Limpar seleção" : "Selecionar todos"}
-        </button>
+        <span className="flex items-center gap-2"><Skull size={14} style={{ color: "var(--red)" }} /> Marcados para descarte ({marcados.length})</span>
+        {marcados.length > 0 && (
+          <button className="btn-ghost" style={{ fontSize: "0.72rem" }} onClick={toggleTodos}>
+            {sel.size === marcados.length && marcados.length ? "Limpar seleção" : "Selecionar todos"}
+          </button>
+        )}
       </div>
-      <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-        Seguem ativos no rebanho (ordenha, sanidade, movimentação), mas fora das ações reprodutivas. Desmarque aqui para voltarem às ações reprodutivas.
-      </p>
-      <div className="overflow-x-auto" style={{ maxHeight: "260px" }}>
-        <table className="fazenda-table" style={{ margin: 0 }}>
-          <thead><tr><th></th><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th></tr></thead>
-          <tbody>
-            {marcados.map((a) => (
-              <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
-                <td><input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
-                <td style={{ fontWeight: 700 }}>{a.numero}</td>
-                <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
-                <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {marcados.length === 0 ? (
+        <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>Nenhum animal marcado para descarte no momento.</p>
+      ) : (
+        <>
+          <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+            Seguem ativos no rebanho (ordenha, sanidade, movimentação), mas fora das ações reprodutivas. Desmarque aqui para voltarem às ações reprodutivas.
+          </p>
+          <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
+            <table className="fazenda-table" style={{ margin: 0 }}>
+              <thead><tr><th></th><th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th><th>Motivo</th></tr></thead>
+              <tbody>
+                {marcados.map((a) => (
+                  <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggle(a.numero)}>
+                    <td><input type="checkbox" checked={sel.has(a.numero)} onChange={() => toggle(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
+                    <td style={{ fontWeight: 700 }}>{a.numero}</td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
+                    <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
+                    <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                    <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.observacoes || "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {msg && <p style={{ fontSize: "0.78rem", color: "var(--dourado-light)", marginTop: "0.6rem" }}>{msg}</p>}
+          <button className="btn-primary" style={{ marginTop: "0.7rem", fontSize: "0.8rem" }} onClick={desmarcar} disabled={salvando || !sel.size}>
+            {salvando ? "Salvando…" : `Desmarcar ${sel.size || ""} selecionado(s)`}
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+// Página própria de Rebanho > Animais a descartar — antes vivia dentro da
+// aba "Rebanho" (visão geral); virou sub-aba independente para não poluir
+// a visão geral e para trazer todos os animais (inclusive machos), já que
+// aqui a lista é fim em si mesma, não um recorte do filtro de fêmeas.
+function RebanhoDescarte() {
+  const [regs, setRegs] = useState<Animal[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const carregar = useCallback(() => {
+    fetchAnimais({ incluirMachos: true }).then(setRegs).catch((e) => setError(e.message));
+  }, []);
+  useEffect(carregar, [carregar]);
+
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Skull size={22} style={{ color: "var(--red)" }} /> Animais a descartar</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Animais marcados para descarte, com o motivo (quando informado).</p>
       </div>
-      {msg && <p style={{ fontSize: "0.78rem", color: "var(--dourado-light)", marginTop: "0.6rem" }}>{msg}</p>}
-      <button className="btn-primary" style={{ marginTop: "0.7rem", fontSize: "0.8rem" }} onClick={desmarcar} disabled={salvando || !sel.size}>
-        {salvando ? "Salvando…" : `Desmarcar ${sel.size || ""} selecionado(s)`}
-      </button>
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+      {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} />}
     </div>
   );
 }
@@ -288,10 +320,11 @@ function RebanhoVisaoGeral() {
 
       {regs && (
         <>
-          <EstratificacaoRebanho animais={regs} />
-          <CaixaADescartar animais={regs} aoAtualizar={carregar} />
-          <div className="card mb-4">
-            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+          <div className="card mb-4" style={{
+            background: "color-mix(in srgb, var(--dourado) 14%, var(--surface))",
+            border: "1px solid var(--dourado)",
+          }}>
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--dourado)" }} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
               <MultiFiltro label="Situação rep." opcoes={opc((a) => a.sit_rep)} selecionados={fSit} onChange={setFSit} />
@@ -301,7 +334,12 @@ function RebanhoVisaoGeral() {
                   <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: 068" />
                 </div></div>
             </div>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.7rem" }}>
+              Este filtro comanda os resultados de toda a página abaixo: indicadores, gráficos e a lista de animais por grupo/número mudam conforme o filtro. (A composição do rebanho logo abaixo é uma referência fixa do rebanho inteiro e não muda com o filtro.)
+            </p>
           </div>
+
+          <EstratificacaoRebanho animais={regs} />
 
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-7 gap-4 mb-4">
             <Indicador categoria="geral" valor={total} rotulo={femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"}
@@ -440,11 +478,12 @@ function RebanhoVisaoGeral() {
 
 // Movimentar/Comprar/Baixar ficam apenas em Lançamentos › Animais — aqui o
 // Rebanho é só consulta (visão, ficha e sugestões).
-type Aba = "visao" | "sugestoes" | "ficha" | "touros" | "indicadores";
-const ABAS_VALIDAS: Aba[] = ["visao", "sugestoes", "ficha", "touros", "indicadores"];
+type Aba = "visao" | "descarte" | "sugestoes" | "ficha" | "touros" | "indicadores";
+const ABAS_VALIDAS: Aba[] = ["visao", "descarte", "sugestoes", "ficha", "touros", "indicadores"];
 
 const ABAS_REBANHO = [
   { id: "visao", label: "Rebanho", icon: CowIcon, title: "Visão geral do rebanho por grupo" },
+  { id: "descarte", label: "Animais a descartar", icon: Skull, title: "Animais marcados para descarte, com o motivo" },
   { id: "ficha", label: "Ficha do animal", icon: FileText, title: "Ficha completa e editável de um animal" },
   { id: "touros", label: "Touros", icon: Dna, title: "Filtro de touros: fazenda, estoque de sêmen ou banco NAAB" },
   { id: "sugestoes", label: "Sugestões de movimentação", icon: Sparkles, title: "Sugestões automáticas de movimentação" },
@@ -474,6 +513,7 @@ export default function RebanhoPage() {
     <div className="px-6 pt-6">
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "visao" && <RebanhoVisaoGeral key={visaoKey} />}
+        {aba === "descarte" && <RebanhoDescarte />}
         {aba === "sugestoes" && <div className="p-6"><SugestoesMovimentacao /></div>}
         {aba === "ficha" && <FichaAnimal numeroInicial={fichaNumeroInicial} />}
         {aba === "touros" && <RebanhoTouros onAbrirFicha={(numero) => { setFichaNumeroInicial(numero); trocarAba("ficha"); }} />}

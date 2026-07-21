@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
-import { Package, AlertTriangle, Filter, Search, Pencil } from "lucide-react";
+import { AlertTriangle, Filter, Search, Pencil, ArrowDownToLine, ArrowUpFromLine, Repeat, Boxes } from "lucide-react";
 import { fetchEstoque, fetchAgenda, formatBRL, fetchMovimentosEstoque, ehAdmin, formatDate, type MovimentoEstoqueRow } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
@@ -8,7 +8,8 @@ import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
 import NovoItemEstoque, { type ItemEstoqueEditando } from "@/components/NovoItemEstoque";
-import { Indicador, SecaoRecolhivel } from "@/components/ui";
+import { Indicador } from "@/components/ui";
+import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
 const COLUNAS_ESTOQUE = [
   { header: "Produto", key: "nome" }, { header: "Categoria", key: "categoria" },
@@ -23,6 +24,18 @@ const COLUNAS_MOVIMENTOS = [
   { header: "Unidade", key: "unidade" }, { header: "Observação", key: "observacao" },
 ];
 
+const COLUNAS_POR_PRODUTO = [
+  { header: "Produto", key: "produto" }, { header: "Unidade", key: "unidade" },
+  { header: "Total entradas", key: "totalEntradas" }, { header: "Total saídas", key: "totalSaidas" },
+  { header: "Saldo movimentado", key: "saldo" },
+];
+
+// Mesma classificação entrada/saída do backend (backend/fazenda/api/routers/estoque.py) —
+// usada para separar o mesmo histórico de movimentos nos mapas de entrada/saída
+// e no resumo por produto, sem precisar de um endpoint novo.
+const MOVIMENTOS_ENTRADA = ["Entrada de ajuste", "Entrada de cortesia"];
+const MOVIMENTOS_SAIDA = ["Aplicação", "Saída de ajuste", "Doação"];
+
 type Item = {
   id: number; categoria: string | null; nome: string; quantidade: number | null;
   estoque_minimo: number | null; unidade: string | null;
@@ -33,25 +46,24 @@ type Item = {
 const brk = (v: number) => `R$${(v / 1000).toFixed(0)}k`;
 const CORES = ["var(--vinho-light, #8B3A56)", "var(--dourado)", "var(--blue)", "var(--amber)", "var(--green-light)"];
 
-export default function EstoquePage() {
+const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
+
+function EstoqueInventario() {
   const [itens, setItens] = useState<Item[] | null>(null);
   const [horm, setHorm] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
   const [busca, setBusca] = useState("");
   const [soAbaixo, setSoAbaixo] = useState(false);
-  const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
   const [modalAbaixo, setModalAbaixo] = useState(false);
   const [modalCategorias, setModalCategorias] = useState(false);
   const [editando, setEditando] = useState<ItemEstoqueEditando | null>(null);
-  const admin = ehAdmin();
 
   const carregar = () => fetchEstoque().then((d) => setItens(d.itens)).catch((e) => setError(e.message));
 
   useEffect(() => {
     carregar();
     fetchAgenda().then((a) => setHorm(a.hormonios_check || [])).catch(() => {});
-    fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch(() => {});
   }, []);
 
   const categorias = useMemo(() => {
@@ -70,7 +82,6 @@ export default function EstoquePage() {
 
   const ordItens = useOrdenacao(filtrados);
   const pagItens = usePaginacao(ordItens.linhasOrdenadas);
-  const pagMovimentos = usePaginacao(movimentos ?? []);
 
   const valorTotal = filtrados.reduce((a, i) => a + (i.valor_total || 0), 0);
   const itensAbaixo = useMemo(() => filtrados.filter((i) => i.abaixo_minimo === true), [filtrados]);
@@ -88,14 +99,13 @@ export default function EstoquePage() {
     return Array.from(by.entries()).map(([cat, valor]) => ({ cat, valor })).sort((a, b) => b.valor - a.valor).slice(0, 8);
   }, [filtrados]);
 
-  const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
-        <h1 className="text-2xl font-bold flex items-center gap-2"><Package size={22} style={{ color: "var(--dourado)" }} /> Estoque</h1>
-        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Inventário de insumos e medicamentos — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Boxes size={22} style={{ color: "var(--dourado)" }} /> Inventário / Saldo de estoque</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Saldo atual de cada item — filtre por categoria, busque ou veja só o que está abaixo do mínimo.</p>
       </div>
 
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o ESTOQUE.csv</a>.</span></div>}
@@ -206,39 +216,6 @@ export default function EstoquePage() {
                 tamanhoPagina={pagItens.tamanhoPagina} onMudarPagina={pagItens.setPagina} onMudarTamanho={pagItens.setTamanhoPagina} />
             </div>
           </div>
-
-          {movimentos && (
-            <SecaoRecolhivel titulo="Movimentos (entradas/saídas manuais)" icon={Package}
-              badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{movimentos.length}</span>}
-              descricao="Histórico de entradas e saídas manuais do estoque">
-              <div className="flex justify-end mb-2">
-                <ExportarBotoes titulo="Movimentos de estoque" nomeArquivoBase="movimentos_estoque" colunas={COLUNAS_MOVIMENTOS} linhas={movimentos} />
-              </div>
-              <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
-                <table className="fazenda-table">
-                  <thead><tr>
-                    <th>Data</th><th>Item</th><th>Movimento</th><th style={{ textAlign: "right" }}>Qtd</th><th>Observação</th>
-                    {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
-                  </tr></thead>
-                  <tbody>
-                    {pagMovimentos.linhasPagina.map((m) => (
-                      <tr key={m.id}>
-                        <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{formatDate(m.data_movimento)}</td>
-                        <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
-                        <td style={{ fontSize: "0.78rem" }}>{m.movimento}</td>
-                        <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
-                        <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
-                        {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
-                      </tr>
-                    ))}
-                    {!movimentos.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento lançado ainda.</td></tr>}
-                  </tbody>
-                </table>
-                <Paginacao pagina={pagMovimentos.pagina} totalPaginas={pagMovimentos.totalPaginas} totalLinhas={pagMovimentos.totalLinhas}
-                  tamanhoPagina={pagMovimentos.tamanhoPagina} onMudarPagina={pagMovimentos.setPagina} onMudarTamanho={pagMovimentos.setTamanhoPagina} />
-              </div>
-            </SecaoRecolhivel>
-          )}
         </>
       )}
 
@@ -293,6 +270,241 @@ export default function EstoquePage() {
           />
         </Modal>
       )}
+    </div>
+  );
+}
+
+// Mapa de entradas / Mapa de saídas: mesmo histórico de movimentos manuais do
+// estoque (ver /estoque/movimentos), só filtrado por tipo de movimento —
+// entrada ou saída — com filtro de período e busca por produto.
+function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcone, corQtd, nomeArquivoBase }: {
+  titulo: string; descricao: string; tiposIncluidos: string[]; icon: any; corIcone: string; corQtd: string; nomeArquivoBase: string;
+}) {
+  const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [de, setDe] = useState("");
+  const [ate, setAte] = useState("");
+  const [busca, setBusca] = useState("");
+  const admin = ehAdmin();
+
+  useEffect(() => { fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message)); }, []);
+
+  const filtrados = useMemo(() => {
+    if (!movimentos) return [];
+    return movimentos.filter((m) =>
+      tiposIncluidos.includes(m.movimento) &&
+      (!de || (m.data_movimento || "") >= de) &&
+      (!ate || (m.data_movimento || "") <= ate) &&
+      (!busca || m.nome_item.toLowerCase().includes(busca.toLowerCase()))
+    );
+  }, [movimentos, tiposIncluidos, de, ate, busca]);
+
+  const ord = useOrdenacao(filtrados);
+  const pag = usePaginacao(ord.linhasOrdenadas);
+  const totalQtd = filtrados.reduce((a, m) => a + (m.quantidade || 0), 0);
+
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Icon size={22} style={{ color: corIcone }} /> {titulo}</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>{descricao}</p>
+      </div>
+
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {movimentos && (
+        <>
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+                <input type="date" style={selStyle} value={de} onChange={(e) => setDe(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+                <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
+                <div style={{ position: "relative" }}>
+                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                </div></div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4 mb-4">
+            <Indicador categoria="geral" valor={filtrados.length} rotulo="Movimentos (filtro)" />
+            <Indicador categoria="geral" valor={totalQtd.toLocaleString("pt-BR")} cor={corQtd} rotulo="Quantidade total" />
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>{titulo}</span>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} no filtro</span>
+                <ExportarBotoes titulo={titulo} nomeArquivoBase={nomeArquivoBase} colunas={COLUNAS_MOVIMENTOS} linhas={filtrados} />
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Data" campo="data_movimento" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Item" campo="nome_item" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Movimento" campo="movimento" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Qtd" campo="quantidade" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <th>Observação</th>
+                  {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
+                </tr></thead>
+                <tbody>
+                  {pag.linhasPagina.map((m) => (
+                    <tr key={m.id}>
+                      <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{formatDate(m.data_movimento)}</td>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{m.nome_item}</td>
+                      <td style={{ fontSize: "0.78rem" }}>{m.movimento}</td>
+                      <td style={{ textAlign: "right" }}>{m.quantidade} {m.unidade || ""}</td>
+                      <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.observacao || "—"}</td>
+                      {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{m.usuario_nome ?? "—"}</td>}
+                    </tr>
+                  ))}
+                  {!filtrados.length && <tr><td colSpan={admin ? 6 : 5} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento no filtro.</td></tr>}
+                </tbody>
+              </table>
+              <Paginacao pagina={pag.pagina} totalPaginas={pag.totalPaginas} totalLinhas={pag.totalLinhas}
+                tamanhoPagina={pag.tamanhoPagina} onMudarPagina={pag.setPagina} onMudarTamanho={pag.setTamanhoPagina} />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type LinhaPorProduto = { produto: string; unidade: string; totalEntradas: number; totalSaidas: number; saldo: number };
+
+// Some as entradas e saídas de cada produto no período — mesmo histórico dos
+// mapas acima, só agrupado por item em vez de listado movimento a movimento.
+function EstoquePorProduto() {
+  const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [de, setDe] = useState("");
+  const [ate, setAte] = useState("");
+  const [busca, setBusca] = useState("");
+
+  useEffect(() => { fetchMovimentosEstoque().then((d) => setMovimentos(d.movimentos)).catch((e) => setError(e.message)); }, []);
+
+  const noPeriodo = useMemo(() => {
+    if (!movimentos) return [];
+    return movimentos.filter((m) => (!de || (m.data_movimento || "") >= de) && (!ate || (m.data_movimento || "") <= ate));
+  }, [movimentos, de, ate]);
+
+  const porProduto = useMemo(() => {
+    const by = new Map<string, LinhaPorProduto>();
+    noPeriodo.forEach((m) => {
+      const atual = by.get(m.nome_item) || { produto: m.nome_item, unidade: m.unidade || "", totalEntradas: 0, totalSaidas: 0, saldo: 0 };
+      if (MOVIMENTOS_ENTRADA.includes(m.movimento)) atual.totalEntradas += m.quantidade || 0;
+      else if (MOVIMENTOS_SAIDA.includes(m.movimento)) atual.totalSaidas += m.quantidade || 0;
+      atual.saldo = atual.totalEntradas - atual.totalSaidas;
+      by.set(m.nome_item, atual);
+    });
+    return Array.from(by.values()).filter((l) => !busca || l.produto.toLowerCase().includes(busca.toLowerCase()));
+  }, [noPeriodo, busca]);
+
+  const ord = useOrdenacao(porProduto);
+  const pag = usePaginacao(ord.linhasOrdenadas);
+
+  return (
+    <div className="p-6 animate-in">
+      <div className="mb-4">
+        <h1 className="text-2xl font-bold flex items-center gap-2"><Repeat size={22} style={{ color: "var(--dourado)" }} /> Entradas/saídas por produto</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>Total de entradas e saídas de cada produto no período — o saldo movimentado é a diferença entre as duas.</p>
+      </div>
+
+      {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
+      {!movimentos && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
+
+      {movimentos && (
+        <>
+          <div className="card mb-4">
+            <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>De</label>
+                <input type="date" style={selStyle} value={de} onChange={(e) => setDe(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
+                <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
+                <div style={{ position: "relative" }}>
+                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
+                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
+                </div></div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-header mb-3 flex items-center justify-between">
+              <span>Entradas/saídas por produto</span>
+              <div className="flex items-center gap-3">
+                <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{porProduto.length} produto(s)</span>
+                <ExportarBotoes titulo="Entradas e saídas por produto" nomeArquivoBase="estoque_por_produto" colunas={COLUNAS_POR_PRODUTO} linhas={porProduto} />
+              </div>
+            </div>
+            <div className="overflow-x-auto">
+              <table className="fazenda-table">
+                <thead><tr>
+                  <ThOrdenavel label="Produto" campo="produto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Total entradas" campo="totalEntradas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Total saídas" campo="totalSaidas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Saldo movimentado" campo="saldo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                </tr></thead>
+                <tbody>
+                  {pag.linhasPagina.map((l) => (
+                    <tr key={l.produto}>
+                      <td style={{ fontWeight: 600, fontSize: "0.82rem" }}>{l.produto}</td>
+                      <td style={{ textAlign: "right", color: "var(--green-light)" }}>{l.totalEntradas} {l.unidade}</td>
+                      <td style={{ textAlign: "right", color: "var(--red)" }}>{l.totalSaidas} {l.unidade}</td>
+                      <td style={{ textAlign: "right", fontWeight: 700 }}>{l.saldo > 0 ? "+" : ""}{l.saldo} {l.unidade}</td>
+                    </tr>
+                  ))}
+                  {!porProduto.length && <tr><td colSpan={4} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhum movimento no filtro.</td></tr>}
+                </tbody>
+              </table>
+              <Paginacao pagina={pag.pagina} totalPaginas={pag.totalPaginas} totalLinhas={pag.totalLinhas}
+                tamanhoPagina={pag.tamanhoPagina} onMudarPagina={pag.setPagina} onMudarTamanho={pag.setTamanhoPagina} />
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+type Aba = "mapaEntradas" | "mapaSaidas" | "porProduto" | "inventario";
+
+const ABAS_ESTOQUE = [
+  { id: "mapaEntradas", label: "Mapa de entradas", icon: ArrowDownToLine, title: "Histórico de entradas no estoque" },
+  { id: "mapaSaidas", label: "Mapa de saídas", icon: ArrowUpFromLine, title: "Histórico de saídas do estoque" },
+  { id: "porProduto", label: "Entradas/saídas por produto", icon: Repeat, title: "Totais de entradas e saídas agrupados por produto" },
+  { id: "inventario", label: "Inventário / Saldo de estoque", icon: Boxes, title: "Saldo atual de cada item do estoque" },
+] as const satisfies readonly { id: Aba; label: string; icon: any; title: string }[];
+
+export default function EstoquePage() {
+  const [aba, setAba] = useState<Aba>("mapaEntradas");
+  const subNavTree: SubNavNode[] = useMemo(() => ABAS_ESTOQUE.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
+  useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: setAba as (id: string) => void }), [subNavTree, aba]));
+
+  return (
+    <div className="px-6 pt-6">
+      <div style={{ margin: "0 -1.5rem" }}>
+        {aba === "mapaEntradas" && (
+          <MapaMovimentos titulo="Mapa de entradas" descricao="Histórico de entradas manuais no estoque."
+            tiposIncluidos={MOVIMENTOS_ENTRADA} icon={ArrowDownToLine} corIcone="var(--green-light)" corQtd="var(--green-light)"
+            nomeArquivoBase="mapa_entradas_estoque" />
+        )}
+        {aba === "mapaSaidas" && (
+          <MapaMovimentos titulo="Mapa de saídas" descricao="Histórico de saídas manuais do estoque."
+            tiposIncluidos={MOVIMENTOS_SAIDA} icon={ArrowUpFromLine} corIcone="var(--red)" corQtd="var(--red)"
+            nomeArquivoBase="mapa_saidas_estoque" />
+        )}
+        {aba === "porProduto" && <EstoquePorProduto />}
+        {aba === "inventario" && <EstoqueInventario />}
+      </div>
     </div>
   );
 }
