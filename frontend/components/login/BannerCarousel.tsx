@@ -5,10 +5,21 @@ import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bannersDeHoje } from "./banners";
 
 const DURACAO_MS = 4000;
+const TRANSICAO_MS = 550;
 
 export function BannerCarousel() {
   const banners = useMemo(() => bannersDeHoje(), []);
-  const [indice, setIndice] = useState(0);
+  const total = banners.length;
+  // Loop infinito para a esquerda: clona o último banner no início e o
+  // primeiro no fim. Assim o slide sempre anda para a esquerda — inclusive
+  // ao voltar do último banner para o primeiro — e ao pousar no clone,
+  // teleportamos sem transição para o slide real equivalente.
+  const slides = useMemo(
+    () => (total > 1 ? [banners[total - 1], ...banners, banners[0]] : banners),
+    [banners, total]
+  );
+  const [indice, setIndice] = useState(total > 1 ? 1 : 0);
+  const [comTransicao, setComTransicao] = useState(true);
   const reduzMovimento = useRef(false);
 
   useEffect(() => {
@@ -19,13 +30,36 @@ export function BannerCarousel() {
   // preferência só suaviza a transição do slide (ver estilo abaixo), não
   // impede o giro automático em si.
   useEffect(() => {
-    if (banners.length <= 1) return;
-    const id = setInterval(() => setIndice((i) => (i + 1) % banners.length), DURACAO_MS);
+    if (total <= 1) return;
+    const id = setInterval(() => setIndice((i) => i + 1), DURACAO_MS);
     return () => clearInterval(id);
-  }, [banners.length]);
+  }, [total]);
 
-  const anterior = () => setIndice((i) => (i - 1 + banners.length) % banners.length);
-  const proximo = () => setIndice((i) => (i + 1) % banners.length);
+  // Ao pousar num dos clones (início ou fim do trilho), espera a transição
+  // acabar e reposiciona instantaneamente no slide real correspondente.
+  useEffect(() => {
+    if (total <= 1) return;
+    if (indice === 0 || indice === slides.length - 1) {
+      const espera = reduzMovimento.current ? 0 : TRANSICAO_MS;
+      const id = setTimeout(() => {
+        setComTransicao(false);
+        setIndice(indice === 0 ? total : 1);
+      }, espera);
+      return () => clearTimeout(id);
+    }
+  }, [indice, slides.length, total]);
+
+  useEffect(() => {
+    if (!comTransicao) {
+      const id = requestAnimationFrame(() => setComTransicao(true));
+      return () => cancelAnimationFrame(id);
+    }
+  }, [comTransicao]);
+
+  const anterior = () => setIndice((i) => i - 1);
+  const proximo = () => setIndice((i) => i + 1);
+
+  const indiceReal = total > 1 ? (((indice - 1) % total) + total) % total : 0;
 
   const setaStyle: React.CSSProperties = {
     position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 2,
@@ -38,7 +72,7 @@ export function BannerCarousel() {
   return (
     <div>
       <div style={{ position: "relative", overflow: "hidden", minHeight: "clamp(220px, 28vw, 300px)" }}>
-        {banners.length > 1 && (
+        {total > 1 && (
           <>
             <button onClick={anterior} aria-label="Banner anterior" className="banner-seta" style={{ ...setaStyle, left: "-0.5rem" }}>
               <ChevronLeft size={18} />
@@ -52,12 +86,12 @@ export function BannerCarousel() {
           style={{
             display: "flex", flexWrap: "nowrap",
             transform: `translateX(-${indice * 100}%)`,
-            transition: reduzMovimento.current ? "none" : "transform 0.6s ease",
+            transition: comTransicao && !reduzMovimento.current ? "transform 0.6s ease" : "none",
           }}
         >
-          {banners.map((b) => (
+          {slides.map((b, i) => (
             <Link
-              key={b.slug}
+              key={`${b.slug}-${i}`}
               href={b.href}
               style={{ flex: "0 0 100%", textDecoration: "none", display: "block", minWidth: 0 }}
             >
@@ -85,11 +119,11 @@ export function BannerCarousel() {
         {banners.map((b, i) => (
           <button
             key={b.slug}
-            onClick={() => setIndice(i)}
+            onClick={() => setIndice(i + 1)}
             aria-label={`Ver banner ${b.eyebrow}`}
             style={{
-              width: i === indice ? "1.6rem" : "0.5rem", height: "0.5rem", borderRadius: "999px",
-              background: i === indice ? "var(--dourado-light)" : "rgba(255,255,255,0.25)",
+              width: i === indiceReal ? "1.6rem" : "0.5rem", height: "0.5rem", borderRadius: "999px",
+              background: i === indiceReal ? "var(--dourado-light)" : "rgba(255,255,255,0.25)",
               border: "none", cursor: "pointer", transition: "all 0.3s ease", padding: 0,
             }}
           />

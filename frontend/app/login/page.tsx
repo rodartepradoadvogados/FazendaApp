@@ -63,7 +63,15 @@ function Hero() {
 
         {/* Cartão de login: largura fixa e ancorado à direita da coluna —
             não se move quando o carrossel troca de banner ao lado. */}
-        <div className="card" style={{ boxShadow: "0 20px 50px rgba(0,0,0,0.4)", justifySelf: "end", width: "100%", maxWidth: "380px" }}>
+        <div
+          className="card login-card-offset"
+          style={{
+            boxShadow: "0 20px 50px rgba(0,0,0,0.4)", justifySelf: "end", width: "100%", maxWidth: "380px",
+            // 2,5cm para a direita — mas nunca mais do que o espaço livre até a
+            // borda da seção, senão o cartão vaza para fora da tela em telas menores.
+            transform: "translateX(min(2.5cm, max(0px, calc((100vw - 1320px) / 2 - 12px))))",
+          }}
+        >
           <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
             Entre com seu usuário e senha
           </p>

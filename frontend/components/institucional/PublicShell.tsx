@@ -66,6 +66,7 @@ export function PublicPage({ variant = "institucional", children }: { variant?: 
         .login-nav-link:hover { color: #ffffff !important; }
         @media (max-width: 860px) {
           .login-hero-grid { grid-template-columns: 1fr !important; }
+          .login-card-offset { transform: none !important; }
         }
       `}</style>
     </div>
