@@ -45,7 +45,7 @@ export default function NewsPage() {
       <div className="mb-6 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2">
-            <Newspaper size={22} style={{ color: "var(--dourado)" }} /> News — Nosso blog de Pecuária Leiteira
+            <Newspaper size={22} style={{ color: "var(--dourado)" }} /> Milk News — Nosso blog de Pecuária Leiteira
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
             Matérias escritas por nós sobre leite, produtor de leite, pecuária leiteira, ordenha, Compost Barn e Free Stall.
@@ -61,6 +61,31 @@ export default function NewsPage() {
             onClick={() => setVerTudo((v) => !v)}>
             {verTudo ? "Ver só últimos dias" : "Ver tudo"}
           </button>
+        </div>
+      </div>
+
+      <div className="card mb-6">
+        <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <LinkIcon size={14} /> Fontes que acompanhamos todo dia
+        </div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+          As matérias daqui são escritas por nós a partir destas referências de mercado, notícia e conteúdo técnico — o acesso direto está sempre no rodapé de cada matéria.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: "0.5rem" }}>
+          {[
+            { nome: "Cepea/Esalq — cotação do leite", url: "https://www.cepea.esalq.usp.br/br/indicador/leite.aspx" },
+            { nome: "MilkPoint", url: "https://www.milkpoint.com.br/" },
+            { nome: "Notícias Agrícolas", url: "https://www.noticiasagricolas.com.br/cotacoes/leite" },
+            { nome: "Canal Rural", url: "https://www.canalrural.com.br/pecuaria/" },
+            { nome: "DairyReporter", url: "https://www.dairyreporter.com/" },
+            { nome: "DairyNews.today", url: "https://dairynews.today/" },
+            { nome: "USDA/AMS Dairy Market News", url: "https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf" },
+          ].map((f) => (
+            <a key={f.url} href={f.url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: "0.8rem", color: "var(--dourado-light)", textDecoration: "none", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+              <ArrowRight size={12} style={{ flexShrink: 0 }} /> {f.nome}
+            </a>
+          ))}
         </div>
       </div>
 
