@@ -64,6 +64,31 @@ export default function NewsPage() {
         </div>
       </div>
 
+      <div className="card mb-6">
+        <div className="card-header mb-3" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }}>
+          <LinkIcon size={14} /> Fontes que acompanhamos todo dia
+        </div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.82rem", marginBottom: "0.8rem" }}>
+          As matérias daqui são escritas por nós a partir destas referências de mercado, notícia e conteúdo técnico — o acesso direto está sempre no rodapé de cada matéria.
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: "0.5rem" }}>
+          {[
+            { nome: "Cepea/Esalq — cotação do leite", url: "https://www.cepea.esalq.usp.br/br/indicador/leite.aspx" },
+            { nome: "MilkPoint", url: "https://www.milkpoint.com.br/" },
+            { nome: "Notícias Agrícolas", url: "https://www.noticiasagricolas.com.br/cotacoes/leite" },
+            { nome: "Canal Rural", url: "https://www.canalrural.com.br/pecuaria/" },
+            { nome: "DairyReporter", url: "https://www.dairyreporter.com/" },
+            { nome: "DairyNews.today", url: "https://dairynews.today/" },
+            { nome: "USDA/AMS Dairy Market News", url: "https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf" },
+          ].map((f) => (
+            <a key={f.url} href={f.url} target="_blank" rel="noopener noreferrer"
+              style={{ fontSize: "0.8rem", color: "var(--dourado-light)", textDecoration: "none", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+              <ArrowRight size={12} style={{ flexShrink: 0 }} /> {f.nome}
+            </a>
+          ))}
+        </div>
+      </div>
+
       {erro && <div className="alert-critico mb-4"><AlertTriangle size={16} /> <span>Não foi possível carregar as notícias: {erro}.</span></div>}
       {carregando && !materias && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
       {materias && materias.length === 0 && (

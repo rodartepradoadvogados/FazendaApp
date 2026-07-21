@@ -15,8 +15,9 @@ import { SectionBackground } from "@/components/SectionBackground";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
-// News é o blog da fazenda — leitura livre para qualquer visitante.
-const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news";
+// News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
+// são as páginas institucionais linkadas pelos banners da própria /login.
+const ROTA_PUBLICA = (p: string) => p === "/login" || p === "/news" || p.startsWith("/sobre/");
 
 /**
  * Porta de entrada: só mostra o sistema para quem estiver logado.
@@ -57,7 +58,9 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     return iniciarMonitorInatividade();
   }, [estado]);
 
-  if (path === "/login") return <>{children}</>;
+  // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
+  // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
+  if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
 
   // Visitante sem login em /news: mostra a matéria com uma casca própria e
   // simples (sem a sidebar do sistema, que é só para quem está logado).
