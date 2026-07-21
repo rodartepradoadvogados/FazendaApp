@@ -13,12 +13,13 @@ listamos seus modelos para aparecerem lado a lado na mesma tela.
 from __future__ import annotations
 
 import io
-from datetime import date
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from sqlmodel import Session, select
 
 from fazenda.api.routers.agenda import _baixar_aplicacao_agendada
+from fazenda.api.routers.cadastro.animais import _completar_genealogia_paterna
 from fazenda.api.routers.estoque import MovimentoIn, _criar_movimento_estoque
 from fazenda.api.routers.financeiro import ItemIn, LancamentoIn, ParcelaIn, criar_lancamento
 from fazenda.api.routers.producao import (
@@ -83,9 +84,18 @@ CATEGORIAS_NOVAS = {
     },
     "animais_cadastro": {
         "label": "Cadastro de animais em lote (ficha simplificada)",
-        "colunas": ["numero", "nome", "sexo (F/M)", "raca", "data_nasc (DD/MM/AAAA)", "lote", "data_entrada (DD/MM/AAAA)"],
-        "colunas_csv": ["numero", "nome", "sexo", "raca", "data_nasc", "lote", "data_entrada"],
-        "exemplo": ["465", "Mimosa", "F", "Girolando", "10/03/2024", "01 - BEZ 1 (0 A 30)", "10/03/2024"],
+        "colunas": [
+            "numero", "nome", "sexo (F/M)", "raca", "data_nasc (DD/MM/AAAA)", "lote", "data_entrada (DD/MM/AAAA)",
+            "pai_nome (opcional)", "pai_naab (opcional)", "mae_numero (opcional)", "mae_nome (opcional)",
+        ],
+        "colunas_csv": ["numero", "nome", "sexo", "raca", "data_nasc", "lote", "data_entrada", "pai_nome", "pai_naab", "mae_numero", "mae_nome"],
+        "exemplo": ["465", "Mimosa", "F", "Girolando", "10/03/2024", "01 - BEZ 1 (0 A 30)", "10/03/2024", "Touro Estrela", "7HO16011", "", ""],
+    },
+    "animais_genealogia": {
+        "label": "Genealogia complementar (pai/mãe) de animais já cadastrados",
+        "colunas": ["numero", "pai_nome (opcional)", "pai_naab (opcional)", "mae_numero (opcional)", "mae_nome (opcional)"],
+        "colunas_csv": ["numero", "pai_nome", "pai_naab", "mae_numero", "mae_nome"],
+        "exemplo": ["465", "Touro Estrela", "7HO16011", "", "Mimosa"],
     },
     "qualidade_leite": {
         "label": "Qualidade do leite — Clínica do Leite / LQL (tanque ou por vaca)",
@@ -473,10 +483,77 @@ async def importar_animais_cadastro(file: UploadFile, session: Session = Depends
         data_entrada = parse_date(row.get("data_entrada", ""))
         if data_entrada:
             animal.data_entrada = data_entrada
+        # Genealogia (opcional) — permite já trazer o pai/mãe no cadastro em
+        # lote, sem precisar preencher depois um a um na ficha manual.
+        pai_nome = row.get("pai_nome", "").strip()
+        if pai_nome:
+            animal.pai_nome = pai_nome
+        pai_naab = row.get("pai_naab", "").strip()
+        if pai_naab:
+            animal.pai_naab = pai_naab
+        mae_numero = row.get("mae_numero", "").strip()
+        if mae_numero:
+            animal.mae_numero = mae_numero
+        mae_nome = row.get("mae_nome", "").strip()
+        if mae_nome:
+            animal.mae_nome = mae_nome
+        if pai_nome:
+            _completar_genealogia_paterna(session, animal)
         session.add(animal)
 
     session.commit()
     return {"categoria": "animais_cadastro", "criados": criados, "atualizados": atualizados, "erros": erros}
+
+
+@router.post("/animais_genealogia")
+async def importar_animais_genealogia(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+    """
+    Complemento de genealogia (pai/mãe) para animais JÁ CADASTRADOS — ao
+    contrário de /animais_cadastro, NÃO cria animal novo (número não
+    encontrado vira erro). Pensado para quem cadastrou o animal comprado só
+    com número e data de nascimento e quer voltar depois e preencher o pai
+    (touro/sêmen) sem duplicar o cadastro. Só grava a coluna que veio
+    preenchida na planilha — célula vazia não apaga o que já estava salvo.
+    """
+    content = await file.read()
+    atualizados = 0
+    erros: list[str] = []
+
+    for i, row in enumerate(iter_csv_rows(content), start=2):
+        numero = row.get("numero", "").strip()
+        if not numero:
+            erros.append(f"Linha {i}: número é obrigatório")
+            continue
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if not animal:
+            erros.append(f"Linha {i}: animal {numero} não encontrado — cadastre-o primeiro (ex.: em \"Cadastro de animais em lote\")")
+            continue
+
+        pai_nome = row.get("pai_nome", "").strip()
+        if pai_nome:
+            animal.pai_nome = pai_nome
+        pai_naab = row.get("pai_naab", "").strip()
+        if pai_naab:
+            animal.pai_naab = pai_naab
+        mae_numero = row.get("mae_numero", "").strip()
+        if mae_numero:
+            animal.mae_numero = mae_numero
+        mae_nome = row.get("mae_nome", "").strip()
+        if mae_nome:
+            animal.mae_nome = mae_nome
+
+        if not (pai_nome or pai_naab or mae_numero or mae_nome):
+            erros.append(f"Linha {i}: nenhuma coluna de genealogia preenchida para o animal {numero}")
+            continue
+
+        if pai_nome:
+            _completar_genealogia_paterna(session, animal)
+        animal.atualizado_em = datetime.utcnow()
+        session.add(animal)
+        atualizados += 1
+
+    session.commit()
+    return {"categoria": "animais_genealogia", "atualizados": atualizados, "erros": erros}
 
 
 @router.post("/qualidade_leite")

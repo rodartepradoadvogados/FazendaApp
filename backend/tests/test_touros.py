@@ -237,3 +237,69 @@ class TestCadastroManual:
         corpo = resp.json()
         assert corpo["touros_depois"] == corpo["touros_antes"] + 1
         assert chamadas == [True]
+
+
+class TestProvaMediaSemen:
+    def test_media_ponderada_pelas_doses_do_botijao(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import EstoqueSemen, Servico
+
+        with Session(engine) as s:
+            s.add(Touro(naab="1HO001", nome="TOURO A", tpi=2900, leite_kg=800))
+            s.add(Touro(naab="1HO002", nome="TOURO B", tpi=2700, leite_kg=600))
+            s.add(EstoqueSemen(touro_nome="TOURO A", naab="1HO001", tipo="convencional", doses=3))
+            s.add(EstoqueSemen(touro_nome="TOURO B", naab="1HO002", tipo="convencional", doses=1))
+            # Sêmen de touro de monta natural (tipo "fazenda") não entra na prova média do botijão.
+            s.add(EstoqueSemen(touro_nome="TOURO FAZENDA", tipo="fazenda", doses=99))
+            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 10), reprodutor="TOURO A"))
+            s.add(Servico(numero_matriz="2", data_servico=date(2026, 1, 15), reprodutor="TOURO A"))
+            s.add(Servico(numero_matriz="3", data_servico=date(2026, 2, 1), reprodutor="TOURO B"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-media")
+        assert resp.status_code == 200, resp.text
+        corpo = resp.json()
+
+        # Botijão: 3 doses do touro A (TPI 2900) + 1 dose do touro B (TPI 2700).
+        # Média ponderada = (2900*3 + 2700*1) / 4 = 2850.
+        assert corpo["botijao"]["total_doses"] == 4
+        assert corpo["botijao"]["touros_considerados"] == 2
+        assert corpo["botijao"]["prova"]["tpi"] == 2850.0
+
+        # Serviços (sem filtro de período): 2 do touro A + 1 do touro B.
+        # Média ponderada = (2900*2 + 2700*1) / 3 = 2833.33.
+        assert corpo["servicos_periodo"]["total_doses"] == 3
+        assert corpo["servicos_periodo"]["prova"]["tpi"] == pytest.approx(2833.33, abs=0.01)
+
+    def test_filtro_de_periodo_nos_servicos(self, client):
+        c, engine = client
+        from datetime import date
+        from fazenda.models import EstoqueSemen, Servico
+
+        with Session(engine) as s:
+            s.add(Touro(naab="1HO003", nome="TOURO C", tpi=3000))
+            s.add(EstoqueSemen(touro_nome="TOURO C", naab="1HO003", tipo="convencional", doses=1))
+            s.add(Servico(numero_matriz="1", data_servico=date(2026, 1, 1), reprodutor="TOURO C"))
+            s.add(Servico(numero_matriz="2", data_servico=date(2026, 6, 1), reprodutor="TOURO C"))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-media", params={"de": "2026-05-01", "ate": "2026-12-31"})
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert corpo["servicos_periodo"]["total_doses"] == 1
+
+    def test_touro_sem_prova_naquele_indicador_nao_entra_no_calculo(self, client):
+        c, engine = client
+        from fazenda.models import EstoqueSemen
+
+        with Session(engine) as s:
+            s.add(Touro(naab="1HO004", nome="TOURO D", tpi=2500, nm_dolar=None))
+            s.add(EstoqueSemen(touro_nome="TOURO D", naab="1HO004", tipo="convencional", doses=5))
+            s.commit()
+
+        resp = c.get("/cadastro/estoque-semen/prova-media")
+        assert resp.status_code == 200
+        corpo = resp.json()
+        assert corpo["botijao"]["prova"]["tpi"] == 2500.0
+        assert corpo["botijao"]["prova"]["nm_dolar"] is None

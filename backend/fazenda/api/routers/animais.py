@@ -180,12 +180,15 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
     partos = session.exec(select(Parto).where(Parto.numero_matriz == numero).order_by(Parto.data_parto)).all()
     # Ordem de parto = posição cronológica (1º, 2º, 3º…). Quando a fonte não
     # traz o número (ex.: animal com um único parto), deriva pela ordem da data
-    # — o primeiro parto é sempre "1", não fica em branco/zero.
+    # — o primeiro parto é sempre "1", não fica em branco/zero. Exibida como
+    # "X de N" (N = total de partos do animal) para ficar claro de cara quantos
+    # partos o animal já teve ao todo.
+    total_partos = len(partos)
     partos_dump = []
     for idx, p in enumerate(partos):
         d = p.model_dump()
-        if not d.get("ordem_parto"):
-            d["ordem_parto"] = idx + 1
+        ordem = d.get("ordem_parto") or (idx + 1)
+        d["ordem_parto"] = f"{ordem} de {total_partos}"
         partos_dump.append(d)
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero).order_by(Servico.data_servico)).all()
     # Código NAAB do pai (touro/sêmen usado no serviço), buscado no catálogo de
@@ -219,6 +222,15 @@ def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
         d["touro_central"] = touro.central if touro else None
         d["touro_tpi"] = touro.tpi if touro else None
         d["touro_nm"] = touro.nm_dolar if touro else None
+        # Ordem de parto ATUAL do animal no momento dessa IA — quantos partos já
+        # tinha antes da data do serviço, +1 (ex.: já teve 2 partos → essa IA é
+        # a tentativa para o 3º parto). Calculado aqui (não vem do campo
+        # Servico.ordem_parto, que só é preenchido pelo import do CSV
+        # REPRODUTIVO) para valer também para lançamentos manuais de IA.
+        if s.data_servico:
+            d["ordem_parto_na_ia"] = sum(1 for p in partos if p.data_parto and p.data_parto < s.data_servico) + 1
+        else:
+            d["ordem_parto_na_ia"] = None
         servicos_dump.append(d)
 
     # Pai deste animal (nome de guerra + NAAB). Prioridade 1: cadastrado

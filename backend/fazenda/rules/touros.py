@@ -324,3 +324,34 @@ def bootstrap_touros_naab(session: Session, forcar: bool = False) -> None:
     if not session.get(SeedFlag, SEED_TOUROS_NAAB_ALTA):
         session.add(SeedFlag(chave=SEED_TOUROS_NAAB_ALTA))
     session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Prova média — média ponderada dos indicadores de prova genética (PTAs,
+# índices econômicos e de tipo) de um conjunto de touros, ponderada por
+# quantidade (doses em estoque, ou doses usadas em serviços/IA). Mesma lógica
+# de "soma(indicador × peso) / soma(peso)" já usada em outros indicadores do
+# sistema (ex.: PR média ponderada em rules/recria.py) — é também como o
+# próprio setor de melting genético pondera índices compostos (ex.: o PTI
+# combina produção e tipo numa razão fixa 2:1/1:2); aqui a ponderação é pela
+# quantidade de sêmen, não por um peso fixo entre índices.
+def calcular_prova_media(pares: list[tuple["Touro", int]]) -> dict[str, float | None]:
+    """Recebe pares (touro, peso) — ex.: (touro, doses_em_estoque) — e devolve
+    a média ponderada de cada campo numérico de prova (CAMPOS_NUM). Toca só
+    nos touros que têm aquele campo preenchido (não zera a média por causa de
+    um touro sem dado); se nenhum touro do grupo tiver o campo, o resultado é
+    None. Peso <= 0 é ignorado."""
+    resultado: dict[str, float | None] = {}
+    for campo in CAMPOS_NUM:
+        soma_ponderada = 0.0
+        soma_pesos = 0.0
+        for touro, peso in pares:
+            if peso is None or peso <= 0:
+                continue
+            valor = getattr(touro, campo, None)
+            if valor is None:
+                continue
+            soma_ponderada += valor * peso
+            soma_pesos += peso
+        resultado[campo] = round(soma_ponderada / soma_pesos, 2) if soma_pesos else None
+    return resultado

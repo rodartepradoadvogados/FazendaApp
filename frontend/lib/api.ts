@@ -3237,6 +3237,24 @@ export const atualizarTouro = (id: number, d: TouroIn): Promise<Touro> => _rSend
 export const excluirTouro = (id: number) => _rSend(`/cadastro/touros/${id}`, "DELETE");
 export const recarregarCatalogoTouros = (): Promise<{ touros_antes: number; touros_depois: number }> => _rSend(`/cadastro/touros/recarregar-catalogo`, "POST");
 
+export type ProvaMediaCampos = Record<
+  "leite_kg" | "gordura_kg" | "gordura_pct" | "proteina_kg" | "proteina_pct" | "tpi" | "nm_dolar"
+  | "tipo_composto" | "ubere_composto" | "pernas_composto" | "ccs_score" | "fertilidade_filhas" | "facilidade_parto",
+  number | null
+>;
+export type ProvaMediaRecorte = { prova: ProvaMediaCampos; total_doses: number; touros_considerados: number };
+export type ProvaMediaSemen = {
+  botijao: ProvaMediaRecorte;
+  servicos_periodo: ProvaMediaRecorte & { de: string | null; ate: string | null };
+};
+export const fetchProvaMediaSemen = (de?: string, ate?: string): Promise<ProvaMediaSemen> => {
+  const p = new URLSearchParams();
+  if (de) p.set("de", de);
+  if (ate) p.set("ate", ate);
+  const qs = p.toString();
+  return _rGet(`/cadastro/estoque-semen/prova-media${qs ? `?${qs}` : ""}`);
+};
+
 // ── News (blog de pecuária leiteira) ──
 export type NoticiaNews = {
   id: number; fonte_id: number; manchete: string; resumo?: string | null; link: string;

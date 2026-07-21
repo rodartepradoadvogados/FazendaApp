@@ -17,8 +17,10 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import EstoqueSemen, SeedFlag, Touro
+from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
+from fazenda.parsers.utils import parse_date
 from fazenda.rules.parametros import minimos_semen_por_tipo
+from fazenda.rules.touros import calcular_prova_media
 
 router = APIRouter()
 
@@ -243,6 +245,93 @@ def excluir_estoque_semen(item_id: int, session: Session = Depends(get_session))
     session.delete(item)
     session.commit()
     return {"excluido": True}
+
+
+def _casar_touro(estoque_item: EstoqueSemen, touro_por_naab: dict, touro_por_nome: dict) -> Optional[Touro]:
+    """Mesma lógica de casamento de _baixar_dose_semen (reproducao.py): por
+    NAAB/código do estoque primeiro, senão pelo nome do touro."""
+    naab = (estoque_item.naab or estoque_item.codigo or "").strip().upper()
+    if naab and naab in touro_por_naab:
+        return touro_por_naab[naab]
+    nome = (estoque_item.touro_nome or "").strip().lower()
+    return touro_por_nome.get(nome)
+
+
+@router.get("/estoque-semen/prova-media")
+def prova_media_semen(
+    de: Optional[str] = None, ate: Optional[str] = None, session: Session = Depends(get_session),
+) -> dict:
+    """
+    Prova média ponderada pela quantidade de doses de sêmen — metodologia:
+    para cada indicador de prova (PTA leite/gordura/proteína, TPI, NM$, tipo,
+    úbere, pernas, CCS, fertilidade das filhas, facilidade de parto), calcula
+    a média ponderada soma(indicador × doses) / soma(doses) entre os touros
+    considerados (só entram touros casados com o catálogo de provas; um touro
+    sem determinado indicador não entra no cálculo DAQUELE indicador, não
+    zera a média do grupo). Mesma lógica de índice ponderado usada por provas
+    genéticas oficiais (ex.: o PTI combina produção e tipo numa razão fixa) —
+    aqui a ponderação é pela quantidade de sêmen, não por um peso fixo entre
+    índices.
+
+    Dois recortes:
+    - "botijao": todo o estoque de sêmen da fazenda (peso = doses em estoque
+      hoje, tipo convencional/sexado — sêmen "fazenda"/monta natural não
+      entra, não tem prova).
+    - "servicos_periodo": só os serviços/IA já registrados no período
+      informado (de/ate, opcional — sem os dois, considera todo o histórico),
+      peso = nº de serviços por touro (cada serviço = 1 dose usada).
+    """
+    touros = session.exec(select(Touro)).all()
+    touro_por_naab = {(t.naab or "").strip().upper(): t for t in touros}
+    touro_por_nome = {(t.nome or "").strip().lower(): t for t in touros if t.nome}
+
+    estoque = [e for e in session.exec(select(EstoqueSemen)).all() if e.ativo and e.tipo != "fazenda"]
+    pares_botijao: list[tuple[Touro, int]] = []
+    for e in estoque:
+        if (e.doses or 0) <= 0:
+            continue
+        touro = _casar_touro(e, touro_por_naab, touro_por_nome)
+        if touro:
+            pares_botijao.append((touro, e.doses))
+    total_doses_botijao = sum(p for _, p in pares_botijao)
+
+    de_d = parse_date(de) if de else None
+    ate_d = parse_date(ate) if ate else None
+    servicos = session.exec(select(Servico)).all()
+    contagem_por_reprodutor: dict[str, int] = {}
+    for s in servicos:
+        if not s.reprodutor:
+            continue
+        if de_d and (not s.data_servico or s.data_servico < de_d):
+            continue
+        if ate_d and (not s.data_servico or s.data_servico > ate_d):
+            continue
+        chave = s.reprodutor.strip().lower()
+        contagem_por_reprodutor[chave] = contagem_por_reprodutor.get(chave, 0) + 1
+
+    estoque_por_nome = {(e.touro_nome or "").strip().lower(): e for e in session.exec(select(EstoqueSemen)).all()}
+    pares_servicos: list[tuple[Touro, int]] = []
+    for nome, qtd in contagem_por_reprodutor.items():
+        item_estoque = estoque_por_nome.get(nome)
+        touro = (_casar_touro(item_estoque, touro_por_naab, touro_por_nome) if item_estoque
+                 else touro_por_nome.get(nome))
+        if touro:
+            pares_servicos.append((touro, qtd))
+    total_doses_servicos = sum(p for _, p in pares_servicos)
+
+    return {
+        "botijao": {
+            "prova": calcular_prova_media(pares_botijao),
+            "total_doses": total_doses_botijao,
+            "touros_considerados": len(pares_botijao),
+        },
+        "servicos_periodo": {
+            "prova": calcular_prova_media(pares_servicos),
+            "total_doses": total_doses_servicos,
+            "touros_considerados": len(pares_servicos),
+            "de": de, "ate": ate,
+        },
+    }
 
 
 # ── Catálogo genético de touros (NAAB/provas) ───────────────────────────────
