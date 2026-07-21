@@ -3,6 +3,24 @@ import { useMemo, useState } from "react";
 import { Calculator, Milk, Info } from "lucide-react";
 import { formatBRL } from "@/lib/api";
 
+// Fontes oficiais que embasam os parâmetros usados no simulador (CCS, CBT/CPP,
+// gordura, proteína) — checadas em dupla (2 fontes independentes) pelo robô
+// Milknews toda segunda-feira (ver Routine "Milknews: checar fonte do
+// simulador de preço do leite"). A rotina reescreve FONTES_BONIFICACAO e
+// FONTES_ATUALIZADO_EM automaticamente ao validar; nunca edite os links aqui
+// sem checar as duas fontes de novo.
+const FONTES_BONIFICACAO = [
+  {
+    nome: "MAPA — Instrução Normativa nº 76/2018",
+    url: "https://www.in.gov.br/materia/-/asset_publisher/Kujrw0TZC2Mb/content/id/52750137/do1-2018-11-30-instrucao-normativa-n-76-de-26-de-novembro-de-2018-52749894IN%2076",
+  },
+  {
+    nome: "Embrapa — Indicadores de qualidade do leite",
+    url: "https://www.atermaisdigital.cnptia.embrapa.br/web/bovino-de-leite/indicadores-de-qualidade-do-leite",
+  },
+] as const;
+const FONTES_ATUALIZADO_EM = "21/07/2026";
+
 /* ─────────────────────────────────────────────────────────────────────────
    Simulador ILUSTRATIVO de preço do leite — para a página pública de login.
 
@@ -145,11 +163,27 @@ export default function MilkPriceExplainer() {
     <div style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
       {/* ── Parte 1: simulador interativo ── */}
       <div className="card">
-        <div style={{ display: "flex", alignItems: "center", gap: "0.5rem", marginBottom: "0.15rem" }}>
-          <Calculator size={18} style={{ color: "var(--dourado-light)" }} />
-          <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "var(--text)" }}>
-            Simulador de preço do leite
-          </h2>
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "0.6rem", marginBottom: "0.15rem", flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "0.5rem" }}>
+            <Calculator size={18} style={{ color: "var(--dourado-light)" }} />
+            <h2 style={{ margin: 0, fontSize: "1rem", fontWeight: 700, color: "var(--text)" }}>
+              Simulador de preço do leite
+            </h2>
+          </div>
+          <div style={{ textAlign: "right", fontSize: "0.66rem", color: "var(--text-muted)", lineHeight: 1.5 }}>
+            <div>
+              Fontes:{" "}
+              {FONTES_BONIFICACAO.map((f, i) => (
+                <span key={f.url}>
+                  {i > 0 && " · "}
+                  <a href={f.url} target="_blank" rel="noopener noreferrer" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>
+                    {f.nome}
+                  </a>
+                </span>
+              ))}
+            </div>
+            <div>Atualizado em {FONTES_ATUALIZADO_EM}</div>
+          </div>
         </div>
         <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0 0 1rem" }}>
           Simulação ilustrativa — cada laticínio define suas próprias faixas de bonificação.
