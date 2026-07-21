@@ -56,7 +56,7 @@ function Hero() {
     <section style={{ position: "relative", overflow: "hidden", padding: "3.5rem 1.5rem 4rem" }}>
       <LoginWatermark />
       <div style={{
-        position: "relative", zIndex: 1, maxWidth: "1140px", margin: "0 auto",
+        position: "relative", zIndex: 1, maxWidth: "1320px", margin: "0 auto",
         display: "grid", gridTemplateColumns: "minmax(0,1fr) minmax(340px,0.85fr)", gap: "3.2rem", alignItems: "center",
       }} className="login-hero-grid">
         <BannerCarousel />

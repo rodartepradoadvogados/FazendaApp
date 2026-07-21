@@ -15,14 +15,14 @@ export default function ReprodutivoInstitucional() {
       />
       <SecaoConteudo>
         <FaixaNumeros itens={[
-          { valor: "D0–D11", rotulo: "Protocolo IATF completo" },
+          { valor: "Vários", rotulo: "Protocolos IATF cadastráveis" },
           { valor: "2 tipos", rotulo: "Sêmen sexado/convencional" },
           { valor: "100%", rotulo: "Histórico por matriz" },
-          { valor: "1 painel", rotulo: "Situação reprodutiva" },
+          { valor: "Painel único", rotulo: "Situação reprodutiva" },
         ]} />
         <DestaquesGrid itens={[
-          { icon: Syringe, titulo: "Protocolos IATF completos", texto: "D0, D7, D9 e D11 com hormônio por etapa — a agenda avisa cada passo, do início do protocolo ao serviço." },
-          { icon: HeartPulse, titulo: "Inseminação e monta natural", texto: "Touro por categoria, sêmen sexado ou convencional, inseminação avulsa ou em lote." },
+          { icon: Syringe, titulo: "Protocolos IATF completos", texto: "Vários protocolos cadastráveis, cada um com suas próprias etapas e hormônios — a agenda avisa cada passo, do início do protocolo ao serviço." },
+          { icon: HeartPulse, titulo: "Inseminação e monta natural", texto: "Touro por categoria (com banco de dados NAAB), sêmen sexado ou convencional, inseminação avulsa ou em lote." },
           { icon: Stethoscope, titulo: "Diagnóstico de gestação", texto: "Toque, reconfirmação e resultado direto na ficha da vaca, com alerta para gestação recente." },
           { icon: Target, titulo: "Acasalamento direcionado", texto: "Sugestão de touro por vaca, com a nota dos critérios usados na indicação." },
           { icon: History, titulo: "Histórico por matriz", texto: "Toda a vida reprodutiva num só lugar: partos, inseminações, secagens, diagnósticos e perdas de prenhez." },

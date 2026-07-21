@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bannersDeHoje } from "./banners";
 
 const DURACAO_MS = 4000;
@@ -13,14 +13,41 @@ export function BannerCarousel() {
 
   useEffect(() => {
     reduzMovimento.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduzMovimento.current || banners.length <= 1) return;
+  }, []);
+
+  // Gira sozinho a cada 4s, independente de prefers-reduced-motion — essa
+  // preferência só suaviza a transição do slide (ver estilo abaixo), não
+  // impede o giro automático em si.
+  useEffect(() => {
+    if (banners.length <= 1) return;
     const id = setInterval(() => setIndice((i) => (i + 1) % banners.length), DURACAO_MS);
     return () => clearInterval(id);
   }, [banners.length]);
 
+  const anterior = () => setIndice((i) => (i - 1 + banners.length) % banners.length);
+  const proximo = () => setIndice((i) => (i + 1) % banners.length);
+
+  const setaStyle: React.CSSProperties = {
+    position: "absolute", top: "50%", transform: "translateY(-50%)", zIndex: 2,
+    width: "2.1rem", height: "2.1rem", borderRadius: "999px",
+    background: "rgba(255,255,255,0.08)", border: "1px solid rgba(255,255,255,0.18)",
+    color: "rgba(245,238,241,0.75)", display: "flex", alignItems: "center", justifyContent: "center",
+    cursor: "pointer", transition: "background 0.15s ease, color 0.15s ease",
+  };
+
   return (
     <div>
       <div style={{ position: "relative", overflow: "hidden", minHeight: "clamp(220px, 28vw, 300px)" }}>
+        {banners.length > 1 && (
+          <>
+            <button onClick={anterior} aria-label="Banner anterior" className="banner-seta" style={{ ...setaStyle, left: "-0.5rem" }}>
+              <ChevronLeft size={18} />
+            </button>
+            <button onClick={proximo} aria-label="Próximo banner" className="banner-seta" style={{ ...setaStyle, right: "-0.5rem" }}>
+              <ChevronRight size={18} />
+            </button>
+          </>
+        )}
         <div
           style={{
             display: "flex", flexWrap: "nowrap",
@@ -68,6 +95,9 @@ export function BannerCarousel() {
           />
         ))}
       </div>
+      <style>{`
+        .banner-seta:hover { background: rgba(255,255,255,0.16) !important; color: #fff !important; }
+      `}</style>
     </div>
   );
 }

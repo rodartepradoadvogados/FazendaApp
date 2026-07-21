@@ -22,7 +22,7 @@ export default function FinanceiroInstitucional() {
         ]} />
         <DestaquesGrid itens={[
           { icon: TrendingUp, titulo: "Fluxo de caixa e DRE", texto: "Entradas e saídas por competência ou por caixa, sempre atualizados, com o livro caixa completo por trás." },
-          { icon: Calculator, titulo: "RMCA — Receita Menos Custo com Alimentação", texto: "Duas versões lado a lado, gerencial e física, para saber quanto sobra da receita do leite depois da ração." },
+          { icon: Calculator, titulo: "RMCA — Receita Menos Custo com Alimentação", texto: "Duas versões lado a lado, gerencial e física, para saber quanto sobra da receita do leite depois da alimentação." },
           { icon: Ruler, titulo: "Custo por litro, por vaca e por lote", texto: "O gasto do período dividido pelo que cada frente realmente produziu — inclusive comparando lote a lote." },
           { icon: Ruler, titulo: "Custo por hectare", texto: "O retorno da fazenda também medido pela área usada, não só pelo tamanho do rebanho." },
           { icon: Receipt, titulo: "Contas a pagar e a receber", texto: "Lançamento único ou parcelado, com leitura automática de nota fiscal, recibo ou boleto anexado." },
