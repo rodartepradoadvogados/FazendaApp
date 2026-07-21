@@ -1,8 +1,6 @@
 "use client";
-import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { LogIn } from "lucide-react";
 import { getToken, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
@@ -12,7 +10,7 @@ import { NewsButton } from "@/components/NewsButton";
 import { SubNavProvider } from "@/components/SubNavContext";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
-import { CowDataWordmark } from "@/components/CowDataWordmark";
+import { NewsShell } from "@/components/news/NewsShell";
 
 // Rotas públicas: acessíveis sem login, sem redirecionar para /login.
 // News é o blog da fazenda — leitura livre para qualquer visitante; /sobre/*
@@ -62,14 +60,18 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.
   if (path === "/login" || path.startsWith("/sobre/")) return <>{children}</>;
 
-  // Visitante sem login em /news: mostra a matéria com uma casca própria e
-  // simples (sem a sidebar do sistema, que é só para quem está logado).
-  if (path === "/news" && estado === "deslogado") {
+  // Milk News tem casca visual PRÓPRIA e FIXA (creme, mesmo logo do site/app)
+  // — igual para qualquer visitante, logado ou não, independente do tema
+  // escolhido no resto do sistema (ver NewsShell). Fica antes do gate de
+  // "estado" porque não depende de login (ver ROTA_PUBLICA acima).
+  if (path === "/news") {
     return (
-      <div style={{ minHeight: "100vh", background: "var(--bg)" }}>
-        <PublicNewsHeader />
+      <NewsShell
+        voltarHref={estado === "logado" ? "/" : "/login"}
+        voltarLabel={estado === "logado" ? "Voltar ao painel" : "Entrar no sistema"}
+      >
         {children}
-      </div>
+      </NewsShell>
     );
   }
 
@@ -96,22 +98,5 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         </main>
       </div>
     </SubNavProvider>
-  );
-}
-
-/** Cabeçalho enxuto para quem chega em /news sem estar logado — identifica a
- * marca e oferece o caminho de volta para o sistema, sem expor a sidebar. */
-function PublicNewsHeader() {
-  return (
-    <header style={{
-      display: "flex", alignItems: "center", justifyContent: "space-between",
-      padding: "0.9rem 1.5rem", borderBottom: "1px solid var(--border)",
-      background: "var(--surface)", flexWrap: "wrap", gap: "0.6rem",
-    }}>
-      <CowDataWordmark size="1.2rem" />
-      <Link href="/login" className="btn-ghost" style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.82rem", textDecoration: "none" }}>
-        <LogIn size={15} /> Entrar no sistema
-      </Link>
-    </header>
   );
 }

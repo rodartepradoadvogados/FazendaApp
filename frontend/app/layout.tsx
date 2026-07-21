@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Inter, Dancing_Script } from "next/font/google";
+import { Inter, Dancing_Script, Sora } from "next/font/google";
 import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
 import { COR_TOPO } from "@/lib/themeColorTopo";
@@ -7,6 +7,10 @@ import { COR_TOPO } from "@/lib/themeColorTopo";
 const inter = Inter({ subsets: ["latin"] });
 // Só para o "milk" cursivo da marca d'água da tela de login (ver LoginWatermark).
 const dancingScript = Dancing_Script({ subsets: ["latin"], weight: "700", variable: "--font-script" });
+// Tipografia de marca (manual de identidade CowData) para nome e títulos —
+// hoje só aplicada no Milk News (ver NewsShell/app/news/page.tsx); disponível
+// em toda a árvore via var(--font-sora) para uso futuro.
+const sora = Sora({ subsets: ["latin"], weight: ["700", "800"], variable: "--font-sora" });
 
 export const metadata: Metadata = {
   title: "Fazenda Estreito Ponte de Pedra",
@@ -44,7 +48,7 @@ export default function RootLayout({
           }}
         />
       </head>
-      <body className={`${inter.className} ${dancingScript.variable}`}>
+      <body className={`${inter.className} ${dancingScript.variable} ${sora.variable}`}>
         <AuthShell>{children}</AuthShell>
       </body>
     </html>

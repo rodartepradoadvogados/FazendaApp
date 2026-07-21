@@ -15,6 +15,23 @@ function dominio(url: string): string {
   try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; }
 }
 
+// Categoria da matéria é texto livre (cotação/mercado, notícia, técnico...) —
+// não é a mesma taxonomia dos módulos do sistema. Quando o texto bate com um
+// módulo (ex.: matéria de manejo taggeada "Sanidade"), usa a cor de categoria
+// da marca; nos demais casos (mercado, notícia internacional...) cai no vinho
+// padrão. Escurecida com color-mix para manter texto branco legível por cima
+// da foto, igual ao badge original.
+const COR_CATEGORIA_MODULO: Record<string, string> = {
+  "reprodução": "var(--cat-reproducao)", "reproducao": "var(--cat-reproducao)",
+  "sanidade": "var(--cat-sanidade)",
+  "alimentação": "var(--cat-alimentacao)", "alimentacao": "var(--cat-alimentacao)",
+  "financeiro": "var(--cat-financeiro)",
+};
+function corBadgeCategoria(categoria?: string | null): string {
+  const cor = categoria ? COR_CATEGORIA_MODULO[categoria.trim().toLowerCase()] : undefined;
+  return cor ? `color-mix(in srgb, ${cor} 60%, #000)` : "var(--vinho)";
+}
+
 export default function NewsPage() {
   const [materias, setMaterias] = useState<NoticiaNews[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -44,7 +61,7 @@ export default function NewsPage() {
     <div className="p-6 animate-in">
       <div className="mb-6 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.75rem" }}>
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2">
+          <h1 className="text-2xl font-bold flex items-center gap-2" style={{ fontFamily: "var(--font-sora), sans-serif" }}>
             <Newspaper size={22} style={{ color: "var(--dourado)" }} /> Milk News — Nosso blog de Pecuária Leiteira
           </h1>
           <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
@@ -106,8 +123,8 @@ export default function NewsPage() {
               {destaque.categoria && (
                 <span className="absolute top-4 left-4" style={{
                   fontSize: "0.68rem", fontWeight: 700, padding: "0.3rem 0.75rem", borderRadius: "999px",
-                  textTransform: "uppercase", letterSpacing: "0.03em", background: "var(--pill-active-bg, var(--vinho))",
-                  color: "var(--pill-active-fg, #fff)", backdropFilter: "blur(4px)",
+                  textTransform: "uppercase", letterSpacing: "0.03em", background: corBadgeCategoria(destaque.categoria),
+                  color: "#fff", backdropFilter: "blur(4px)",
                 }}>
                   {destaque.categoria}
                 </span>
@@ -117,7 +134,7 @@ export default function NewsPage() {
               <div className="flex items-center gap-2 mb-3" style={{ fontSize: "0.74rem", color: "var(--text-muted)" }}>
                 <CalendarDays size={12} /> Publicado em {formatarData(destaque.data_publicacao)}
               </div>
-              <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--dourado-light)", lineHeight: 1.25 }}>
+              <h2 className="text-2xl font-bold mb-3" style={{ color: "var(--dourado-light)", lineHeight: 1.25, fontFamily: "var(--font-sora), sans-serif" }}>
                 {destaque.manchete}
               </h2>
               {(destaque.materia || destaque.resumo) && (
@@ -159,15 +176,15 @@ export default function NewsPage() {
                   {n.categoria && (
                     <span className="absolute top-3 left-3" style={{
                       fontSize: "0.62rem", fontWeight: 700, padding: "0.22rem 0.6rem", borderRadius: "999px",
-                      textTransform: "uppercase", letterSpacing: "0.03em", background: "var(--pill-active-bg, var(--vinho))",
-                      color: "var(--pill-active-fg, #fff)",
+                      textTransform: "uppercase", letterSpacing: "0.03em", background: corBadgeCategoria(n.categoria),
+                      color: "#fff",
                     }}>
                       {n.categoria}
                     </span>
                   )}
                 </div>
                 <div className="p-4 flex flex-col flex-1">
-                  <h3 className="font-bold mb-2" style={{ fontSize: "1rem", color: "var(--dourado-light)", lineHeight: 1.35 }}>
+                  <h3 className="font-bold mb-2" style={{ fontSize: "1rem", color: "var(--dourado-light)", lineHeight: 1.35, fontFamily: "var(--font-sora), sans-serif" }}>
                     {n.manchete}
                   </h3>
                   {(n.materia || n.resumo) && (
