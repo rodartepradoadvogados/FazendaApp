@@ -16,9 +16,11 @@ const NEWS_VARS = {
   "--text": "#150B10",
   "--text-muted": "rgba(21,11,16,0.62)",
   // --dourado-light é o token que os cards de matéria usam para manchete e
-  // links — aqui vira o dourado mais escuro (--gold-deep), legível sobre o
-  // fundo claro (o --gold normal do sistema é feito para fundo escuro).
-  "--dourado-light": "#B9831F",
+  // links — aqui vira uma versão mais escura do --gold-deep (mesma família,
+  // misturada com --ink) porque o --gold-deep puro sobre este creme só
+  // atinge 2.71:1 de contraste — abaixo do mínimo AA (4.5:1). Esta mistura
+  // chega a ~5.1:1, legível para texto normal.
+  "--dourado-light": "color-mix(in srgb, #B9831F 65%, #150B10)",
   "--vinho": "#3A0F1A",
 } as React.CSSProperties;
 

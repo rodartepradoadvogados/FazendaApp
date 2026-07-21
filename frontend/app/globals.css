@@ -530,6 +530,16 @@ textarea:focus-visible, [tabindex]:focus-visible {
   animation: pulse-dot 2s infinite;
 }
 
+/* Respeita a preferência do sistema por menos movimento: desliga a entrada
+   animada de página (.animate-in), o "pulsar" do indicador de notificação, e
+   o deslocamento (translateY) dos hovers de botão/card — mantém as
+   transições de cor, que não costumam disparar problema vestibular. */
+@media (prefers-reduced-motion: reduce) {
+  .animate-in { animation: none; }
+  .pulse-dot { animation: none; }
+  .btn-primary:hover, .kpi-card:hover { transform: none; }
+}
+
 /* Verde luminoso com brilho — para tendências positivas e metas batidas. */
 .glow-verde { color: var(--verde-neon) !important; filter: var(--verde-glow); }
 
