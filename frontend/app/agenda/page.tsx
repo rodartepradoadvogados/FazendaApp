@@ -64,10 +64,10 @@ function categoriaLabel(categoria: string): string {
 // Cor de destaque por categoria — usada como borda/pontinho nas linhas da
 // linha do tempo, no lugar da pílula de categoria repetida em toda linha.
 const COR_CATEGORIA: Record<string, string> = {
-  "Reprodutivo":       "var(--green-light)",
-  "Sanidade":          "var(--dourado-light)",
+  "Reprodutivo":       "var(--cat-reproducao)",
+  "Sanidade":          "var(--cat-sanidade)",
   "Produção":          "var(--blue)",
-  "Gestão/Financeiro": "#e8837a",
+  "Gestão/Financeiro": "var(--cat-financeiro)",
   "Atividades":        "var(--text-muted)",
 };
 const COR_CATEGORIA_LC: Record<string, string> = Object.fromEntries(Object.entries(COR_CATEGORIA).map(([k, v]) => [k.toLowerCase(), v]));

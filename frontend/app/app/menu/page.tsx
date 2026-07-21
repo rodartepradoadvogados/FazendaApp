@@ -45,26 +45,26 @@ type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; ic
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
 
 const GRUPOS: Grupo[] = [
-  { secao: "reproducao", titulo: "Reprodução", cor: "var(--mob-roxo)", iconeSecao: <Heart size={26} />, itens: [
+  { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
     { chave: "agendaVet", titulo: "Agenda do Veterinário", subtitulo: "Listas do rebanho para a visita", rota: "/reproducao", icone: <Stethoscope size={26} /> },
     { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={26} /> },
   ] },
-  { secao: "sanidade", titulo: "Sanidade", cor: "var(--mob-verde)", iconeSecao: <ShieldPlus size={26} />, itens: [
+  { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
     { chave: "calendario", titulo: "Calendário Sanitário", subtitulo: "Próximos eventos (90 dias)", rota: "/sanidade", icone: <CalendarDays size={26} /> },
     { chave: "aplicacoes", titulo: "Aplicações", subtitulo: "Medicamentos aplicados — editar/excluir", rota: "/sanidade", icone: <Syringe size={26} />, soAdmin: true },
   ] },
-  { secao: "alimentacao", titulo: "Alimentação", cor: "var(--mob-laranja)", iconeSecao: <Wheat size={26} />, itens: [
+  { secao: "alimentacao", titulo: "Alimentação", cor: "var(--cat-alimentacao)", iconeSecao: <Wheat size={26} />, itens: [
     { chave: "plano", titulo: "Plano por Lote", subtitulo: "Consumo por lote e ingrediente", rota: "/alimentacao", icone: <Wheat size={26} />, cor: "var(--mob-laranja)" },
     { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={26} />, cor: "var(--mob-verde)" },
     { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={26} />, cor: "var(--mob-azul)" },
     { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={26} />, cor: "var(--mob-roxo)" },
   ] },
-  { secao: "gestao", titulo: "Gestão", cor: "var(--mob-azul)", iconeSecao: <FileBarChart size={26} />, itens: [
+  { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
     { chave: "indicadores", titulo: "Indicadores", subtitulo: "8 números de consulta rápida", rota: "/indicadores", icone: <Gauge size={26} /> },
     { chave: "aprovacoes", titulo: "Aprovações", subtitulo: "Lançamentos do Telegram a aprovar", rota: "/aprovacoes", icone: <CheckCheck size={26} />, soAdmin: true },
   ] },
-  { secao: "financeiro", titulo: "Financeiro", cor: "var(--mob-vinho)", iconeSecao: <Landmark size={26} />, itens: [
+  { secao: "financeiro", titulo: "Financeiro", cor: "var(--cat-financeiro)", iconeSecao: <Landmark size={26} />, itens: [
     { chave: "fluxoCaixa", titulo: "Fluxo de caixa", subtitulo: "Entradas e saídas por mês", rota: "/financeiro", icone: <Wallet size={26} /> },
     { chave: "dre", titulo: "DRE", subtitulo: "Receita, despesa e resultado por conta", rota: "/financeiro", icone: <FileText size={26} /> },
     { chave: "rmca", titulo: "RMCA", subtitulo: "Receita menos custo com alimentação", rota: "/financeiro", icone: <BarChart3 size={26} /> },
@@ -185,9 +185,9 @@ export default function Pagina() {
   // acessos + auditoria de atividade, então não há uma aba separada para isso.
   const secoesOpcoes: OpcaoAcao[] = [
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
-    ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--mob-dourado)" }] : []),
-    ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--mob-dourado)" }] : []),
-    ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--mob-vinho)" }] : []),
+    ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
+    ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
+    ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];

@@ -349,11 +349,14 @@ textarea:focus-visible, [tabindex]:focus-visible {
   color: var(--card-header-fg);
 }
 
-/* ── Badges de categoria ── */
-.badge-reprodutivo  { background: #1a3d1a; color: #4CAF80; border: 1px solid #2E7D52; }
-.badge-sanidade     { background: #3d3300; color: #D4A017; border: 1px solid #B8860B; }
+/* ── Badges de categoria — cores fixas da marca CowData (--cat-*), iguais em
+   toda parte que mostra a categoria (Agenda, Indicadores, menu do app,
+   landing). "Produção" não é uma das 8 categorias fixas da marca; mantém a
+   cor azul que já usava (sem mudança). */
+.badge-reprodutivo  { background: color-mix(in srgb, var(--cat-reproducao) 20%, #120a12); color: var(--cat-reproducao); border: 1px solid var(--cat-reproducao); }
+.badge-sanidade     { background: color-mix(in srgb, var(--cat-sanidade) 20%, #120a12); color: var(--cat-sanidade); border: 1px solid var(--cat-sanidade); }
 .badge-producao     { background: #1a2d3d; color: #5BA8E0; border: 1px solid #1E6FA8; }
-.badge-financeiro   { background: #3d1a1a; color: #E07070; border: 1px solid #C0392B; }
+.badge-financeiro   { background: color-mix(in srgb, var(--cat-financeiro) 24%, #120a12); color: #E07070; border: 1px solid var(--cat-financeiro); }
 .badge-atividades   { background: #2a2a2a; color: #aaa;    border: 1px solid #555; }
 
 /* ── Tabelas ── */
@@ -386,11 +389,15 @@ textarea:focus-visible, [tabindex]:focus-visible {
 }
 .fazenda-table tbody tr:nth-child(even) { background: var(--row-stripe); }
 
-/* ── Botões ── */
+/* ── Botões ──
+   CTA primário (Saiba mais, Entrar, Salvar, Lançar...) é sempre ouro com
+   texto escuro — o vinho vira ação SECUNDÁRIA (ver .btn-ghost). Antes o
+   primário era vinho com texto dourado, o que quase some sobre foto escura
+   (ex.: hero do login) — ouro sobre qualquer fundo lê bem. */
 .btn-primary {
-  background: linear-gradient(135deg, var(--vinho), var(--vinho-dark));
-  color: var(--dourado-light);
-  border: 1px solid var(--vinho-light);
+  background: linear-gradient(135deg, var(--gold), var(--gold-deep));
+  color: var(--ink);
+  border: 1px solid var(--gold-deep);
   padding: 0.5rem 1.25rem;
   border-radius: 8px;
   font-weight: 600;
@@ -402,9 +409,9 @@ textarea:focus-visible, [tabindex]:focus-visible {
   gap: 0.5rem;
 }
 .btn-primary:hover {
-  background: linear-gradient(135deg, var(--vinho-light), var(--vinho));
+  background: linear-gradient(135deg, var(--gold-pale), var(--gold));
   transform: translateY(-1px);
-  box-shadow: 0 4px 15px rgba(94, 26, 46, 0.4);
+  box-shadow: 0 4px 15px rgba(224, 166, 60, 0.4);
 }
 
 .btn-ghost {
