@@ -285,6 +285,43 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             ],
         },
     ],
+    "milknews_20260721": [{
+        "manchete": "Onda de calor nos EUA reduz produção e qualidade do leite, aponta USDA",
+        "resumo": (
+            "Uma onda de calor histórica pressionou a produção leiteira nos Estados Unidos na "
+            "semana de 13 a 17 de julho, segundo o USDA. Idaho registrou o fim de semana mais "
+            "quente de 2026, afetando o conforto animal, o volume ordenhado e os componentes do "
+            "leite. Na região Central do país, a queda nos teores de gordura e proteína também "
+            "apertou a oferta de creme, elevando os prêmios pagos por ele no mercado à vista. "
+            "Especialistas do setor estimam que o estresse térmico já custa cerca de US$ 1,5 "
+            "bilhão por ano à pecuária leiteira americana, somando perdas reprodutivas, descarte "
+            "de animais e queda de produção. Dados: USDA/AMS Dairy Market News (17/07/2026)."
+        ),
+        "materia": (
+            "Uma onda de calor histórica pressionou a produção leiteira nos Estados Unidos na "
+            "semana de 13 a 17 de julho de 2026, segundo o relatório semanal Dairy Market News, "
+            "do USDA/AMS (Agricultural Marketing Service).\n\n"
+            "Idaho registrou o fim de semana mais quente do ano, o que processadores relacionam "
+            "diretamente à queda no conforto térmico das vacas, no volume ordenhado e nos teores "
+            "de gordura e proteína do leite. Na região Central dos Estados Unidos, o calor "
+            "persistente também vem reduzindo o volume produzido e os componentes do leite.\n\n"
+            "Com os teores mais baixos, a oferta de creme ficou mais apertada — o que elevou os "
+            "prêmios (multiples) pagos por esse insumo no mercado à vista, sobretudo na região "
+            "Central do país.\n\n"
+            "O episódio reforça um problema estrutural do setor: segundo estimativa de "
+            "nutricionistas do setor citada pela Brownfield Ag News, o estresse térmico já custa "
+            "cerca de US$ 1,5 bilhão por ano à pecuária leiteira americana, somando perdas "
+            "reprodutivas, descarte precoce de animais, queda de produção, perda de componentes, "
+            "morbidade e mortalidade."
+        ),
+        "link": "/news#milknews-2026-07-21-01",
+        "data_publicacao": "2026-07-21",
+        "fontes": [
+            "https://www.ams.usda.gov/mnreports/dywweeklyreport.pdf",
+            "https://www.indexbox.io/blog/usda-dairy-market-report-mixed-cme-prices-and-summer-heat-impact-july-2026/",
+            "https://www.brownfieldagnews.com/news/nutritionist-says-heat-stress-costs-dairy-industry-1-5-billion-per-year/",
+        ],
+    }],
 }
 
 
