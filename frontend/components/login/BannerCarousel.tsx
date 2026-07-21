@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { bannersDeHoje } from "./banners";
@@ -13,22 +13,16 @@ export function BannerCarousel() {
   // Loop infinito para a esquerda: clona o último banner no início e o
   // primeiro no fim. Assim o slide sempre anda para a esquerda — inclusive
   // ao voltar do último banner para o primeiro — e ao pousar no clone,
-  // teleportamos sem transição para o slide real equivalente.
+  // teleportamos sem transição para o slide real equivalente. O slide em
+  // si sempre anima (não é gated por prefers-reduced-motion) — só o
+  // teleporte de loop, que não deve ser visto, fica instantâneo.
   const slides = useMemo(
     () => (total > 1 ? [banners[total - 1], ...banners, banners[0]] : banners),
     [banners, total]
   );
   const [indice, setIndice] = useState(total > 1 ? 1 : 0);
   const [comTransicao, setComTransicao] = useState(true);
-  const reduzMovimento = useRef(false);
 
-  useEffect(() => {
-    reduzMovimento.current = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  }, []);
-
-  // Gira sozinho a cada 4s, independente de prefers-reduced-motion — essa
-  // preferência só suaviza a transição do slide (ver estilo abaixo), não
-  // impede o giro automático em si.
   useEffect(() => {
     if (total <= 1) return;
     const id = setInterval(() => setIndice((i) => i + 1), DURACAO_MS);
@@ -40,11 +34,10 @@ export function BannerCarousel() {
   useEffect(() => {
     if (total <= 1) return;
     if (indice === 0 || indice === slides.length - 1) {
-      const espera = reduzMovimento.current ? 0 : TRANSICAO_MS;
       const id = setTimeout(() => {
         setComTransicao(false);
         setIndice(indice === 0 ? total : 1);
-      }, espera);
+      }, TRANSICAO_MS);
       return () => clearTimeout(id);
     }
   }, [indice, slides.length, total]);
@@ -86,7 +79,7 @@ export function BannerCarousel() {
           style={{
             display: "flex", flexWrap: "nowrap",
             transform: `translateX(-${indice * 100}%)`,
-            transition: comTransicao && !reduzMovimento.current ? "transform 0.6s ease" : "none",
+            transition: comTransicao ? "transform 0.6s ease" : "none",
           }}
         >
           {slides.map((b, i) => (
