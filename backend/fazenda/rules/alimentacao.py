@@ -7,9 +7,26 @@ Lote N (DIETA) ↔ grupo cujo código de 2 dígitos é N (ex.: lote 1 ↔ '01 - 
 from __future__ import annotations
 
 import math
+import re
 from typing import Optional
 
 DIAS_MES = 30
+
+_RE_SACA_KG = re.compile(r"saca\D*(\d+(?:[.,]\d+)?)\s*kg", re.IGNORECASE)
+
+
+def _kg_por_saca_de_unidade(unidade: Optional[str]) -> Optional[float]:
+    """Extrai o peso da saca em kg direto da própria `unidade` do item de
+    Estoque (ex.: "saca 30kg", "saca 60kg") — o campo que quem cadastra o
+    produto realmente preenche. Serve de alternativa ao trio
+    unidade_embalagem/medida_embalagem/quantidade_embalagem (usado quando o
+    peso da saca precisa ser diferente do que a própria unidade já diz)."""
+    if not unidade:
+        return None
+    m = _RE_SACA_KG.search(unidade)
+    if not m:
+        return None
+    return float(m.group(1).replace(",", "."))
 
 
 def _codigo_grupo(grupo: Optional[str]) -> Optional[str]:
@@ -114,9 +131,14 @@ def calcular_necessidade_mensal(
 ) -> list[dict]:
     """
     Projeta o consumo diário para uma janela de 30 dias. Quando o ingrediente
-    tem um item de estoque vinculado embalado em sacas com peso conhecido
-    (unidade_embalagem="Saca", medida_embalagem="kg/saca"), converte kg em
-    sacos (arredondando para cima — não dá pra comprar meio saco).
+    tem um item de estoque vinculado embalado em sacas com peso conhecido,
+    converte kg em sacos (arredondando para cima — não dá pra comprar meio
+    saco). O peso da saca vem de duas fontes possíveis, nesta ordem: (1) o
+    trio unidade_embalagem="Saca"/medida_embalagem="kg/saca"/
+    quantidade_embalagem, quando alguém preencheu esse cadastro específico;
+    (2) senão, extraído direto da própria `unidade` do item de Estoque (ex.:
+    "saca 30kg", "saca 60kg") — o campo que normalmente já é preenchido ao
+    cadastrar o produto, sem precisar duplicar a informação em outro lugar.
 
     O vínculo com o Estoque é resolvido em duas etapas: (1) nome idêntico ao
     de um item de Estoque (comportamento histórico, mantido para não quebrar
@@ -145,6 +167,9 @@ def calcular_necessidade_mensal(
             and estoque_item.get("medida_embalagem") == "kg/saca" and estoque_item.get("quantidade_embalagem")
         )
         kg_por_saco = estoque_item.get("quantidade_embalagem") if ensacado else None
+        if not ensacado and estoque_item:
+            kg_por_saco = _kg_por_saca_de_unidade(estoque_item.get("unidade"))
+            ensacado = kg_por_saco is not None
         sacos = math.ceil(kg_mes / kg_por_saco) if ensacado else None
         saida.append({
             "ingrediente": item["ingrediente"],
