@@ -5,17 +5,34 @@ Endpoints: POST /auth/login · GET /auth/me · GET/POST /auth/usuarios
 """
 from __future__ import annotations
 
+import secrets
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_dono, get_current_user, hash_senha, verificar_senha
+from fazenda.config import settings
 from fazenda.database import get_session
 from fazenda.models import LoginAcesso, Pessoa, Usuario
+from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+
+RESET_SENHA_VALIDADE = timedelta(hours=1)
+
+
+def _mascarar_email(email: str) -> str:
+    """'jairodarte@gmail.com' -> 'j***te@gmail.com' — só a 1ª letra e as 2
+    últimas do usuário do e-mail ficam visíveis, o resto vira ***."""
+    if "@" not in email:
+        return "***"
+    local, dominio = email.split("@", 1)
+    if len(local) <= 3:
+        return f"{local[:1]}***@{dominio}"
+    return f"{local[0]}***{local[-2:]}@{dominio}"
 
 
 class LoginIn(BaseModel):
@@ -86,6 +103,70 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     session.add(LoginAcesso(usuario_id=user.id, criado_em=user.ultimo_login))
     session.commit()
     return {"token": criar_token(user.username), "usuario": _publico(user, session)}
+
+
+class EsqueciSenhaVerificarIn(BaseModel):
+    username: str
+
+
+class EsqueciSenhaEnviarIn(BaseModel):
+    username: str
+
+
+class RedefinirSenhaIn(BaseModel):
+    token: str
+    nova_senha: str
+
+
+@router.post("/esqueci-senha/verificar")
+def esqueci_senha_verificar(dados: EsqueciSenhaVerificarIn, session: Session = Depends(get_session)) -> dict:
+    """Passo 1 do fluxo 'Esqueci minha senha': só confirma se o login existe e,
+    se existir, devolve o e-mail cadastrado mascarado — para a janela suspensa
+    perguntar 'deseja redefinir por e-mail?' sem expor o e-mail completo."""
+    user = session.exec(select(Usuario).where(Usuario.username == dados.username.strip())).first()
+    if not user or not user.ativo:
+        return {"existe": False}
+    if not user.email:
+        return {"existe": True, "tem_email": False}
+    return {"existe": True, "tem_email": True, "email_mascarado": _mascarar_email(user.email)}
+
+
+@router.post("/esqueci-senha/enviar")
+def esqueci_senha_enviar(dados: EsqueciSenhaEnviarIn, session: Session = Depends(get_session)) -> dict:
+    user = session.exec(select(Usuario).where(Usuario.username == dados.username.strip())).first()
+    if not user or not user.ativo or not user.email:
+        raise HTTPException(status_code=404, detail="Não foi possível enviar o e-mail de redefinição.")
+    user.reset_senha_token = secrets.token_urlsafe(32)
+    user.reset_senha_expira = datetime.utcnow() + RESET_SENHA_VALIDADE
+    session.add(user)
+    session.commit()
+    link = f"{settings.frontend_base_url}/redefinir-senha?token={user.reset_senha_token}"
+    corpo_html = f"""
+        <p>Olá, {user.nome or user.username}!</p>
+        <p>Recebemos um pedido para redefinir a senha do seu login <strong>{user.username}</strong> no sistema da fazenda.</p>
+        <p><a href="{link}">Clique aqui para definir uma nova senha</a></p>
+        <p>Esse link vale por 1 hora. Se você não pediu essa redefinição, pode ignorar este e-mail.</p>
+    """
+    try:
+        enviar_email(user.email, "Redefinição de senha", corpo_html)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+    return {"enviado": True}
+
+
+@router.post("/redefinir-senha")
+def redefinir_senha(dados: RedefinirSenhaIn, session: Session = Depends(get_session)) -> dict:
+    user = session.exec(select(Usuario).where(Usuario.reset_senha_token == dados.token)).first()
+    if not user or not user.reset_senha_expira or user.reset_senha_expira < datetime.utcnow():
+        raise HTTPException(status_code=400, detail="Link inválido ou expirado. Peça uma nova redefinição de senha.")
+    if len(dados.nova_senha) < 4:
+        raise HTTPException(status_code=400, detail="A senha deve ter ao menos 4 caracteres.")
+    user.senha_hash = hash_senha(dados.nova_senha)
+    user.reset_senha_token = None
+    user.reset_senha_expira = None
+    session.add(user)
+    session.commit()
+    return {"redefinido": True}
 
 
 @router.get("/me")

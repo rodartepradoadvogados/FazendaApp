@@ -112,6 +112,42 @@ export async function login(username: string, senha: string) {
   return data.usuario;
 }
 
+// Fluxo "Esqueci minha senha" — 3 passos: verificar se o login existe (e
+// devolver o e-mail mascarado), pedir o envio do e-mail de redefinição, e
+// finalmente trocar a senha com o token recebido por e-mail.
+export type EsqueciSenhaVerificacao = { existe: boolean; tem_email?: boolean; email_mascarado?: string };
+
+export async function verificarLoginParaResetSenha(username: string): Promise<EsqueciSenhaVerificacao> {
+  const res = await fetch(`${API}/auth/esqueci-senha/verificar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) throw new Error("Não foi possível verificar o login agora.");
+  return res.json();
+}
+
+export async function enviarResetSenha(username: string): Promise<void> {
+  const res = await fetch(`${API}/auth/esqueci-senha/enviar`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || "Não foi possível enviar o e-mail de redefinição.");
+  }
+}
+
+export async function redefinirSenha(token: string, novaSenha: string): Promise<void> {
+  const res = await fetch(`${API}/auth/redefinir-senha`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token, nova_senha: novaSenha }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || "Não foi possível redefinir a senha.");
+  }
+}
+
 // Preferência pessoal de paleta de cores (Vinho/Verde) — cada usuário guarda a sua.
 export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde") {
   return salvarPreferencias({ paleta });
