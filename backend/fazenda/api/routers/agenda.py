@@ -30,7 +30,7 @@ from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.auditoria import usuario_id_seguro
-from fazenda.rules.parametros import minimos_semen_por_tipo
+from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo
 from fazenda.rules.patrimonio import status_manutencao
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
@@ -247,26 +247,37 @@ def calcular_agenda(
     contas = [_model_to_dict(c) for c in session.exec(select(ContaGerencial)).all()]
     manuais = [_model_to_dict(m) for m in session.exec(select(AgendaManual)).all()]
 
-    # BST a cada 12 dias ancorado na ÚLTIMA APLICAÇÃO REAL lançada (não no
-    # último serviço reprodutivo, que é só uma estimativa de reserva usada
-    # quando a fazenda nunca lançou nenhuma aplicação de BST ainda). Calculado
-    # ANTES do motor rodar, para que a projeção de DEL de cada animal na
-    # próxima aplicação (bst_elegiveis/bst_nunca_aplicados) já use a data
-    # certa — antes essa correção só acontecia depois, e nunca realimentava
-    # o cálculo de elegibilidade, deixando animais entrarem cedo demais.
+    # BST a cada intervalo_bst() dias ancorado na ÚLTIMA APLICAÇÃO REAL lançada
+    # (não no último serviço reprodutivo, que é só uma estimativa de reserva
+    # usada quando a fazenda nunca lançou nenhuma aplicação de BST ainda).
+    # Calculado ANTES do motor rodar, para que a projeção de DEL de cada
+    # animal na próxima aplicação (bst_elegiveis/bst_nunca_aplicados) já use a
+    # data certa — antes essa correção só acontecia depois, e nunca
+    # realimentava o cálculo de elegibilidade, deixando animais entrarem cedo
+    # demais.
     sanidades_bst = [
         s for s in session.exec(select(Sanidade)).all()
         if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
     ]
     datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
+    intervalo_bst_dias = intervalo_bst()
+    # `bst_ajuste_ancora_data` é o override manual gravado por
+    # POST /producao/bst/ajustar-proxima-aplicacao (opção "considerar essa
+    # nova data a referência") — só vale enquanto for mais recente que a
+    # última aplicação real; assim que uma aplicação real mais nova é
+    # lançada, ela retoma a âncora naturalmente, sem precisar limpar nada.
+    ancora_bst = max(datas_bst) if datas_bst else None
+    ancora_manual = bst_ajuste_ancora_data()
+    if ancora_manual is not None and (ancora_bst is None or ancora_manual > ancora_bst):
+        ancora_bst = ancora_manual
     proxima_visita_bst_real: date | None = None
-    if datas_bst:
-        proxima_visita_bst_real = max(datas_bst) + timedelta(days=12)
-        # A aplicação é sempre em ciclo fixo de 12 em 12 dias — se a última
-        # dose+12 já ficou no passado (várias janelas puladas), avança até a
-        # próxima ocorrência futura, em vez de mostrar uma data já vencida.
+    if ancora_bst is not None:
+        proxima_visita_bst_real = ancora_bst + timedelta(days=intervalo_bst_dias)
+        # A aplicação é sempre em ciclo fixo — se a última dose+intervalo já
+        # ficou no passado (várias janelas puladas), avança até a próxima
+        # ocorrência futura, em vez de mostrar uma data já vencida.
         while proxima_visita_bst_real <= data:
-            proxima_visita_bst_real += timedelta(days=12)
+            proxima_visita_bst_real += timedelta(days=intervalo_bst_dias)
 
     engine = AgendaEngine()
     result = engine.calcular(
@@ -807,6 +818,7 @@ def calcular_agenda(
         "necessidade_iatf": (result.necessidade_iatf.__dict__ if result.necessidade_iatf else None) if tem_reproducao else None,
         "proxima_visita_iatf": (result.proxima_visita_iatf.isoformat() if result.proxima_visita_iatf else None) if tem_reproducao else None,
         "proxima_visita_bst": (result.proxima_visita_bst.isoformat() if result.proxima_visita_bst else None) if tem_reproducao else None,
+        "intervalo_bst": intervalo_bst_dias if tem_reproducao else None,
         "hormonios_check": [h.__dict__ for h in result.hormonios_check] if tem_reproducao else [],
         # "ja_aplicado_antes": indica se o animal já recebeu alguma aplicação de
         # BST no passado (produto casa MARCADORES_BST em Sanidade) — False =

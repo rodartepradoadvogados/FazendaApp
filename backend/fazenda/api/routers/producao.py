@@ -18,7 +18,7 @@ from fazenda.auth import exigir_admin, get_current_user
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
-    FaixaBonificacaoQualidade, LancamentoItem, Lote,
+    FaixaBonificacaoQualidade, LancamentoItem, Lote, ParametroFazenda,
     Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
     ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
 )
@@ -1210,4 +1210,74 @@ def relatorio_bst(session: Session = Depends(get_session)) -> dict:
         })
     registros.sort(key=lambda r: r["data_aplicacao"] or "", reverse=True)
     return {"aplicacoes": registros, "total": len(registros)}
-    return {"lote_sugerido": None}
+
+
+class AjustarProximaAplicacaoBstIn(BaseModel):
+    nova_data: date
+    modo: str  # "intervalo" | "referencia"
+
+
+@router.post("/bst/ajustar-proxima-aplicacao")
+def ajustar_proxima_aplicacao_bst(
+    dados: AjustarProximaAplicacaoBstIn, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+) -> dict:
+    """Corrige manualmente a data da próxima aplicação de BST (é uma decisão
+    de rebanho inteiro, não por animal — mesma lógica de `proxima_visita_bst`
+    em agenda.py).
+    modo="intervalo": recalcula o "Intervalo de aplicação de BST" (Configurações
+    > Parâmetros) a partir da última aplicação real até a nova data.
+    modo="referencia": mantém o intervalo atual, passando a contar os
+    próximos ciclos a partir da nova data (grava em `bst_ajuste_ancora_data`,
+    lido por agenda.py)."""
+    from fazenda.rules.parametros import intervalo_bst
+
+    aplicacoes = [
+        s for s in session.exec(select(Sanidade)).all()
+        if s.atividade == "BST" or MARCADORES_BST_PRODUCAO.search(s.produto or "")
+    ]
+    datas_bst = [s.data_aplicacao for s in aplicacoes if s.data_aplicacao]
+    intervalo_atual = intervalo_bst()
+    hoje = date.today()
+
+    if dados.modo == "intervalo":
+        if not datas_bst:
+            raise HTTPException(
+                status_code=400,
+                detail="Não há nenhuma aplicação de BST registrada ainda — não é possível calcular um novo intervalo.",
+            )
+        ancora = max(datas_bst)
+        ciclos = 1
+        marcador = ancora + timedelta(days=intervalo_atual)
+        while marcador <= hoje:
+            marcador += timedelta(days=intervalo_atual)
+            ciclos += 1
+        novo_intervalo = max(1, round((dados.nova_data - ancora).days / ciclos))
+        linha_intervalo = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "intervalo_bst")).first()
+        if not linha_intervalo:
+            raise HTTPException(status_code=500, detail="Parâmetro 'intervalo_bst' não encontrado.")
+        linha_intervalo.valor = str(novo_intervalo)
+        linha_intervalo.atualizado_em = datetime.utcnow()
+        session.add(linha_intervalo)
+        # O novo intervalo já reproduz a data escolhida a partir da última
+        # aplicação real — qualquer ajuste manual de referência anterior fica
+        # obsoleto.
+        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        if linha_ancora and linha_ancora.valor:
+            linha_ancora.valor = ""
+            linha_ancora.atualizado_em = datetime.utcnow()
+            session.add(linha_ancora)
+        session.commit()
+        return {"ok": True, "novo_intervalo": novo_intervalo, "proxima_visita_bst": dados.nova_data.isoformat()}
+
+    if dados.modo == "referencia":
+        nova_ancora = dados.nova_data - timedelta(days=intervalo_atual)
+        linha_ancora = session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == "bst_ajuste_ancora_data")).first()
+        if not linha_ancora:
+            raise HTTPException(status_code=500, detail="Parâmetro 'bst_ajuste_ancora_data' não encontrado.")
+        linha_ancora.valor = nova_ancora.isoformat()
+        linha_ancora.atualizado_em = datetime.utcnow()
+        session.add(linha_ancora)
+        session.commit()
+        return {"ok": True, "intervalo_bst": intervalo_atual, "proxima_visita_bst": dados.nova_data.isoformat()}
+
+    raise HTTPException(status_code=400, detail="modo deve ser 'intervalo' ou 'referencia'")

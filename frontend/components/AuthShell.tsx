@@ -42,6 +42,9 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
+    // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
+    // duas (a página em si esconde a sub-aba sem permissão).
+    if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace("/"); return; }
     // Configurações tem a aba "Aparência" (tema/paleta) liberada para todo mundo,
     // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }

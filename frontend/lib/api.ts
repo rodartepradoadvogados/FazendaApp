@@ -21,6 +21,7 @@ export const ROTA_MODULO: Record<string, string> = {
   "/reproducao": "reproducao", "/analise-reprodutiva": "analise", "/relatorios": "reproducao", "/rebanho": "rebanho",
   "/producao": "producao", "/alimentacao": "alimentacao", "/sanidade": "sanidade", "/recria": "recria",
   "/financeiro": "financeiro", "/estoque": "estoque", "/pedidos": "pedidos", "/parametros": "parametros", "/upload": "upload",
+  "/analise-relatorios": "indicadores",
 };
 
 // Permissão de módulo para o usuário logado (admin tem tudo).
@@ -2371,6 +2372,19 @@ export async function fetchRelatorioControleEntrega(dataInicio?: string, dataFim
 export async function fetchRelatorioBst() {
   const res = await authFetch(`${API}/producao/relatorio-bst`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Relatório de BST error: ${res.status}`);
+  return res.json();
+}
+
+export async function ajustarProximaAplicacaoBst(novaData: string, modo: "intervalo" | "referencia") {
+  const res = await authFetch(`${API}/producao/bst/ajustar-proxima-aplicacao`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ nova_data: novaData, modo }),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    throw new Error(d.detail || "Não foi possível ajustar a próxima aplicação de BST.");
+  }
   return res.json();
 }
 

@@ -6,9 +6,9 @@ import { usePathname } from "next/navigation";
 // só que trocando a foto conforme a seção. Preenche só a área de conteúdo
 // (o <main> à direita da barra lateral), nunca a própria barra lateral.
 const SECOES: { prefixos: string[]; imagem: string }[] = [
-  { prefixos: ["/rebanho", "/reproducao", "/producao"], imagem: "/images/bg-rebanho.webp" },
+  { prefixos: ["/rebanho", "/reproducao", "/producao", "/historico"], imagem: "/images/bg-rebanho.webp" },
   { prefixos: ["/sanidade", "/alimentacao", "/estoque"], imagem: "/images/bg-insumos-sanidade.webp" },
-  { prefixos: ["/indicadores", "/financeiro", "/pedidos", "/relatorios"], imagem: "/images/bg-analise.webp" },
+  { prefixos: ["/indicadores", "/financeiro", "/pedidos", "/relatorios", "/analise-relatorios"], imagem: "/images/bg-analise.webp" },
   { prefixos: ["/aprovacoes", "/configuracoes"], imagem: "/images/bg-administracao.webp" },
   { prefixos: ["/agenda", "/lancamentos"], imagem: "/images/bg-ciclo-diario.webp" },
 ];

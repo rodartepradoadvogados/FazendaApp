@@ -16,7 +16,6 @@ import {
   Settings,
   ClipboardList,
   FileBarChart,
-  CheckCheck,
   ShoppingCart,
   MessageSquare,
   Users,
@@ -33,10 +32,11 @@ import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
 
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
-// insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) administração
-// (Aprovações/Configurações, sempre por último, acrescentados dinamicamente).
-// Recria não tem mais item próprio aqui — virou sub-aba de Indicadores.
-const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Análise", "Administração"] as const;
+// insumos/sanidade (consumíveis do dia a dia); (4) análise; (5) financeiro
+// (Controle Financeiro + Pedidos); (6) administração (Configurações, sempre
+// por último — Aprovações virou sub-aba de Configurações). Recria não tem
+// mais item próprio aqui — virou sub-aba de Indicadores.
+const GRUPOS = ["Ciclo diário", "Manejo do rebanho", "Insumos e sanidade", "Análise", "Financeiro", "Administração"] as const;
 
 const links = [
   // ── Ciclo diário ──
@@ -45,17 +45,18 @@ const links = [
   { href: "/lancamentos", label: "Lançamentos",  icon: ClipboardList, title: "Lançamentos — registrar eventos e dados do dia a dia", grupo: "Ciclo diário" },
   // ── Manejo do rebanho ──
   { href: "/rebanho",     label: "Rebanho",      icon: CowIcon,       title: "Rebanho — animais, movimentações entre lotes e ficha do animal", grupo: "Manejo do rebanho" },
-  { href: "/reproducao",  label: "Reprodução",   icon: Heart,         title: "Reprodução — serviços, diagnósticos e análise reprodutiva", grupo: "Manejo do rebanho" },
-  { href: "/producao",    label: "Produção",     icon: Milk,          title: "Produção — controle leiteiro, secagem e qualidade do leite", grupo: "Manejo do rebanho" },
+  { href: "/historico",   label: "Histórico",    icon: Heart,         title: "Histórico — Reprodução (serviços, diagnósticos, partos) e Produção (controle leiteiro, secagem, BST)", grupo: "Manejo do rebanho" },
   // ── Insumos e sanidade ──
   { href: "/sanidade",    label: "Sanidade",     icon: Syringe,       title: "Sanidade — aplicações, protocolos e calendário sanitário", grupo: "Insumos e sanidade" },
   { href: "/alimentacao", label: "Alimentação",  icon: Wheat,         title: "Alimentação — dieta, consumo e necessidade por lote", grupo: "Insumos e sanidade" },
   { href: "/estoque",     label: "Estoque",      icon: Package,       title: "Estoque de insumos — quantidades, valores e itens abaixo do mínimo", grupo: "Insumos e sanidade" },
   // ── Análise ──
   { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro", grupo: "Análise" },
-  { href: "/financeiro",  label: "Financeiro",   icon: BarChart3,     title: "Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Análise" },
-  { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Análise" },
   { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)", grupo: "Análise" },
+  { href: "/analise-relatorios", label: "Relatórios", icon: FileBarChart, title: "Relatórios — em construção", grupo: "Análise" },
+  // ── Financeiro ──
+  { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
+  { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
 ];
 
 export function Sidebar() {
@@ -79,8 +80,12 @@ export function Sidebar() {
   const [buscaSubNav, setBuscaSubNav] = useState("");
 
   useEffect(() => {
-    // Filtra o menu conforme as permissões do usuário logado.
-    setVisiveis(links.filter((l) => podeModulo(ROTA_MODULO[l.href] || l.href)));
+    // Filtra o menu conforme as permissões do usuário logado. "/historico"
+    // reúne Reprodução + Produção — mostra o link se o usuário tiver
+    // qualquer uma das duas (a página em si esconde a sub-aba sem permissão).
+    setVisiveis(links.filter((l) => (
+      l.href === "/historico" ? (podeModulo("reproducao") || podeModulo("producao")) : podeModulo(ROTA_MODULO[l.href] || l.href)
+    )));
     setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
@@ -221,7 +226,6 @@ export function Sidebar() {
         <div className="flex-1 p-3 space-y-1" style={{ overflowY: "auto", minHeight: 0 }}>
           {(() => {
             const todos = [...visiveis,
-              ...(admin ? [{ href: "/aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram", grupo: "Administração" }] : []),
               ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),

@@ -4,6 +4,7 @@ import { Droplets, AlertTriangle, Check, Ban, X as XIcon } from "lucide-react";
 import { aplicarBstLote, marcarInaptaBst, fetchEstoque, fetchPessoas } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import { MultiFiltro } from "@/components/ui";
+import { PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
 
 const th: React.CSSProperties = { textAlign: "left", padding: "0.4rem 0.6rem", fontSize: "0.72rem", textTransform: "uppercase", color: "var(--text-muted)", borderBottom: "1px solid var(--border)" };
 const td: React.CSSProperties = { padding: "0.4rem 0.6rem", fontSize: "0.82rem", borderBottom: "1px solid var(--border)" };
@@ -175,6 +176,14 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
   return (
     <div className="space-y-4">
       {erro && <div className="alert-critico"><AlertTriangle size={16} /><span>{erro}</span></div>}
+
+      <div className="card">
+        <PainelAjustarProximaAplicacaoBst
+          proximaVisitaBst={agenda?.proxima_visita_bst ?? null}
+          intervaloBstDias={agenda?.intervalo_bst ?? null}
+          onAjustado={onAtualizado}
+        />
+      </div>
 
       <div style={{ maxWidth: "280px" }}>
         <MultiFiltro label="Filtrar por lote" opcoes={lotesDisponiveis} selecionados={lotesFiltro} onChange={setLotesFiltro} />
