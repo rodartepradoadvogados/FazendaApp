@@ -26,7 +26,7 @@ export default function ReprodutivoInstitucional() {
           { icon: Stethoscope, titulo: "Diagnóstico de gestação", texto: "Toque, reconfirmação e resultado direto na ficha da vaca, com alerta para gestação recente." },
           { icon: Target, titulo: "Acasalamento direcionado", texto: "Sugestão de touro por vaca, com a nota dos critérios usados na indicação." },
           { icon: History, titulo: "Histórico por matriz", texto: "Toda a vida reprodutiva num só lugar: partos, inseminações, secagens, diagnósticos e perdas de prenhez." },
-          { icon: CalendarClock, titulo: "Agenda do veterinário", texto: "Visão dedicada para a visita técnica, com exportação em Excel e PDF." },
+          { icon: CalendarClock, titulo: "Agenda Reprodutiva", texto: "Visão dedicada para a visita técnica, com exportação em Excel e PDF." },
         ]} />
       </SecaoConteudo>
     </PublicPage>

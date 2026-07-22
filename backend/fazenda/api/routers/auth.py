@@ -112,8 +112,13 @@ def listar_acessos(_: Usuario = Depends(exigir_dono), session: Session = Depends
         ).all()
         resultado.append({
             "id": u.id, "username": u.username, "nome": u.nome, "papel": u.papel, "ativo": u.ativo,
-            "ultimo_login": u.ultimo_login.isoformat() if u.ultimo_login else None,
-            "ultimos_acessos": [a.criado_em.isoformat() for a in ultimos],
+            # Ambos os campos são gravados via datetime.utcnow() (naive, mas em
+            # UTC) — sem o "Z", o navegador interpretaria a string como já
+            # sendo horário local e exibiria um horário adiantado (bug: acesso
+            # "no futuro"). Acrescentar o "Z" deixa o navegador converter para
+            # o fuso local corretamente.
+            "ultimo_login": (u.ultimo_login.isoformat() + "Z") if u.ultimo_login else None,
+            "ultimos_acessos": [a.criado_em.isoformat() + "Z" for a in ultimos],
         })
     return resultado
 

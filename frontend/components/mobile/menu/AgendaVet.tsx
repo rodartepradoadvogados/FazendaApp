@@ -111,7 +111,7 @@ function ListaSecao({ chave, rotulo, animais, enviandoDg, setEnviandoDg, onFicha
       </summary>
       <div style={{ borderTop: "1px solid var(--mob-border)", paddingTop: "0.4rem" }}>
         <div className="flex items-center justify-end mb-2">
-          <ExportarBotoes titulo={`Agenda do veterinário — ${rotulo}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${chave}`} />
+          <ExportarBotoes titulo={`Agenda Reprodutiva — ${rotulo}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${chave}`} />
         </div>
         {animais.map((a) => (
           <div key={a.numero_matriz}>
@@ -152,7 +152,7 @@ export default function AgendaVet({ onVoltar }: { onVoltar: () => void }) {
 
   return (
     <div>
-      <MobVoltar titulo="Agenda do Veterinário" onVoltar={onVoltar} />
+      <MobVoltar titulo="Agenda Reprodutiva" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_agenda_vet" mostrar={doCache} />
       {sucesso && (
         <div className="mb-2" style={{ background: "rgba(45, 138, 86, 0.15)", border: "1px solid var(--green-light)", borderRadius: "8px", padding: "0.5rem 0.8rem", color: "var(--green-light)", fontSize: "0.82rem" }}>

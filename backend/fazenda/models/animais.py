@@ -78,6 +78,11 @@ class Animal(SQLModel, table=True):
     # Marca manual: nunca entra nas listas de candidatas/excluídos do BST
     # (ex.: vaca com contraindicação), independente dos critérios automáticos.
     excluir_bst: bool = False
+    # "Reverter (voltar a apta)": revertida de excluir_bst, mas ainda não conta
+    # como apta de novo — só volta a aparecer em bst_elegiveis depois que uma
+    # NOVA aplicação de BST é lançada para o animal (ver aplicar_bst_lote).
+    # Até lá fica na lista "Incluir no próximo BST" (bst_reanalise).
+    aguardando_nova_aplicacao_bst: bool = False
 
 
 # ---------------------------------------------------------------------------

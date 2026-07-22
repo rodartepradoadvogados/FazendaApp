@@ -4,6 +4,12 @@ import { LineChart as LineChartIcon, Info } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { fetchIndicadoresMensais, type IndicadoresMensais } from "@/lib/api";
 
+type AnaliseInterativaProps = {
+  ini?: string;
+  fim?: string;
+  filtros?: Record<string, string[]>;
+};
+
 type Eixo = "mes" | "ano";
 
 type Metrica = { key: string; label: string; unidade: "pct" | "n" | "kg" | "dias" };
@@ -64,15 +70,16 @@ const UNIDADE_LABEL: Record<Metrica["unidade"], string> = { pct: "%", n: "", kg:
  * uma selecionada, para permitir comparação visual — os valores reais
  * continuam disponíveis no tooltip.
  */
-export default function AnaliseInterativa() {
+export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterativaProps) {
   const [dados, setDados] = useState<IndicadoresMensais | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selecionadas, setSelecionadas] = useState<string[]>(["taxa_concepcao", "num_servicos"]);
   const [eixo, setEixo] = useState<Eixo>("mes");
 
   useEffect(() => {
-    fetchIndicadoresMensais().then(setDados).catch((e) => setError(e.message));
-  }, []);
+    fetchIndicadoresMensais({ ini, fim, filtros }).then(setDados).catch((e) => setError(e.message));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ini, fim, JSON.stringify(filtros)]);
 
   const toggle = (key: string) =>
     setSelecionadas((p) => (p.includes(key) ? p.filter((k) => k !== key) : [...p, key]));

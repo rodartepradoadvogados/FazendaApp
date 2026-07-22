@@ -46,7 +46,7 @@ type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.R
 
 const GRUPOS: Grupo[] = [
   { secao: "reproducao", titulo: "Reprodução", cor: "var(--cat-reproducao)", iconeSecao: <Heart size={26} />, itens: [
-    { chave: "agendaVet", titulo: "Agenda do Veterinário", subtitulo: "Listas do rebanho para a visita", rota: "/reproducao", icone: <Stethoscope size={26} /> },
+    { chave: "agendaVet", titulo: "Agenda Reprodutiva", subtitulo: "Listas do rebanho para a visita", rota: "/relatorios", icone: <Stethoscope size={26} /> },
     { chave: "iatf", titulo: "Protocolos IATF", subtitulo: "Vacas em andamento (D0/D7/D9/D11)", rota: "/reproducao", icone: <Syringe size={26} /> },
   ] },
   { secao: "sanidade", titulo: "Sanidade", cor: "var(--cat-sanidade)", iconeSecao: <ShieldPlus size={26} />, itens: [
@@ -103,7 +103,7 @@ export default function Pagina() {
   // Atalho do ícone "News" no cabeçalho do app (/app/menu#news) — abre a
   // sub-tela direto, sem passar pela grade de sessões.
   useEffect(() => {
-    const verificarHash = () => { if (window.location.hash === "#news" && ehAdmin()) setSecaoAberta("news"); };
+    const verificarHash = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
     verificarHash();
     window.addEventListener("hashchange", verificarHash);
     return () => window.removeEventListener("hashchange", verificarHash);

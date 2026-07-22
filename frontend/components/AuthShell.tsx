@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getToken, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -89,7 +89,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
         <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
           <ThemeSwitcher />
         </div>
-        {ehAdmin() && <NewsButton />}
+        <NewsButton />
         <NotificationBell />
         <AssistenteClaude />
         <main className="flex-1 md:overflow-y-auto app-main">

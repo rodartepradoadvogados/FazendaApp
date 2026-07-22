@@ -295,20 +295,32 @@ function ProducaoLeiteira() {
     return linhas.sort((a, b) => (a.numero === b.numero ? (a.data! < b.data! ? 1 : -1) : a.numero.localeCompare(b.numero)));
   }, [regs, ucNumerosEscopo, ucN]);
 
-  // Linhas exibidas na tabela, já com a "noite" resolvida como campo próprio
-  // (ordenha3 quando há 3 ordenhas, senão ordenha2) para poder ordenar por ela.
+  // Linhas exibidas na tabela, já com "tarde"/"noite" resolvidos como campos
+  // próprios para poder ordenar por eles. Com 2 ordenhas: manhã/noite. Com 3
+  // ordenhas: manhã/tarde/noite — a antiga "noite" (ordenha2) vira "tarde" e
+  // a nova ordenha3 passa a contar como noite a partir daquele lançamento.
   const ucLinhas = useMemo(
-    () => ucRegistros.map((r) => ({ ...r, noite_kg: r.ordenha3_kg ?? r.ordenha2_kg })),
+    () => ucRegistros.map((r) => ({
+      ...r,
+      tarde_kg: r.ordenha3_kg != null ? r.ordenha2_kg : null,
+      noite_kg: r.ordenha3_kg ?? r.ordenha2_kg,
+    })),
     [ucRegistros]
   );
+  const ucTemTerceiraOrdenha = useMemo(() => ucRegistros.some((r) => r.ordenha3_kg != null), [ucRegistros]);
 
   // Relatório único do filtro selecionado: média e menor do próprio conjunto
   // mostrado na tabela (o mesmo escopo do animal/lote/rebanho filtrado), média
-  // por ordenha (manhã/noite), quantidade de vacas e de controles do filtro.
+  // por ordenha (manhã/tarde/noite), quantidade de vacas e de controles do filtro.
   const ucValoresProducao = useMemo(() => ucRegistros.map((r) => r.producao_kg).filter((v): v is number => v != null), [ucRegistros]);
   const ucMedia = useMemo(() => media(ucValoresProducao), [ucValoresProducao]);
   const ucMenor = useMemo(() => (ucValoresProducao.length ? Math.min(...ucValoresProducao) : null), [ucValoresProducao]);
   const ucMediaManha = useMemo(() => media(ucRegistros.filter((r) => r.ordenha1_kg != null).map((r) => r.ordenha1_kg!)), [ucRegistros]);
+  const ucMediaTarde = useMemo(() => {
+    // "Tarde" só existe quando há 3 ordenhas no dia — é a antiga ordenha2.
+    const valores = ucRegistros.filter((r) => r.ordenha3_kg != null && r.ordenha2_kg != null).map((r) => r.ordenha2_kg!);
+    return media(valores);
+  }, [ucRegistros]);
   const ucMediaNoite = useMemo(() => {
     // "Noite" = última ordenha do dia lançada — ordenha3 quando há 3, senão ordenha2.
     const valores = ucRegistros.map((r) => (r.ordenha3_kg ?? r.ordenha2_kg)).filter((v): v is number => v != null);
@@ -375,10 +387,11 @@ function ProducaoLeiteira() {
             </div>
 
             {ucRegistros.length > 0 && (
-              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-3">
+              <div className={`grid grid-cols-2 md:grid-cols-3 ${ucTemTerceiraOrdenha ? "lg:grid-cols-7" : "lg:grid-cols-6"} gap-4 mb-3`}>
                 <Indicador categoria="producao" valor={`${ucMedia} kg`} cor="var(--green-light)" rotulo={`Média do ${ucLabelEscopo}`} />
                 <Indicador categoria="producao" valor={`${ucMenor ?? "—"} kg`} rotulo="Menor" />
                 <Indicador categoria="producao" valor={`${ucMediaManha || "—"} kg`} rotulo="Média ordenha — manhã" />
+                {ucTemTerceiraOrdenha && <Indicador categoria="producao" valor={`${ucMediaTarde || "—"} kg`} rotulo="Média ordenha — tarde" />}
                 <Indicador categoria="producao" valor={`${ucMediaNoite || "—"} kg`} rotulo="Média ordenha — noite" />
                 <Indicador categoria="producao" valor={ucNumerosEscopo.size} rotulo="Vacas no filtro" />
                 <Indicador categoria="producao" valor={ucRegistros.length} rotulo="Controles no filtro" />
@@ -392,6 +405,7 @@ function ProducaoLeiteira() {
                   <ThOrdenavel label="Lote" campo="grupo_primario" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
                   <ThOrdenavel label="Data" campo="data" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} />
                   <ThOrdenavel label="Manhã (kg)" campo="ordenha1_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
+                  {ucTemTerceiraOrdenha && <ThOrdenavel label="Tarde (kg)" campo="tarde_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />}
                   <ThOrdenavel label="Noite (kg)" campo="noite_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
                   <ThOrdenavel label="Total (kg)" campo="producao_kg" coluna={ordUltimos.coluna} dir={ordUltimos.dir} ordenar={ordUltimos.ordenar} alinhar="right" />
                   {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
@@ -403,6 +417,7 @@ function ProducaoLeiteira() {
                       <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{r.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.78rem" }}>{r.data ? new Date(r.data + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</td>
                       <td style={{ textAlign: "right" }}>{r.ordenha1_kg ?? "—"}</td>
+                      {ucTemTerceiraOrdenha && <td style={{ textAlign: "right" }}>{r.tarde_kg ?? "—"}</td>}
                       <td style={{ textAlign: "right" }}>{r.noite_kg ?? "—"}</td>
                       <td style={{ textAlign: "right", fontWeight: 600 }}>{r.producao_kg ?? "—"}</td>
                       {admin && <td>{r.usuario_nome ?? "—"}</td>}

@@ -311,8 +311,22 @@ export async function atualizarSecagem(id: number, dados: { data_secagem?: strin
 }
 
 export type IndicadoresMensais = { meses: string[]; series: Record<string, (number | null)[]> };
-export async function fetchIndicadoresMensais(): Promise<IndicadoresMensais> {
-  const res = await authFetch(`${API}/reproducao/indicadores-mensais`, { cache: "no-store" });
+export type IndicadoresMensaisFiltros = {
+  ini?: string;
+  fim?: string;
+  filtros?: Record<string, string[]>;
+};
+export async function fetchIndicadoresMensais(params?: IndicadoresMensaisFiltros): Promise<IndicadoresMensais> {
+  const q = new URLSearchParams();
+  if (params?.ini) q.set("ini", params.ini);
+  if (params?.fim) q.set("fim", params.fim);
+  if (params?.filtros) {
+    for (const [chave, valores] of Object.entries(params.filtros)) {
+      for (const v of valores ?? []) q.append(chave, v);
+    }
+  }
+  const qs = q.toString();
+  const res = await authFetch(`${API}/reproducao/indicadores-mensais${qs ? `?${qs}` : ""}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Indicadores mensais error: ${res.status}`);
   return res.json();
 }
@@ -440,14 +454,17 @@ export type AgendaVetItem = {
   diagnostico: string | null; diagnostico_reconfirmacao: string | null;
   atrasada?: boolean; dias_para_parto?: number | null; motivo?: string;
 };
-export type AgendaVetResposta = { data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number> };
+export type AgendaVetResposta = {
+  data_referencia: string; projetado?: boolean; listas: Record<string, AgendaVetItem[]>; totais: Record<string, number>;
+  ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
+};
 
 // data (opcional, AAAA-MM-DD): simula um cenário projetado numa data futura
 // (ex.: a próxima visita do veterinário) — ver #490.
 export async function fetchAgendaVeterinario(data?: string): Promise<AgendaVetResposta> {
   const qs = data ? `?data=${encodeURIComponent(data)}` : "";
   const res = await authFetch(`${API}/reproducao/agenda-veterinario${qs}`, { cache: "no-store" });
-  if (!res.ok) throw new Error(`Agenda do veterinário error: ${res.status}`);
+  if (!res.ok) throw new Error(`Agenda Reprodutiva error: ${res.status}`);
   return res.json();
 }
 
@@ -2198,7 +2215,7 @@ export async function fetchControles() {
 
 export async function criarControlesLeiteiros(dados: {
   data_controle: string;
-  entradas: { numero_matriz: string; ordenhas: number[] }[];
+  entradas: { numero_matriz: string; ordenhas: (number | null)[] }[];
 }) {
   const res = await authFetch(`${API}/producao/controles`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

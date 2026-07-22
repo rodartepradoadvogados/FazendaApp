@@ -170,11 +170,15 @@ class AgendaEngine:
             result.necessidade_iatf = calcular_necessidade_hormonios(len(candidatas))
 
         # Próxima visita reprodutiva/BST — ancorada no serviço mais recente do
-        # rebanho inteiro (não por animal individual).
+        # rebanho inteiro (não por animal individual). Intervalo em 0/vazio
+        # (Configurações > Parâmetros) desliga o agendamento automático da
+        # visita reprodutiva — ele simplesmente não aparece (ver Agenda
+        # Reprodutiva, que então oferece configurar via janela suspensa).
         datas_servico = [s["data_servico"] for s in servicos if s.get("data_servico")]
         if datas_servico:
             ultimo_servico = max(datas_servico)
-            result.proxima_visita_iatf = ultimo_servico + timedelta(days=intervalo_visita_reprodutiva)
+            if intervalo_visita_reprodutiva > 0:
+                result.proxima_visita_iatf = ultimo_servico + timedelta(days=intervalo_visita_reprodutiva)
             result.proxima_visita_bst = ultimo_servico + timedelta(days=intervalo_bst)
         # A data real (última aplicação de BST + 12 dias, avançada até cair no
         # futuro) sempre tem prioridade sobre a estimativa acima — que é só um
@@ -355,10 +359,11 @@ class AgendaEngine:
                             observacao=obs,
                         ))
 
-            # ── BST — marcada para excluir manualmente: não é "apta" nem
-            # "excluída por critério automático" — vai para uma lista à parte,
-            # de reanálise na próxima aplicação (indicador amarelo no front).
-            if animal.get("excluir_bst"):
+            # ── BST — marcada para excluir manualmente OU revertida (aguardando
+            # nova aplicação para voltar a apta): não é "apta" nem "excluída
+            # por critério automático" — vai para uma lista à parte, de
+            # reanálise na próxima aplicação (indicador amarelo no front).
+            if animal.get("excluir_bst") or animal.get("aguardando_nova_aplicacao_bst"):
                 cod = (grupo or "").strip()[:2]
                 if cod in ("01", "02", "03"):
                     res_bst = avaliar_bst(
@@ -368,7 +373,11 @@ class AgendaEngine:
                         data_secagem=data_parto_provavel - timedelta(days=60) if data_parto_provavel else None,
                         data_referencia=data_referencia,
                     )
-                    res_bst.motivo_exclusao = "Excluída manualmente do BST — revisar na próxima aplicação"
+                    res_bst.motivo_exclusao = (
+                        "Excluída manualmente do BST — revisar na próxima aplicação"
+                        if animal.get("excluir_bst")
+                        else "Revertida do BST — aguardando nova aplicação para voltar a apta"
+                    )
                     bst_reanalise.append(res_bst)
             else:
                 # DEL projetado para a data da PRÓXIMA aplicação de BST (não o DEL de

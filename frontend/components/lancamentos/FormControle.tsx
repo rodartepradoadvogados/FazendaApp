@@ -47,10 +47,13 @@ export function FormControle({ animais, lotesLact }: { animais: AnimalRow[]; lot
 
   async function salvar() {
     setErro(null); setSucesso(null);
+    // Ordenha em branco vira `null` (não lançada), nunca `0` — um `0` gravado
+    // como se fosse ordenha real puxaria a média de manhã/noite para baixo.
+    const ordenhaOuNull = (v: string) => (v.trim() === "" ? null : Number(v));
     const entradas = modo === "vaca"
-      ? (vaca ? [{ numero_matriz: vaca, ordenhas: ord.slice(0, nOrd).map((v) => Number(v) || 0) }] : [])
-      : vacasDoLote.map((a) => ({ numero_matriz: a.numero, ordenhas: (porVaca[a.numero] || []).slice(0, nOrd).map((v) => Number(v) || 0) }))
-          .filter((e) => e.ordenhas.some((v) => v > 0));
+      ? (vaca ? [{ numero_matriz: vaca, ordenhas: ord.slice(0, nOrd).map(ordenhaOuNull) }] : [])
+      : vacasDoLote.map((a) => ({ numero_matriz: a.numero, ordenhas: (porVaca[a.numero] || []).slice(0, nOrd).map(ordenhaOuNull) }))
+          .filter((e) => e.ordenhas.some((v) => v !== null));
     if (!entradas.length) { setErro(modo === "vaca" ? "Selecione a vaca e informe ao menos uma ordenha." : "Informe a pesagem de ao menos uma vaca do lote."); return; }
     setSalvando(true);
     try {

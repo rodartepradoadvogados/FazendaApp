@@ -169,7 +169,7 @@ export default function AnaliseReprodutivaPage() {
           <div className="flex justify-end mb-2">
             <ExportarBotoes titulo="Análise Reprodutiva — Serviços" nomeArquivoBase="analise_reprodutiva" colunas={COLUNAS_SERVICOS} linhas={filtrados} />
           </div>
-          <AnaliseInterativa />
+          <AnaliseInterativa ini={ini} fim={fim} filtros={filtros} />
 
           {/* Quebra por dimensão */}
           <div className="card">

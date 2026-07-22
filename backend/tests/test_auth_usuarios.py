@@ -164,3 +164,33 @@ def test_editar_usuario_permite_manter_mesma_pessoa(client):
     )
     assert r.status_code == 200
     assert r.json()["email"] == "joao@x.com"
+
+
+def test_permissoes_vet_e_recria_nao_somem_ao_editar(client):
+    """Regressão: 'vet' (Agenda do veterinário) e 'recria' ficavam fora do
+    whitelist MODULOS em fazenda.auth e eram silenciosamente removidas de
+    Usuario.permissoes em toda edição (mesmo uma edição sem relação com
+    permissões), mesmo aparecendo marcadas no formulário."""
+    c, engine = client
+    token = _login(c)
+    pid = _pessoa_id(engine, "João Silva")
+    r_criado = c.post(
+        "/auth/usuarios",
+        json={
+            "username": "joao", "senha": "123", "pessoa_id": pid, "papel": "operador",
+            "permissoes": ["agenda", "vet", "recria"],
+        },
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert sorted(r_criado.json()["permissoes"]) == ["agenda", "recria", "vet"]
+    user_id = r_criado.json()["id"]
+
+    # Uma edição não relacionada (ex.: reenviando as mesmas permissões, como
+    # o formulário do site faz ao salvar) não pode derrubar "vet"/"recria".
+    r = c.put(
+        f"/auth/usuarios/{user_id}",
+        json={"permissoes": ["agenda", "vet", "recria"]},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    assert sorted(r.json()["permissoes"]) == ["agenda", "recria", "vet"]
