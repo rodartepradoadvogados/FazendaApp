@@ -1,7 +1,7 @@
 """
 Testes de PUT /auth/preferencias — preferência pessoal de paleta de cores
-(Vinho/Verde), que qualquer usuário logado edita para si mesmo (sem precisar
-ser admin).
+(Vinho/Verde/Azul), que qualquer usuário logado edita para si mesmo (sem
+precisar ser admin).
 """
 from __future__ import annotations
 
@@ -63,7 +63,22 @@ def test_salvar_e_persistir_paleta_verde(client):
     assert r.json()["paleta"] == "verde"
 
 
+def test_salvar_e_persistir_paleta_azul(client):
+    c, engine = client
+    r = c.put("/auth/preferencias", json={"paleta": "azul"})
+    assert r.status_code == 200
+    assert r.json()["paleta"] == "azul"
+
+    with Session(engine) as s:
+        u = s.exec(select(Usuario).where(Usuario.username == "operador-teste")).first()
+        assert u.paleta == "azul"
+
+    # Persiste entre chamadas — /auth/me reflete o valor salvo.
+    r = c.get("/auth/me")
+    assert r.json()["paleta"] == "azul"
+
+
 def test_paleta_invalida_rejeitada(client):
     c, _ = client
-    r = c.put("/auth/preferencias", json={"paleta": "azul"})
+    r = c.put("/auth/preferencias", json={"paleta": "roxo"})
     assert r.status_code == 400

@@ -276,7 +276,7 @@ def salvar_preferencias(dados: PreferenciasIn, user: Usuario = Depends(get_curre
     Mesmas duas travas de sempre (admin + ninguém mais é dono) se aplicam.
     """
     if dados.paleta is not None:
-        if dados.paleta not in ("vinho", "verde"):
+        if dados.paleta not in ("vinho", "verde", "azul"):
             raise HTTPException(status_code=400, detail="Paleta inválida")
         user.paleta = dados.paleta
     novo_email = EMAIL_DONO if dados.reivindicar_proprietario else dados.email
