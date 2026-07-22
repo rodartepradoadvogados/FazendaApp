@@ -75,6 +75,9 @@ from .estoque import (
     EstoqueSemen,
     CompraSemen,
 )
+from .agricultura import (
+    Safra,
+)
 from .pessoal import (
     TipoPessoa,
     Pessoa,
@@ -202,6 +205,7 @@ __all__ = [
     "PedidoItem",
     "Patrimonio",
     "ManutencaoPatrimonio",
+    "Safra",
     "CurvaABC",
     "Estoque",
     "Fornecedor",

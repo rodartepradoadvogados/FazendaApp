@@ -7,7 +7,7 @@ import {
 import {
   fetchLancamentos, marcarPagoFinanceiro, criarBaixaLote, criarBaixaLoteDetalhada, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPatrimonio,
   atualizarPlanoManutencaoPatrimonio, fetchManutencoesPatrimonio, registrarManutencaoPatrimonio,
-  fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, formatBRL, formatDate,
+  fetchPessoas, fetchRmca, fetchCustoLitroLeite, fetchCustoHectare, fetchCustoVacaLote, fetchCustoSafra, fetchSafras, formatBRL, formatDate,
   atualizarLancamentoFinanceiro, ehAdmin, fetchRelatorioCompraVendaAnimais, type LinhaRelatorioCompraVendaAnimal,
   fetchCentrosCusto,
   fetchOrcamento, criarItemOrcamento, atualizarItemOrcamento, excluirItemOrcamento, fetchComparativoOrcado,
@@ -57,7 +57,7 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -67,6 +67,7 @@ const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "custo_litro_leite", label: "Custo p/L de leite", icon: BarChart3, desc: "Custo de alimentação do período dividido pelos litros de leite entregues" },
   { id: "custo_hectare", label: "Custo por hectare", icon: BarChart3, desc: "Despesas do período divididas pela área total da fazenda" },
   { id: "custo_vaca_lote", label: "Custo por vaca/lote", icon: BarChart3, desc: "Despesas do período divididas pelo nº de vacas em lactação, por lote" },
+  { id: "custo_safra", label: "Custo por safra", icon: BarChart3, desc: "Despesas do centro de custo e período da safra divididas por hectare/tonelada" },
   { id: "compra_venda_animais", label: "Compra/Venda de animais", icon: ShoppingCart, desc: "Consulta por animal, período, documento ou GTA" },
 ];
 const CONTAS: { id: Rel; label: string; icon: any; desc: string }[] = [
@@ -498,6 +499,7 @@ export default function FinanceiroPage() {
           : rel === "custo_litro_leite" ? <CustoLitroLeiteView />
           : rel === "custo_hectare" ? <CustoHectareView />
           : rel === "custo_vaca_lote" ? <CustoVacaLoteView />
+          : rel === "custo_safra" ? <CustoSafraView />
           : rel === "compra_venda_animais" ? <RelatorioCompraVendaAnimaisView />
           : rel === "orcamento" ? <OrcamentoView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} />
           : rel === "planejamento_financeiro" ? <PlanejamentoFinanceiroView planoContas={planoContas} fornecedores={opcoesRel.fornecedores} /> : <>
@@ -2506,6 +2508,103 @@ function CustoVacaLoteView() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+type SafraOpcao = { id: number; nome: string; centro_custo: string; hectares: number; toneladas_produzidas: number; ativo: boolean };
+type CustoSafraResp = {
+  safra: SafraOpcao & { data_inicio: string; data_fim: string; observacao: string | null };
+  por_categoria: { codigo: string; descricao: string; valor: number }[];
+  despesas_total: number; hectares: number | null; toneladas_produzidas: number | null;
+  custo_por_hectare: number | null; custo_por_tonelada: number | null;
+};
+
+// Opção A do plano de custo agrícola (silagem): em vez de período/centro de
+// custo livres como os relatórios acima, aqui o usuário escolhe a Safra já
+// cadastrada (Configurações > Cadastro > Safra) — ela já traz o centro de
+// custo e o período embutidos.
+function CustoSafraView() {
+  const [safras, setSafras] = useState<SafraOpcao[]>([]);
+  const [safraId, setSafraId] = useState<number | "">("");
+  const [dados, setDados] = useState<CustoSafraResp | null>(null);
+  const [erro, setErro] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchSafras().then((lista: SafraOpcao[]) => {
+      setSafras(lista);
+      const primeira = lista.find((s) => s.ativo) ?? lista[0];
+      if (primeira) setSafraId(primeira.id);
+    }).catch((e) => setErro(e.message));
+  }, []);
+
+  useEffect(() => {
+    if (safraId === "") return;
+    setDados(null);
+    fetchCustoSafra(Number(safraId)).then(setDados).catch((e) => setErro(e.message));
+  }, [safraId]);
+
+  return (
+    <div>
+      <div className="card mb-4">
+        <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Safra</div>
+        {!safras.length && !erro && (
+          <p style={{ fontSize: "0.85rem", color: "var(--text-muted)" }}>
+            Nenhuma safra cadastrada ainda. Cadastre em <strong>Configurações → Cadastro → Safra</strong>
+            (nome, centro de custo, período, hectares e toneladas produzidas).
+          </p>
+        )}
+        {!!safras.length && (
+          <select style={selStyleLote} value={safraId} onChange={(e) => setSafraId(Number(e.target.value))}>
+            {safras.map((s) => <option key={s.id} value={s.id}>{s.nome}{!s.ativo ? " (inativa)" : ""}</option>)}
+          </select>
+        )}
+      </div>
+
+      {erro && <div className="alert-critico mb-3"><span>Sem dados: {erro}.</span></div>}
+
+      {dados && (
+        <>
+          <div className="card mb-4">
+            <div className="card-header mb-3">Custo por safra — {dados.safra.nome}</div>
+            <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.75rem" }}>
+              Despesas lançadas no centro de custo "{dados.safra.centro_custo}" entre{" "}
+              {dados.safra.data_inicio.split("-").reverse().join("/")} e {dados.safra.data_fim.split("-").reverse().join("/")},
+              divididas pelos {dados.hectares?.toLocaleString("pt-BR")} ha e {dados.toneladas_produzidas?.toLocaleString("pt-BR")} ton cadastrados na safra.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-3 mb-3">
+              <KPI v={formatBRL(dados.despesas_total)} l="Despesas do período" c="var(--red)" />
+              <KPI v={dados.hectares != null ? `${dados.hectares.toLocaleString("pt-BR")} ha` : "—"} l="Hectares" c="var(--dourado-light)" />
+              <KPI v={dados.custo_por_hectare != null ? formatBRL(dados.custo_por_hectare) : "—"} l="Custo por hectare" c="var(--green-light)" />
+              <KPI v={dados.custo_por_tonelada != null ? formatBRL(dados.custo_por_tonelada) : "—"} l="Custo por tonelada" c="var(--green-light)" />
+            </div>
+          </div>
+
+          {dados.por_categoria.length > 0 && (
+            <div className="card">
+              <div className="card-header mb-3">Quebra por categoria</div>
+              <div className="overflow-x-auto">
+                <table className="w-full" style={{ fontSize: "0.82rem" }}>
+                  <thead>
+                    <tr style={{ textAlign: "left", color: "var(--text-muted)" }}>
+                      <th style={{ padding: "0.3rem 0.5rem" }}>Categoria</th>
+                      <th style={{ padding: "0.3rem 0.5rem", textAlign: "right" }}>Valor</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {dados.por_categoria.map((cat) => (
+                      <tr key={cat.codigo} style={{ borderTop: "1px solid var(--border)" }}>
+                        <td style={{ padding: "0.3rem 0.5rem" }}>{cat.codigo} — {cat.descricao || "Sem descrição"}</td>
+                        <td style={{ padding: "0.3rem 0.5rem", textAlign: "right" }}>{formatBRL(cat.valor)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           )}
         </>

@@ -48,9 +48,11 @@ from fazenda.api.routers import (
     relatorio_compra_venda_animal,
     relatorio_custo_hectare,
     relatorio_custo_producao,
+    relatorio_custo_safra,
     relatorio_rastreabilidade_sanitaria,
     relatorios,
     reproducao,
+    safra,
     sanidade,
     telegram,
     upload,
@@ -60,7 +62,7 @@ from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 from fazenda.api.routers.financeiro import (
     seed_parametros_financeiros, normalizar_plano_contas, normalizar_centros_custo, classificar_natureza_plano_contas,
-    seed_tipos_documento_formas_pagamento,
+    seed_tipos_documento_formas_pagamento, seed_centro_custo_agricultura,
 )
 from fazenda.api.routers.reproducao import deduplicar_partos, backfill_categoria_crias, backfill_numero_cria_partos
 from fazenda.api.routers.cadastro import (
@@ -135,6 +137,10 @@ async def lifespan(app: FastAPI):
         # só preenche onde ainda está vazio, nunca sobrescreve edição manual.
         classificar_natureza_plano_contas(session)
         normalizar_centros_custo(session)
+        # Centro de custo "Agricultura" (Opção A do plano de custo agrícola —
+        # ver models.Safra) — já serve qualquer fazenda que planta para a
+        # própria produção de leite (decisão do usuário).
+        seed_centro_custo_agricultura(session)
         deduplicar_partos(session)
         backfill_categoria_crias(session)
         backfill_numero_cria_partos(session)
@@ -270,6 +276,7 @@ app.include_router(agenda.router, dependencies=_protegido)
 app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
 app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro"))])
 app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro"))])
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # — mesmo módulo. Pedidos é módulo próprio (não mexe em Estoque/Financeiro
 # sozinho — só quando um lançamento/movimento é vinculado a ele).
@@ -289,6 +296,8 @@ app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_pro
 app.include_router(recria.router, dependencies=_protegido)
 # Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
 app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
+# Cadastro de Safra (Opção A do plano de custo agrícola) — mesma seção/módulo.
+app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros"))])
 app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])
 # Leitura do banco de touros: Rebanho > Touros também consulta este catálogo
 # (módulo "rebanho"), então aceita "parametros" OU "rebanho" — só a listagem,
