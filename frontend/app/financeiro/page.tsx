@@ -869,7 +869,7 @@ const theadStickyStyle: React.CSSProperties = { position: "sticky", top: 0, zInd
  * seleciona quais notas EM ABERTO quer baixar de uma vez, com um único
  * pagamento (data, conta corrente, forma de pagamento, comprovante).
  */
-function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
+export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancarias: string[]; onFeito?: () => void }) {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Lanc[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -1915,7 +1915,7 @@ const LABEL_FORMA_PAGAMENTO: Record<string, string> = { pix: "Pix", transferenci
  * e número do comprovante. Substitui a antiga baixa direto na lista de
  * Contas a pagar/receber — "Tratar" leva para cá em vez de abrir um modal.
  */
-function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito }: {
+export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, onNotaTratada, onFeito }: {
   tipo: "despesa" | "receita"; contasBancarias: string[]; notaAlvoRef: string | null;
   onNotaTratada?: () => void; onFeito?: () => void;
 }) {

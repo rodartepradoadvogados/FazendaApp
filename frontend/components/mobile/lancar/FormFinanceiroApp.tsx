@@ -7,7 +7,7 @@
 // como texto livre — exatamente o que a importação deve preservar.
 import { useState } from "react";
 import dynamic from "next/dynamic";
-import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users } from "lucide-react";
+import { Receipt, HandCoins, ShoppingCart, Tag, Dna, Users, CircleDollarSign } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type Animal } from "@/components/mobile/lancar/comum";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -18,12 +18,14 @@ const FormFinanceiro = dynamic(() => import("@/components/FormFinanceiro").then(
 const CompraVendaAnimalForm = dynamic(() => import("@/components/CompraVendaAnimalForm"), { ssr: false });
 const CompraSemenForm = dynamic(() => import("@/components/CompraSemenForm"), { ssr: false });
 const FolhaPagamentoView = dynamic(() => import("@/components/FolhaPagamentoView"), { ssr: false });
+const DarBaixa = dynamic(() => import("@/components/mobile/lancar/DarBaixa"), { ssr: false });
 
-type TipoLancamento = "despesa" | "receita" | "compra_animal" | "venda_animal" | "compra_semen" | "folha";
+type TipoLancamento = "despesa" | "receita" | "compra_animal" | "venda_animal" | "compra_semen" | "folha" | "baixa";
 
 const TITULOS: Record<TipoLancamento, string> = {
   despesa: "Contas a pagar", receita: "Contas a receber", compra_animal: "Compra de animal",
   venda_animal: "Venda de animal", compra_semen: "Compra de sêmen", folha: "Folha de pagamento",
+  baixa: "Dar baixa em conta",
 };
 
 export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { onVoltar: () => void; tipoInicial?: "despesa" | "receita"; animais: Animal[] }) {
@@ -37,15 +39,20 @@ export default function FormFinanceiroApp({ onVoltar, tipoInicial, animais }: { 
           opcoes={[
             { id: "despesa", label: "Contas a pagar", icone: <Receipt size={28} />, cor: "var(--mob-vermelho)" },
             { id: "receita", label: "Contas a receber", icone: <HandCoins size={28} />, cor: "var(--mob-verde)" },
+            { id: "baixa", label: "Dar baixa em conta", icone: <CircleDollarSign size={28} />, cor: "var(--mob-dourado-2)" },
             { id: "compra_animal", label: "Compra de animal", icone: <ShoppingCart size={28} />, cor: "var(--mob-azul)" },
             { id: "venda_animal", label: "Venda de animal", icone: <Tag size={28} />, cor: "var(--mob-laranja)" },
             { id: "compra_semen", label: "Compra de sêmen", icone: <Dna size={28} />, cor: "var(--mob-roxo)" },
-            { id: "folha", label: "Folha de pagamento", icone: <Users size={28} />, cor: "var(--mob-dourado-2)" },
+            { id: "folha", label: "Folha de pagamento", icone: <Users size={28} />, cor: "var(--mob-vinho)" },
           ]}
           onEscolher={(id) => setTipo(id as TipoLancamento)}
         />
       </div>
     );
+  }
+
+  if (tipo === "baixa") {
+    return <DarBaixa onVoltar={() => setTipo(null)} />;
   }
 
   return (
