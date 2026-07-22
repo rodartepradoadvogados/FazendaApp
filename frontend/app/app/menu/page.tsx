@@ -11,7 +11,7 @@ import { useEffect, useState } from "react";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -37,6 +37,7 @@ import News from "@/components/mobile/menu/News";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
+import Portal from "@/components/mobile/menu/Portal";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -92,7 +93,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -159,6 +160,13 @@ export default function Pagina() {
     return <ControleAcesso onVoltar={() => setSecaoAberta(null)} />;
   }
 
+  // Portal (comunicação interna) — sem gate de módulo, igual ao site (qualquer
+  // usuário logado pode mandar mensagem/e-mail; "Exportar" já é admin-only
+  // dentro do próprio PortalView).
+  if (secaoAberta === "portal") {
+    return <Portal onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // 2º nível: itens da sessão escolhida, em quadrados.
   if (secaoAberta === "aparencia") {
     return (
@@ -188,6 +196,7 @@ export default function Pagina() {
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
+    { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
