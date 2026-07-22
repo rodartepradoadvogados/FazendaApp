@@ -54,7 +54,11 @@ def _usuario_id_seguro(user: Usuario) -> int | None:
 
 class OrdenhaIn(BaseModel):
     numero_matriz: str
-    ordenhas: list[float] = []
+    # Cada posição é a ordenha correspondente (1ª/2ª/3ª); `None` significa
+    # "não ordenhou"/"não lançou" nessa posição — distinto de `0` (ordenhou e
+    # deu zero) — para não puxar as médias de ordenha para baixo com um valor
+    # que não foi realmente medido.
+    ordenhas: list[float | None] = []
     # Se preenchido, grava só o total do dia (sem quebrar em ordenha1/2/3) —
     # usado quando a planilha/lançamento só informa o total, sem detalhar por
     # ordenha; nesse caso `ordenhas` fica vazio e os relatórios que abrem por
@@ -125,9 +129,9 @@ def criar_controles(
         if entrada.total_kg is not None:
             producao_kg = round(entrada.total_kg, 2)
             o1 = o2 = o3 = None
-        elif entrada.ordenhas and any(entrada.ordenhas):
+        elif entrada.ordenhas and any(v for v in entrada.ordenhas if v is not None):
             ordenhas = entrada.ordenhas
-            producao_kg = round(sum(ordenhas), 2)
+            producao_kg = round(sum(v for v in ordenhas if v is not None), 2)
             o1 = ordenhas[0] if len(ordenhas) > 0 else None
             o2 = ordenhas[1] if len(ordenhas) > 1 else None
             o3 = ordenhas[2] if len(ordenhas) > 2 else None
@@ -238,12 +242,12 @@ async def importar_controle_leiteiro(
     erros: list[str] = []
     por_data: dict[date, list[OrdenhaIn]] = {}
 
-    def _ordenhas_ou_total(row_norm: dict) -> tuple[list[float], float | None] | None:
+    def _ordenhas_ou_total(row_norm: dict) -> tuple[list[float | None], float | None] | None:
         o1 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha1_kg"]))
         o2 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha2_kg"]))
         o3 = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["ordenha3_kg"]))
         if o1 is not None or o2 is not None or o3 is not None:
-            return ([o1 or 0, o2 or 0, o3 or 0] if o3 is not None else [o1 or 0, o2 or 0]), None
+            return ([o1, o2, o3] if o3 is not None else [o1, o2]), None
         total = parse_float(valor_por_apelido(row_norm, CONTROLE_LEITEIRO_APELIDOS["total_kg"]))
         return ([], total) if total is not None else None
 
@@ -281,7 +285,7 @@ async def importar_controle_leiteiro(
                 for a in animais_lote:
                     por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, total_kg=total_por_vaca))
             else:
-                ordenhas_por_vaca = [round(v / n, 2) for v in ordenhas]
+                ordenhas_por_vaca = [round(v / n, 2) if v is not None else None for v in ordenhas]
                 for a in animais_lote:
                     por_data.setdefault(data_linha, []).append(OrdenhaIn(numero_matriz=a.numero, ordenhas=ordenhas_por_vaca))
 

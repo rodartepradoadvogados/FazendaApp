@@ -142,8 +142,8 @@ def exigir_pode_publicar(user: Usuario = Depends(get_current_user)) -> Usuario:
 
 # Módulos do sistema (chaves usadas nas permissões dos operadores).
 MODULOS = [
-    "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise",
-    "rebanho", "producao", "alimentacao", "sanidade", "financeiro", "estoque",
+    "capa", "indicadores", "agenda", "lancamentos", "reproducao", "analise", "vet",
+    "rebanho", "producao", "alimentacao", "sanidade", "recria", "financeiro", "estoque",
     "pedidos", "parametros", "upload",
 ]
 

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
@@ -155,11 +155,28 @@ def agenda_veterinario(data: date | None = None, session: Session = Depends(get_
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
     listas = classificar_rebanho(animais, servico_por_animal, peso_por_animal, hoje)
+
+    # Próxima visita reprodutiva sugerida (#571): último serviço do rebanho +
+    # intervalo configurado em Parâmetros. Intervalo 0/vazio => nenhuma data
+    # é sugerida (agendamento automático "desligado") — o front então oferece
+    # a janela suspensa para o usuário configurar o intervalo.
+    from fazenda.rules.parametros import intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva
+
+    datas_servico = [s["data_servico"] for s in servico_por_animal.values() if s.get("data_servico")]
+    ultimo_servico = max(datas_servico) if datas_servico else None
+    intervalo = _intervalo_visita_reprodutiva()
+    proxima_visita_reprodutiva = (
+        ultimo_servico + timedelta(days=intervalo) if (ultimo_servico and intervalo > 0) else None
+    )
+
     return {
         "data_referencia": hoje.isoformat(),
         "projetado": hoje != hoje_real,
         "listas": listas,
         "totais": {k: len(v) for k, v in listas.items()},
+        "ultimo_servico": ultimo_servico.isoformat() if ultimo_servico else None,
+        "proxima_visita_reprodutiva": proxima_visita_reprodutiva.isoformat() if proxima_visita_reprodutiva else None,
+        "intervalo_visita_reprodutiva": intervalo,
     }
 
 
@@ -267,17 +284,68 @@ def atualizar_servico(servico_id: int, dados: ServicoEditIn, session: Session = 
 
 
 @router.get("/indicadores-mensais")
-def indicadores_mensais_analise(session: Session = Depends(get_session)) -> dict:
+def indicadores_mensais_analise(
+    session: Session = Depends(get_session),
+    ini: str | None = None,
+    fim: str | None = None,
+    tipo_servico: list[str] | None = Query(None),
+    metodo_ia: list[str] | None = Query(None),
+    touro: list[str] | None = Query(None),
+    inseminador: list[str] | None = Query(None),
+    ordem_parto: list[str] | None = Query(None),
+    ordem_tentativa: list[str] | None = Query(None),
+) -> dict:
     """
     Série mensal cruzando métricas reprodutivas (serviços, métodos, concepção,
     perdas) e produtivas (secagens, produção de leite, DEL) — alimenta o
     gráfico interativo configurável de Análise reprodutiva (escolha de
     métricas e eixo ano/mês).
+
+    Aceita os mesmos filtros (período e dimensões) usados na tela de Análise
+    reprodutiva, para que o gráfico reflita exatamente o recorte que o
+    usuário escolheu — em vez de sempre olhar o histórico inteiro.
     """
     servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
     registros = analisar_servicos(servicos)
+
+    filtros_dimensao = {
+        "tipo_servico": tipo_servico,
+        "metodo_ia": metodo_ia,
+        "touro": touro,
+        "inseminador": inseminador,
+        "ordem_parto": ordem_parto,
+        "ordem_tentativa": ordem_tentativa,
+    }
+
+    def passa(r: dict) -> bool:
+        if ini and (not r["data"] or r["data"] < ini):
+            return False
+        if fim and (not r["data"] or r["data"] > fim):
+            return False
+        for chave, valores in filtros_dimensao.items():
+            if valores and str(r.get(chave)) not in valores:
+                return False
+        return True
+
+    registros = [r for r in registros if passa(r)]
+
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+
+    if ini or fim:
+        def no_periodo(d: object) -> bool:
+            if not isinstance(d, date):
+                return False
+            iso = d.isoformat()
+            if ini and iso < ini:
+                return False
+            if fim and iso > fim:
+                return False
+            return True
+
+        secagens = [s for s in secagens if no_periodo(s.get("data_secagem"))]
+        controles = [c for c in controles if no_periodo(c.get("data_controle"))]
+
     return agregar_mensal(registros, secagens, controles)
 
 

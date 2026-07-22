@@ -370,3 +370,42 @@ class TestDataReferenciaProjetada:
         listas40 = r40.json()["listas"]
         assert any(a["numero_matriz"] == "70" for a in listas40["inseminadas_30_59"])
         assert not any(a["numero_matriz"] == "70" for a in listas40["inseminadas_1_29"])
+
+
+class TestProximaVisitaReprodutivaSugerida:
+    """#571 — a "Agenda Reprodutiva" expõe último serviço/próxima visita
+    sugerida (último serviço do rebanho + intervalo do parâmetro), usada pelo
+    seletor "Data atual"/"Projeção" no front. Intervalo 0 desliga a sugestão."""
+
+    def test_sem_nenhum_servico_nao_ha_sugestao(self, client):
+        c, engine = client
+        r = c.get("/reproducao/agenda-veterinario")
+        corpo = r.json()
+        assert corpo["ultimo_servico"] is None
+        assert corpo["proxima_visita_reprodutiva"] is None
+
+    def test_com_servico_sugere_ultimo_servico_mais_intervalo_padrao(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="80", data_servico=date(2026, 7, 1)))
+            s.commit()
+        r = c.get("/reproducao/agenda-veterinario")
+        corpo = r.json()
+        assert corpo["ultimo_servico"] == "2026-07-01"
+        assert corpo["intervalo_visita_reprodutiva"] == 21
+        assert corpo["proxima_visita_reprodutiva"] == "2026-07-22"
+
+    def test_intervalo_zero_desliga_a_sugestao(self, client, monkeypatch):
+        # get_param() lê do engine real compartilhado entre testes (não do
+        # engine isolado do fixture), então mockar a função direto evita
+        # sujar o parâmetro global para os outros testes da suíte.
+        monkeypatch.setattr("fazenda.rules.parametros.intervalo_visita_reprodutiva", lambda: 0)
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="80", data_servico=date(2026, 7, 1)))
+            s.commit()
+        r = c.get("/reproducao/agenda-veterinario")
+        corpo = r.json()
+        assert corpo["ultimo_servico"] == "2026-07-01"
+        assert corpo["intervalo_visita_reprodutiva"] == 0
+        assert corpo["proxima_visita_reprodutiva"] is None

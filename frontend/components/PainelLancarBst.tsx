@@ -212,8 +212,8 @@ export function PainelLancarBst({ agenda, onAtualizado }: { agenda: any; onAtual
           <button className="btn-ghost" disabled={!selecionados.size || ocupado} onClick={marcarInapta} style={{ color: "var(--red)" }}>
             <Ban size={14} /> Marcar como inapta
           </button>
-          <button className="btn-ghost" disabled={!selecionados.size || ocupado} onClick={reverterInapta}>
-            <XIcon size={14} /> Reverter (voltar a apta)
+          <button className="btn-ghost" disabled={!selecionados.size || ocupado} onClick={reverterInapta} title="Volta para a lista &quot;Incluir no próximo BST&quot; — só conta como apta de novo após uma nova aplicação">
+            <XIcon size={14} /> Reverter (incluir de novo)
           </button>
         </div>
       </div>

@@ -35,6 +35,13 @@ from fazenda.rules.patrimonio import status_manutencao
 
 router = APIRouter(prefix="/agenda", tags=["agenda"])
 
+# Reconhece uma aplicação como BST pelo nome do produto — casamento por
+# palavra inteira (\b), não substring, para não achar falso positivo em
+# produtos como "carboidrato" ou "substância". Usado tanto para ancorar a
+# "próxima visita BST" na última aplicação real quanto para saber quando uma
+# aplicação confirmada deve limpar Animal.aguardando_nova_aplicacao_bst.
+MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
+
 # Categoria do evento -> módulo cujo acesso o usuário precisa ter para ver o
 # evento na Agenda (e no sininho de notificações, ver notificacoes.py).
 # "Atividades" é o balde genérico de eventos manuais — exige só o acesso à
@@ -247,9 +254,6 @@ def calcular_agenda(
     # próxima aplicação (bst_elegiveis/bst_nunca_aplicados) já use a data
     # certa — antes essa correção só acontecia depois, e nunca realimentava
     # o cálculo de elegibilidade, deixando animais entrarem cedo demais.
-    # Casamento por palavra inteira (\b) — não por substring — para não achar
-    # falso positivo em produtos como "carboidrato" ou "substância".
-    MARCADORES_BST = re.compile(r"\b(lactotropin|boostin|bst|somatotropina)\b", re.IGNORECASE)
     sanidades_bst = [
         s for s in session.exec(select(Sanidade)).all()
         if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
@@ -929,6 +933,14 @@ def _baixar_aplicacao_agendada(
         natureza=ag.natureza or "curativo",
     ))
 
+    # Aplicação de BST confirmada (produto reconhecido) — fecha o ciclo do
+    # "Reverter (voltar a apta)", igual à aplicação direta em aplicar_bst_lote.
+    if MARCADORES_BST.search(produto_final or ""):
+        animal = session.exec(select(Animal).where(Animal.numero == ag.numero_matriz)).first()
+        if animal and animal.aguardando_nova_aplicacao_bst:
+            animal.aguardando_nova_aplicacao_bst = False
+            session.add(animal)
+
     estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto_final)).first()
     if dose_final and estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(unidade_final, estoque_item.unidade):
         estoque_item.quantidade = (estoque_item.quantidade or 0) - dose_final
@@ -1242,6 +1254,13 @@ def aplicar_bst_lote(
                     estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
                 estoque_item.atualizado_em = datetime.utcnow()
                 session.add(estoque_item)
+        # Nova aplicação de fato lançada — fecha o ciclo de "Reverter (voltar
+        # a apta)": o animal deixa de ficar em bst_reanalise e volta a contar
+        # normalmente pela avaliação de elegibilidade (ver agenda_engine.py).
+        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        if animal and animal.aguardando_nova_aplicacao_bst:
+            animal.aguardando_nova_aplicacao_bst = False
+            session.add(animal)
     session.commit()
 
     intervalo = get_param("intervalo_bst", 12)
@@ -1257,7 +1276,7 @@ def aplicar_bst_lote(
 class MarcarInaptaBstIn(BaseModel):
     numeros_matriz: list[str]
     # True = marca como inapta para a próxima aplicação/retira voluntariamente
-    # (Animal.excluir_bst); False = reverte (volta a aparecer como apta).
+    # (Animal.excluir_bst); False = reverte ("Reverter (voltar a apta)").
     inapta: bool = True
 
 
@@ -1265,13 +1284,19 @@ class MarcarInaptaBstIn(BaseModel):
 def marcar_inapta_bst(dados: MarcarInaptaBstIn, session: Session = Depends(get_session)) -> dict:
     """Marca (ou reverte) animais como inaptos para a próxima aplicação de BST
     — ação distinta de aplicar: não lança nenhuma Sanidade nem mexe em
-    estoque, só sinaliza para a Agenda/relatórios via Animal.excluir_bst."""
+    estoque, só sinaliza para a Agenda/relatórios via Animal.excluir_bst.
+
+    Reverter (inapta=False) NÃO torna o animal apto imediatamente — ele vai
+    para "Incluir no próximo BST" (bst_reanalise) e só volta a bst_elegiveis
+    depois que uma aplicação de fato é lançada (ver aplicar_bst_lote, que
+    limpa aguardando_nova_aplicacao_bst)."""
     atualizados = 0
     for numero in dados.numeros_matriz:
         animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
         if not animal:
             continue
         animal.excluir_bst = dados.inapta
+        animal.aguardando_nova_aplicacao_bst = False if dados.inapta else True
         session.add(animal)
         atualizados += 1
     session.commit()

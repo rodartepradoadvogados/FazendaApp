@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail } from "lucide-react";
-import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail } from "@/lib/api";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus } from "lucide-react";
+import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
@@ -94,22 +94,70 @@ function FormEnviarDiagnostico({ numero, onEnviado, onCancelar }: { numero: stri
   );
 }
 
+type DadosAgendaVet = {
+  listas: Listas; totais: Record<string, number>; data_referencia: string; projetado?: boolean;
+  ultimo_servico?: string | null; proxima_visita_reprodutiva?: string | null; intervalo_visita_reprodutiva?: number;
+};
+
 export default function AgendaVeterinarioPage() {
   const hoje = new Date().toISOString().slice(0, 10);
-  const [dados, setDados] = useState<{ listas: Listas; totais: Record<string, number>; data_referencia: string; projetado?: boolean } | null>(null);
+  const [dados, setDados] = useState<DadosAgendaVet | null>(null);
   const [dataRef, setDataRef] = useState(hoje);
+  const [modo, setModo] = useState<"atual" | "projecao">("atual");
   const [error, setError] = useState<string | null>(null);
   const [abertas, setAbertas] = useState<Set<string>>(new Set());
   const [reconfirmando, setReconfirmando] = useState<string | null>(null);
   const [enviandoDg, setEnviandoDg] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
 
+  // Janela suspensa em 2 passos para configurar a próxima visita reprodutiva
+  // quando o modo "projeção" não tem para onde projetar (parâmetro em 0/vazio
+  // ou nenhum serviço lançado ainda).
+  const [passoAgendar, setPassoAgendar] = useState<null | "confirmar" | "definir">(null);
+  const [novaData, setNovaData] = useState("");
+  const [salvandoParam, setSalvandoParam] = useState(false);
+  const [avisoParam, setAvisoParam] = useState<string | null>(null);
+
   function carregar() {
     fetchAgendaVeterinario(dataRef !== hoje ? dataRef : undefined).then(setDados).catch((e) => setError(e.message));
   }
   useEffect(carregar, [dataRef]);
 
+  // A metadata (último serviço / próxima visita sugerida) não depende da
+  // data de referência escolhida — assim que carrega uma vez, já sabemos se
+  // o modo "projeção" tem para onde ir.
+  useEffect(() => {
+    if (modo === "atual") { setDataRef(hoje); return; }
+    if (dados?.proxima_visita_reprodutiva) setDataRef(dados.proxima_visita_reprodutiva);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modo]);
+
   const toggle = (k: string) => setAbertas((s) => { const n = new Set(s); n.has(k) ? n.delete(k) : n.add(k); return n; });
+
+  const intervaloImplicito = dados?.ultimo_servico && novaData
+    ? Math.round((new Date(novaData + "T00:00:00").getTime() - new Date(dados.ultimo_servico + "T00:00:00").getTime()) / 86400000)
+    : null;
+
+  async function confirmarComoParametro() {
+    if (intervaloImplicito == null) return;
+    setSalvandoParam(true);
+    try {
+      await atualizarParametro("intervalo_visita_reprodutiva", intervaloImplicito);
+      setPassoAgendar(null);
+      setAvisoParam(null);
+      setSucesso(`Intervalo da visita reprodutiva definido em ${intervaloImplicito} dia(s). A próxima visita passa a ser calculada automaticamente.`);
+      setDataRef(novaData);
+    } catch (e: any) {
+      setAvisoParam(e.message);
+    } finally {
+      setSalvandoParam(false);
+    }
+  }
+
+  function recusarComoParametro() {
+    setPassoAgendar(null);
+    setAvisoParam("Para que a próxima visita reprodutiva seja sugerida automaticamente, vá em Configurações > Parâmetros e defina o intervalo entre serviços.");
+  }
 
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
@@ -117,26 +165,37 @@ export default function AgendaVeterinarioPage() {
   return (
     <div className="animate-in">
       <div className="mb-4">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda do veterinário</h2>
+        <h2 className="text-xl font-bold flex items-center gap-2"><Stethoscope size={20} style={{ color: "var(--dourado)" }} /> Agenda Reprodutiva</h2>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
           Roteiro da visita reprodutiva, na data de referência {fmtDia(dados.data_referencia)}. Machos e bezerras nunca
           entram em nenhuma lista; os demais só entram (exceto em "Verificar aptidão") ao atingir 15 meses e 300 kg.
           Toque entre 30–59 dias; reconfirmação a partir de 60 dias.
         </p>
-        <div className="flex items-center gap-2 mt-2" style={{ flexWrap: "wrap" }}>
-          <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem" }}>
-            Data de referência
-            <input type="date" value={dataRef} onChange={(e) => setDataRef(e.target.value)}
-              style={{ background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem 0.5rem", fontSize: "0.8rem" }} />
+        <div className="flex items-center gap-4 mt-2" style={{ flexWrap: "wrap" }}>
+          <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+            <input type="radio" name="modoAgendaRepro" checked={modo === "atual"} onChange={() => setModo("atual")} /> Data atual
           </label>
-          {dataRef !== hoje && (
-            <button onClick={() => setDataRef(hoje)}
-              style={{ fontSize: "0.75rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
-              Voltar para hoje
+          <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
+            <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próximo serviço agendado
+          </label>
+        </div>
+      </div>
+
+      {modo === "projecao" && !dados.proxima_visita_reprodutiva && (
+        <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
+          <div className="flex items-center gap-2" style={{ color: "var(--red)" }}>
+            <AlertTriangle size={16} /><span>Não há próximo serviço agendado.</span>
+          </div>
+          {avisoParam ? (
+            <p style={{ marginTop: "0.4rem", color: "var(--text-muted)" }}>{avisoParam}</p>
+          ) : (
+            <button onClick={() => setPassoAgendar("confirmar")} className="btn-primary mt-2"
+              style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "flex", alignItems: "center", gap: "0.35rem" }}>
+              <CalendarPlus size={14} /> Deseja agendar a próxima visita reprodutiva?
             </button>
           )}
         </div>
-      </div>
+      )}
 
       {dados.projetado && (
         <div className="mb-3 flex items-center gap-2" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.6rem 1rem", color: "var(--dourado-light)", fontSize: "0.85rem" }}>
@@ -183,6 +242,65 @@ export default function AgendaVeterinarioPage() {
       {LISTAS.every((l) => (dados.totais[l.key] ?? 0) === 0) && (
         <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum animal para classificar no momento.</p>
       )}
+
+      {passoAgendar === "confirmar" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ maxWidth: "420px", width: "90%" }}>
+            <div className="card-header mb-2">Agendar a próxima visita reprodutiva?</div>
+            <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+              Não há um próximo serviço agendado. Deseja definir a data da próxima visita reprodutiva agora?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Não</button>
+              <button onClick={() => { setNovaData(""); setPassoAgendar("definir"); }} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>Sim</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {passoAgendar === "definir" && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 200, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ maxWidth: "460px", width: "90%" }}>
+            <div className="card-header mb-2">Data do próximo serviço</div>
+            {!dados.ultimo_servico ? (
+              <>
+                <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                  Ainda não há nenhum serviço reprodutivo lançado — não é possível calcular o intervalo automaticamente.
+                  Vá em Configurações &gt; Parâmetros e defina o intervalo entre serviços manualmente.
+                </p>
+                <div className="flex justify-end">
+                  <button onClick={() => setPassoAgendar(null)} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>Entendi</button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "block", marginBottom: "0.75rem" }}>
+                  Escreva a data do próximo serviço
+                  <input type="date" value={novaData} onChange={(e) => setNovaData(e.target.value)} min={dados.ultimo_servico}
+                    style={{ display: "block", marginTop: "0.3rem", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.85rem" }} />
+                </label>
+                {intervaloImplicito != null && intervaloImplicito > 0 && (
+                  <div className="mb-3" style={{ background: "rgba(212,160,23,0.15)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.6rem 0.8rem", color: "var(--dourado-light)", fontSize: "0.8rem" }}>
+                    Essa data considerará <strong>{intervaloImplicito} dia(s)</strong> de intervalo entre o último serviço
+                    ({fmtDia(dados.ultimo_servico)}) e o serviço lançado. Deseja colocar esse intervalo como parâmetro?
+                  </div>
+                )}
+                {avisoParam && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{avisoParam}</p>}
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setPassoAgendar(null)} style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>Cancelar</button>
+                  <button onClick={recusarComoParametro} disabled={intervaloImplicito == null || intervaloImplicito <= 0}
+                    style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                    Não
+                  </button>
+                  <button onClick={confirmarComoParametro} disabled={salvandoParam || intervaloImplicito == null || intervaloImplicito <= 0} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
+                    {salvandoParam ? "Salvando…" : "Sim, salvar como parâmetro"}
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -210,7 +328,7 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
     <div className="card mb-3" style={{ overflowX: "auto" }}>
       <div className="card-header mb-2 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
         <span>{cfg.label}</span>
-        <ExportarBotoes titulo={`Agenda do veterinário — ${cfg.label}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${cfg.key}`} />
+        <ExportarBotoes titulo={`Agenda Reprodutiva — ${cfg.label}`} colunas={colunasExport} linhas={linhasExport} nomeArquivoBase={`agenda_veterinario_${cfg.key}`} />
       </div>
       <table className="fazenda-table">
         <thead><tr>

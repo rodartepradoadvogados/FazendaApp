@@ -105,3 +105,17 @@ class TestCriarControles:
         r = client.get("/producao/controles")
         registro = next(c for c in r.json()["controles"] if c["numero"] == "102")
         assert registro["ordenha3_kg"] == 3.0
+
+    def test_ordenha_nao_lancada_fica_nula_e_nao_vira_zero(self, client):
+        # Regressão: uma ordenha em branco (não lançada) deve ficar None, não
+        # 0 — um 0 gravado como se fosse ordenha real puxaria a média de
+        # manhã/noite do relatório para baixo silenciosamente.
+        client.post("/producao/controles", json={
+            "data_controle": "2026-07-08",
+            "entradas": [{"numero_matriz": "101", "ordenhas": [12.5, None]}],
+        })
+        r = client.get("/producao/controles")
+        registro = next(c for c in r.json()["controles"] if c["numero"] == "101")
+        assert registro["ordenha1_kg"] == 12.5
+        assert registro["ordenha2_kg"] is None
+        assert registro["producao_kg"] == 12.5

@@ -8,9 +8,9 @@ import { RelatorioAcessos, AuditoriaAtividade } from "@/components/AuditoriaAces
 const MODULOS = [
   { key: "capa", label: "Capa" }, { key: "indicadores", label: "Indicadores" }, { key: "agenda", label: "Agenda" },
   { key: "lancamentos", label: "Lançamentos" }, { key: "reproducao", label: "Reprodução" }, { key: "analise", label: "Análise Repr." },
-  { key: "vet", label: "Agenda do veterinário" },
+  { key: "vet", label: "Agenda Reprodutiva" },
   { key: "rebanho", label: "Rebanho" }, { key: "producao", label: "Produção" }, { key: "alimentacao", label: "Alimentação" },
-  { key: "sanidade", label: "Sanidade" }, { key: "financeiro", label: "Financeiro" }, { key: "estoque", label: "Sanidade/Estoque" },
+  { key: "sanidade", label: "Sanidade" }, { key: "recria", label: "Recria" }, { key: "financeiro", label: "Financeiro" }, { key: "estoque", label: "Sanidade/Estoque" },
   { key: "pedidos", label: "Pedidos" },
   { key: "parametros", label: "Parâmetros" }, { key: "upload", label: "Upload" },
 ];

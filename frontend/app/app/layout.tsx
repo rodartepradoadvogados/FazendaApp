@@ -15,7 +15,6 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
 import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
 import { CowIcon } from "@/components/CowIcon";
-import { ehAdmin } from "@/lib/api";
 
 const ABAS = [
   { href: "/app", label: "Agenda", icon: CalendarColorfulIcon },
@@ -89,12 +88,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <CloudUpload size={14} /> {fila.length}
               </Link>
             )}
-            {ehAdmin() && (
-              <Link href="/app/menu#news" title="News — notícias de pecuária leiteira" aria-label="Abrir News"
-                style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
-                <NewsIcon size={19} color="var(--mob-header-fg)" />
-              </Link>
-            )}
+            <Link href="/app/menu#news" title="News — notícias de pecuária leiteira" aria-label="Abrir News"
+              style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+              <NewsIcon size={19} color="var(--mob-header-fg)" />
+            </Link>
             <button type="button" onClick={alternarTema} aria-label={escuro ? "Mudar para tema claro" : "Mudar para tema escuro"}
               style={{ width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {escuro ? <Sun size={17} /> : <Moon size={17} />}

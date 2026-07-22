@@ -137,12 +137,14 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
   const totalVaca = (numero: string) => (porVaca[numero] || ["", "", ""]).reduce((s, v) => s + (Number(v) || 0), 0);
   const totalLote = vacasDoLote.reduce((s, a) => s + totalVaca(a.numero), 0);
 
+  // Ordenha em branco vira `null` (não lançada), nunca `0` — um `0` gravado
+  // como se fosse ordenha real puxaria a média de manhã/noite para baixo.
   function salvar() {
     if (modo === "vaca") {
       if (!animal) return erroValidacao("Selecione o animal.");
       if (total <= 0) return erroValidacao("Informe o leite de ao menos uma ordenha.");
-      const ordenhas = [Number(o1) || 0, Number(o2) || 0];
-      if (o3.trim() !== "") ordenhas.push(Number(o3) || 0);
+      const ordenhas: (number | null)[] = [o1.trim() === "" ? null : Number(o1), o2.trim() === "" ? null : Number(o2)];
+      if (o3.trim() !== "") ordenhas.push(Number(o3));
       enviar(
         "/producao/controles",
         { data_controle: data, entradas: [{ numero_matriz: animal, ordenhas }] },
@@ -154,11 +156,11 @@ function ControleLeiteiro({ animais, animalFixado }: { animais: Animal[]; animal
       const entradas = vacasDoLote
         .map((a) => {
           const [v1, v2, v3] = porVaca[a.numero] || ["", "", ""];
-          const ordenhas = [Number(v1) || 0, Number(v2) || 0];
-          if (v3.trim() !== "") ordenhas.push(Number(v3) || 0);
+          const ordenhas: (number | null)[] = [v1.trim() === "" ? null : Number(v1), v2.trim() === "" ? null : Number(v2)];
+          if (v3.trim() !== "") ordenhas.push(Number(v3));
           return { numero_matriz: a.numero, ordenhas };
         })
-        .filter((ent) => ent.ordenhas.some((v) => v > 0));
+        .filter((ent) => ent.ordenhas.some((v) => v !== null));
       if (!entradas.length) return erroValidacao("Informe a pesagem de ao menos uma vaca do lote.");
       enviar(
         "/producao/controles",
