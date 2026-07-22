@@ -152,6 +152,7 @@ def registrar_aplicacao(
         return {"criados": 0, "agendadas": agendadas, "avisos": [], "programado": True}
 
     criados = 0
+    sanidade_ids: list[int] = []
     avisos: list[str] = []
     for item in dados.itens:
         # Se o usuário escolheu o frasco/apresentação específico ("qual frasco?"),
@@ -169,7 +170,7 @@ def registrar_aplicacao(
             )
 
         for numero in dados.animais:
-            session.add(Sanidade(
+            sanidade = Sanidade(
                 numero_matriz=numero,
                 data_aplicacao=dados.data_aplicacao,
                 produto=item.produto,
@@ -180,7 +181,10 @@ def registrar_aplicacao(
                 obs=dados.observacao,
                 usuario_id=usuario_id_seguro(user),
                 natureza=dados.natureza,
-            ))
+            )
+            session.add(sanidade)
+            session.flush()
+            sanidade_ids.append(sanidade.id)
             criados += 1
 
         if estoque_item and estoque_item.estocavel is False:
@@ -213,7 +217,7 @@ def registrar_aplicacao(
             )
 
     session.commit()
-    return {"criados": criados, "agendadas": 0, "avisos": avisos, "programado": False}
+    return {"criados": criados, "agendadas": 0, "avisos": avisos, "programado": False, "sanidade_ids": sanidade_ids}
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -726,20 +730,24 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
         if dados.resultado_exame and dados.resultado_exame not in RESULTADOS_EXAME:
             raise HTTPException(status_code=400, detail=f"Resultado inválido (use: {', '.join(RESULTADOS_EXAME)})")
         banda = _banda_numerica(exame_def, dados.resultado_numerico) if dados.resultado_numerico is not None else None
+        exame_resultado_ids: list[int] = []
         for numero in dados.animais:
-            session.add(ExameResultado(
+            exame_resultado = ExameResultado(
                 numero_matriz=numero, evento_sanitario_id=ev.id, exame_definicao_id=ev.exame_definicao_id,
                 data_exame=dados.data_evento, resultado=dados.resultado_exame,
                 valor_numerico=dados.resultado_numerico, banda=banda,
                 veterinario=dados.veterinario, observacao=dados.observacao,
-            ))
+            )
+            session.add(exame_resultado)
+            session.flush()
+            exame_resultado_ids.append(exame_resultado.id)
         session.commit()
         if dados.resultado_exame == "positivo":
             marcar_a_descartar(
                 ADescartarIn(animais=dados.animais, descartar=True, observacao=f"Exame {ev.nome}: positivo"),
                 session,
             )
-        resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais)}
+        resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
     eventos, doencas, principios, categorias = _nomes(session)
     return {

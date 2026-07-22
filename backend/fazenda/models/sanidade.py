@@ -49,6 +49,11 @@ class Sanidade(SQLModel, table=True):
     # Avaliação de cura, pedida na Agenda no dia seguinte a uma aplicação
     # curativa (None = ainda não respondida). Alimenta o relatório Taxa de cura.
     curada: Optional[bool] = None
+    # Vínculo (soft-join pelo número, igual a *.numero_lancamento_gerado em
+    # ManutencaoPatrimonio/FolhaPagamento) com o lançamento financeiro em
+    # ContaGerencial que paga esta aplicação — ver popup de vínculo
+    # sanitário/reprodutivo, disparado ao salvar uma vacina/exame preventivo.
+    numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
 
 
 class AplicacaoAgendada(SQLModel, table=True):
@@ -186,6 +191,10 @@ class ExameResultado(SQLModel, table=True):
     veterinario: Optional[str] = None
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Vínculo (soft-join pelo número) com o lançamento financeiro em
+    # ContaGerencial que paga este exame — ver popup de vínculo
+    # sanitário/reprodutivo, disparado ao salvar um exame preventivo.
+    numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
 
 
 class EventoSanitario(SQLModel, table=True):

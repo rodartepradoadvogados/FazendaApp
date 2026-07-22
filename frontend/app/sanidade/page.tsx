@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route } from "lucide-react";
+import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History } from "lucide-react";
 import {
   fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
@@ -18,6 +18,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import type { AnimalRow } from "@/components/AnimalModal";
+import { HistoricoPreventivoView } from "@/components/sanidade/HistoricoPreventivoView";
 
 const COLUNAS_SANIDADE = [
   { header: "Data", key: "data" }, { header: "Animal", key: "numero" }, { header: "Produto", key: "produto" },
@@ -1318,10 +1319,11 @@ const ABAS_CURATIVA = [
   { id: "taxa_cura", label: "Taxa de cura", icon: Percent, title: "Taxa de cura dos tratamentos (aplicações e protocolos)" },
 ] as const satisfies readonly { id: AbaCurativa; label: string; icon: any; title: string }[];
 
-type AbaPreventiva = "aplicacoes" | "calendario";
+type AbaPreventiva = "aplicacoes" | "calendario" | "historico";
 const ABAS_PREVENTIVA = [
   { id: "aplicacoes", label: "Aplicações", icon: ClipboardList, title: "Aplicações preventivas já lançadas" },
   { id: "calendario", label: "Calendário sanitário", icon: CalendarClock, title: "Regras recorrentes do calendário preventivo" },
+  { id: "historico", label: "Histórico", icon: History, title: "Vacinas e exames já realizados, agrupados por produto/exame, com filtros" },
 ] as const satisfies readonly { id: AbaPreventiva; label: string; icon: any; title: string }[];
 
 export default function SanidadePage() {
@@ -1377,6 +1379,7 @@ export default function SanidadePage() {
         <>
           {abaPrev === "aplicacoes" && <AplicacoesView natureza="preventivo" autoEditarId={autoEditarId} />}
           {abaPrev === "calendario" && <CalendarioSanitarioView />}
+          {abaPrev === "historico" && <HistoricoPreventivoView />}
         </>
       )}
       {aba === "rastreabilidade" && <RastreabilidadeSanitariaView />}

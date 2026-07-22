@@ -15,8 +15,9 @@ from fazenda.auth import get_current_user
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, FormaPagamentoCadastro, Fornecedor, LancamentoAnexo, LancamentoItem,
-    ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, SeedFlag, TipoDocumento, Usuario,
+    CentroCusto, ContaCorrente, ContaGerencial, EntregaLeiteMensal, Estoque, ExameDefinicao, ExameResultado, FormaPagamentoCadastro, Fornecedor,
+    LancamentoAnexo, LancamentoItem, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade, SeedFlag, Servico,
+    TipoDocumento, Usuario,
 )
 from fazenda.rules.auditoria import mapa_usuarios
 from fazenda.rules.email import enviar_email
@@ -529,6 +530,7 @@ def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
                 "fluxo": c.fluxo, "tipo_fixo_variavel": c.tipo_fixo_variavel,
                 "rmca_receita_leite": c.rmca_receita_leite, "rmca_custo_alimentacao": c.rmca_custo_alimentacao,
                 "natureza": c.natureza,
+                "pede_vinculo_sanitario_reprodutivo": c.pede_vinculo_sanitario_reprodutivo,
             }
             for c in plano
         ],
@@ -702,6 +704,10 @@ class PlanoContaGerencialIn(BaseModel):
     # "servico" | "produto" | "ambos" — restringe o que pode ser lançado nesta
     # conta em Financeiro > Contas a pagar/a receber (ver FormFinanceiro).
     natureza: str | None = None
+    # Quando marcado, lançar uma despesa nesta conta pergunta, ao salvar, se o
+    # pagamento deve ser vinculado a uma vacina/exame/visita reprodutiva (ver
+    # popup de vínculo sanitário/reprodutivo em FormFinanceiro).
+    pede_vinculo_sanitario_reprodutivo: bool | None = None
 
 
 @router.post("/plano-contas")
@@ -734,6 +740,153 @@ def atualizar_conta_gerencial(conta_id: int, dados: PlanoContaGerencialIn, sessi
     session.commit()
     session.refresh(conta)
     return conta.model_dump()
+
+
+# ---------------------------------------------------------------------------
+# Vínculo financeiro ↔ sanitário/reprodutivo — despesas em contas gerenciais
+# marcadas (ex.: "3.03.02.11 - Veterinário/zootecnista", ver
+# PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo) podem ser associadas
+# a uma aplicação de vacina, exame ou visita reprodutiva (diagnóstico de
+# gestação) já lançados — ou o inverso: ao lançar a vacina/exame/diagnóstico,
+# associá-lo a uma conta a pagar/paga já existente, ou gerar uma nova a partir
+# dele. O vínculo é feito por `numero_lancamento_vinculado` (soft-join pelo
+# número do lançamento, mesmo padrão de ManutencaoPatrimonio/FolhaPagamento),
+# nunca por FK — garante rastreabilidade sem acoplar os módulos.
+# ---------------------------------------------------------------------------
+def _rotulo_exame(exame_definicao_id: int | None, session: Session) -> str:
+    if exame_definicao_id is None:
+        return "Exame"
+    ed = session.get(ExameDefinicao, exame_definicao_id)
+    return f"Exame de {ed.nome}" if ed else "Exame"
+
+
+@router.get("/candidatos-vinculo-sanitario-reprodutivo")
+def candidatos_vinculo_sanitario_reprodutivo(session: Session = Depends(get_session)) -> dict:
+    """
+    Lista, para toda a fazenda (não filtrada por animal — o lançamento
+    financeiro não guarda animal/matriz), os eventos sanitários/reprodutivos
+    mais recentes ainda NÃO vinculados a um lançamento financeiro: os 3
+    últimos serviços reprodutivos (diagnóstico de gestação), as 2 últimas
+    vacinas aplicadas e os 2 últimos exames realizados — cada um agrupado por
+    data (um lançamento em lote, com vários animais, vira um só candidato).
+    Usado no popup de vínculo ao salvar uma despesa numa conta gerencial
+    marcada (ver PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo).
+    """
+    # Serviços reprodutivos com diagnóstico já lançado — agrupados por
+    # (data do diagnóstico, método), que coincide com a data da visita/D0.
+    servicos = session.exec(
+        select(Servico)
+        .where(Servico.numero_lancamento_vinculado.is_(None), Servico.data_diagnostico.is_not(None))
+        .order_by(Servico.data_diagnostico.desc())
+    ).all()
+    grupos_servico: dict[tuple, list[Servico]] = {}
+    for s in servicos:
+        grupos_servico.setdefault((s.data_diagnostico, s.metodo_diagnostico), []).append(s)
+    candidatos_servico = [
+        {
+            "tipo": "servico",
+            "ids": [g.id for g in grupo],
+            "rotulo": f"Diagnóstico de gestação — {metodo or 'visita reprodutiva'} ({len(grupo)} animal(is))",
+            "data": data.isoformat() if data else None,
+            "responsavel": next((g.inseminador for g in grupo if g.inseminador), None),
+        }
+        for (data, metodo), grupo in list(grupos_servico.items())[:3]
+    ]
+
+    # Vacinas aplicadas (Sanidade, categoria "Vacina") — agrupadas por
+    # (produto, data de aplicação).
+    vacinas = session.exec(
+        select(Sanidade)
+        .where(Sanidade.numero_lancamento_vinculado.is_(None), Sanidade.categoria == "Vacina")
+        .order_by(Sanidade.data_aplicacao.desc())
+    ).all()
+    grupos_vacina: dict[tuple, list[Sanidade]] = {}
+    for v in vacinas:
+        grupos_vacina.setdefault((v.produto, v.data_aplicacao), []).append(v)
+    candidatos_vacina = [
+        {
+            "tipo": "sanidade",
+            "ids": [g.id for g in grupo],
+            "rotulo": f"Vacina — {produto} ({len(grupo)} animal(is))",
+            "data": data.isoformat() if data else None,
+            "responsavel": next((g.responsavel for g in grupo if g.responsavel), None),
+        }
+        for (produto, data), grupo in list(grupos_vacina.items())[:2]
+    ]
+
+    # Exames realizados (ExameResultado) — agrupados por (exame, data).
+    exames = session.exec(
+        select(ExameResultado)
+        .where(ExameResultado.numero_lancamento_vinculado.is_(None))
+        .order_by(ExameResultado.data_exame.desc())
+    ).all()
+    grupos_exame: dict[tuple, list[ExameResultado]] = {}
+    for e in exames:
+        grupos_exame.setdefault((e.exame_definicao_id, e.data_exame), []).append(e)
+    candidatos_exame = [
+        {
+            "tipo": "exame",
+            "ids": [g.id for g in grupo],
+            "rotulo": f"{_rotulo_exame(exame_definicao_id, session)} ({len(grupo)} animal(is))",
+            "data": data.isoformat() if data else None,
+            "responsavel": next((g.veterinario for g in grupo if g.veterinario), None),
+        }
+        for (exame_definicao_id, data), grupo in list(grupos_exame.items())[:2]
+    ]
+
+    return {"servicos": candidatos_servico, "vacinas": candidatos_vacina, "exames": candidatos_exame}
+
+
+class VincularEventoIn(BaseModel):
+    tipo: str  # "sanidade" | "exame" | "servico"
+    ids: list[int]
+    numero_lancamento: str
+
+
+@router.post("/vincular-evento-sanitario-reprodutivo")
+def vincular_evento_sanitario_reprodutivo(dados: VincularEventoIn, session: Session = Depends(get_session)) -> dict:
+    modelo = {"sanidade": Sanidade, "exame": ExameResultado, "servico": Servico}.get(dados.tipo)
+    if modelo is None:
+        raise HTTPException(status_code=400, detail="Tipo inválido (use: sanidade, exame, servico)")
+    if not session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == dados.numero_lancamento)).first():
+        raise HTTPException(status_code=404, detail="Lançamento financeiro não encontrado")
+    atualizados = 0
+    for item_id in dados.ids:
+        obj = session.get(modelo, item_id)
+        if obj:
+            obj.numero_lancamento_vinculado = dados.numero_lancamento
+            session.add(obj)
+            atualizados += 1
+    session.commit()
+    return {"vinculados": atualizados}
+
+
+@router.get("/lancamentos-por-data")
+def lancamentos_por_data(data: date, tipo: str = "despesa", session: Session = Depends(get_session)) -> list[dict]:
+    """
+    Lançamentos (agrupados por numero_lancamento) com data de EMISSÃO igual à
+    informada — usado no popup de vínculo do lado sanitário/reprodutivo,
+    opção "associar este evento a uma conta paga/a pagar" (a data buscada é a
+    da vacina/exame/diagnóstico, ver /calendario/cadastrar-preventivo e
+    reprodução > diagnóstico de gestação).
+    """
+    contas = session.exec(
+        select(ContaGerencial).where(ContaGerencial.data_emissao == data, ContaGerencial.tipo == tipo)
+    ).all()
+    por_lancamento: dict[str, list[ContaGerencial]] = {}
+    for c in contas:
+        if c.numero_lancamento:
+            por_lancamento.setdefault(c.numero_lancamento, []).append(c)
+    return [
+        {
+            "numero_lancamento": numero,
+            "fornecedor_cliente": grupo[0].fornecedor_cliente,
+            "descricao": grupo[0].descricao,
+            "valor_total": sum(c.valor_total or 0 for c in grupo),
+            "status": "pago" if all(c.valor_pago is not None for c in grupo) else "em aberto",
+        }
+        for numero, grupo in por_lancamento.items()
+    ]
 
 
 @router.get("/rmca")

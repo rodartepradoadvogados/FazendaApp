@@ -13,6 +13,7 @@ export type ContaPlano = {
   rmca_receita_leite?: boolean | null;
   rmca_custo_alimentacao?: boolean | null;
   natureza?: string | null; // "servico" | "produto" | "ambos"
+  pede_vinculo_sanitario_reprodutivo?: boolean | null;
 };
 
 /** Nível na hierarquia: "3" = 1, "3.01" = 2, "3.01.01" = 3, "3.01.01.01" = 4. */

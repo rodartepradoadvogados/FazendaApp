@@ -8,6 +8,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, codigoGrupo } from "@/components/lancamentos/comumForms";
+import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
 
 export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
   // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar).
@@ -75,6 +76,9 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Popup de vínculo financeiro — a data do diagnóstico coincide com a data
+  // da visita reprodutiva/D0 do protocolo (ver PopupVinculoFinanceiro).
+  const [popupOrigem, setPopupOrigem] = useState<OrigemPopupVinculo | null>(null);
 
   // Animais selecionados com menos de 30 dias desde a última inseminação/cobertura.
   const animaisComAviso = useMemo(() => {
@@ -95,14 +99,19 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
     // o trabalho já feito nem a seleção dos que precisam de nova tentativa.
     const salvos: string[] = [];
     const falhados: string[] = [];
+    const servicoIds: number[] = [];
     try {
       for (const numero of numerosAlvo) {
         try {
-          await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+          const r = await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
+          if (r?.id) servicoIds.push(r.id);
           salvos.push(numero);
         } catch {
           falhados.push(numero);
         }
+      }
+      if (!falhados.length && servicoIds.length) {
+        setPopupOrigem({ tipo: "servico", ids: servicoIds, produto: "Diagnóstico de gestação — visita reprodutiva", data, responsavel: null });
       }
       if (falhados.length) {
         // Sucesso parcial: passa para seleção individual só com quem falhou, para reenviar.
@@ -277,6 +286,8 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
+
+      {popupOrigem && <PopupVinculoFinanceiro origem={popupOrigem} onFechar={() => setPopupOrigem(null)} />}
     </>
   );
 }

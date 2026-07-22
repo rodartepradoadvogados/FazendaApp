@@ -134,6 +134,12 @@ class PlanoContaGerencial(SQLModel, table=True):
     # pode ser um serviço, um produto, ou os dois (ver FormFinanceiro/SeletorContaGerencial).
     natureza: Optional[str] = None
 
+    # Quando marcado, um lançamento de despesa nesta conta (ex.: 3.03.02.11 —
+    # Veterinário/zootecnista) pergunta, ao salvar, se o pagamento deve ser
+    # vinculado a uma aplicação de vacina, exame ou visita reprodutiva — ver
+    # popup de vínculo sanitário/reprodutivo em FormFinanceiro.
+    pede_vinculo_sanitario_reprodutivo: Optional[bool] = None
+
 
 # ---------------------------------------------------------------------------
 # Conta corrente (Configurações > Parâmetros financeiros) — antes era uma
