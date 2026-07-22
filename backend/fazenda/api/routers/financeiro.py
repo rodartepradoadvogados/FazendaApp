@@ -160,6 +160,16 @@ def normalizar_centros_custo(session: Session) -> None:
     session.commit()
 
 
+def seed_centro_custo_agricultura(session: Session) -> None:
+    """Garante o centro de custo "Agricultura" cadastrado (Opção A do plano
+    de custo agrícola — ver models.Safra / relatorio_custo_safra.py).
+    Idempotente por existência (não por SeedFlag), para nunca reaparecer se o
+    usuário decidir inativá-lo depois em Configurações > Parâmetros financeiros."""
+    if not session.exec(select(CentroCusto).where(CentroCusto.nome == "Agricultura")).first():
+        session.add(CentroCusto(nome="Agricultura", ativo=True))
+        session.commit()
+
+
 class ParcelaIn(BaseModel):
     data_vencimento: date
     valor: float

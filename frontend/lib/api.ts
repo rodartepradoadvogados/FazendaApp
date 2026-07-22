@@ -1106,6 +1106,29 @@ export async function previewCriteriosLote(dados: Record<string, any>) {
   return res.json();
 }
 
+// ── Safra (Configurações > Cadastro) — Opção A do plano de custo agrícola:
+// nome, hectares e toneladas produzidas, usados pelo relatório de custo por
+// hectare/tonelada (ver fetchCustoSafra, abaixo) ──
+export async function fetchSafras() {
+  const res = await authFetch(`${API}/safras/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Safras error: ${res.status}`);
+  return res.json();
+}
+export async function criarSafra(dados: Record<string, any>) {
+  const res = await authFetch(`${API}/safras/`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar safra"); }
+  return res.json();
+}
+export async function atualizarSafra(id: number, dados: Record<string, any>) {
+  const res = await authFetch(`${API}/safras/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar safra"); }
+  return res.json();
+}
+
 // ── Movimentação de animais entre lotes ──
 export async function fetchMovimentacoes(params?: { numero_matriz?: string; data_inicio?: string; data_fim?: string }) {
   const qs = new URLSearchParams();
@@ -2575,6 +2598,12 @@ export async function fetchCustoVacaLote(dataInicio: string, dataFim: string, ce
   if (centroCusto) qs.set("centro_custo", centroCusto);
   const res = await authFetch(`${API}/financeiro/custo-vaca-lote?${qs.toString()}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Custo por vaca/lote error: ${res.status}`);
+  return res.json();
+}
+
+export async function fetchCustoSafra(safraId: number) {
+  const res = await authFetch(`${API}/financeiro/custo-safra?safra_id=${safraId}`, { cache: "no-store" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Custo por safra error: ${res.status}`); }
   return res.json();
 }
 

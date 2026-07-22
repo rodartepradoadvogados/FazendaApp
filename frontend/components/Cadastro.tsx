@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
 import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby, Sprout } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
+import CadastroSafra from "./CadastroSafra";
 import CadastroAlimentacao from "./CadastroAlimentacao";
 import CadastroPesagem from "./CadastroPesagem";
 import CadastroRecria from "./CadastroRecria";
@@ -39,6 +40,7 @@ export const ABAS_CADASTRO = [
   ["pesagem", "Pesagem do rebanho", Scale],
   ["pessoas", "Pessoas", Users],
   ["racas", "Raças e grau de sangue", GitBranch],
+  ["safra", "Safra", Sprout],
   ["sanitario", "Sanitário", HeartPulse],
   ["servicos", "Serviços", Wrench],
   ["tipos-metodos-servico", "Tipos/Métodos", Wrench],
@@ -98,6 +100,7 @@ export default function Cadastro({
       {aba === "motivos" && <CadastroMotivosMovimentacao />}
       {aba === "motivos-baixa" && <CadastroMotivosBaixa />}
       {aba === "racas" && <CadastroRacas />}
+      {aba === "safra" && <div style={{ margin: "-1.5rem" }}><CadastroSafra /></div>}
       {aba === "servicos" && <CadastroServicos />}
       {aba === "tipos-metodos-servico" && <CadastroTiposMetodosServico />}
       {aba === "pessoas" && <CadastroPessoas />}
