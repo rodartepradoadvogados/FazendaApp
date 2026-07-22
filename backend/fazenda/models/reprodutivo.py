@@ -58,6 +58,11 @@ class Servico(SQLModel, table=True):
     data_reconfirmacao: Optional[date] = None
     diagnostico_reconfirmacao: Optional[str] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Vínculo (soft-join pelo número) com o lançamento financeiro em
+    # ContaGerencial que paga a visita reprodutiva (diagnóstico de gestação) —
+    # ver popup de vínculo sanitário/reprodutivo, disparado ao salvar o
+    # diagnóstico (data_diagnostico == data_servico == D0 do protocolo IATF).
+    numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
 
 
 # ---------------------------------------------------------------------------

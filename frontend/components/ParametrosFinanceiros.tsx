@@ -366,14 +366,17 @@ function FormasPagamento() {
 type ContaGerencial = {
   id: number; codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string | null;
   rmca_receita_leite: boolean | null; rmca_custo_alimentacao: boolean | null; natureza: string | null;
+  pede_vinculo_sanitario_reprodutivo: boolean | null;
 };
 type FormGerencial = {
   codigo: string; nome: string; ativa: boolean; tipo_fixo_variavel: string;
   rmca_receita_leite: boolean; rmca_custo_alimentacao: boolean; natureza: string;
+  pede_vinculo_sanitario_reprodutivo: boolean;
 };
 const formGerencialVazio: FormGerencial = {
   codigo: "", nome: "", ativa: true, tipo_fixo_variavel: "",
   rmca_receita_leite: false, rmca_custo_alimentacao: false, natureza: "ambos",
+  pede_vinculo_sanitario_reprodutivo: false,
 };
 
 function ContasGerenciais() {
@@ -397,6 +400,7 @@ function ContasGerenciais() {
       codigo: c.codigo, nome: c.nome, ativa: c.ativa, tipo_fixo_variavel: c.tipo_fixo_variavel ?? "",
       rmca_receita_leite: c.rmca_receita_leite ?? false, rmca_custo_alimentacao: c.rmca_custo_alimentacao ?? false,
       natureza: c.natureza ?? "ambos",
+      pede_vinculo_sanitario_reprodutivo: c.pede_vinculo_sanitario_reprodutivo ?? false,
     });
     setEditando(c.id); setMsg(null);
   };
@@ -410,6 +414,7 @@ function ContasGerenciais() {
         codigo: form.codigo.trim(), nome: form.nome.trim(), ativa: form.ativa, tipo_fixo_variavel: form.tipo_fixo_variavel || undefined,
         rmca_receita_leite: form.rmca_receita_leite, rmca_custo_alimentacao: form.rmca_custo_alimentacao,
         natureza: form.natureza || undefined,
+        pede_vinculo_sanitario_reprodutivo: form.pede_vinculo_sanitario_reprodutivo,
       };
       if (editando === "novo") await criarContaGerencial(dados);
       else if (typeof editando === "number") await atualizarContaGerencial(editando, dados);
@@ -445,7 +450,10 @@ function ContasGerenciais() {
           ))}
         </div>
         <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
-          Em Financeiro &gt; Contas a pagar/a receber, "Serviço" só abre a lista de serviços; "Produto" só abre a lista de produtos; "Ambos" abre as duas.
+          Quem decide se o item do lançamento é serviço ou produto é a escolha do próprio usuário na tela de
+          Financeiro &gt; Contas a pagar/a receber; a natureza marcada aqui só restringe, dentro dessa escolha, quais
+          contas gerenciais ficam disponíveis para seleção (uma conta "Serviço" some da lista quando o usuário
+          escolhe "Produto", e vice-versa; "Ambos" sempre aparece nas duas).
         </p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
@@ -453,6 +461,17 @@ function ContasGerenciais() {
           <input type="checkbox" checked={form.rmca_receita_leite} onChange={(e) => setForm({ ...form, rmca_receita_leite: e.target.checked })} /> Conta de receita do leite (indicador RMCA)</label>
         <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.rmca_custo_alimentacao} onChange={(e) => setForm({ ...form, rmca_custo_alimentacao: e.target.checked })} /> Conta de custo com alimentação (indicador RMCA)</label>
+      </div>
+      <div className="mb-1">
+        <label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
+          <input type="checkbox" checked={form.pede_vinculo_sanitario_reprodutivo}
+            onChange={(e) => setForm({ ...form, pede_vinculo_sanitario_reprodutivo: e.target.checked })} />
+          Pedir vínculo com aplicação de vacina/exame/visita reprodutiva ao lançar uma despesa nesta conta
+        </label>
+        <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>
+          Ex.: marque em "Veterinário/zootecnista" — ao salvar uma despesa nessa conta, o sistema oferece vincular
+          o pagamento a um serviço reprodutivo, vacina ou exame já lançado (ver Financeiro &gt; Contas a pagar).
+        </p>
       </div>
     </>
   );
@@ -497,6 +516,7 @@ function ContasGerenciais() {
             )}
             {c.rmca_receita_leite && <span style={badgeRmca}>RMCA · receita leite</span>}
             {c.rmca_custo_alimentacao && <span style={badgeRmca}>RMCA · alimentação</span>}
+            {c.pede_vinculo_sanitario_reprodutivo && <span style={badgeRmca}>vínculo sanitário/reprodutivo</span>}
           </button>
           <button className="btn-ghost" style={{ fontSize: "0.7rem", display: "flex", alignItems: "center", gap: "0.3rem", flexShrink: 0 }} onClick={() => abrirEdicao(c)}><Pencil size={12} /> Editar</button>
         </div>

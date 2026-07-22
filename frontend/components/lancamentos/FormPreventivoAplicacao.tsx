@@ -5,6 +5,7 @@ import {
   cadastrarPreventivo, fetchCalendarioSanitario, fetchEventosSanitarios, fetchExames, fetchMedicamentos, fetchPessoas, formatDate,
   marcarEventoRealizado, previewCriteriosLote,
 } from "@/lib/api";
+import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
@@ -105,6 +106,9 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
   const [exames, setExames] = useState<ExameDef[]>([]);
   const [diagnostico, setDiagnostico] = useState<"" | "positivo" | "negativo" | "indefinido">("");
   const [resultadoNumerico, setResultadoNumerico] = useState("");
+  // Popup de vínculo financeiro — só para vacina/exame (não avulso/tratamento),
+  // disparado após salvar com sucesso (ver PopupVinculoFinanceiro).
+  const [popupOrigem, setPopupOrigem] = useState<OrigemPopupVinculo | null>(null);
 
   useEffect(() => { fetchEventosSanitarios().then((d) => setEventos(d.filter((e: any) => e.ativo))).catch(() => {}); }, []);
   useEffect(() => { fetchExames().then(setExames).catch(() => {}); }, []);
@@ -247,6 +251,12 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
         else if (banda) txtDiagnostico = ` · resultado numérico: ${banda === "abaixo" ? "abaixo da faixa" : banda === "acima" ? "acima da faixa" : "dentro da faixa"}.`;
       }
       setMsg({ tipo: "ok", txt: `Preventivo registrado no calendário${nApl ? ` · ${nApl} aplicação(ões)${agendado ? " programada(s) na Agenda" : ""}` : ""}${ehExame ? " (exame — sem baixa de estoque)" : ""}${txtDiagnostico}.` });
+      // Vínculo financeiro — só se aplica a vacina/exame (não avulso/tratamento).
+      if (evento?.categoria_preventiva === "vacina" && r?.aplicacao?.sanidade_ids?.length) {
+        setPopupOrigem({ tipo: "sanidade", ids: r.aplicacao.sanidade_ids, produto: `Vacina — ${evento.nome}`, data: dataEvento, responsavel: veterinario || null });
+      } else if (ehExame && r?.resultado_exame?.ids?.length) {
+        setPopupOrigem({ tipo: "exame", ids: r.resultado_exame.ids, produto: `Exame — ${evento?.nome}`, data: dataEvento, responsavel: veterinario || null });
+      }
       setAnimaisSel(new Set()); setLotesSelecionados([]); setCategoriasSel(new Set());
       setDiagnostico(""); setResultadoNumerico("");
     } catch (e: any) { setMsg({ tipo: "erro", txt: e.message }); }
@@ -467,6 +477,8 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
           <Check size={14} /> {salvando ? "Salvando…" : `Registrar preventivo${numeros.length ? ` (${numeros.length} animais)` : ""}`}
         </button>
       </div>
+
+      {popupOrigem && <PopupVinculoFinanceiro origem={popupOrigem} onFechar={() => setPopupOrigem(null)} />}
     </>
   );
 }

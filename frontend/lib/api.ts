@@ -2556,7 +2556,8 @@ export async function fetchPlanoContas() {
 }
 type ContaGerencialPayload = {
   codigo: string; nome: string; ativa?: boolean; participa_atividade?: boolean; fluxo?: boolean; tipo_fixo_variavel?: string;
-  rmca_receita_leite?: boolean; rmca_custo_alimentacao?: boolean;
+  rmca_receita_leite?: boolean; rmca_custo_alimentacao?: boolean; natureza?: string;
+  pede_vinculo_sanitario_reprodutivo?: boolean;
 };
 export async function criarContaGerencial(dados: ContaGerencialPayload) {
   const res = await authFetch(`${API}/financeiro/plano-contas`, {
@@ -2571,6 +2572,31 @@ export async function atualizarContaGerencial(id: number, dados: ContaGerencialP
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar conta gerencial"); }
   return res.json();
+}
+
+export type CandidatoVinculoSanitarioReprodutivo = {
+  tipo: "servico" | "sanidade" | "exame";
+  ids: number[];
+  rotulo: string;
+  data: string | null;
+  responsavel: string | null;
+};
+export async function fetchCandidatosVinculoSanitarioReprodutivo() {
+  const res = await authFetch(`${API}/financeiro/candidatos-vinculo-sanitario-reprodutivo`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Candidatos de vínculo error: ${res.status}`);
+  return res.json() as Promise<{ servicos: CandidatoVinculoSanitarioReprodutivo[]; vacinas: CandidatoVinculoSanitarioReprodutivo[]; exames: CandidatoVinculoSanitarioReprodutivo[] }>;
+}
+export async function vincularEventoSanitarioReprodutivo(dados: { tipo: string; ids: number[]; numero_lancamento: string }) {
+  const res = await authFetch(`${API}/financeiro/vincular-evento-sanitario-reprodutivo`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular evento"); }
+  return res.json();
+}
+export async function fetchLancamentosPorData(data: string, tipo: "despesa" | "receita" = "despesa") {
+  const res = await authFetch(`${API}/financeiro/lancamentos-por-data?data=${data}&tipo=${tipo}`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Lançamentos por data error: ${res.status}`);
+  return res.json() as Promise<{ numero_lancamento: string; fornecedor_cliente: string | null; descricao: string | null; valor_total: number; status: string }[]>;
 }
 
 export async function fetchRmca(dataInicio: string, dataFim: string) {

@@ -4,6 +4,7 @@ import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
+  fetchCandidatosVinculoSanitarioReprodutivo, vincularEventoSanitarioReprodutivo, type CandidatoVinculoSanitarioReprodutivo,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
 import NovoItemEstoque from "@/components/NovoItemEstoque";
@@ -13,6 +14,7 @@ import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { onPedidoLancamentoFinanceiro } from "@/lib/estoqueFinanceiroBridge";
+import { onPedidoLancamentoFinanceiroDeEvento, type OrigemVinculoSanitarioReprodutivo } from "@/lib/vinculoSanitarioFinanceiroBridge";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -168,6 +170,28 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
   }, [tipo]);
   const [desconto, setDesconto] = useState("");
   const [acrescimo, setAcrescimo] = useState("");
+
+  // Vínculo sanitário/reprodutivo — dois caminhos possíveis:
+  // 1) este lançamento nasceu de "lançar em contas a pagar" a partir de uma
+  //    vacina/exame/diagnóstico (origemEvento já identifica o evento; ao
+  //    salvar, vincula direto, sem perguntar de novo);
+  // 2) o usuário escolheu uma conta gerencial marcada (ex.: Veterinário/
+  //    zootecnista) — ao salvar, oferece vincular a um evento recente (popup).
+  const [origemEvento, setOrigemEvento] = useState<OrigemVinculoSanitarioReprodutivo | null>(null);
+  useEffect(() => onPedidoLancamentoFinanceiroDeEvento((dados) => {
+    setOrigemEvento(dados);
+    setItens([{ ...itemVazio(), tipo_item: "servico", produto: dados.produto }]);
+    if (dados.data_emissao) setDataEmissao(dados.data_emissao);
+    if (dados.responsavel) setResponsavel(dados.responsavel);
+  }), []);
+  const [popupVinculo, setPopupVinculo] = useState<{
+    numeroLancamento: string;
+    candidatos: { servicos: CandidatoVinculoSanitarioReprodutivo[]; vacinas: CandidatoVinculoSanitarioReprodutivo[]; exames: CandidatoVinculoSanitarioReprodutivo[] };
+  } | null>(null);
+  const contasQuePedemVinculo = useMemo(
+    () => new Set(planoContas.filter((c) => c.pede_vinculo_sanitario_reprodutivo).map((c) => c.codigo)),
+    [planoContas]
+  );
 
   const [parcelado, setParcelado] = useState(false);
   const [qtdParcelas, setQtdParcelas] = useState("2");
@@ -534,6 +558,19 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
         if (falhas.length) avisoAnexo = ` (não foi possível anexar: ${falhas.join(", ")})`;
       }
       setSucesso(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
+      // Vínculo sanitário/reprodutivo — 2 caminhos (ver estado `origemEvento`
+      // e `contasQuePedemVinculo` acima): se este lançamento nasceu de "lançar
+      // em contas a pagar" a partir de um evento, vincula direto; senão, se
+      // alguma conta escolhida pede vínculo, oferece associar a um evento
+      // recente antes de limpar o formulário.
+      if (origemEvento) {
+        vincularEventoSanitarioReprodutivo({ tipo: origemEvento.tipo, ids: origemEvento.ids, numero_lancamento: r.numero_lancamento }).catch(() => {});
+        setOrigemEvento(null);
+      } else if (tipo === "despesa" && itens.some((i) => contasQuePedemVinculo.has(i.codigo_conta_gerencial))) {
+        fetchCandidatosVinculoSanitarioReprodutivo()
+          .then((candidatos) => setPopupVinculo({ numeroLancamento: r.numero_lancamento, candidatos }))
+          .catch(() => {});
+      }
       limpar();
       onSujo?.(false);
       onSalvo?.();
@@ -1025,6 +1062,40 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
             <div className="flex items-center gap-3 mt-3">
               <button className="btn-primary" title="Confirmar a diferença e salvar o lançamento" onClick={salvar}><Check size={14} /> Confirmar e salvar</button>
               <button className="btn-ghost" title="Cancelar sem salvar" onClick={() => setConfirmando(false)}><X size={14} /> Cancelar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {popupVinculo && (
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
+          <div className="card" style={{ width: "560px", maxWidth: "95vw" }}>
+            <strong style={{ display: "block", marginBottom: "0.4rem" }}>Vincular a uma aplicação de vacina, exame ou visita reprodutiva?</strong>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.7rem" }}>
+              Lançamento {popupVinculo.numeroLancamento} salvo em conta que costuma pagar serviços reprodutivos, vacinas ou exames.
+              Escolha um evento recente para vincular (rastreabilidade financeiro ↔ sanitário/reprodutivo) ou pule.
+            </p>
+            <div style={{ maxHeight: "40vh", overflowY: "auto", display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              {[...popupVinculo.candidatos.servicos, ...popupVinculo.candidatos.vacinas, ...popupVinculo.candidatos.exames].map((c, i) => (
+                <button key={`${c.tipo}-${i}`} type="button" className="btn-ghost"
+                  style={{ textAlign: "left", fontSize: "0.82rem", padding: "0.5rem 0.7rem", border: "1px solid var(--border)", borderRadius: 6 }}
+                  onClick={() => {
+                    vincularEventoSanitarioReprodutivo({ tipo: c.tipo, ids: c.ids, numero_lancamento: popupVinculo.numeroLancamento })
+                      .catch(() => {})
+                      .finally(() => setPopupVinculo(null));
+                  }}>
+                  <strong>{c.rotulo}</strong>
+                  <div style={{ color: "var(--text-muted)", fontSize: "0.75rem" }}>
+                    {c.data ? new Date(c.data + "T00:00:00").toLocaleDateString("pt-BR") : "sem data"}{c.responsavel ? ` · ${c.responsavel}` : ""}
+                  </div>
+                </button>
+              ))}
+              {!popupVinculo.candidatos.servicos.length && !popupVinculo.candidatos.vacinas.length && !popupVinculo.candidatos.exames.length && (
+                <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Nenhum evento recente ainda não vinculado.</p>
+              )}
+            </div>
+            <div className="flex items-center gap-3 mt-3">
+              <button className="btn-ghost" onClick={() => setPopupVinculo(null)}><X size={14} /> Não se aplica</button>
             </div>
           </div>
         </div>
