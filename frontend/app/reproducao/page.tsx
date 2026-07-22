@@ -6,8 +6,8 @@ import HistoricoServicos, { type Foco } from "@/components/reproducao/HistoricoS
 import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 
-type AbaVisao = "servicos" | "ias" | "diagnosticos" | "perdas" | "partos" | "secagens";
-const ABAS_VISAO = [
+export type AbaVisao = "servicos" | "ias" | "diagnosticos" | "perdas" | "partos" | "secagens";
+export const ABAS_VISAO = [
   { id: "servicos", label: "Serviços", icon: ClipboardList, foco: "todos" as Foco,
     titulo: "Histórico de serviços", descricao: "Todo serviço reprodutivo (IA/monta) — filtre por data ou ciclo, ordem de parto/tentativa, método e diagnóstico." },
   { id: "ias", label: "IAs", icon: Syringe, foco: "ias" as Foco,

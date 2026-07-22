@@ -11,6 +11,8 @@ import { AnimalPicker } from "@/components/AnimalPicker";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabelasStatusBst } from "@/components/PainelLancarBst";
+import { CaixaProximaAplicacaoBst, PainelAjustarProximaAplicacaoBst } from "@/components/AjusteProximaAplicacaoBst";
+import { Modal } from "@/components/Modal";
 
 // Comparação numérica quando possível, senão alfabética — mesmo critério usado
 // em toda a auditoria de ordenação (crescente por padrão em toda listagem).
@@ -114,7 +116,7 @@ type RelatorioControleEntrega = {
   nao_entregue_kg: number | null; leite_bezerros_kg_dia: number; bezerros_kg: number; bezerros_fonte: string; equipe_kg: number | null;
 };
 
-function ProducaoLeiteira() {
+export function ProducaoLeiteira() {
   const admin = ehAdmin();
   const [regs, setRegs] = useState<Ctrl[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -758,7 +760,7 @@ type AplicacaoBst = {
   unidade: string | null; responsavel: string | null; lote: string | null; categoria: string | null;
 };
 
-function RelatoriosBstView() {
+export function RelatoriosBstView() {
   const [historico, setHistorico] = useState<AplicacaoBst[] | null>(null);
   const [agenda, setAgenda] = useState<any | null>(null);
   const [erro, setErro] = useState<string | null>(null);
@@ -766,6 +768,7 @@ function RelatoriosBstView() {
   const [fAnimal, setFAnimal] = useState("");
   const [fDe, setFDe] = useState("");
   const [fAte, setFAte] = useState("");
+  const [ajustarAberto, setAjustarAberto] = useState(false);
 
   const carregar = () => {
     fetchRelatorioBst().then((d) => setHistorico(d.aplicacoes)).catch((e) => setErro(e.message));
@@ -797,7 +800,7 @@ function RelatoriosBstView() {
   return (
     <div className="px-6 pt-6 space-y-4">
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Próxima aplicação BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{agenda?.proxima_visita_bst ? new Date(agenda.proxima_visita_bst + "T00:00:00").toLocaleDateString("pt-BR") : "—"}</div></div>
+        <CaixaProximaAplicacaoBst proximaVisitaBst={agenda?.proxima_visita_bst ?? null} onClick={() => setAjustarAberto(true)} />
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Aplicações no filtro</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{filtrado.length}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Vacas distintas aplicadas</div><div style={{ fontSize: "1.1rem", fontWeight: 700 }}>{vacasDistintas}</div></div>
         <div className="card"><div style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Incluir no próximo BST</div><div style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--amber)" }}>{nuncaAplicadas.length}</div></div>
@@ -844,14 +847,24 @@ function RelatoriosBstView() {
           </table>
         </div>
       </div>
+
+      {ajustarAberto && (
+        <Modal title="Ajustar próxima aplicação de BST" onClose={() => setAjustarAberto(false)} width="480px">
+          <PainelAjustarProximaAplicacaoBst
+            proximaVisitaBst={agenda?.proxima_visita_bst ?? null}
+            intervaloBstDias={agenda?.intervalo_bst ?? null}
+            onAjustado={carregar}
+          />
+        </Modal>
+      )}
     </div>
   );
 }
 
 type AbaProducao = "leiteira" | "bst";
-const ABAS_PRODUCAO = [
+export const ABAS_PRODUCAO = [
   { id: "leiteira" as const, label: "Produção leiteira", icon: Milk, title: "Série histórica, curva de lactação e ranking por vaca" },
-  { id: "bst" as const, label: "Relatórios de BST", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
+  { id: "bst" as const, label: "BST (aplicações)", icon: Droplets, title: "Dados gerenciais e filtros de aplicação de BST (somatotropina bovina)" },
 ];
 
 export default function ProducaoPage() {

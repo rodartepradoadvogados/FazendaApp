@@ -194,6 +194,11 @@ class Usuario(SQLModel, table=True):
     # cadastrada (ver criar_usuario em fazenda.api.routers.auth); contas
     # antigas podem não ter esse vínculo até serem editadas retroativamente.
     pessoa_id: Optional[int] = Field(default=None, foreign_key="pessoa.id")
+    # Fluxo "Esqueci minha senha" — token de uso único enviado por e-mail
+    # (ver fazenda.api.routers.auth). None fora de um pedido de redefinição
+    # em andamento; limpo assim que a senha é redefinida ou o token expira.
+    reset_senha_token: Optional[str] = Field(default=None, index=True)
+    reset_senha_expira: Optional[datetime] = None
 
 
 class LoginAcesso(SQLModel, table=True):

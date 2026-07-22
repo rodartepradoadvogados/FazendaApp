@@ -63,6 +63,13 @@ DEFINICOES: list[dict] = [
     # ---- BST -----------------------------------------------------------------
     {"chave": "del_minimo_bst", "grupo": "bst", "label": "DEL mínimo para BST", "valor": 60, "unidade": "dias"},
     {"chave": "dias_antes_secagem_bst", "grupo": "bst", "label": "Dias antes da secagem para sair do BST", "valor": 15, "unidade": "dias"},
+    # Ajuste manual da "próxima aplicação BST" (Produção > Relatórios de BST e
+    # Lançamentos > Produção > BST) quando o usuário escolhe a opção "considerar
+    # essa nova data a referência para a contagem de x dias" — guarda a data
+    # equivalente de "última aplicação" para que o cálculo padrão (âncora +
+    # intervalo_bst) reproduza a data escolhida. Vazio = sem ajuste manual
+    # pendente (o cálculo usa só as aplicações reais lançadas em Sanidade).
+    {"chave": "bst_ajuste_ancora_data", "grupo": "bst", "label": "Ajuste manual da próxima aplicação de BST", "valor": "", "tipo": "date"},
 
     # ---- Reinseminação e observação de cio ------------------------------------
     {"chave": "dias_reinseminacao_min", "grupo": "reinseminacao_cio", "label": "Dias para reinseminação — mínimo", "valor": 18, "unidade": "dias"},
@@ -279,6 +286,10 @@ def del_minimo_bst() -> int:
 
 def dias_antes_secagem_bst() -> int:
     return int(get_param("dias_antes_secagem_bst", 15) or 15)
+
+
+def bst_ajuste_ancora_data() -> date | None:
+    return get_param_date("bst_ajuste_ancora_data", None)
 
 
 def janela_eventos_sanitarios_passado() -> int:
