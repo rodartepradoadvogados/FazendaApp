@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Sun, Moon, Columns2, Wine, Leaf, Mail } from "lucide-react";
+import { Sun, Moon, Columns2, Wine, Leaf, Droplet, Mail } from "lucide-react";
 import { TabBar } from "@/components/ui";
 import { aplicarTema, aplicarPaleta, type Paleta } from "@/components/ThemeSwitcher";
 import { ehAdmin, ehDono, reivindicarProprietario } from "@/lib/api";
@@ -19,6 +19,7 @@ const TEMAS_APP = [
 const PALETAS = [
   { id: "vinho" as Paleta, label: "Vinho", icon: Wine, title: "Paleta Vinho (padrão)" },
   { id: "verde" as Paleta, label: "Verde", icon: Leaf, title: "Paleta Verde" },
+  { id: "azul" as Paleta, label: "Azul", icon: Droplet, title: "Paleta Azul" },
 ];
 
 /**
@@ -35,7 +36,7 @@ export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "ap
     const t = (el.getAttribute("data-theme") as Tema) || "misto";
     const p = (el.getAttribute("data-paleta") as Paleta) || "vinho";
     setTema(variant === "app" && t === "misto" ? "claro" : t);
-    setPaleta(p === "verde" ? "verde" : "vinho");
+    setPaleta(p === "verde" || p === "azul" ? p : "vinho");
   }, [variant]);
 
   function mudarTema(t: Tema) {
@@ -52,7 +53,7 @@ export function AparenciaSelector({ variant = "site" }: { variant?: "site" | "ap
       <div style={{ display: "flex", flexDirection: "column", gap: "1.6rem", minHeight: "calc(100dvh - 150px)" }}>
         <TileGroup titulo="Tema" opcoes={TEMAS_APP} ativa={tema} onEscolher={mudarTema} />
         <TileGroup titulo="Paleta" opcoes={PALETAS} ativa={paleta} onEscolher={mudarPaleta}
-          swatch={{ vinho: "var(--mob-vinho-fixo)", verde: "var(--mob-verde-fixo)" }} />
+          swatch={{ vinho: "var(--mob-vinho-fixo)", verde: "var(--mob-verde-fixo)", azul: "var(--mob-azul)" }} />
         <ReivindicarProprietario variant="app" />
       </div>
     );

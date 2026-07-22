@@ -106,7 +106,7 @@ export async function login(username: string, senha: string) {
   localStorage.setItem("token", data.token);
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
-  if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde") {
+  if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde" || data.usuario?.paleta === "azul") {
     document.documentElement.setAttribute("data-paleta", data.usuario.paleta);
     localStorage.setItem("paleta", data.usuario.paleta);
   }
@@ -149,8 +149,8 @@ export async function redefinirSenha(token: string, novaSenha: string): Promise<
   }
 }
 
-// Preferência pessoal de paleta de cores (Vinho/Verde) — cada usuário guarda a sua.
-export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde") {
+// Preferência pessoal de paleta de cores (Vinho/Verde/Azul) — cada usuário guarda a sua.
+export async function salvarPreferenciaPaleta(paleta: "vinho" | "verde" | "azul") {
   return salvarPreferencias({ paleta });
 }
 
@@ -164,7 +164,7 @@ export async function reivindicarProprietario() {
   return salvarPreferencias({ reivindicar_proprietario: true });
 }
 
-async function salvarPreferencias(dados: { paleta?: "vinho" | "verde"; email?: string; reivindicar_proprietario?: boolean }) {
+async function salvarPreferencias(dados: { paleta?: "vinho" | "verde" | "azul"; email?: string; reivindicar_proprietario?: boolean }) {
   const res = await fetch(`${API}/auth/preferencias`, {
     method: "PUT", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),

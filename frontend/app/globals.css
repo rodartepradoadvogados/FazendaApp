@@ -246,6 +246,38 @@
   --sidebar-subnav-muted: var(--chumbo);
 }
 
+/* ── PALETA "Azul" — mesma dimensão independente do tema descrita acima na
+   paleta "Verde"; azul-escuro (navy) como cor de marca, azul claro só nos
+   poucos destaques pontuais (--dourado-light), nunca como fundo. */
+:root[data-theme="escuro"][data-paleta="azul"] {
+  --vinho:       #153A66;
+  --vinho-light: #2563EB;
+  --vinho-dark:  #0D2340;
+  --dourado:     #2563EB;
+  --dourado-light: #7DD3FC;
+  --sidebar-active-bg: rgba(21, 58, 102, 0.4);
+  --pill-active-bg: rgba(21, 58, 102, 0.4);
+}
+:root[data-theme="claro"][data-paleta="azul"] {
+  --vinho:       #153A66;
+  --vinho-light: #2563EB;
+  --vinho-dark:  #0D2340;
+  --dourado:     #2563EB;
+  --dourado-light: #7DD3FC;
+  --sidebar-active-bg: rgba(21, 58, 102, 0.08);
+  --sidebar-subnav-outline-bg: rgba(21, 58, 102, 0.06);
+  --sidebar-subnav-bg: #E4E7EB;
+}
+:root[data-theme="misto"][data-paleta="azul"] {
+  --vinho:       #153A66;
+  --vinho-light: #2563EB;
+  --vinho-dark:  #0D2340;
+  --dourado:     #2563EB;
+  --dourado-light: #7DD3FC;
+  --sidebar-subnav-bg: #E4E7EB;
+  --sidebar-subnav-muted: var(--chumbo);
+}
+
 /* ── Tailwind custom colors via CSS vars ── */
 @theme {
   --color-fazenda-bg:       var(--bg);
@@ -659,6 +691,17 @@ html, body { max-width: 100%; overflow-x: hidden; }
 }
 :root[data-theme="escuro"][data-paleta="verde"] .mob {
   --mob-header:    linear-gradient(160deg, #16402B, #0E2E1F);
+}
+
+/* ── PALETA "Azul" no app móvel — mesmo padrão da paleta "Verde" acima. */
+:root[data-paleta="azul"] .mob {
+  --mob-vinho:     #153A66;
+  --mob-dourado:   #2563EB;
+  --mob-dourado-2: #7DD3FC;
+  --mob-header:    linear-gradient(160deg, #153A66, #0D2340);
+}
+:root[data-theme="escuro"][data-paleta="azul"] .mob {
+  --mob-header:    linear-gradient(160deg, #0D2340, #081729);
 }
 
 /* Área de conteúdo rola por baixo da barra fixa inferior. */

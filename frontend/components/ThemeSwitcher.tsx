@@ -15,11 +15,12 @@ const META: Record<Tema, { label: string; icon: typeof Sun }> = {
 
 // Cor da faixa do topo do navegador/app instalado (<meta name="theme-color">)
 // — precisa acompanhar tema E paleta juntos, senão fica vinho mesmo com a
-// paleta verde escolhida. Mesma tabela usada no script anti-flash do layout.
+// paleta verde/azul escolhida. Mesma tabela usada no script anti-flash do layout.
 function sincronizarCorTopo() {
   const escuro = document.documentElement.getAttribute("data-theme") === "escuro";
-  const verde = document.documentElement.getAttribute("data-paleta") === "verde";
-  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", corTopo(escuro, verde));
+  const p = document.documentElement.getAttribute("data-paleta");
+  const paleta = p === "verde" || p === "azul" ? p : "vinho";
+  document.querySelector('meta[name="theme-color"]')?.setAttribute("content", corTopo(escuro, paleta));
 }
 
 export function aplicarTema(t: Tema) {
@@ -28,7 +29,7 @@ export function aplicarTema(t: Tema) {
   sincronizarCorTopo();
 }
 
-export type Paleta = "vinho" | "verde";
+export type Paleta = "vinho" | "verde" | "azul";
 
 export function aplicarPaleta(p: Paleta) {
   document.documentElement.setAttribute("data-paleta", p);
