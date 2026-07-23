@@ -40,6 +40,12 @@ class Pessoa(SQLModel, table=True):
     __tablename__ = "pessoa"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda: nulo para toda pessoa cadastrada
+    # antes da migração de backfill (ver fazenda/models/multitenant.py) — só
+    # a listagem/cadastro principal (GET/POST /pessoas) considera este campo
+    # por enquanto; seletores em outros módulos (veterinário, responsável
+    # etc.) ainda enxergam todas as pessoas, independente da fazenda.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     tipo: str  # Funcionário | Veterinário | Zootecnista | Vet/Zootec. | Diarista | Prestador de serviços | ... (CSV de TipoPessoa.nome)
     telefone: Optional[str] = None  # legado — sempre o 1º item de `telefones`, mantido para quem lê Pessoa.email/telefone direto (ex.: destinatario_recibo)

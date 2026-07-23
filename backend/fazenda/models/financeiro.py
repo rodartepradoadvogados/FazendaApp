@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Conta Gerencial (Financeiro)
@@ -149,6 +149,11 @@ class ContaCorrente(SQLModel, table=True):
     __tablename__ = "conta_corrente"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
+    # nulo para toda conta cadastrada antes da migração de backfill — ainda
+    # não filtra nada sozinho, só os endpoints que já sabem considerar
+    # fazenda_id (ver fazenda/api/routers/financeiro.py).
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     banco: str
     agencia: str
     numero_conta: str
@@ -162,9 +167,15 @@ class ContaCorrente(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 class CentroCusto(SQLModel, table=True):
     __tablename__ = "centro_custo"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_centro_custo_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    # Piloto conservador de multi-fazenda: nulo para todo centro de custo já
+    # cadastrado antes da migração de backfill (ver fazenda/models/multitenant.py).
+    # Trocou o unique(nome) global por unique(nome, fazenda_id) — dois
+    # tenants podem, cada um, ter seu próprio "Pecuária Leiteira".
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 

@@ -264,6 +264,11 @@ class CalendarioSanitario(SQLModel, table=True):
     __tablename__ = "calendario_sanitario"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda: nulo para toda regra já cadastrada
+    # antes da migração de backfill (ver fazenda/models/multitenant.py) — a
+    # regra já É o "lançamento" real e editável (não um valor fixo em
+    # Python); fazenda nova nasce sem nenhuma, fazenda #1 mantém as suas.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     evento_sanitario_id: int = Field(foreign_key="evento_sanitario.id")
     categoria_alvo: Optional[str] = None  # ex.: "Bezerras (até 4 a 8 meses)"
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")

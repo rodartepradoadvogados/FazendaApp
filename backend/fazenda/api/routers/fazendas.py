@@ -15,13 +15,30 @@ from sqlmodel import Session, select
 
 from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Fazenda, Usuario, UsuarioFazenda
+from fazenda.models import CentroCusto, ContaCorrente, Fazenda, Usuario, UsuarioFazenda
 
 router = APIRouter(prefix="/fazendas", tags=["fazendas"])
 
 
 def _publico(f: Fazenda) -> dict:
     return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa}
+
+
+def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
+    """Provisionamento padrão de uma fazenda recém-criada — só o que é
+    seguro nascer em branco/genérico (não copia nada real da fazenda #1):
+    - Contas correntes "Banco" e "Carteira", em branco, editáveis.
+    - Centros de custo "Pecuária Leiteira" e "Agricultura".
+    Pessoas e calendário sanitário nascem vazios de propósito (cada fazenda
+    cadastra os seus funcionários e sua própria agenda sanitária) — ver
+    fazenda/models/pessoal.py::Pessoa e fazenda/models/sanidade.py::CalendarioSanitario."""
+    session.add_all([
+        ContaCorrente(banco="Banco", agencia="", numero_conta="", fazenda_id=fazenda_id),
+        ContaCorrente(banco="Carteira", agencia="", numero_conta="", fazenda_id=fazenda_id),
+        CentroCusto(nome="Pecuária Leiteira", fazenda_id=fazenda_id),
+        CentroCusto(nome="Agricultura", fazenda_id=fazenda_id),
+    ])
+    session.commit()
 
 
 def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token: int | None) -> None:
@@ -69,6 +86,7 @@ def criar_fazenda(dados: FazendaIn, _: Usuario = Depends(exigir_dono), session: 
     session.add(fazenda)
     session.commit()
     session.refresh(fazenda)
+    provisionar_fazenda_nova(session, fazenda.id)
     return _publico(fazenda)
 
 
