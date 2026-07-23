@@ -1,7 +1,10 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Newspaper, AlertTriangle, Plus, Trash2, X, Check, Link as LinkIcon, CalendarDays, ShieldCheck, ClipboardCheck, Pencil, Ban } from "lucide-react";
-import { fetchTodasMaterias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias, type NoticiaNews } from "@/lib/api";
+import {
+  fetchTodasMaterias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias,
+  fetchNotaCapa, atualizarNotaCapa, type NoticiaNews,
+} from "@/lib/api";
 import { imagemMateria } from "@/lib/newsVisual";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
@@ -28,6 +31,7 @@ function dominio(url: string): string {
 const TABS = [
   { key: "publicadas", label: "Matérias publicadas", icon: Newspaper },
   { key: "revisao", label: "Revisão de publicação definitiva", icon: ClipboardCheck },
+  { key: "nota", label: "Nota da Capa", icon: ShieldCheck },
 ] as const;
 
 export default function NewsAdmin() {
@@ -53,6 +57,31 @@ export default function NewsAdmin() {
   const [editError, setEditError] = useState<string | null>(null);
 
   const podePublicar = podePublicarMaterias();
+
+  // Nota informativa simples da Capa — distinta de matéria de blog.
+  const [notaTitulo, setNotaTitulo] = useState("");
+  const [notaTexto, setNotaTexto] = useState("");
+  const [notaAtiva, setNotaAtiva] = useState(true);
+  const [notaSalvando, setNotaSalvando] = useState(false);
+  const [notaMsg, setNotaMsg] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchNotaCapa().then((n) => {
+      if (n) { setNotaTitulo(n.titulo); setNotaTexto(n.texto); }
+    }).catch(() => {});
+  }, []);
+
+  const salvarNota = async () => {
+    setNotaSalvando(true); setNotaMsg(null);
+    try {
+      await atualizarNotaCapa({ titulo: notaTitulo.trim(), texto: notaTexto.trim(), ativa: notaAtiva });
+      setNotaMsg(notaAtiva ? "Nota atualizada — já aparece na Capa." : "Nota desativada — não aparece mais na Capa.");
+    } catch (e: any) {
+      setNotaMsg(e.message || "Erro ao salvar a nota");
+    } finally {
+      setNotaSalvando(false);
+    }
+  };
 
   const carregar = () =>
     fetchTodasMaterias()
@@ -388,6 +417,26 @@ export default function NewsAdmin() {
             </div>
           )}
         </>
+      )}
+
+      {aba === "nota" && (
+        <div className="card" style={{ maxWidth: "560px" }}>
+          <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+            Nota curta exibida na Capa para o produtor — distinta de matéria de blog, sem revisão. Desmarque "Ativa" para tirá-la da Capa sem apagar o texto.
+          </p>
+          <label style={lbl}>Título</label>
+          <input style={{ ...inp, marginBottom: "0.7rem" }} value={notaTitulo} onChange={(e) => setNotaTitulo(e.target.value)} disabled={!podePublicar} />
+          <label style={lbl}>Texto</label>
+          <textarea style={{ ...inp, marginBottom: "0.7rem", minHeight: "90px", resize: "vertical" }} value={notaTexto} onChange={(e) => setNotaTexto(e.target.value)} disabled={!podePublicar} />
+          <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", marginBottom: "0.9rem" }}>
+            <input type="checkbox" checked={notaAtiva} onChange={(e) => setNotaAtiva(e.target.checked)} disabled={!podePublicar} /> Ativa (aparece na Capa)
+          </label>
+          <button type="button" className="btn-primary" style={{ fontSize: "0.82rem" }}
+            onClick={salvarNota} disabled={!podePublicar || notaSalvando || !notaTitulo.trim() || !notaTexto.trim()}>
+            {notaSalvando ? "Salvando…" : "Salvar nota"}
+          </button>
+          {notaMsg && <p style={{ fontSize: "0.8rem", color: "var(--green-light)", marginTop: "0.6rem" }}>{notaMsg}</p>}
+        </div>
       )}
     </div>
   );

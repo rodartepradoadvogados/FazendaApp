@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
+from fazenda.auth import EMAIL_DONO
 from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews
 
 
@@ -36,6 +37,7 @@ def client():
         papel = "admin"
         ativo = True
         username = "admin_teste"
+        email = EMAIL_DONO  # administração de News agora exige exigir_dono
         pode_publicar_materias_blog = True
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
@@ -66,6 +68,7 @@ def client_admin_sem_permissao_publicar():
         papel = "admin"
         ativo = True
         username = "admin_sem_permissao"
+        email = "admin_comum@example.com"  # não é EMAIL_DONO — exigir_dono bloqueia
         pode_publicar_materias_blog = False
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
@@ -95,6 +98,7 @@ def client_operador():
         papel = "operador"
         ativo = True
         username = "operador_teste"
+        email = "operador@example.com"
         pode_publicar_materias_blog = False
 
     main.app.dependency_overrides[database.get_session] = _get_session_override

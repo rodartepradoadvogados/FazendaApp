@@ -29,6 +29,9 @@ ROTAS_PUBLICAS = {
     ("POST", "/telegram/webhook"),
     ("GET", "/telegram/status"),
     ("GET", "/news/"),
+    # Nota simples da Capa (distinta de matéria de blog) — mesma lógica de
+    # leitura pública do feed de News, ver fazenda/api/routers/news.py.
+    ("GET", "/news/nota-capa"),
     ("GET", "/docs"),
     ("GET", "/redoc"),
     ("GET", "/openapi.json"),

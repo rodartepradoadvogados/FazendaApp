@@ -45,7 +45,7 @@
   --vinho-dark:  color-mix(in srgb, var(--wine) 55%, var(--ink) 45%);
   --dourado:     var(--gold-deep);
   --dourado-light: var(--gold);
-  /* Ouro fixo — não acompanha a paleta (o D do logo CWD milk fica sempre
+  /* Ouro fixo — não acompanha a paleta (o D do logo CowData fica sempre
      dourado, mesmo na paleta verde, ao contrário de --dourado/--dourado-light). */
   --dourado-fixo: var(--gold);
   /* Fundo escuro tingido pela paleta ativa (vinho→avermelhado, verde→esverdeado)

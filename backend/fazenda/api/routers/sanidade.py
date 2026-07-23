@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
@@ -422,7 +422,7 @@ def _serializar(
 @router.get("/calendario")
 def listar_calendario(
     data_inicio: str = "", data_fim: str = "", evento_sanitario_id: int | None = None,
-    session: Session = Depends(get_session),
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """
     Lista as regras do calendário sanitário. O filtro de período compara com a
@@ -432,7 +432,10 @@ def listar_calendario(
     """
     eventos, doencas, principios, categorias = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
-    regras = session.exec(select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)).all()  # noqa: E712
+    query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(CalendarioSanitario.fazenda_id == fazenda_id)
+    regras = session.exec(query).all()
     saida = [_serializar(c, eventos, doencas, principios, categorias, ultimos) for c in regras]
     if evento_sanitario_id is not None:
         saida = [s for s in saida if s["evento_sanitario_id"] == evento_sanitario_id]
@@ -491,9 +494,11 @@ def _marcar_calendario_realizado(session: Session, c: CalendarioSanitario) -> No
 
 
 @router.post("/calendario")
-def criar_calendario(dados: CalendarioSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def criar_calendario(
+    dados: CalendarioSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     _validar_calendario(dados, session)
-    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}))
+    c = CalendarioSanitario(**dados.model_dump(exclude={"realizado"}), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)

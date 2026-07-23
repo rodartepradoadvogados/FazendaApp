@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fastapi.responses import Response
 from fazenda.models import (
@@ -476,7 +476,7 @@ def itens_por_conta(
 
 
 @router.get("/opcoes")
-def opcoes(session: Session = Depends(get_session)) -> dict:
+def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> dict:
     """Listas para os seletores do lançamento — plano de contas real + dados já importados."""
     plano = session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.ativa == True)).all()
     # Só as contas-FOLHA são lançáveis (nível mais baixo da hierarquia): uma
@@ -492,15 +492,19 @@ def opcoes(session: Session = Depends(get_session)) -> dict:
     contas = session.exec(select(ContaGerencial)).all()
     # União com os valores já lançados como texto livre (antes do cadastro
     # formal existir) — nada que já foi usado deixa de aparecer no filtro.
-    centros_cadastrados = {c.nome for c in session.exec(select(CentroCusto).where(CentroCusto.ativo == True)).all()}
+    query_centros = select(CentroCusto).where(CentroCusto.ativo == True)
+    if fazenda_id is not None:
+        query_centros = query_centros.where(CentroCusto.fazenda_id == fazenda_id)
+    centros_cadastrados = {c.nome for c in session.exec(query_centros).all()}
     # Os centros canônicos (Pecuária Leiteira / Financiamento 2026 / Arrendamento)
     # ficam sempre disponíveis para seleção, mesmo antes de aparecerem num lançamento.
     centros_custo = sorted(centros_cadastrados | set(CENTROS_CANONICOS) | {c.centro_custo for c in contas if c.centro_custo})
     fornecedores = sorted({c.fornecedor_cliente for c in contas if c.fornecedor_cliente})
     produtos = sorted({it.produto for it in session.exec(select(LancamentoItem)).all() if it.produto})
-    contas_correntes = session.exec(
-        select(ContaCorrente).where(ContaCorrente.ativo == True).order_by(ContaCorrente.banco)
-    ).all()
+    query_contas_correntes = select(ContaCorrente).where(ContaCorrente.ativo == True)
+    if fazenda_id is not None:
+        query_contas_correntes = query_contas_correntes.where(ContaCorrente.fazenda_id == fazenda_id)
+    contas_correntes = session.exec(query_contas_correntes.order_by(ContaCorrente.banco)).all()
     tipos_doc_cadastrados = [t.nome for t in session.exec(select(TipoDocumento).where(TipoDocumento.ativo == True).order_by(TipoDocumento.nome)).all()]
     formas_pgto_cadastradas = [f.nome for f in session.exec(select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.ativo == True).order_by(FormaPagamentoCadastro.nome)).all()]
     return {
@@ -550,14 +554,21 @@ class ContaCorrenteIn(BaseModel):
 
 
 @router.get("/contas-correntes")
-def listar_contas_correntes(session: Session = Depends(get_session)) -> list[dict]:
-    contas = session.exec(select(ContaCorrente).order_by(ContaCorrente.banco, ContaCorrente.agencia)).all()
+def listar_contas_correntes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    query = select(ContaCorrente)
+    if fazenda_id is not None:
+        query = query.where(ContaCorrente.fazenda_id == fazenda_id)
+    contas = session.exec(query.order_by(ContaCorrente.banco, ContaCorrente.agencia)).all()
     return [{**c.model_dump(), "rotulo": rotulo_conta_corrente(c)} for c in contas]
 
 
 @router.post("/contas-correntes")
-def criar_conta_corrente(dados: ContaCorrenteIn, session: Session = Depends(get_session)) -> dict:
-    c = ContaCorrente(**dados.model_dump())
+def criar_conta_corrente(
+    dados: ContaCorrenteIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    c = ContaCorrente(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)
@@ -583,18 +594,26 @@ class CentroCustoIn(BaseModel):
 
 
 @router.get("/centros-custo")
-def listar_centros_custo(session: Session = Depends(get_session)) -> list[dict]:
-    return [c.model_dump() for c in session.exec(select(CentroCusto).order_by(CentroCusto.nome)).all()]
+def listar_centros_custo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    query = select(CentroCusto)
+    if fazenda_id is not None:
+        query = query.where(CentroCusto.fazenda_id == fazenda_id)
+    return [c.model_dump() for c in session.exec(query.order_by(CentroCusto.nome)).all()]
 
 
 @router.post("/centros-custo")
-def criar_centro_custo(dados: CentroCustoIn, session: Session = Depends(get_session)) -> dict:
+def criar_centro_custo(
+    dados: CentroCustoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(CentroCusto).where(CentroCusto.nome == nome)).first():
+    duplicado = select(CentroCusto).where(CentroCusto.nome == nome, CentroCusto.fazenda_id == fazenda_id)
+    if session.exec(duplicado).first():
         raise HTTPException(status_code=409, detail="Já existe um centro de custo com esse nome")
-    c = CentroCusto(nome=nome, ativo=dados.ativo)
+    c = CentroCusto(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(c)
     session.commit()
     session.refresh(c)

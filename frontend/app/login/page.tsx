@@ -3,7 +3,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
-import { login, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, type NoticiaNews } from "@/lib/api";
+import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, type NoticiaNews, type FazendaAtual } from "@/lib/api";
+import { Building2 } from "lucide-react";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
 import { BannerCarousel } from "@/components/login/BannerCarousel";
@@ -113,6 +114,10 @@ function Hero() {
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  // Piloto conservador de multi-fazenda: só aparece quando o login devolve
+  // mais de uma fazenda vinculada ao mesmo usuário (ver POST /auth/login).
+  const [fazendasParaEscolher, setFazendasParaEscolher] = useState<FazendaAtual[] | null>(null);
+  const [escolhendoFazenda, setEscolhendoFazenda] = useState(false);
 
   const [etapaEsqueci, setEtapaEsqueci] = useState<EtapaEsqueci>(null);
   const [loginEsqueci, setLoginEsqueci] = useState("");
@@ -120,18 +125,37 @@ function Hero() {
   const [erroEsqueci, setErroEsqueci] = useState<string | null>(null);
   const [carregandoEsqueci, setCarregandoEsqueci] = useState(false);
 
+  const irParaDestino = () => {
+    // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
+    const next = new URLSearchParams(window.location.search).get("next");
+    router.replace(next && next.startsWith("/") ? next : "/");
+  };
+
   const entrar = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro(null); setCarregando(true);
     try {
-      await login(username.trim(), senha);
-      // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
-      const next = new URLSearchParams(window.location.search).get("next");
-      router.replace(next && next.startsWith("/") ? next : "/");
+      const data = await login(username.trim(), senha);
+      if (data.selecao_fazenda_necessaria) {
+        setFazendasParaEscolher(data.fazendas_disponiveis || []);
+        return;
+      }
+      irParaDestino();
     } catch (err: any) {
       setErro(err.message || "Falha no login");
     } finally {
       setCarregando(false);
+    }
+  };
+
+  const escolherFazenda = async (fazendaId: number) => {
+    setEscolhendoFazenda(true); setErro(null);
+    try {
+      await selecionarFazenda(fazendaId);
+      irParaDestino();
+    } catch (err: any) {
+      setErro(err.message || "Não foi possível selecionar a fazenda");
+      setEscolhendoFazenda(false);
     }
   };
 
@@ -202,37 +226,64 @@ function Hero() {
             transform: "translateX(min(2.5cm, max(0px, calc((100vw - 1320px) / 2 - 12px))))",
           }}
         >
-          <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
-            Entre com seu usuário e senha
-          </p>
-          <form onSubmit={entrar} className="space-y-3">
-            <div>
-              <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
-              <input style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
-            </div>
-            <div>
-              <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
-              <div style={{ position: "relative" }}>
-                <input style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
-                  onChange={(e) => setSenha(e.target.value)} autoComplete="current-password" />
-                <button type="button" onClick={() => setMostrarSenha((v) => !v)} aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
-                  style={{
-                    position: "absolute", right: "0.6rem", top: "50%", transform: "translateY(-50%)",
-                    background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", display: "flex",
-                  }}>
-                  {mostrarSenha ? <EyeOff size={17} /> : <Eye size={17} />}
-                </button>
+          {fazendasParaEscolher ? (
+            <>
+              <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
+                Você tem acesso a mais de uma fazenda — qual delas?
+              </p>
+              <div className="space-y-2">
+                {fazendasParaEscolher.map((f) => (
+                  <button key={f.id} type="button" disabled={escolhendoFazenda} onClick={() => escolherFazenda(f.id)}
+                    className="btn-ghost" style={{ width: "100%", justifyContent: "flex-start", gap: "0.6rem", border: "1px solid var(--border)", padding: "0.7rem 0.9rem" }}>
+                    <Building2 size={16} style={{ color: "var(--dourado-light)" }} />
+                    <span style={{ textAlign: "left" }}>
+                      <strong style={{ display: "block" }}>{f.nome}</strong>
+                      {(f.cidade || f.uf) && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{[f.cidade, f.uf].filter(Boolean).join(" · ")}</span>}
+                    </span>
+                  </button>
+                ))}
               </div>
-              <button type="button" onClick={abrirEsqueciSenha}
-                style={{ background: "none", border: "none", padding: 0, marginTop: "0.4rem", color: "var(--dourado-light)", fontSize: "0.78rem", cursor: "pointer" }}>
-                Esqueci minha senha
+              {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginTop: "0.6rem" }}>{erro}</p>}
+              <button type="button" onClick={() => setFazendasParaEscolher(null)}
+                style={{ background: "none", border: "none", padding: 0, marginTop: "0.8rem", color: "var(--text-muted)", fontSize: "0.78rem", cursor: "pointer" }}>
+                ← Voltar
               </button>
-            </div>
-            {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
-            <button type="submit" className="btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={carregando || !username || !senha}>
-              {carregando ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Entrar
-            </button>
-          </form>
+            </>
+          ) : (
+            <>
+              <p style={{ textAlign: "center", color: "var(--text-muted)", fontSize: "0.85rem", margin: "0 0 1.1rem", fontWeight: 600 }}>
+                Entre com seu usuário e senha
+              </p>
+              <form onSubmit={entrar} className="space-y-3">
+                <div>
+                  <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Usuário</label>
+                  <input style={input} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
+                </div>
+                <div>
+                  <label style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Senha</label>
+                  <div style={{ position: "relative" }}>
+                    <input style={{ ...input, paddingRight: "2.4rem" }} type={mostrarSenha ? "text" : "password"} value={senha}
+                      onChange={(e) => setSenha(e.target.value)} autoComplete="current-password" />
+                    <button type="button" onClick={() => setMostrarSenha((v) => !v)} aria-label={mostrarSenha ? "Ocultar senha" : "Mostrar senha"}
+                      style={{
+                        position: "absolute", right: "0.6rem", top: "50%", transform: "translateY(-50%)",
+                        background: "none", border: "none", color: "var(--text-muted)", cursor: "pointer", display: "flex",
+                      }}>
+                      {mostrarSenha ? <EyeOff size={17} /> : <Eye size={17} />}
+                    </button>
+                  </div>
+                  <button type="button" onClick={abrirEsqueciSenha}
+                    style={{ background: "none", border: "none", padding: 0, marginTop: "0.4rem", color: "var(--dourado-light)", fontSize: "0.78rem", cursor: "pointer" }}>
+                    Esqueci minha senha
+                  </button>
+                </div>
+                {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
+                <button type="submit" className="btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={carregando || !username || !senha}>
+                  {carregando ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Entrar
+                </button>
+              </form>
+            </>
+          )}
         </div>
       </div>
 

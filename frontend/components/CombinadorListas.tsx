@@ -5,7 +5,7 @@ import { fetchRelatoriosManejo, fetchAgenda, fetchRelatorioBst } from "@/lib/api
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
 /**
- * Listas Gerenciais — a "Lista de Lactotropina (BST)" (quem está apta,
+ * Listas Gerenciais — a "Lista de BST" (quem está apta,
  * quem entra no próximo BST, quem está inapta e o histórico de aplicação) e
  * o Combinador de listas: escolhe 2+ listas de trabalho já existentes no
  * site e cruza por número do animal (união, interseção ou diferença),
@@ -57,15 +57,15 @@ export default function CombinadorListas() {
     ] : [];
     if (agenda) {
       saida.push(
-        { chave: "bst_aptas", rotulo: "BST — Aptas", grupo: "Lactotropina (BST)", itens: (agenda.bst_elegiveis || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.grupo })) },
-        { chave: "bst_incluir", rotulo: "BST — Incluir no próximo", grupo: "Lactotropina (BST)", itens: (agenda.bst_nunca_aplicados || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.grupo })) },
-        { chave: "bst_inaptas", rotulo: "BST — Inaptas", grupo: "Lactotropina (BST)", itens: (agenda.bst_excluidos || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.motivo_exclusao })) },
+        { chave: "bst_aptas", rotulo: "BST — Aptas", grupo: "BST", itens: (agenda.bst_elegiveis || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.grupo })) },
+        { chave: "bst_incluir", rotulo: "BST — Incluir no próximo", grupo: "BST", itens: (agenda.bst_nunca_aplicados || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.grupo })) },
+        { chave: "bst_inaptas", rotulo: "BST — Inaptas", grupo: "BST", itens: (agenda.bst_excluidos || []).map((r: any) => ({ id: String(r.numero_matriz), extra: r.motivo_exclusao })) },
       );
     }
     if (bst) {
       const porAnimal = new Map<string, string>();
       (bst.aplicacoes || []).forEach((r: any) => { if (!porAnimal.has(r.numero_matriz)) porAnimal.set(r.numero_matriz, r.lote || r.categoria || ""); });
-      saida.push({ chave: "bst_aplicados", rotulo: "BST — Já aplicados (histórico)", grupo: "Lactotropina (BST)", itens: Array.from(porAnimal, ([id, extra]) => ({ id, extra })) });
+      saida.push({ chave: "bst_aplicados", rotulo: "BST — Já aplicados (histórico)", grupo: "BST", itens: Array.from(porAnimal, ([id, extra]) => ({ id, extra })) });
     }
     return saida;
   }, [manejo, agenda, bst]);
@@ -107,11 +107,11 @@ export default function CombinadorListas() {
 
   return (
     <div style={{ display: "grid", gap: "1rem" }}>
-      {/* Lista de Lactotropina (BST) */}
+      {/* Lista de BST */}
       <div style={card}>
         <div className="flex items-center justify-between" style={{ marginBottom: "0.7rem" }}>
           <div className="flex items-center gap-2" style={{ fontWeight: 700, fontSize: "0.95rem" }}>
-            <Droplets size={16} style={{ color: "var(--accent-icon)" }} /> Lista de Lactotropina (BST)
+            <Droplets size={16} style={{ color: "var(--accent-icon)" }} /> Lista de BST
           </div>
           <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={carregar}><RefreshCw size={13} /> Atualizar</button>
         </div>

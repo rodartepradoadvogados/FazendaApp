@@ -142,6 +142,21 @@ from .recria import (
     RegistroCocho,
     CategoriaManejo,
 )
+from .multitenant import (
+    Fazenda,
+    UsuarioFazenda,
+)
+from .planos import (
+    PrecoModulo,
+    ContratoFazenda,
+    ContratoFazendaModulo,
+    ContratoAnexo,
+)
+from .consultores import (
+    ContratoConsultor,
+    FazendaGerenciada,
+    RegistroImportado,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -156,12 +171,22 @@ from .sistema import (
     BackupAutomatico,
     FonteNews,
     NoticiaNews,
+    NotaCapa,
     PushSubscription,
     PushNotificacaoEnviada,
     PortalMensagem,
 )
 
 __all__ = [
+    "Fazenda",
+    "UsuarioFazenda",
+    "PrecoModulo",
+    "ContratoFazenda",
+    "ContratoFazendaModulo",
+    "ContratoAnexo",
+    "ContratoConsultor",
+    "FazendaGerenciada",
+    "RegistroImportado",
     "Animal",
     "Lote",
     "MovimentoLote",
@@ -281,6 +306,7 @@ __all__ = [
     "BackupAutomatico",
     "FonteNews",
     "NoticiaNews",
+    "NotaCapa",
     "PushSubscription",
     "PushNotificacaoEnviada",
     "PortalMensagem",

@@ -19,7 +19,9 @@ from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import SeedFlag, Usuario
+from fazenda.models import (
+    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda,
+)
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -62,13 +64,22 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def criar_token(username: str) -> str:
-    payload = _b64(json.dumps({"sub": username, "exp": int(time.time()) + TOKEN_VALIDADE_S}).encode())
+def criar_token(username: str, fazenda_id: int | None = None) -> str:
+    """`fazenda_id` (piloto conservador de multi-fazenda, ver
+    fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
+    login com um usuário vinculado a uma única fazenda auto-seleciona; um
+    usuário sem nenhuma fazenda vinculada (todo mundo antes desta mudança,
+    até rodar o backfill) gera token sem "fid", e o resto do sistema continua
+    se comportando exatamente como antes (ver get_fazenda_atual_id)."""
+    payload_dict = {"sub": username, "exp": int(time.time()) + TOKEN_VALIDADE_S}
+    if fazenda_id is not None:
+        payload_dict["fid"] = fazenda_id
+    payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
 
 
-def validar_token(token: str) -> str | None:
+def _validar_token_payload(token: str) -> dict | None:
     try:
         payload, sig = token.split(".")
         esperado = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
@@ -77,9 +88,14 @@ def validar_token(token: str) -> str | None:
         dados = json.loads(_unb64(payload))
         if dados.get("exp", 0) < time.time():
             return None
-        return dados.get("sub")
+        return dados
     except Exception:
         return None
+
+
+def validar_token(token: str) -> str | None:
+    dados = _validar_token_payload(token)
+    return dados.get("sub") if dados else None
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +114,20 @@ def get_current_user(
     if not user or not user.ativo:
         raise HTTPException(status_code=401, detail="Usuário inativo")
     return user
+
+
+def get_fazenda_atual_id(
+    authorization: str | None = Header(default=None),
+) -> int | None:
+    """Fazenda selecionada no login/troca de fazenda (piloto conservador de
+    multi-fazenda), lida do próprio token — None para qualquer token emitido
+    antes desta mudança, ou de usuário ainda sem nenhuma fazenda vinculada
+    (SEM RETROATIVIDADE: essas rotas continuam vendo tudo, como sempre viram,
+    até serem migradas explicitamente para considerar fazenda_id)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    dados = _validar_token_payload(authorization.split(" ", 1)[1])
+    return dados.get("fid") if dados else None
 
 
 def get_current_user_opcional(
@@ -128,6 +158,28 @@ def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     Independente de papel/admin: mesmo outro admin não passa por aqui."""
     if (user.email or "").strip().lower() != EMAIL_DONO:
         raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
+    return user
+
+
+def exigir_contratante_ou_dono(
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> Usuario:
+    """Contratante = usuário mestre de UMA fazenda (UsuarioFazenda.contratante,
+    ver fazenda/models/multitenant.py) — gerencia a própria fazenda (ex.:
+    vincular/desvincular usuários), mas não as ações reservadas só ao dono da
+    plataforma (exigir_dono), como criar fazenda nova ou administrar News/Blog.
+    O dono sempre passa, independente de fazenda selecionada."""
+    if (user.email or "").strip().lower() == EMAIL_DONO:
+        return user
+    if fazenda_id is None:
+        raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
+    vinculo = session.exec(
+        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+    ).first()
+    if not vinculo or not vinculo.contratante:
+        raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
     return user
 
 
@@ -171,6 +223,83 @@ def exigir_modulo_qualquer(*modulos: str):
     def _dep(user: Usuario = Depends(get_current_user)) -> Usuario:
         if not any(tem_modulo(user, m) for m in modulos):
             raise HTTPException(status_code=403, detail=f"Sem acesso a nenhum dos módulos: {', '.join(modulos)}")
+        return user
+    return _dep
+
+
+# ---------------------------------------------------------------------------
+# Trava por PLANO CONTRATADO (fazenda/tenant) — camada ACIMA da permissão por
+# usuário acima (exigir_modulo/tem_modulo). Aquela decide o que um FUNCIONÁRIO
+# vê dentro da própria fazenda; esta decide o que a FAZENDA contratou e o
+# dono da plataforma aprovou (ver fazenda/models/planos.py e
+# fazenda/api/routers/fazendas.py). As duas precisam passar.
+#
+# Token sem "fid" (emitido antes deste piloto, ou usuário ainda sem fazenda
+# vinculada) pula esta checagem — mesmo comportamento "sem retroatividade"
+# de get_fazenda_atual_id e de todo o resto do piloto de multi-fazenda.
+# ---------------------------------------------------------------------------
+def _contrato_ativo(session: Session, fazenda_id: int) -> ContratoFazenda | None:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato or contrato.status != "ativo":
+        return None
+    return contrato
+
+
+def exigir_contrato_ativo():
+    """Dependência: só exige que a fazenda tenha um contrato ATIVO (qualquer
+    módulo) — para áreas transversais que não pertencem a um módulo comercial
+    específico (Agenda, Indicadores, Parâmetros, Upload/Importar). Como
+    Rebanho está em todo plano, contrato ativo já garante pelo menos isso."""
+    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
+        if fazenda_id is None:
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+    return _dep
+
+
+def exigir_modulo_contratado(modulo: str):
+    """Dependência: exige que A FAZENDA (não o usuário) tenha este módulo
+    comercial contratado e ativo, dentro de um contrato aprovado. Some junto
+    com exigir_modulo/exigir_modulo_qualquer nos include_router (main.py) —
+    não substitui a permissão do funcionário, só adiciona a trava do tenant."""
+    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
+        if fazenda_id is None:
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+        tem = session.exec(
+            select(ContratoFazendaModulo).where(
+                ContratoFazendaModulo.fazenda_id == fazenda_id,
+                ContratoFazendaModulo.modulo == modulo,
+                ContratoFazendaModulo.ativo == True,  # noqa: E712
+            )
+        ).first()
+        if not tem:
+            raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
+    return _dep
+
+
+# ---------------------------------------------------------------------------
+# Trava por assinatura do CONSULTOR (Fase 2C) — produto independente do
+# consultor (fazendas gerenciadas por importação de planilha, fora de
+# qualquer fazenda-tenant). Não confundir com exigir_modulo_contratado
+# ("consultor"), que é o módulo comercial de uma FAZENDA Diamond (Fase 2B).
+# ---------------------------------------------------------------------------
+def _contrato_consultor_ativo(session: Session, usuario_id: int) -> ContratoConsultor | None:
+    contrato = session.exec(select(ContratoConsultor).where(ContratoConsultor.usuario_id == usuario_id)).first()
+    if not contrato or contrato.status != "ativo":
+        return None
+    return contrato
+
+
+def exigir_consultor_ativo():
+    """Dependência: exige que o USUÁRIO LOGADO (não uma fazenda) tenha uma
+    assinatura de consultor ativa — usada pelo router de fazendas gerenciadas/
+    importação/indicadores (fazenda/api/routers/consultores.py)."""
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if not _contrato_consultor_ativo(session, user.id):
+            raise HTTPException(status_code=403, detail="Assinatura de consultor sem contrato ativo — aguardando aprovação")
         return user
     return _dep
 

@@ -11,8 +11,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from fazenda.auth import (
-    exigir_modulo, exigir_modulo_qualquer, get_current_user, seed_admin,
-    seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
+    exigir_contrato_ativo, exigir_modulo, exigir_modulo_contratado, exigir_modulo_qualquer, get_current_user,
+    seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
@@ -27,9 +27,11 @@ from fazenda.api.routers import (
     cadastro,
     compra_animal,
     compra_semen,
+    consultores,
     estoque,
     exclusoes,
     farmacia,
+    fazendas,
     financeiro,
     importar,
     indicadores,
@@ -76,7 +78,9 @@ from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
-from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news
+from fazenda.api.routers.news import (
+    desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news, seed_nota_capa_202607,
+)
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -203,6 +207,9 @@ async def lifespan(app: FastAPI):
         # Publica os lotes novos do robô agendado /milknews (MILKNEWS_LOTES) —
         # cada lote roda uma única vez, sob a fonte manual "robô Milknews".
         publicar_lotes_milknews(session)
+        # Nota informativa na Capa para o produtor (jul/2026) — editável só
+        # pelo dono da plataforma depois disso.
+        seed_nota_capa_202607(session)
         # O proprietário já nasce com permissão de publicar matérias no blog
         # (ele já usa essa função hoje); todos os demais usuários começam sem
         # essa permissão, por padrão (uma única vez, ver seed_permissao_publicar_dono).
@@ -265,75 +272,102 @@ app.add_middleware(
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)
+# Fazendas: gerencia os próprios contratos/planos — não leva a trava de
+# módulo contratado (seria circular).
+app.include_router(fazendas.router)
+# Consultor (Fase 2C): produto independente, escopado por USUÁRIO (não por
+# fazenda) — cada endpoint já tem sua própria trava interna (get_current_user
+# nos públicos, exigir_consultor_ativo/exigir_dono nos demais); não faz
+# sentido usar a trava de módulo contratado por fazenda aqui.
+app.include_router(consultores.router)
 
 _protegido = [Depends(get_current_user)]
-app.include_router(animais.router, dependencies=_protegido)
-app.include_router(upload.router, dependencies=_protegido)
+# Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por
+# usuário (exigir_modulo/exigir_modulo_qualquer) já usada abaixo. Token sem
+# "fid" (legado) pula a checagem, como o resto do piloto de multi-fazenda —
+# ver fazenda/auth.py::exigir_modulo_contratado/exigir_contrato_ativo.
+_contrato_ativo = [Depends(exigir_contrato_ativo())]
+
+app.include_router(animais.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("rebanho"))])
+# Upload/Importar CSV e áreas transversais (Agenda, Indicadores, Parâmetros)
+# não pertencem a um módulo comercial específico — exigem só que a fazenda
+# tenha ALGUM contrato ativo (Rebanho é obrigatório em todo plano).
+app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
-app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))])
-app.include_router(agenda.router, dependencies=_protegido)
+app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
+app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
-app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro"))])
-app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro"))])
-app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro"))])
-app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro"))])
+app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
-# — mesmo módulo. Pedidos é módulo próprio (não mexe em Estoque/Financeiro
-# sozinho — só quando um lançamento/movimento é vinculado a ele).
-app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro"))])
-app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos"))])
-app.include_router(indicadores.router, dependencies=_protegido)
-app.include_router(parametros.router, dependencies=_protegido)
-app.include_router(alimentacao.router, dependencies=_protegido)
-app.include_router(producao.router, dependencies=_protegido)
-app.include_router(reproducao.router, dependencies=_protegido)
-app.include_router(relatorio_acasalamento.router, dependencies=_protegido)
-app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao"))])
-app.include_router(estoque.router, dependencies=_protegido)
-app.include_router(farmacia.router, dependencies=_protegido)
-app.include_router(sanidade.router, dependencies=_protegido)
-app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_protegido)
-app.include_router(recria.router, dependencies=_protegido)
-# Cadastro de lotes/parâmetros vive em Configurações (mesmo módulo de "parametros").
-app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros"))])
-# Cadastro de Safra (Opção A do plano de custo agrícola) — mesma seção/módulo.
-app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros"))])
-app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))])
+# na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
+# não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é
+# módulo próprio (não mexe em Estoque/Financeiro sozinho — só quando um
+# lançamento/movimento é vinculado a ele).
+app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento"))])
+app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
+app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
+app.include_router(producao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
+app.include_router(reproducao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
+app.include_router(relatorio_acasalamento.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])
+app.include_router(relatorios.router, dependencies=[Depends(exigir_modulo("reproducao")), Depends(exigir_modulo_contratado("reprodutivo"))])
+app.include_router(estoque.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("estoque"))])
+app.include_router(farmacia.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
+app.include_router(sanidade.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
+app.include_router(relatorio_rastreabilidade_sanitaria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("sanitario"))])
+app.include_router(recria.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
+# Cadastro de lotes vive em Configurações (permissão "parametros"), mas é
+# dado de Rebanho no contrato. Cadastro de Safra é módulo "agricultura".
+# cadastro.router é um cadastro-base amplo (fornecedores, pessoas, tipos,
+# serviços, farmácia...) usado por vários módulos comerciais ao mesmo tempo —
+# fica com a trava transversal (contrato ativo), não um módulo específico.
+app.include_router(lotes.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(safra.router, dependencies=[Depends(exigir_modulo("parametros")), Depends(exigir_modulo_contratado("agricultura"))])
+app.include_router(cadastro.router, dependencies=[Depends(exigir_modulo("parametros"))] + _contrato_ativo)
 # Leitura do banco de touros: Rebanho > Touros também consulta este catálogo
 # (módulo "rebanho"), então aceita "parametros" OU "rebanho" — só a listagem,
 # não o cadastro/edição (que fica no router acima, exigindo "parametros").
-app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho"))])
-app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
-app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho"))])
+app.include_router(cadastro.router_touros_leitura, dependencies=[Depends(exigir_modulo_qualquer("parametros", "rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(movimentacoes.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(baixas.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(compra_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(compra_semen.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
+app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(exigir_modulo("rebanho")), Depends(exigir_modulo_contratado("rebanho"))])
 # Exclusões: qualquer usuário logado pode buscar/solicitar; excluir de fato,
 # aprovar e rejeitar são restritos a administradores (gate por rota, dentro
 # do próprio router — ver exclusoes.py).
-app.include_router(exclusoes.router, dependencies=_protegido)
-app.include_router(notificacoes.router, dependencies=_protegido)
+app.include_router(exclusoes.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(notificacoes.router, dependencies=_protegido + _contrato_ativo)
 # Push (Web Push API): GET /push/chave-publica é pública (o frontend precisa
 # dela antes mesmo de terminar a inscrição); subscribe/unsubscribe exigem
 # login internamente (ver fazenda/api/routers/push.py) — por isso este
 # router NÃO leva a dependência _protegido global, igual news.router.
 app.include_router(push.router)
-app.include_router(portal.router, dependencies=_protegido)
-app.include_router(auditoria.router, dependencies=_protegido)
+app.include_router(portal.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(auditoria.router, dependencies=_protegido + _contrato_ativo)
 # Telegram: webhook é público (o Telegram chama sem login; a segurança é o
 # segredo do cabeçalho + a whitelist de chats liberados).
 app.include_router(telegram.router)
-# Aprovações: cada rota já exige admin (exigir_admin) internamente.
+# Aprovações: cada rota já exige admin (exigir_admin) internamente — a fila
+# de aprovação ainda não tem fazenda_id (gap conhecido), então não leva a
+# trava de contrato ainda (evitaria ficar inconsistente com o resto do módulo).
 app.include_router(aprovacoes.router)
 # News: leitura (GET /news/) é pública — qualquer visitante lê o blog sem
 # login; cada rota de gestão (cadastro de fontes, publicar/excluir/revisar
 # matéria) já exige a permissão certa internamente (exigir_admin /
-# exigir_pode_publicar) — por isso este router NÃO leva o _protegido global.
+# exigir_pode_publicar) — por isso este router NÃO leva o _protegido global,
+# nem a trava de contrato (o blog é compartilhado entre todas as fazendas).
 app.include_router(news.router)
-# Assistente Claude (protótipo): aberto a qualquer usuário logado — cada
-# ferramenta interna é oferecida só conforme os módulos liberados dele.
-app.include_router(assistente.router, dependencies=_protegido)
+# Assistente Claude (protótipo): aberto a qualquer usuário logado — já
+# restrito à fazenda #1 (FAZENDA_ID_PILOTO, ver assistente.py), então a trava
+# de contrato aqui é redundante hoje, mas evita reabrir um buraco se essa
+# restrição for removida antes do assistente virar um módulo comercial.
+app.include_router(assistente.router, dependencies=_protegido + _contrato_ativo)
 
 
 @app.get("/")

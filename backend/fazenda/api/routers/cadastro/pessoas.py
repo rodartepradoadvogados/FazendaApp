@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Pessoa, TipoPessoa
 
@@ -189,19 +190,26 @@ def atualizar_tipo_pessoa(tipo_id: int, dados: TipoPessoaIn, session: Session = 
 
 
 @router.get("/pessoas")
-def listar_pessoas(session: Session = Depends(get_session)) -> list[dict]:
-    return [_serializar_pessoa(p) for p in session.exec(select(Pessoa).order_by(Pessoa.nome)).all()]
+def listar_pessoas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    query = select(Pessoa)
+    if fazenda_id is not None:
+        query = query.where(Pessoa.fazenda_id == fazenda_id)
+    return [_serializar_pessoa(p) for p in session.exec(query.order_by(Pessoa.nome)).all()]
 
 
 @router.post("/pessoas")
-def criar_pessoa(dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
+def criar_pessoa(
+    dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     tipo_csv = _validar_tipos(session, dados.tipos)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     telefones = _normalizar_lista_contato(dados.telefones)
     emails = _normalizar_lista_contato(dados.emails)
     campos = dados.model_dump(exclude={"tipos", "telefones", "emails"})
-    p = Pessoa(**campos, tipo=tipo_csv)
+    p = Pessoa(**campos, tipo=tipo_csv, fazenda_id=fazenda_id)
     _aplicar_contatos(p, telefones, emails)
     session.add(p)
     session.commit()

@@ -1540,7 +1540,7 @@ export default function AgendaPage() {
                       <td style={{ fontSize: "0.78rem", color: b.ja_aplicado_antes ? "var(--text-muted)" : "var(--blue)" }}>
                         {b.ja_aplicado_antes ? "Já tomou antes" : "Primeira vez"}
                       </td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin)" categoria="Sanidade" /></td>
+                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST" categoria="Sanidade" /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -1594,7 +1594,7 @@ export default function AgendaPage() {
                       <td style={{ fontSize: "0.78rem" }}>{b.grupo}</td>
                       <td>{b.del_dias ?? "—"}</td>
                       <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{b.requer_reanalise ? (b.motivo_exclusao || "Revisar") : "Nunca aplicada — apta na próxima"}</td>
-                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST (Lactotropin/Boostin) — nunca aplicada" categoria="Sanidade" /></td>
+                      <td><BotaoAgendar numero={b.numero_matriz} descricao="Aplicar BST — nunca aplicada" categoria="Sanidade" /></td>
                     </tr>
                   ))}
                 </tbody>

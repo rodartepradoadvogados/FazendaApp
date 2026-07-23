@@ -42,9 +42,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user, get_current_user_opcional
+from fazenda.auth import exigir_dono, get_current_user, get_current_user_opcional
 from fazenda.database import get_session
-from fazenda.models import FonteNews, LancamentoPendente, NoticiaNews, SeedFlag, Usuario
+from fazenda.models import FonteNews, LancamentoPendente, NotaCapa, NoticiaNews, SeedFlag, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
 
 RESUMO_MAX = 800
@@ -121,6 +121,26 @@ def desligar_fontes_rss_e_apagar_noticias_202607(session: Session) -> None:
             session.delete(noticia)
         fonte.ativo = False
         session.add(fonte)
+    session.add(SeedFlag(chave=chave))
+    session.commit()
+
+
+def seed_nota_capa_202607(session: Session) -> None:
+    """Nota inicial exibida na Capa para o produtor (jul/2026) — resumo do PL
+    913/26 (piso de R$2,50/litro), a mesma pauta já publicada em News. Roda
+    uma única vez (SeedFlag); depois disso o dono da plataforma controla o
+    conteúdo via PUT /news/nota-capa, inclusive desativando-a."""
+    chave = "nota_capa_pl91326_202607"
+    if session.get(SeedFlag, chave):
+        return
+    session.add(NotaCapa(
+        titulo="Projeto de lei propõe piso de R$ 2,50/litro para o leite",
+        texto=(
+            "O PL 913/26, em tramitação na Câmara dos Deputados, propõe um preço "
+            "mínimo nacional de R$ 2,50 por litro do leite pago ao produtor. "
+            "Acompanhe a matéria completa na aba News."
+        ),
+    ))
     session.add(SeedFlag(chave=chave))
     session.commit()
 
@@ -433,12 +453,12 @@ def publicar_lotes_milknews(session: Session) -> None:
 
 
 @router.get("/fontes")
-def listar_fontes(session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> list[dict]:
+def listar_fontes(session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> list[dict]:
     return [f.model_dump() for f in session.exec(select(FonteNews).order_by(FonteNews.nome)).all()]
 
 
 @router.post("/fontes")
-def criar_fonte(dados: FonteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def criar_fonte(dados: FonteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> dict:
     nome = dados.nome.strip()
     url = dados.url.strip()
     if not nome or not url:
@@ -454,7 +474,7 @@ def criar_fonte(dados: FonteIn, session: Session = Depends(get_session), user: U
 
 @router.put("/fontes/{fonte_id}")
 def atualizar_fonte(
-    fonte_id: int, dados: FonteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    fonte_id: int, dados: FonteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
 ) -> dict:
     fonte = session.get(FonteNews, fonte_id)
     if not fonte:
@@ -477,7 +497,7 @@ def atualizar_fonte(
 
 
 @router.delete("/fontes/{fonte_id}")
-def excluir_fonte(fonte_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def excluir_fonte(fonte_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> dict:
     fonte = session.get(FonteNews, fonte_id)
     if not fonte:
         raise HTTPException(status_code=404, detail="Fonte não encontrada")
@@ -536,7 +556,7 @@ def _atualizar_fonte_se_necessario(session: Session, fonte: FonteNews) -> None:
 
 
 @router.post("/fontes/{fonte_id}/testar")
-def testar_fonte(fonte_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def testar_fonte(fonte_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> dict:
     """Força uma busca imediata desta fonte, ignorando o intervalo mínimo de
     1h — para o administrador testar depois de corrigir a URL ou de uma
     correção no fetch, sem precisar esperar."""
@@ -554,7 +574,7 @@ def testar_fonte(fonte_id: int, session: Session = Depends(get_session), user: U
 
 @router.post("/manual")
 def importar_noticias_manual(
-    dados: NoticiasManualIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    dados: NoticiasManualIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
 ) -> dict:
     """Recebe matérias já apuradas por fora (ex.: robô agendado /milknews) e
     coloca cada uma na fila de aprovação (LancamentoPendente, tipo
@@ -663,7 +683,7 @@ def _serializar_noticia(n: NoticiaNews) -> dict:
 
 @router.post("/materias")
 def criar_materia_blog(
-    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
+    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
 ) -> dict:
     """Publica direto uma matéria escrita por nós em Configurações > News >
     Adicionar matéria ao blog — sem passar pela fila de aprovação (exige a
@@ -692,7 +712,7 @@ def criar_materia_blog(
 
 
 @router.delete("/materias/{noticia_id}")
-def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar)) -> dict:
+def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> dict:
     noticia = session.get(NoticiaNews, noticia_id)
     if not noticia:
         raise HTTPException(status_code=404, detail="Matéria não encontrada")
@@ -703,7 +723,7 @@ def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session
 
 @router.post("/materias/{noticia_id}/revisar-final")
 def revisar_publicacao_final(
-    noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
+    noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
 ) -> dict:
     """Confirma a revisão de publicação definitiva de UMA matéria (aba própria
     em Configurações > News) — vale para qualquer matéria já publicada,
@@ -732,7 +752,7 @@ class MateriaBlogEditIn(BaseModel):
 
 
 @router.get("/materias")
-def listar_todas_materias(session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> list[dict]:
+def listar_todas_materias(session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> list[dict]:
     """Lista TODAS as matérias — publicadas e aguardando revisão — para a tela
     Configurações > News (abas "Matérias publicadas" e "Revisão de publicação
     definitiva"). Diferente de GET /, que só devolve matérias já revisadas
@@ -744,7 +764,7 @@ def listar_todas_materias(session: Session = Depends(get_session), user: Usuario
 
 @router.put("/materias/{noticia_id}")
 def atualizar_materia_blog(
-    noticia_id: int, dados: MateriaBlogEditIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
+    noticia_id: int, dados: MateriaBlogEditIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
 ) -> dict:
     """Edita manchete/corpo/fontes de uma matéria já publicada — usado no
     botão "Editar matéria" da aba Revisão de publicação definitiva, para
@@ -795,3 +815,38 @@ def listar_noticias(ver_tudo: bool = False, session: Session = Depends(get_sessi
             "noticias": [_serializar_noticia(n) for n in noticias],
         })
     return {"janela_dias": JANELA_PADRAO_DIAS, "fontes": saida}
+
+
+class NotaCapaIn(BaseModel):
+    titulo: str
+    texto: str
+    ativa: bool = True
+
+
+@router.get("/nota-capa")
+def obter_nota_capa(session: Session = Depends(get_session)) -> dict | None:
+    """Leitura pública — a nota ativa mais recente para exibir na Capa
+    (aparece pra qualquer usuário logado da fazenda, é conteúdo único e
+    compartilhado, não por tenant)."""
+    nota = session.exec(
+        select(NotaCapa).where(NotaCapa.ativa == True).order_by(NotaCapa.atualizado_em.desc())  # noqa: E712
+    ).first()
+    if not nota:
+        return None
+    return {"id": nota.id, "titulo": nota.titulo, "texto": nota.texto, "atualizado_em": nota.atualizado_em.isoformat()}
+
+
+@router.put("/nota-capa")
+def atualizar_nota_capa(
+    dados: NotaCapaIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
+) -> dict:
+    """Só o dono da plataforma edita a nota da Capa — desativa a nota ativa
+    anterior (se houver) e cria uma nova, mantendo histórico."""
+    for nota in session.exec(select(NotaCapa).where(NotaCapa.ativa == True)).all():  # noqa: E712
+        nota.ativa = False
+        session.add(nota)
+    nova = NotaCapa(titulo=dados.titulo.strip(), texto=dados.texto.strip(), ativa=dados.ativa)
+    session.add(nova)
+    session.commit()
+    session.refresh(nova)
+    return {"id": nova.id, "titulo": nova.titulo, "texto": nova.texto}

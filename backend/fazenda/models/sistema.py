@@ -292,6 +292,23 @@ class NoticiaNews(SQLModel, table=True):
     categoria: Optional[str] = None
 
 
+class NotaCapa(SQLModel, table=True):
+    """Nota informativa simples, exibida na Capa para o produtor — distinta de
+    matéria de blog (NoticiaNews): não tem revisão nem fonte RSS, é só um
+    aviso curto e atualizável (ex.: mudança regulatória/de mercado relevante),
+    editável só pelo dono da plataforma (ver auth.py::exigir_dono). Só a mais
+    recente com `ativa=True` aparece na Capa."""
+
+    __tablename__ = "nota_capa"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    titulo: str
+    texto: str
+    ativa: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Notificações push (Web Push API) — canal adicional de entrega para os
 # MESMOS alertas do sininho (/notificacoes), funcionando com o app fechado.

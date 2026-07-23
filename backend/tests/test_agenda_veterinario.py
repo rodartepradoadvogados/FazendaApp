@@ -178,13 +178,15 @@ class TestNovilhas:
         r = c.get("/reproducao/agenda-veterinario")
         assert any(a["numero_matriz"] == "22" for a in r.json()["listas"]["novilhas_gestantes"])
 
-    def test_inseminada_nao_reconfirmada_nao_entra_em_gestantes(self, client):
+    def test_novilha_toque_positivo_ja_confirma_sem_precisar_de_reconfirmacao(self, client):
+        """Novilha (nunca pariu) dispensa o 2º exame de reconfirmação nesta
+        fazenda — 1º toque positivo já é gestante confirmada (ver #657)."""
         c, engine = client
         _add_animal(engine, "23", "Novilha", idade_meses=IDADE_APTA)
         _add_peso(engine, "23", 350)
         _add_servico(engine, "23", 40, data_diagnostico=HOJE - timedelta(days=10), diagnostico="POSITIVO")
         r = c.get("/reproducao/agenda-veterinario")
-        assert not any(a["numero_matriz"] == "23" for a in r.json()["listas"]["novilhas_gestantes"])
+        assert any(a["numero_matriz"] == "23" for a in r.json()["listas"]["novilhas_gestantes"])
 
 
 class TestVerificarAptidao:

@@ -367,7 +367,15 @@ def registrar_diagnostico(dados: DiagnosticoIn, session: Session = Depends(get_s
     if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
 
+    # Prioriza o serviço ainda em aberto (sem diagnóstico) — evita gravar por
+    # engano num serviço antigo já diagnosticado quando a matriz tem mais de
+    # um serviço na tabela. Sem serviço em aberto, cai no mais recente (mantém
+    # o fluxo de reeditar o diagnóstico já lançado, ex.: retoque -> reconfirmada).
     servico = session.exec(
+        select(Servico)
+        .where(Servico.numero_matriz == dados.numero_matriz, Servico.diagnostico.is_(None))
+        .order_by(Servico.data_servico.desc())
+    ).first() or session.exec(
         select(Servico)
         .where(Servico.numero_matriz == dados.numero_matriz)
         .order_by(Servico.data_servico.desc())
@@ -412,7 +420,18 @@ def registrar_reconfirmacao(dados: ReconfirmacaoIn, session: Session = Depends(g
     if dados.resultado not in ("positivo", "negativo"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
 
+    # Mesma lógica de preferência do diagnóstico acima: prioriza o serviço
+    # positivo ainda sem reconfirmação; sem um assim, cai no mais recente
+    # (mantém o fluxo legado de reconfirmar direto um serviço sem 1º toque).
     servico = session.exec(
+        select(Servico)
+        .where(
+            Servico.numero_matriz == dados.numero_matriz,
+            Servico.diagnostico == "POSITIVO",
+            Servico.data_reconfirmacao.is_(None),
+        )
+        .order_by(Servico.data_servico.desc())
+    ).first() or session.exec(
         select(Servico)
         .where(Servico.numero_matriz == dados.numero_matriz)
         .order_by(Servico.data_servico.desc())

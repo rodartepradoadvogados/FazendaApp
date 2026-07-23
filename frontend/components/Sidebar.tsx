@@ -19,11 +19,12 @@ import {
   ShoppingCart,
   MessageSquare,
   Users,
+  Briefcase,
   Menu,
   X,
   Search,
 } from "lucide-react";
-import { checkHealth, getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
+import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -68,6 +69,11 @@ export function Sidebar() {
   const [dono, setDono] = useState(false);
 
   const [temConfiguracoes, setTemConfiguracoes] = useState(false);
+  // Nome exibido embaixo do logo CowData — vem da fazenda selecionada no
+  // login (piloto conservador de multi-fazenda). "Jairo Nasser" é o valor
+  // fixo de sempre, mantido como fallback para quem nunca teve mais de uma
+  // fazenda vinculada (ninguém percebe diferença nenhuma).
+  const [fazendaNome, setFazendaNome] = useState("Jairo Nasser");
 
   // Drill-down: quando a página registra sua árvore de sub-abas, a barra
   // mostra essa árvore ACIMA da lista de módulos (nunca no lugar dela) — assim
@@ -89,6 +95,7 @@ export function Sidebar() {
     setAdmin(ehAdmin());
     setDono(ehDono());
     setTemConfiguracoes(podeModulo("parametros") || podeModulo("upload") || ehAdmin());
+    setFazendaNome(getFazendaAtual()?.nome || "Jairo Nasser");
   }, [path]);
 
   useEffect(() => {
@@ -132,7 +139,7 @@ export function Sidebar() {
           <Menu size={22} />
         </button>
         <CowDataWordmark size="0.85rem" cowColor="var(--sidebar-fg)" />
-        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· Jairo Nasser</span>
+        <span style={{ color: "var(--sidebar-muted)", fontSize: "0.7rem" }}>· {fazendaNome}</span>
       </div>
       {/* Espaçador: reserva a altura da barra fixa para o conteúdo não ficar por baixo dela. */}
       <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
@@ -159,7 +166,7 @@ export function Sidebar() {
           <CowDataMark size={56} />
           <CowDataWordmark size="1.05rem" cowColor="var(--sidebar-fg)" />
           <p style={{ color: "var(--sidebar-logo-sub)", fontSize: "0.6rem", lineHeight: 1.2 }}>
-            Jairo Nasser
+            {fazendaNome}
           </p>
         </div>
       </div>
@@ -228,6 +235,7 @@ export function Sidebar() {
             const todos = [...visiveis,
               ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
+              { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
             ];
             return GRUPOS.map((grupo, i) => {

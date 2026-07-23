@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck } from "lucide-react";
-import { podeModulo, ehAdmin } from "@/lib/api";
+import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, Building2 } from "lucide-react";
+import { podeModulo, ehAdmin, ehDono } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
@@ -10,11 +10,12 @@ import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSe
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import NewsAdmin from "@/components/NewsAdmin";
+import FazendasAdmin from "@/components/FazendasAdmin";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aprovacoes" | "aparencia";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "fazendas" | "aprovacoes" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -41,7 +42,8 @@ export default function ConfiguracoesPage() {
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
-    if (ehAdmin()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
+    if (ehDono()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
+    if (ehDono()) abas.push({ id: "fazendas", label: "Fazendas", icon: Building2, title: "Planos, contratos e anexos das fazendas clientes" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
@@ -120,6 +122,7 @@ export default function ConfiguracoesPage() {
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "news" && <NewsAdmin />}
+        {aba === "fazendas" && <div className="px-6"><FazendasAdmin /></div>}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
       </div>
     </div>

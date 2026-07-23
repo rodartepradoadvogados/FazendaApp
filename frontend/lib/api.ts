@@ -9,9 +9,17 @@ export function getUsuario(): any | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
 }
+// Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
+// — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
+// que nunca teve mais de uma fazenda vinculada (o caso de hoje).
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null };
+export function getFazendaAtual(): FazendaAtual | null {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
+}
 export function logout() {
   if (typeof window !== "undefined") {
-    localStorage.removeItem("token"); localStorage.removeItem("usuario");
+    localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
     location.href = "/login";
   }
 }
@@ -40,11 +48,10 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
-// Permissão específica para publicar/gerenciar matérias do blog (News) e
-// confirmar a revisão de publicação definitiva — independente de admin (ver
-// backend/fazenda/auth.py::exigir_pode_publicar). Todo usuário nasce sem ela.
+// Administração de News/Blog (fontes, matérias, revisão) é restrita ao
+// proprietário da plataforma — ver backend/fazenda/auth.py::exigir_dono.
 export function podePublicarMaterias(): boolean {
-  return getUsuario()?.pode_publicar_materias_blog === true;
+  return ehDono();
 }
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
@@ -105,12 +112,265 @@ export async function login(username: string, senha: string) {
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
+  if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  else localStorage.removeItem("fazenda_atual");
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
   if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde" || data.usuario?.paleta === "azul") {
     document.documentElement.setAttribute("data-paleta", data.usuario.paleta);
     localStorage.setItem("paleta", data.usuario.paleta);
   }
-  return data.usuario;
+  // Piloto conservador de multi-fazenda: quando o usuário está vinculado a
+  // mais de uma fazenda, a página de login mostra a tela de escolha em vez
+  // de navegar direto (ver POST /auth/selecionar-fazenda) — devolve a
+  // resposta inteira (não só usuario) para o chamador checar isso.
+  return data;
+}
+
+export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual> {
+  const res = await fetch(`${API}/auth/selecionar-fazenda`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify({ fazenda_id: fazendaId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao selecionar fazenda"); }
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  return data.fazenda_atual;
+}
+
+export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
+  const res = await authFetch(`${API}/fazendas/minhas`);
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json();
+}
+
+// ── Planos comerciais e contrato por fazenda (Fase 2A, dono only) ──
+// Ver backend/fazenda/models/planos.py e fazenda/api/routers/fazendas.py.
+export type Fazenda = { id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean };
+export type ModuloComercial =
+  | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
+  | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor";
+export type PlanoNome = "standard" | "silver" | "gold" | "diamond";
+export type ModuloDoContrato = { modulo: ModuloComercial; preco: number; ativo: boolean };
+export type ContratoFazenda = {
+  fazenda_id: number;
+  status: "aguardando_aprovacao" | "ativo" | "suspenso" | null;
+  plano: PlanoNome | null;
+  aprovado_por_usuario_id?: number | null;
+  data_fechamento?: string | null;
+  modulos: ModuloDoContrato[];
+};
+export type PlanoCatalogo = { nome: string; preco: number; modulos: ModuloComercial[] };
+export type PrecoModulo = { modulo: ModuloComercial; preco: number };
+export type AnexoContrato = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em: string };
+
+export async function fetchFazendas(): Promise<Fazenda[]> {
+  const res = await authFetch(`${API}/fazendas/`);
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json();
+}
+export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: string }): Promise<Fazenda> {
+  const res = await authFetch(`${API}/fazendas/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fazenda"); }
+  return res.json();
+}
+export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`);
+  if (!res.ok) throw new Error(`Contrato error: ${res.status}`);
+  return res.json();
+}
+export async function definirContratoFazenda(
+  fazendaId: number, dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[] },
+): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao definir contrato"); }
+  return res.json();
+}
+export async function aprovarContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/aprovar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  return res.json();
+}
+export async function suspenderContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/suspender`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  return res.json();
+}
+export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
+  const res = await authFetch(`${API}/fazendas/catalogo/planos`);
+  if (!res.ok) throw new Error(`Catálogo de planos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchPrecosModulo(): Promise<PrecoModulo[]> {
+  const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo`);
+  if (!res.ok) throw new Error(`Preços de módulo error: ${res.status}`);
+  return res.json();
+}
+export async function atualizarPrecoModulo(modulo: ModuloComercial, preco: number): Promise<PrecoModulo> {
+  const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo/${modulo}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modulo, preco }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar preço"); }
+  return res.json();
+}
+export async function fetchAnexosContrato(fazendaId: number): Promise<AnexoContrato[]> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`);
+  if (!res.ok) throw new Error(`Anexos error: ${res.status}`);
+  return res.json();
+}
+export async function anexarContrato(fazendaId: number, file: File): Promise<AnexoContrato> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  return res.json();
+}
+export async function excluirAnexoContrato(anexoId: number): Promise<void> {
+  const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+}
+export function urlAnexoContrato(anexoId: number): string {
+  return `${API}/fazendas/contrato/anexos/${anexoId}`;
+}
+
+// Vínculo de usuário a uma fazenda — contratante (administra a fazenda) ou
+// consultor externo (veterinário/contador/agrônomo; só aceito em fazenda com
+// módulo "consultor" contratado — plano Diamond). Ver Fase 2B.
+export type UsuarioVinculado = { usuario_id: number; username: string; nome: string | null; contratante: boolean; consultor: boolean };
+
+export async function fetchUsuariosVinculados(fazendaId: number): Promise<UsuarioVinculado[]> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/usuarios`);
+  if (!res.ok) throw new Error(`Usuários vinculados error: ${res.status}`);
+  return res.json();
+}
+export async function vincularUsuarioFazenda(
+  fazendaId: number, dados: { username: string; contratante?: boolean; consultor?: boolean },
+): Promise<{ vinculado: boolean; usuario_id: number; username: string }> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular usuário"); }
+  return res.json();
+}
+export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: number): Promise<void> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desvincular usuário"); }
+}
+
+// ── Consultor independente (Fase 2C) — assinatura própria (fora de qualquer
+// fazenda-tenant), fazendas gerenciadas por importação de planilha, e o modo
+// Simulação (cálculo puro, nunca persistido). Ver
+// backend/fazenda/models/consultores.py e fazenda/api/routers/consultores.py.
+export type PlanoConsultorNome = "consultor_basico" | "consultor_intermediario" | "consultor_avancado";
+export type PlanoConsultorCatalogo = { nome: string; preco: number; limite_fazendas: number };
+export type ContratoConsultor = {
+  usuario_id: number;
+  status: "aguardando_aprovacao" | "ativo" | "suspenso" | null;
+  plano: PlanoConsultorNome | null;
+  limite_fazendas: number | null;
+  data_fechamento?: string | null;
+};
+export type ContratoConsultorAdmin = ContratoConsultor & { username: string | null };
+export type CategoriaImportacao =
+  | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro" | "estoque" | "alimentacao" | "agricultura";
+export type FazendaGerenciada = {
+  id: number; nome: string; produtor: string | null; cidade: string | null; uf: string | null;
+  observacoes: string | null; criado_em: string;
+};
+export type RegistroImportado = {
+  id: number; categoria: CategoriaImportacao; data_referencia: string | null;
+  dados: Record<string, string>; arquivo_origem: string; criado_em: string;
+};
+
+export async function fetchPlanosConsultorCatalogo(): Promise<Record<PlanoConsultorNome, PlanoConsultorCatalogo>> {
+  const res = await authFetch(`${API}/consultor/catalogo/planos`);
+  if (!res.ok) throw new Error(`Catálogo de planos de consultor error: ${res.status}`);
+  return res.json();
+}
+export async function solicitarPlanoConsultor(plano: PlanoConsultorNome): Promise<ContratoConsultor> {
+  const res = await authFetch(`${API}/consultor/solicitar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ plano }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao solicitar plano"); }
+  return res.json();
+}
+export async function fetchMeuContratoConsultor(): Promise<ContratoConsultor> {
+  const res = await authFetch(`${API}/consultor/meu-contrato`);
+  if (!res.ok) throw new Error(`Meu contrato de consultor error: ${res.status}`);
+  return res.json();
+}
+export async function fetchContratosConsultor(): Promise<ContratoConsultorAdmin[]> {
+  const res = await authFetch(`${API}/consultor/todos`);
+  if (!res.ok) throw new Error(`Contratos de consultor error: ${res.status}`);
+  return res.json();
+}
+export async function aprovarContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
+  const res = await authFetch(`${API}/consultor/${usuarioId}/aprovar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  return res.json();
+}
+export async function suspenderContratoConsultor(usuarioId: number): Promise<ContratoConsultor> {
+  const res = await authFetch(`${API}/consultor/${usuarioId}/suspender`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  return res.json();
+}
+
+export async function fetchFazendasGerenciadas(): Promise<FazendaGerenciada[]> {
+  const res = await authFetch(`${API}/consultor/fazendas`);
+  if (!res.ok) throw new Error(`Fazendas gerenciadas error: ${res.status}`);
+  return res.json();
+}
+export async function criarFazendaGerenciada(dados: {
+  nome: string; produtor?: string; cidade?: string; uf?: string; observacoes?: string;
+}): Promise<FazendaGerenciada> {
+  const res = await authFetch(`${API}/consultor/fazendas`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cadastrar fazenda gerenciada"); }
+  return res.json();
+}
+export async function excluirFazendaGerenciada(fazendaGerenciadaId: number): Promise<void> {
+  const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir fazenda gerenciada"); }
+}
+export async function importarPlanilhaGerenciada(
+  fazendaGerenciadaId: number, categoria: CategoriaImportacao, file: File,
+): Promise<{ categoria: string; criados: number }> {
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("categoria", categoria);
+  const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importar`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao importar planilha"); }
+  return res.json();
+}
+export async function fetchIndicadoresGerenciados(
+  fazendaGerenciadaId: number, categoria?: CategoriaImportacao,
+): Promise<RegistroImportado[]> {
+  const qs = categoria ? `?categoria=${categoria}` : "";
+  const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/indicadores${qs}`);
+  if (!res.ok) throw new Error(`Indicadores importados error: ${res.status}`);
+  return res.json();
+}
+export async function excluirRegistroImportado(fazendaGerenciadaId: number, registroId: number): Promise<void> {
+  const res = await authFetch(`${API}/consultor/fazendas/${fazendaGerenciadaId}/importacoes/${registroId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir registro importado"); }
+}
+
+export type SimulacaoIn = {
+  vacas_lactacao: number; producao_media_litro_vaca_dia: number; preco_litro: number;
+  custo_alimentar_vaca_dia: number; outros_custos_mensais?: number; taxa_prenhez_pct?: number | null;
+};
+export type SimulacaoOut = {
+  producao_total_litro_dia: number; producao_total_litro_mes: number; receita_mes: number;
+  custo_alimentar_mes: number; custo_total_mes: number; margem_mes: number;
+  custo_por_litro: number | null; margem_por_litro: number | null; taxa_prenhez_pct: number | null;
+};
+export async function calcularSimulacaoConsultor(dados: SimulacaoIn): Promise<SimulacaoOut> {
+  const res = await authFetch(`${API}/consultor/simulacao/calcular`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular simulação"); }
+  return res.json();
 }
 
 // Fluxo "Esqueci minha senha" — 3 passos: verificar se o login existe (e
@@ -3416,6 +3676,13 @@ export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: s
 export const atualizarMateriaBlog = (id: number, d: MateriaBlogEditIn): Promise<NoticiaNews> => _rSend(`/news/materias/${id}`, "PUT", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
 export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");
+
+// Nota informativa simples na Capa (distinta de matéria de blog) — só o
+// dono da plataforma edita (ver PUT /news/nota-capa em Configurações > News).
+export type NotaCapa = { id: number; titulo: string; texto: string; atualizado_em: string };
+export const fetchNotaCapa = (): Promise<NotaCapa | null> => _rGet(`/news/nota-capa`);
+export const atualizarNotaCapa = (d: { titulo: string; texto: string; ativa: boolean }): Promise<NotaCapa> =>
+  _rSend(`/news/nota-capa`, "PUT", d);
 
 // ── Assistente Claude (protótipo, admin-only) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };

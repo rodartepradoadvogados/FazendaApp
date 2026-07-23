@@ -13,6 +13,7 @@ from pydantic import BaseModel
 from sqlalchemy import func
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Raca
 
@@ -74,7 +75,9 @@ def _completar_genealogia_paterna(session: Session, animal: Animal) -> None:
 
 
 @router.post("/animais")
-def criar_animal(dados: AnimalFichaIn, session: Session = Depends(get_session)) -> dict:
+def criar_animal(
+    dados: AnimalFichaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)
+) -> dict:
     numero = dados.numero.strip()
     if not numero:
         raise HTTPException(status_code=400, detail="Número/brinco é obrigatório")
@@ -82,7 +85,7 @@ def criar_animal(dados: AnimalFichaIn, session: Session = Depends(get_session)) 
     if existente:
         raise HTTPException(status_code=400, detail=f"Já existe um animal com o número {numero}")
 
-    animal = Animal(numero=numero, ativo=dados.data_baixa is None)
+    animal = Animal(numero=numero, ativo=dados.data_baixa is None, fazenda_id=fazenda_id)
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
         setattr(animal, campo, valor)
     _completar_genealogia_paterna(session, animal)
