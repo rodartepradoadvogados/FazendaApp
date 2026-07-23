@@ -21,6 +21,12 @@ class Animal(SQLModel, table=True):
     __tablename__ = "animal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
+    # nulo para todo animal de instalações que nunca passaram pela migração de
+    # backfill, e preenchido a partir daí — ainda não filtra nada sozinho, só
+    # o endpoint de listagem (GET /animais) e o de cadastro (POST .../animais)
+    # o consideram por enquanto.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero: str = Field(index=True, unique=True)
     data_nasc: Optional[date] = None
     idade_meses: Optional[float] = None

@@ -13,10 +13,12 @@ from sqlmodel import Session, select
 
 from datetime import datetime, timedelta
 
-from fazenda.auth import EMAIL_DONO, MODULOS, criar_token, exigir_dono, get_current_user, hash_senha, verificar_senha
+from fazenda.auth import (
+    EMAIL_DONO, MODULOS, criar_token, exigir_dono, get_current_user, get_fazenda_atual_id, hash_senha, verificar_senha,
+)
 from fazenda.config import settings
 from fazenda.database import get_session
-from fazenda.models import LoginAcesso, Pessoa, Usuario
+from fazenda.models import Fazenda, LoginAcesso, Pessoa, Usuario, UsuarioFazenda
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -93,6 +95,16 @@ def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario
     return pessoa
 
 
+def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
+    vinculos = session.exec(select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id)).all()
+    fazendas = [session.get(Fazenda, v.fazenda_id) for v in vinculos]
+    return [f for f in fazendas if f and f.ativa]
+
+
+def _fazenda_publica(f: Fazenda) -> dict:
+    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf}
+
+
 @router.post("/login")
 def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     user = session.exec(select(Usuario).where(Usuario.username == dados.username)).first()
@@ -102,7 +114,45 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     session.add(user)
     session.add(LoginAcesso(usuario_id=user.id, criado_em=user.ultimo_login))
     session.commit()
-    return {"token": criar_token(user.username), "usuario": _publico(user, session)}
+
+    # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
+    # 0 ou 1 fazenda vinculada → auto-seleciona (ou nenhuma) e segue como
+    # sempre seguiu, sem tela nova. Só aparece a seleção quando há de fato
+    # mais de uma fazenda vinculada ao mesmo usuário.
+    fazendas = _fazendas_vinculadas(session, user.id)
+    fazenda_auto = fazendas[0] if len(fazendas) == 1 else None
+    resposta = {
+        "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None),
+        "usuario": _publico(user, session),
+    }
+    if fazenda_auto:
+        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto)
+    if len(fazendas) > 1:
+        resposta["selecao_fazenda_necessaria"] = True
+        resposta["fazendas_disponiveis"] = [_fazenda_publica(f) for f in fazendas]
+    return resposta
+
+
+class SelecionarFazendaIn(BaseModel):
+    fazenda_id: int
+
+
+@router.post("/selecionar-fazenda")
+def selecionar_fazenda(
+    dados: SelecionarFazendaIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)
+) -> dict:
+    """Completa o login quando o usuário está vinculado a mais de uma
+    fazenda — emite um novo token já com a fazenda escolhida (ver
+    get_fazenda_atual_id, usado pelos endpoints que já filtram por fazenda)."""
+    vinculo = session.exec(
+        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == dados.fazenda_id)
+    ).first()
+    if not vinculo:
+        raise HTTPException(status_code=403, detail="Você não está vinculado a esta fazenda")
+    fazenda = session.get(Fazenda, dados.fazenda_id)
+    if not fazenda or not fazenda.ativa:
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    return {"token": criar_token(user.username, fazenda_id=fazenda.id), "fazenda_atual": _fazenda_publica(fazenda)}
 
 
 class EsqueciSenhaVerificarIn(BaseModel):
@@ -170,8 +220,17 @@ def redefinir_senha(dados: RedefinirSenhaIn, session: Session = Depends(get_sess
 
 
 @router.get("/me")
-def me(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
-    return _publico(user, session)
+def me(
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
+    dados = _publico(user, session)
+    if fazenda_id:
+        fazenda = session.get(Fazenda, fazenda_id)
+        if fazenda:
+            dados["fazenda_atual"] = _fazenda_publica(fazenda)
+    return dados
 
 
 @router.get("/usuarios")

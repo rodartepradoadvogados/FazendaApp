@@ -9,9 +9,17 @@ export function getUsuario(): any | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("usuario") || "null"); } catch { return null; }
 }
+// Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
+// — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
+// que nunca teve mais de uma fazenda vinculada (o caso de hoje).
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null };
+export function getFazendaAtual(): FazendaAtual | null {
+  if (typeof window === "undefined") return null;
+  try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
+}
 export function logout() {
   if (typeof window !== "undefined") {
-    localStorage.removeItem("token"); localStorage.removeItem("usuario");
+    localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
     location.href = "/login";
   }
 }
@@ -105,12 +113,36 @@ export async function login(username: string, senha: string) {
   const data = await res.json();
   localStorage.setItem("token", data.token);
   localStorage.setItem("usuario", JSON.stringify(data.usuario));
+  if (data.fazenda_atual) localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  else localStorage.removeItem("fazenda_atual");
   // Paleta salva no cadastro do usuário tem prioridade sobre o que já estava no navegador.
   if (data.usuario?.paleta === "vinho" || data.usuario?.paleta === "verde" || data.usuario?.paleta === "azul") {
     document.documentElement.setAttribute("data-paleta", data.usuario.paleta);
     localStorage.setItem("paleta", data.usuario.paleta);
   }
-  return data.usuario;
+  // Piloto conservador de multi-fazenda: quando o usuário está vinculado a
+  // mais de uma fazenda, a página de login mostra a tela de escolha em vez
+  // de navegar direto (ver POST /auth/selecionar-fazenda) — devolve a
+  // resposta inteira (não só usuario) para o chamador checar isso.
+  return data;
+}
+
+export async function selecionarFazenda(fazendaId: number): Promise<FazendaAtual> {
+  const res = await fetch(`${API}/auth/selecionar-fazenda`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify({ fazenda_id: fazendaId }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao selecionar fazenda"); }
+  const data = await res.json();
+  localStorage.setItem("token", data.token);
+  localStorage.setItem("fazenda_atual", JSON.stringify(data.fazenda_atual));
+  return data.fazenda_atual;
+}
+
+export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
+  const res = await authFetch(`${API}/fazendas/minhas`);
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json();
 }
 
 // Fluxo "Esqueci minha senha" — 3 passos: verificar se o login existe (e

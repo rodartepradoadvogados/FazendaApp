@@ -8,6 +8,7 @@ from datetime import date, timedelta
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AgendaManual, BaixaAnimal, ColostragemBezerra, CompraAnimal, ControleLeiteiro, EstoqueSemen,
@@ -28,9 +29,15 @@ def listar_animais(
     sit_rep: str | None = Query(None, description="Filtrar por situação reprodutiva"),
     ativo: bool = Query(True),
     incluir_machos: bool = Query(False, description="Incluir machos e sêmen (padrão: só fêmeas)"),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     query = select(Animal).where(Animal.ativo == ativo)
+    # Piloto conservador de multi-fazenda: só filtra quando o token carrega
+    # uma fazenda selecionada (ver get_fazenda_atual_id) — token sem "fid"
+    # (todo login de antes desta mudança) continua vendo tudo, como sempre.
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
     if grupo:
         query = query.where(Animal.grupo_primario.contains(grupo))
     if sit_rep:

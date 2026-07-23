@@ -62,13 +62,22 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def criar_token(username: str) -> str:
-    payload = _b64(json.dumps({"sub": username, "exp": int(time.time()) + TOKEN_VALIDADE_S}).encode())
+def criar_token(username: str, fazenda_id: int | None = None) -> str:
+    """`fazenda_id` (piloto conservador de multi-fazenda, ver
+    fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
+    login com um usuário vinculado a uma única fazenda auto-seleciona; um
+    usuário sem nenhuma fazenda vinculada (todo mundo antes desta mudança,
+    até rodar o backfill) gera token sem "fid", e o resto do sistema continua
+    se comportando exatamente como antes (ver get_fazenda_atual_id)."""
+    payload_dict = {"sub": username, "exp": int(time.time()) + TOKEN_VALIDADE_S}
+    if fazenda_id is not None:
+        payload_dict["fid"] = fazenda_id
+    payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
 
 
-def validar_token(token: str) -> str | None:
+def _validar_token_payload(token: str) -> dict | None:
     try:
         payload, sig = token.split(".")
         esperado = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
@@ -77,9 +86,14 @@ def validar_token(token: str) -> str | None:
         dados = json.loads(_unb64(payload))
         if dados.get("exp", 0) < time.time():
             return None
-        return dados.get("sub")
+        return dados
     except Exception:
         return None
+
+
+def validar_token(token: str) -> str | None:
+    dados = _validar_token_payload(token)
+    return dados.get("sub") if dados else None
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +112,20 @@ def get_current_user(
     if not user or not user.ativo:
         raise HTTPException(status_code=401, detail="Usuário inativo")
     return user
+
+
+def get_fazenda_atual_id(
+    authorization: str | None = Header(default=None),
+) -> int | None:
+    """Fazenda selecionada no login/troca de fazenda (piloto conservador de
+    multi-fazenda), lida do próprio token — None para qualquer token emitido
+    antes desta mudança, ou de usuário ainda sem nenhuma fazenda vinculada
+    (SEM RETROATIVIDADE: essas rotas continuam vendo tudo, como sempre viram,
+    até serem migradas explicitamente para considerar fazenda_id)."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return None
+    dados = _validar_token_payload(authorization.split(" ", 1)[1])
+    return dados.get("fid") if dados else None
 
 
 def get_current_user_opcional(

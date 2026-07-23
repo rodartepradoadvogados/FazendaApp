@@ -142,6 +142,10 @@ from .recria import (
     RegistroCocho,
     CategoriaManejo,
 )
+from .multitenant import (
+    Fazenda,
+    UsuarioFazenda,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -162,6 +166,8 @@ from .sistema import (
 )
 
 __all__ = [
+    "Fazenda",
+    "UsuarioFazenda",
     "Animal",
     "Lote",
     "MovimentoLote",

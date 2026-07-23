@@ -30,6 +30,7 @@ from fazenda.api.routers import (
     estoque,
     exclusoes,
     farmacia,
+    fazendas,
     financeiro,
     importar,
     indicadores,
@@ -265,6 +266,7 @@ app.add_middleware(
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)
+app.include_router(fazendas.router)
 
 _protegido = [Depends(get_current_user)]
 app.include_router(animais.router, dependencies=_protegido)
