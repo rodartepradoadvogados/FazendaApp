@@ -9,15 +9,26 @@ fazenda/api/routers/auth.py (POST /auth/login, POST /auth/selecionar-fazenda).
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from datetime import datetime
+
+from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import CentroCusto, ContaCorrente, Fazenda, Usuario, UsuarioFazenda
+from fazenda.models import (
+    CentroCusto, ContaCorrente, ContratoAnexo, ContratoFazenda, ContratoFazendaModulo, Fazenda, PrecoModulo,
+    Usuario, UsuarioFazenda,
+)
+from fazenda.models.planos import MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO
 
 router = APIRouter(prefix="/fazendas", tags=["fazendas"])
+
+# Anexo do contrato assinado — mesmo limite/padrão de LancamentoAnexo (ver
+# fazenda/api/routers/financeiro.py) — conteúdo em bytes no próprio banco.
+TAMANHO_MAXIMO_ANEXO_CONTRATO = 15 * 1024 * 1024  # 15 MB
 
 
 def _publico(f: Fazenda) -> dict:
@@ -29,6 +40,9 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     seguro nascer em branco/genérico (não copia nada real da fazenda #1):
     - Contas correntes "Banco" e "Carteira", em branco, editáveis.
     - Centros de custo "Pecuária Leiteira" e "Agricultura".
+    - Contrato aguardando aprovação, SEM nenhum módulo ativo — nada funciona
+      (nem Rebanho, que é obrigatório em todo plano) até você escolher o
+      plano/módulos e aprovar/fechar o contrato (ver endpoints abaixo).
     Pessoas e calendário sanitário nascem vazios de propósito (cada fazenda
     cadastra os seus funcionários e sua própria agenda sanitária) — ver
     fazenda/models/pessoal.py::Pessoa e fazenda/models/sanidade.py::CalendarioSanitario."""
@@ -37,6 +51,7 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
         ContaCorrente(banco="Carteira", agencia="", numero_conta="", fazenda_id=fazenda_id),
         CentroCusto(nome="Pecuária Leiteira", fazenda_id=fazenda_id),
         CentroCusto(nome="Agricultura", fazenda_id=fazenda_id),
+        ContratoFazenda(fazenda_id=fazenda_id, status="aguardando_aprovacao"),
     ])
     session.commit()
 
@@ -128,3 +143,232 @@ def desvincular_usuario(
     session.delete(vinculo)
     session.commit()
     return {"desvinculado": True}
+
+
+# ---------------------------------------------------------------------------
+# Planos e contrato por fazenda — quem contrata o quê, com atenção de que
+# nada (nem Rebanho) libera antes da aprovação/fechamento (ver
+# provisionar_fazenda_nova acima e exigir_modulo_contratado/exigir_contrato_ativo
+# em fazenda/auth.py, usados nos include_router de main.py).
+# ---------------------------------------------------------------------------
+class ModuloContratoIn(BaseModel):
+    modulo: str
+    preco: float
+
+
+class ContratoIn(BaseModel):
+    plano: str | None = None  # chave de PLANOS_CATALOGO, ou None para "sob medida"
+    modulos: list[ModuloContratoIn] = []  # só usado quando plano é None
+
+
+def _publico_contrato(session: Session, fazenda_id: int) -> dict:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    modulos = session.exec(
+        select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda_id)
+    ).all()
+    if not contrato:
+        return {"fazenda_id": fazenda_id, "status": None, "plano": None, "modulos": []}
+    return {
+        "fazenda_id": fazenda_id,
+        "status": contrato.status,
+        "plano": contrato.plano,
+        "aprovado_por_usuario_id": contrato.aprovado_por_usuario_id,
+        "data_fechamento": contrato.data_fechamento.isoformat() if contrato.data_fechamento else None,
+        "modulos": [{"modulo": m.modulo, "preco": m.preco, "ativo": m.ativo} for m in modulos],
+    }
+
+
+@router.get("/{fazenda_id}/contrato")
+def obter_contrato(fazenda_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+    if not session.get(Fazenda, fazenda_id):
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    return _publico_contrato(session, fazenda_id)
+
+
+@router.put("/{fazenda_id}/contrato")
+def definir_contrato(
+    fazenda_id: int, dados: ContratoIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    """Monta o "rascunho" do contrato — plano fechado (Standard/Silver/Gold/
+    Diamond, preço do pacote) ou módulos avulsos sob medida (preço livre por
+    módulo). Não muda o status: uma fazenda nova continua aguardando
+    aprovação até POST /{fazenda_id}/contrato/aprovar; editar os módulos de
+    uma fazenda já ativa aplica na hora (é você mesmo, dono, editando)."""
+    if not session.get(Fazenda, fazenda_id):
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    if dados.plano is not None and dados.plano not in PLANOS_CATALOGO:
+        raise HTTPException(status_code=400, detail=f"Plano inválido: {dados.plano}")
+
+    if dados.plano is not None:
+        pacote = PLANOS_CATALOGO[dados.plano]
+        novos = [{"modulo": m, "preco": pacote["preco"] if m == MODULO_REBANHO else 0.0} for m in pacote["modulos"]]
+        # Preço do pacote fica só na 1ª linha (rebanho) pra não somar errado
+        # num relatório futuro — os demais módulos do mesmo pacote entram
+        # com preço 0 (o valor cobrado é o do plano, não a soma dos módulos).
+    else:
+        nomes_invalidos = [m.modulo for m in dados.modulos if m.modulo not in MODULOS_COMERCIAIS]
+        if nomes_invalidos:
+            raise HTTPException(status_code=400, detail=f"Módulo(s) inválido(s): {', '.join(nomes_invalidos)}")
+        if not any(m.modulo == MODULO_REBANHO for m in dados.modulos):
+            raise HTTPException(status_code=400, detail="Rebanho é obrigatório em todo contrato")
+        novos = [{"modulo": m.modulo, "preco": m.preco} for m in dados.modulos]
+
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato:
+        contrato = ContratoFazenda(fazenda_id=fazenda_id)
+        session.add(contrato)
+    contrato.plano = dados.plano
+    contrato.atualizado_em = datetime.utcnow()
+    session.add(contrato)
+
+    existentes = {
+        m.modulo: m for m in session.exec(
+            select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda_id)
+        ).all()
+    }
+    modulos_novos = {n["modulo"] for n in novos}
+    for nome, linha in existentes.items():
+        linha.ativo = nome in modulos_novos
+        if linha.ativo:
+            linha.preco = next(n["preco"] for n in novos if n["modulo"] == nome)
+        session.add(linha)
+    for n in novos:
+        if n["modulo"] not in existentes:
+            session.add(ContratoFazendaModulo(fazenda_id=fazenda_id, modulo=n["modulo"], preco=n["preco"], ativo=True))
+    session.commit()
+    return _publico_contrato(session, fazenda_id)
+
+
+@router.post("/{fazenda_id}/contrato/aprovar")
+def aprovar_contrato(
+    fazenda_id: int, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    """Aprova/fecha o contrato — a partir daqui os módulos definidos em PUT
+    .../contrato liberam de verdade para a fazenda. Idempotente: também serve
+    para reativar uma fazenda suspensa."""
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Fazenda não tem contrato — defina os módulos antes (PUT)")
+    tem_modulo_ativo = session.exec(
+        select(ContratoFazendaModulo).where(
+            ContratoFazendaModulo.fazenda_id == fazenda_id, ContratoFazendaModulo.ativo == True,  # noqa: E712
+        )
+    ).first()
+    if not tem_modulo_ativo:
+        raise HTTPException(status_code=400, detail="Defina ao menos um módulo (PUT .../contrato) antes de aprovar")
+    contrato.status = "ativo"
+    contrato.aprovado_por_usuario_id = user.id
+    contrato.data_fechamento = datetime.utcnow()
+    contrato.atualizado_em = datetime.utcnow()
+    session.add(contrato)
+    session.commit()
+    return _publico_contrato(session, fazenda_id)
+
+
+@router.post("/{fazenda_id}/contrato/suspender")
+def suspender_contrato(
+    fazenda_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Fazenda não tem contrato")
+    contrato.status = "suspenso"
+    contrato.atualizado_em = datetime.utcnow()
+    session.add(contrato)
+    session.commit()
+    return _publico_contrato(session, fazenda_id)
+
+
+@router.get("/catalogo/planos")
+def listar_planos_catalogo(_: Usuario = Depends(exigir_dono)) -> dict:
+    return PLANOS_CATALOGO
+
+
+@router.get("/catalogo/precos-modulo")
+def listar_precos_modulo(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
+    existentes = {p.modulo: p for p in session.exec(select(PrecoModulo)).all()}
+    return [
+        {"modulo": m, "preco": existentes[m].preco if m in existentes else 0.0}
+        for m in MODULOS_COMERCIAIS
+    ]
+
+
+@router.put("/catalogo/precos-modulo/{modulo}")
+def atualizar_preco_modulo(
+    modulo: str, dados: ModuloContratoIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    if modulo not in MODULOS_COMERCIAIS:
+        raise HTTPException(status_code=400, detail=f"Módulo inválido: {modulo}")
+    preco = session.exec(select(PrecoModulo).where(PrecoModulo.modulo == modulo)).first()
+    if not preco:
+        preco = PrecoModulo(modulo=modulo)
+    preco.preco = dados.preco
+    preco.atualizado_em = datetime.utcnow()
+    session.add(preco)
+    session.commit()
+    return {"modulo": preco.modulo, "preco": preco.preco}
+
+
+# ---------------------------------------------------------------------------
+# Anexo do contrato assinado — consulta e segurança jurídica (bytes no banco,
+# mesmo padrão de LancamentoAnexo — sobrevive a redeploy).
+# ---------------------------------------------------------------------------
+@router.post("/{fazenda_id}/contrato/anexos", status_code=201)
+async def anexar_contrato(
+    fazenda_id: int, file: UploadFile,
+    user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    if not session.get(Fazenda, fazenda_id):
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    conteudo = await file.read()
+    if len(conteudo) > TAMANHO_MAXIMO_ANEXO_CONTRATO:
+        raise HTTPException(status_code=400, detail="Arquivo maior que 15 MB — não é possível anexar")
+    anexo = ContratoAnexo(
+        fazenda_id=fazenda_id,
+        nome_arquivo=file.filename or "contrato",
+        mime_type=file.content_type or "application/octet-stream",
+        tamanho_bytes=len(conteudo),
+        conteudo=conteudo,
+        usuario_id=user.id,
+    )
+    session.add(anexo)
+    session.commit()
+    session.refresh(anexo)
+    return {"id": anexo.id, "nome_arquivo": anexo.nome_arquivo, "mime_type": anexo.mime_type, "tamanho_bytes": anexo.tamanho_bytes}
+
+
+@router.get("/{fazenda_id}/contrato/anexos")
+def listar_anexos_contrato(
+    fazenda_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> list[dict]:
+    anexos = session.exec(select(ContratoAnexo).where(ContratoAnexo.fazenda_id == fazenda_id)).all()
+    return [
+        {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
+         "criado_em": a.criado_em.isoformat()}
+        for a in anexos
+    ]
+
+
+@router.get("/contrato/anexos/{anexo_id}")
+def baixar_anexo_contrato(
+    anexo_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> Response:
+    anexo = session.get(ContratoAnexo, anexo_id)
+    if not anexo:
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    return Response(
+        content=anexo.conteudo, media_type=anexo.mime_type,
+        headers={"Content-Disposition": f'inline; filename="{anexo.nome_arquivo}"'},
+    )
+
+
+@router.delete("/contrato/anexos/{anexo_id}")
+def excluir_anexo_contrato(
+    anexo_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    anexo = session.get(ContratoAnexo, anexo_id)
+    if not anexo:
+        raise HTTPException(status_code=404, detail="Anexo não encontrado")
+    session.delete(anexo)
+    session.commit()
+    return {"excluido": True}

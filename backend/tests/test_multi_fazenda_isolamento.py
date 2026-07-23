@@ -27,8 +27,10 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    CalendarioSanitario, CentroCusto, ContaCorrente, Doenca, EventoSanitario, Fazenda, Pessoa, UsuarioFazenda,
+    CalendarioSanitario, CentroCusto, ContaCorrente, ContratoFazenda, ContratoFazendaModulo, Doenca,
+    EventoSanitario, Fazenda, Pessoa, UsuarioFazenda,
 )
+from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
 @pytest.fixture
@@ -57,6 +59,14 @@ def client(monkeypatch):
             evento_sanitario_id=ev.id, fazenda_id=1, frequencia_valor=4, frequencia_unidade="meses",
             data_evento=date(2026, 1, 1),
         ))
+        # Contrato de planos (Fase 2A) — ortogonal ao isolamento de dados que
+        # este arquivo testa; ambas as fazendas nascem com contrato ativo e
+        # todos os módulos, pra nenhum teste aqui ser bloqueado pela trava de
+        # módulo contratado (isso é testado à parte em test_planos_contrato.py).
+        for fid in (1, 2):
+            s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+            for modulo in MODULOS_COMERCIAIS:
+                s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
         s.commit()
 
     def _get_session_override():

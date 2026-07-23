@@ -19,7 +19,7 @@ from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import SeedFlag, Usuario, UsuarioFazenda
+from fazenda.models import ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -222,6 +222,59 @@ def exigir_modulo_qualquer(*modulos: str):
         if not any(tem_modulo(user, m) for m in modulos):
             raise HTTPException(status_code=403, detail=f"Sem acesso a nenhum dos módulos: {', '.join(modulos)}")
         return user
+    return _dep
+
+
+# ---------------------------------------------------------------------------
+# Trava por PLANO CONTRATADO (fazenda/tenant) — camada ACIMA da permissão por
+# usuário acima (exigir_modulo/tem_modulo). Aquela decide o que um FUNCIONÁRIO
+# vê dentro da própria fazenda; esta decide o que a FAZENDA contratou e o
+# dono da plataforma aprovou (ver fazenda/models/planos.py e
+# fazenda/api/routers/fazendas.py). As duas precisam passar.
+#
+# Token sem "fid" (emitido antes deste piloto, ou usuário ainda sem fazenda
+# vinculada) pula esta checagem — mesmo comportamento "sem retroatividade"
+# de get_fazenda_atual_id e de todo o resto do piloto de multi-fazenda.
+# ---------------------------------------------------------------------------
+def _contrato_ativo(session: Session, fazenda_id: int) -> ContratoFazenda | None:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato or contrato.status != "ativo":
+        return None
+    return contrato
+
+
+def exigir_contrato_ativo():
+    """Dependência: só exige que a fazenda tenha um contrato ATIVO (qualquer
+    módulo) — para áreas transversais que não pertencem a um módulo comercial
+    específico (Agenda, Indicadores, Parâmetros, Upload/Importar). Como
+    Rebanho está em todo plano, contrato ativo já garante pelo menos isso."""
+    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
+        if fazenda_id is None:
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+    return _dep
+
+
+def exigir_modulo_contratado(modulo: str):
+    """Dependência: exige que A FAZENDA (não o usuário) tenha este módulo
+    comercial contratado e ativo, dentro de um contrato aprovado. Some junto
+    com exigir_modulo/exigir_modulo_qualquer nos include_router (main.py) —
+    não substitui a permissão do funcionário, só adiciona a trava do tenant."""
+    def _dep(fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session)) -> None:
+        if fazenda_id is None:
+            return
+        if not _contrato_ativo(session, fazenda_id):
+            raise HTTPException(status_code=403, detail="Fazenda sem contrato ativo — aguardando aprovação")
+        tem = session.exec(
+            select(ContratoFazendaModulo).where(
+                ContratoFazendaModulo.fazenda_id == fazenda_id,
+                ContratoFazendaModulo.modulo == modulo,
+                ContratoFazendaModulo.ativo == True,  # noqa: E712
+            )
+        ).first()
+        if not tem:
+            raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
     return _dep
 
 

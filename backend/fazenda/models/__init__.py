@@ -146,6 +146,12 @@ from .multitenant import (
     Fazenda,
     UsuarioFazenda,
 )
+from .planos import (
+    PrecoModulo,
+    ContratoFazenda,
+    ContratoFazendaModulo,
+    ContratoAnexo,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -169,6 +175,10 @@ from .sistema import (
 __all__ = [
     "Fazenda",
     "UsuarioFazenda",
+    "PrecoModulo",
+    "ContratoFazenda",
+    "ContratoFazendaModulo",
+    "ContratoAnexo",
     "Animal",
     "Lote",
     "MovimentoLote",

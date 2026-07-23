@@ -144,6 +144,95 @@ export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
   return res.json();
 }
 
+// ── Planos comerciais e contrato por fazenda (Fase 2A, dono only) ──
+// Ver backend/fazenda/models/planos.py e fazenda/api/routers/fazendas.py.
+export type Fazenda = { id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean };
+export type ModuloComercial =
+  | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
+  | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor";
+export type PlanoNome = "standard" | "silver" | "gold" | "diamond";
+export type ModuloDoContrato = { modulo: ModuloComercial; preco: number; ativo: boolean };
+export type ContratoFazenda = {
+  fazenda_id: number;
+  status: "aguardando_aprovacao" | "ativo" | "suspenso" | null;
+  plano: PlanoNome | null;
+  aprovado_por_usuario_id?: number | null;
+  data_fechamento?: string | null;
+  modulos: ModuloDoContrato[];
+};
+export type PlanoCatalogo = { nome: string; preco: number; modulos: ModuloComercial[] };
+export type PrecoModulo = { modulo: ModuloComercial; preco: number };
+export type AnexoContrato = { id: number; nome_arquivo: string; mime_type: string; tamanho_bytes: number; criado_em: string };
+
+export async function fetchFazendas(): Promise<Fazenda[]> {
+  const res = await authFetch(`${API}/fazendas/`);
+  if (!res.ok) throw new Error(`Fazendas error: ${res.status}`);
+  return res.json();
+}
+export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: string }): Promise<Fazenda> {
+  const res = await authFetch(`${API}/fazendas/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fazenda"); }
+  return res.json();
+}
+export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`);
+  if (!res.ok) throw new Error(`Contrato error: ${res.status}`);
+  return res.json();
+}
+export async function definirContratoFazenda(
+  fazendaId: number, dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[] },
+): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao definir contrato"); }
+  return res.json();
+}
+export async function aprovarContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/aprovar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao aprovar contrato"); }
+  return res.json();
+}
+export async function suspenderContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/suspender`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao suspender contrato"); }
+  return res.json();
+}
+export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
+  const res = await authFetch(`${API}/fazendas/catalogo/planos`);
+  if (!res.ok) throw new Error(`Catálogo de planos error: ${res.status}`);
+  return res.json();
+}
+export async function fetchPrecosModulo(): Promise<PrecoModulo[]> {
+  const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo`);
+  if (!res.ok) throw new Error(`Preços de módulo error: ${res.status}`);
+  return res.json();
+}
+export async function atualizarPrecoModulo(modulo: ModuloComercial, preco: number): Promise<PrecoModulo> {
+  const res = await authFetch(`${API}/fazendas/catalogo/precos-modulo/${modulo}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ modulo, preco }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar preço"); }
+  return res.json();
+}
+export async function fetchAnexosContrato(fazendaId: number): Promise<AnexoContrato[]> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`);
+  if (!res.ok) throw new Error(`Anexos error: ${res.status}`);
+  return res.json();
+}
+export async function anexarContrato(fazendaId: number, file: File): Promise<AnexoContrato> {
+  const fd = new FormData();
+  fd.append("file", file);
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/anexos`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  return res.json();
+}
+export async function excluirAnexoContrato(anexoId: number): Promise<void> {
+  const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
+}
+export function urlAnexoContrato(anexoId: number): string {
+  return `${API}/fazendas/contrato/anexos/${anexoId}`;
+}
+
 // Fluxo "Esqueci minha senha" — 3 passos: verificar se o login existe (e
 // devolver o e-mail mascarado), pedir o envio do e-mail de redefinição, e
 // finalmente trocar a senha com o token recebido por e-mail.
