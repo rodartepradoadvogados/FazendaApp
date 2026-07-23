@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, ControleLeiteiro, EstoqueSemen, Parto, PesagemCorporal, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
@@ -18,7 +18,7 @@ from fazenda.models import (
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
@@ -123,7 +123,11 @@ PASSOS_PROTOCOLO_IATF = [
 
 
 @router.get("/agenda-veterinario")
-def agenda_veterinario(data: date | None = None, session: Session = Depends(get_session)) -> dict:
+def agenda_veterinario(
+    data: date | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Roteiro do veterinário do serviço: classifica o rebanho fêmea em 9 listas
     (ver fazenda.rules.agenda_veterinario para os critérios de cada uma).
@@ -134,14 +138,19 @@ def agenda_veterinario(data: date | None = None, session: Session = Depends(get_
     como se aquela fosse "hoje" — com os dados já lançados, sem prever novos
     lançamentos que ainda vão acontecer até lá.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje_real = date.today()
     hoje = data or hoje_real
-    animais = [
-        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
-    ]
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = [a.model_dump() for a in session.exec(query_animais).all()]
 
+    query_servicos = select(Servico)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
     servico_por_animal: dict[str, dict] = {}
-    for s in session.exec(select(Servico)).all():
+    for s in session.exec(query_servicos).all():
         atual = servico_por_animal.get(s.numero_matriz)
         if not atual or (s.data_servico and (not atual.get("data_servico") or s.data_servico > atual["data_servico"])):
             servico_por_animal[s.numero_matriz] = s.model_dump()
@@ -180,18 +189,24 @@ def agenda_veterinario(data: date | None = None, session: Session = Depends(get_
     }
 
 
-def _ultimo_servico(session: Session, numero_matriz: str) -> Servico | None:
-    return session.exec(
-        select(Servico).where(Servico.numero_matriz == numero_matriz).order_by(Servico.data_servico.desc())
-    ).first()
+def _ultimo_servico(session: Session, numero_matriz: str, fazenda_id: int | None = None) -> Servico | None:
+    query = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    return session.exec(query.order_by(Servico.data_servico.desc())).first()
 
 
 @router.get("/animais/{numero_matriz}/ultimo-diagnostico")
-def ultimo_diagnostico(numero_matriz: str, session: Session = Depends(get_session)) -> dict | None:
+def ultimo_diagnostico(
+    numero_matriz: str,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict | None:
     """Último serviço/IA da matriz (com diagnóstico, se já lançado) — usado
     tanto na Agenda do veterinário quanto na ficha do animal para montar o
     e-mail de "enviar último DG" (ver enviar_ultimo_diagnostico abaixo)."""
-    servico = _ultimo_servico(session, numero_matriz)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    servico = _ultimo_servico(session, numero_matriz, fazenda_id=fazenda_id)
     return servico.model_dump() if servico else None
 
 
@@ -200,13 +215,19 @@ class EnviarDiagnosticoIn(BaseModel):
 
 
 @router.post("/animais/{numero_matriz}/diagnostico/enviar")
-def enviar_ultimo_diagnostico(numero_matriz: str, dados: EnviarDiagnosticoIn, session: Session = Depends(get_session)) -> dict:
+def enviar_ultimo_diagnostico(
+    numero_matriz: str,
+    dados: EnviarDiagnosticoIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Envia por e-mail um resumo do último diagnóstico de gestação da
     matriz — mesmo mecanismo de e-mail do recibo financeiro (#505), mas sem
     PDF anexado (o corpo do e-mail já traz os dados do diagnóstico)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not (dados.destinatario or "").strip():
         raise HTTPException(status_code=400, detail="Informe o e-mail do destinatário")
-    servico = _ultimo_servico(session, numero_matriz)
+    servico = _ultimo_servico(session, numero_matriz, fazenda_id=fazenda_id)
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {numero_matriz}")
     if not servico.data_diagnostico:
@@ -233,13 +254,19 @@ def enviar_ultimo_diagnostico(numero_matriz: str, dados: EnviarDiagnosticoIn, se
 
 
 @router.get("/servicos")
-def listar_servicos_analise(session: Session = Depends(get_session)) -> dict:
+def listar_servicos_analise(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Todos os serviços achatados com as dimensões da análise reprodutiva
     (concepção/perda por categoria, raça, ordem de parto/tentativa, condição
     de IA, inseminador, mês, DEL). O front filtra/agrega no cliente.
     """
-    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Servico)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    servicos = [s.model_dump() for s in session.exec(query).all()]
     registros = analisar_servicos(servicos)
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     tipo_por_touro = _mapa_tipo_semen_por_touro(session)
@@ -271,9 +298,15 @@ class ServicoEditIn(BaseModel):
 
 
 @router.put("/servicos/{servico_id}")
-def atualizar_servico(servico_id: int, dados: ServicoEditIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_servico(
+    servico_id: int,
+    dados: ServicoEditIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     servico = session.get(Servico, servico_id)
-    if not servico:
+    if not servico or (fazenda_id is not None and servico.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Serviço não encontrado")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(servico, campo, valor)
@@ -286,6 +319,7 @@ def atualizar_servico(servico_id: int, dados: ServicoEditIn, session: Session = 
 @router.get("/indicadores-mensais")
 def indicadores_mensais_analise(
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     ini: str | None = None,
     fim: str | None = None,
     tipo_servico: list[str] | None = Query(None),
@@ -305,7 +339,11 @@ def indicadores_mensais_analise(
     reprodutiva, para que o gráfico reflita exatamente o recorte que o
     usuário escolheu — em vez de sempre olhar o histórico inteiro.
     """
-    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Servico)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    servicos = [s.model_dump() for s in session.exec(query).all()]
     registros = analisar_servicos(servicos)
 
     filtros_dimensao = {
@@ -357,13 +395,18 @@ class DiagnosticoIn(BaseModel):
 
 
 @router.post("/diagnostico")
-def registrar_diagnostico(dados: DiagnosticoIn, session: Session = Depends(get_session)) -> dict:
+def registrar_diagnostico(
+    dados: DiagnosticoIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Registra o resultado do diagnóstico de gestação no serviço mais recente da
     matriz. Se marcado "retoque", o lembrete de reconfirmação entra na agenda
     na data do próximo serviço (agenda_engine.py). "Indefinido" (inconclusivo)
     é distinto de "negativo" — a matriz não vira vazia, segue para reavaliar.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.resultado not in ("retoque", "reconfirmada", "negativo", "indefinido"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
 
@@ -371,14 +414,13 @@ def registrar_diagnostico(dados: DiagnosticoIn, session: Session = Depends(get_s
     # engano num serviço antigo já diagnosticado quando a matriz tem mais de
     # um serviço na tabela. Sem serviço em aberto, cai no mais recente (mantém
     # o fluxo de reeditar o diagnóstico já lançado, ex.: retoque -> reconfirmada).
-    servico = session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == dados.numero_matriz, Servico.diagnostico.is_(None))
-        .order_by(Servico.data_servico.desc())
-    ).first() or session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == dados.numero_matriz)
-        .order_by(Servico.data_servico.desc())
+    query_aberto = select(Servico).where(Servico.numero_matriz == dados.numero_matriz, Servico.diagnostico.is_(None))
+    query_recente = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
+    if fazenda_id is not None:
+        query_aberto = query_aberto.where(Servico.fazenda_id == fazenda_id)
+        query_recente = query_recente.where(Servico.fazenda_id == fazenda_id)
+    servico = session.exec(query_aberto.order_by(Servico.data_servico.desc())).first() or session.exec(
+        query_recente.order_by(Servico.data_servico.desc())
     ).first()
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
@@ -411,30 +453,34 @@ class ReconfirmacaoIn(BaseModel):
 
 
 @router.post("/reconfirmacao")
-def registrar_reconfirmacao(dados: ReconfirmacaoIn, session: Session = Depends(get_session)) -> dict:
+def registrar_reconfirmacao(
+    dados: ReconfirmacaoIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Segundo exame (reconfirmação, ~60 dias do serviço) — distinto do primeiro
     toque. Usado pela agenda do veterinário para tirar o animal de "atrasada
     para reconfirmação" e classificá-lo como gestante confirmada.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.resultado not in ("positivo", "negativo"):
         raise HTTPException(status_code=400, detail="Resultado inválido")
 
     # Mesma lógica de preferência do diagnóstico acima: prioriza o serviço
     # positivo ainda sem reconfirmação; sem um assim, cai no mais recente
     # (mantém o fluxo legado de reconfirmar direto um serviço sem 1º toque).
-    servico = session.exec(
-        select(Servico)
-        .where(
-            Servico.numero_matriz == dados.numero_matriz,
-            Servico.diagnostico == "POSITIVO",
-            Servico.data_reconfirmacao.is_(None),
-        )
-        .order_by(Servico.data_servico.desc())
-    ).first() or session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == dados.numero_matriz)
-        .order_by(Servico.data_servico.desc())
+    query_aberto = select(Servico).where(
+        Servico.numero_matriz == dados.numero_matriz,
+        Servico.diagnostico == "POSITIVO",
+        Servico.data_reconfirmacao.is_(None),
+    )
+    query_recente = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
+    if fazenda_id is not None:
+        query_aberto = query_aberto.where(Servico.fazenda_id == fazenda_id)
+        query_recente = query_recente.where(Servico.fazenda_id == fazenda_id)
+    servico = session.exec(query_aberto.order_by(Servico.data_servico.desc())).first() or session.exec(
+        query_recente.order_by(Servico.data_servico.desc())
     ).first()
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
@@ -459,21 +505,25 @@ class PerdaPrenhezIn(BaseModel):
 
 
 @router.post("/perda-prenhez")
-def registrar_perda_prenhez(dados: PerdaPrenhezIn, session: Session = Depends(get_session)) -> dict:
+def registrar_perda_prenhez(
+    dados: PerdaPrenhezIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Registra a perda de prenhez (com motivo) no serviço mais recente da
     matriz — sem isso, `data_perda_prenhez` só era populado pela importação de
     CSV, sem nenhuma classificação nem forma manual de lançar. Alimenta o
     histórico de perda de prenhezes (filtro aborto/natimorto/outros).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.motivo not in MOTIVOS_PERDA_PRENHEZ:
         raise HTTPException(status_code=400, detail="Motivo inválido")
 
-    servico = session.exec(
-        select(Servico)
-        .where(Servico.numero_matriz == dados.numero_matriz)
-        .order_by(Servico.data_servico.desc())
-    ).first()
+    query = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Servico.fazenda_id == fazenda_id)
+    servico = session.exec(query.order_by(Servico.data_servico.desc())).first()
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
 
@@ -486,10 +536,16 @@ def registrar_perda_prenhez(dados: PerdaPrenhezIn, session: Session = Depends(ge
 
 
 @router.get("/partos")
-def listar_partos_historico(session: Session = Depends(get_session)) -> dict:
+def listar_partos_historico(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Todos os partos, achatados — histórico de partos (Reprodução), com os
     mesmos filtros de animal/data/ciclo/ordem de parto da sub-aba Reprodução."""
-    partos = session.exec(select(Parto).order_by(Parto.data_parto.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Parto).order_by(Parto.data_parto.desc())
+    if fazenda_id is not None:
+        query = query.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(query).all()
     nomes = mapa_usuarios(session, {p.usuario_id for p in partos})
     registros = []
     for p in partos:
@@ -511,11 +567,17 @@ class PartoEditIn(BaseModel):
 
 
 @router.put("/partos/{parto_id}")
-def atualizar_parto(parto_id: int, dados: PartoEditIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_parto(
+    parto_id: int,
+    dados: PartoEditIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Edita os campos do parto em si (data, tipo, retenção de placenta) — não
     mexe nas crias já cadastradas, que seguem editáveis pela ficha do animal."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     parto = session.get(Parto, parto_id)
-    if not parto:
+    if not parto or (fazenda_id is not None and parto.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Parto não encontrado")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(parto, campo, valor)
@@ -580,20 +642,28 @@ class PartoIn(BaseModel):
 
 
 @router.post("/parto")
-def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_parto(
+    dados: PartoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Registra o parto e cria a ficha de cada cria nascida viva ainda não
     cadastrada. Não move ninguém de lote sozinho — o front sugere o lote via
     /producao/sugestao-lote-evento e só move (POST /movimentacoes/mover) com
     confirmação explícita do usuário.
     """
-    mae = session.exec(select(Animal).where(Animal.numero == dados.numero_matriz)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_mae = select(Animal).where(Animal.numero == dados.numero_matriz)
+    if fazenda_id is not None:
+        query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
+    mae = session.exec(query_mae).first()
     if not mae:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
 
-    ultimo_parto = session.exec(
-        select(Parto).where(Parto.numero_matriz == dados.numero_matriz).order_by(Parto.ordem_parto.desc())
-    ).first()
+    query_ultimo_parto = select(Parto).where(Parto.numero_matriz == dados.numero_matriz).order_by(Parto.ordem_parto.desc())
+    if fazenda_id is not None:
+        query_ultimo_parto = query_ultimo_parto.where(Parto.fazenda_id == fazenda_id)
+    ultimo_parto = session.exec(query_ultimo_parto).first()
     ordem_parto = (ultimo_parto.ordem_parto or 0) + 1 if ultimo_parto else 1
 
     # Sexo do parto gemelar: usa o informado ou deriva dos sexos das crias.
@@ -616,6 +686,7 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
         gemelar_sexo=gemelar_sexo,
         retencao_placenta=dados.retencao_placenta,
         usuario_id=usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
     session.add(parto)
 
@@ -627,7 +698,10 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
         if not (cria.numero or "").strip() or not cria.nasceu_viva:
             crias_baixadas.append(cria.sexo or "?")
             continue
-        if session.exec(select(Animal).where(Animal.numero == cria.numero)).first():
+        query_cria_existente = select(Animal).where(Animal.numero == cria.numero)
+        if fazenda_id is not None:
+            query_cria_existente = query_cria_existente.where(Animal.fazenda_id == fazenda_id)
+        if session.exec(query_cria_existente).first():
             continue  # já cadastrada — não sobrescreve
         raca_cria, grau_sangue_cria = calcular_grau_sangue_cria(session, mae, dados.data_parto)
         # Todo animal que nasce entra automaticamente na categoria "bezerra/o
@@ -639,6 +713,7 @@ def registrar_parto(dados: PartoIn, session: Session = Depends(get_session), use
             numero=cria.numero, sexo=cria.sexo, raca=raca_cria, grau_sangue=grau_sangue_cria, data_nasc=dados.data_parto,
             mae_numero=mae.numero, mae_nome=mae.nome, ativo=True,
             categoria_completa=categoria_completa_cria, categoria_abrev=categoria_abrev_cria,
+            fazenda_id=fazenda_id,
         ))
         crias_criadas.append(cria.numero)
 
@@ -684,7 +759,10 @@ class ProtocoloIatfIn(BaseModel):
 
 
 @router.post("/protocolo-iatf")
-def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def lancar_protocolo_iatf(
+    dados: ProtocoloIatfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Agenda só o PROTOCOLO hormonal (D0/D7/D9/D11) — não cria o serviço em si.
     A inseminação de fato (D11) é lançada à parte em POST /reproducao/servico,
@@ -692,10 +770,14 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
     cada animal vira uma ProtocoloIatfAplicacao rastreável — a Agenda agrupa
     por (lançamento, dia) em vez de mostrar uma linha por animal.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    lancamento = ProtocoloIatfLancamento(nome_protocolo=dados.protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user))
+    lancamento = ProtocoloIatfLancamento(
+        nome_protocolo=dados.protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
+    )
     session.add(lancamento)
     session.flush()  # garante lancamento.id antes de criar as aplicações
 
@@ -707,7 +789,7 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
             hormonios_por_dia.setdefault(h.dia, []).append(h)
             session.add(ProtocoloIatfHormonio(
                 lancamento_id=lancamento.id, dia=h.dia, produto=h.produto.strip(),
-                dose=h.dose, unidade=h.unidade, via=h.via,
+                dose=h.dose, unidade=h.unidade, via=h.via, fazenda_id=fazenda_id,
             ))
 
     def _descricao_dia(dias: int, padrao: str) -> str:
@@ -725,6 +807,7 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
                 dia=dias,
                 descricao=_descricao_dia(dias, descricao),
                 data_prevista=dados.data_d0 + timedelta(days=dias),
+                fazenda_id=fazenda_id,
             ))
             eventos_criados += 1
 
@@ -733,7 +816,9 @@ def lancar_protocolo_iatf(dados: ProtocoloIatfIn, session: Session = Depends(get
 
 
 @router.get("/protocolo-iatf/ativos")
-def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_protocolos_iatf_ativos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """
     Protocolos IATF com pelo menos uma etapa ainda não realizada — para ver de
     relance em qual dia (D0/D7/D9/D11) está cada animal em andamento.
@@ -745,13 +830,20 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
     (D11 + intervalo) e as candidatas herd-wide ao próximo repasse (mesmo
     critério de `selecionar_candidatas_iatf`, usado na Agenda) — ver #369.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     from fazenda.rules.iatf import selecionar_candidatas_iatf
     from fazenda.rules.parametros import intervalo_visita_reprodutiva
 
     hoje = date.today()
     intervalo = intervalo_visita_reprodutiva()
-    lancamentos = session.exec(select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc())).all()
-    aplicacoes = session.exec(select(ProtocoloIatfAplicacao)).all()
+    query_lancamentos = select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc())
+    if fazenda_id is not None:
+        query_lancamentos = query_lancamentos.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query_lancamentos).all()
+    query_aplicacoes = select(ProtocoloIatfAplicacao)
+    if fazenda_id is not None:
+        query_aplicacoes = query_aplicacoes.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query_aplicacoes).all()
     por_lancamento: dict[int, list[ProtocoloIatfAplicacao]] = {}
     for ap in aplicacoes:
         por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
@@ -761,8 +853,14 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
     def candidatas_herd() -> list[dict]:
         nonlocal _candidatas_cache
         if _candidatas_cache is None:
-            animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
-            servicos = session.exec(select(Servico).where(Servico.ult_ocorrencia == 1)).all()
+            query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+            if fazenda_id is not None:
+                query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+            animais = session.exec(query_animais).all()
+            query_servicos = select(Servico).where(Servico.ult_ocorrencia == 1)
+            if fazenda_id is not None:
+                query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+            servicos = session.exec(query_servicos).all()
             diag_por_animal = {s.numero_matriz: s.diagnostico for s in servicos}
             iatf_input = [
                 {
@@ -826,15 +924,24 @@ def listar_protocolos_iatf_ativos(session: Session = Depends(get_session)) -> li
 
 
 @router.get("/protocolo-iatf/lancamentos")
-def listar_lancamentos_iatf(session: Session = Depends(get_session)) -> list[dict]:
+def listar_lancamentos_iatf(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """
     Todos os lançamentos de protocolo IATF (para adicionar animais a um
     protocolo já existente — mesmo D0 e mesmo nome). Mais recentes primeiro.
     """
-    lancamentos = session.exec(
-        select(ProtocoloIatfLancamento).order_by(ProtocoloIatfLancamento.data_d0.desc(), ProtocoloIatfLancamento.id.desc())
-    ).all()
-    aplicacoes = session.exec(select(ProtocoloIatfAplicacao)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_lancamentos = select(ProtocoloIatfLancamento).order_by(
+        ProtocoloIatfLancamento.data_d0.desc(), ProtocoloIatfLancamento.id.desc()
+    )
+    if fazenda_id is not None:
+        query_lancamentos = query_lancamentos.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query_lancamentos).all()
+    query_aplicacoes = select(ProtocoloIatfAplicacao)
+    if fazenda_id is not None:
+        query_aplicacoes = query_aplicacoes.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes = session.exec(query_aplicacoes).all()
     animais_por_lanc: dict[int, set[str]] = {}
     for ap in aplicacoes:
         animais_por_lanc.setdefault(ap.lancamento_id, set()).add(ap.numero_matriz)
@@ -854,14 +961,20 @@ class AdicionarAnimaisIatfIn(BaseModel):
 
 
 @router.post("/protocolo-iatf/{lancamento_id}/animais")
-def adicionar_animais_iatf(lancamento_id: int, dados: AdicionarAnimaisIatfIn, session: Session = Depends(get_session)) -> dict:
+def adicionar_animais_iatf(
+    lancamento_id: int,
+    dados: AdicionarAnimaisIatfIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Adiciona animais a um protocolo IATF já lançado (esqueci de incluí-los na
     hora). Reaproveita a MESMA data de D0 e os mesmos hormônios por dia; ignora
     animais que já estão no protocolo.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
-    if not lancamento:
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
         raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
@@ -953,16 +1066,28 @@ class ServicoIn(BaseModel):
 
 
 @router.post("/servico")
-def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_servico(
+    dados: ServicoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Registra a inseminação/cobertura em si — cio natural (sem protocolo) ou a
     inseminação de um protocolo IATF já agendado (protocolo preenchido).
     """
-    animal = session.exec(select(Animal).where(Animal.numero == dados.numero_matriz)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == dados.numero_matriz)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Matriz não encontrada")
 
-    anteriores = session.exec(select(Servico).where(Servico.numero_matriz == dados.numero_matriz)).all()
+    query_anteriores = select(Servico).where(Servico.numero_matriz == dados.numero_matriz)
+    if fazenda_id is not None:
+        query_anteriores = query_anteriores.where(Servico.fazenda_id == fazenda_id)
+    anteriores = session.exec(query_anteriores).all()
     for s in anteriores:
         if s.ult_ocorrencia == 1:
             s.ult_ocorrencia = 0
@@ -988,6 +1113,7 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session),
         del_servico=animal.del_dias,
         ult_ocorrencia=1,
         usuario_id=usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
     session.add(servico)
     # Desconta 1 dose do Estoque de Sêmen (mesma regra do lançamento em lote,
@@ -1000,7 +1126,7 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session),
     # aberto correspondente — a Agenda para de lembrar essa etapa sozinha,
     # sem exigir um segundo clique de "marcar realizado" separado.
     if dados.protocolo:
-        aplicacao_d11 = session.exec(
+        query_ap_d11 = (
             select(ProtocoloIatfAplicacao)
             .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
             .where(
@@ -1009,7 +1135,10 @@ def registrar_servico(dados: ServicoIn, session: Session = Depends(get_session),
                 ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
                 ProtocoloIatfLancamento.nome_protocolo == dados.protocolo,
             )
-        ).first()
+        )
+        if fazenda_id is not None:
+            query_ap_d11 = query_ap_d11.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+        aplicacao_d11 = session.exec(query_ap_d11).first()
         if aplicacao_d11:
             aplicacao_d11.realizada = True
             aplicacao_d11.data_realizacao = dados.data_servico
@@ -1029,13 +1158,19 @@ def _nome_auto_iatf(d0: date) -> str:
 def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: date,
                           tipo_servico: str, protocolo: str | None, reprodutor: str | None,
                           inseminador: str | None = None, usuario_id: int | None = None,
-                          tipo_semen: str | None = None) -> Servico | None:
+                          tipo_semen: str | None = None, fazenda_id: int | None = None) -> Servico | None:
     """Cria um Servico para uma matriz (mesma lógica de registrar_servico, sem
     commit) — resolve o D11 do protocolo IATF vinculado, se houver."""
-    animal = session.exec(select(Animal).where(Animal.numero == numero_matriz)).first()
+    query_animal = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         return None
-    anteriores = session.exec(select(Servico).where(Servico.numero_matriz == numero_matriz)).all()
+    query_anteriores = select(Servico).where(Servico.numero_matriz == numero_matriz)
+    if fazenda_id is not None:
+        query_anteriores = query_anteriores.where(Servico.fazenda_id == fazenda_id)
+    anteriores = session.exec(query_anteriores).all()
     for s in anteriores:
         if s.ult_ocorrencia == 1:
             s.ult_ocorrencia = 0
@@ -1049,10 +1184,11 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
         protocolo=protocolo, reprodutor=reprodutor, tipo_semen=tipo_semen, inseminador=inseminador,
         ordem_tentativa=ordem_tentativa,
         intervalo_tentativas=intervalo, del_servico=animal.del_dias, ult_ocorrencia=1, usuario_id=usuario_id,
+        fazenda_id=fazenda_id,
     )
     session.add(servico)
     if protocolo:
-        ap_d11 = session.exec(
+        query_ap_d11 = (
             select(ProtocoloIatfAplicacao)
             .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
             .where(
@@ -1061,7 +1197,10 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
                 ProtocoloIatfAplicacao.realizada == False,  # noqa: E712
                 ProtocoloIatfLancamento.nome_protocolo == protocolo,
             )
-        ).first()
+        )
+        if fazenda_id is not None:
+            query_ap_d11 = query_ap_d11.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+        ap_d11 = session.exec(query_ap_d11).first()
         if ap_d11:
             ap_d11.realizada = True
             ap_d11.data_realizacao = data_servico
@@ -1069,12 +1208,16 @@ def _registrar_um_servico(session: Session, numero_matriz: str, data_servico: da
     return servico
 
 
-def _animal_tem_protocolo_pendente(session: Session, numero_matriz: str) -> ProtocoloIatfLancamento | None:
+def _animal_tem_protocolo_pendente(
+    session: Session, numero_matriz: str, fazenda_id: int | None = None
+) -> ProtocoloIatfLancamento | None:
     """Retorna o lançamento IATF com etapa pendente do animal (o mais recente)."""
-    ap = session.exec(
-        select(ProtocoloIatfAplicacao)
-        .where(ProtocoloIatfAplicacao.numero_matriz == numero_matriz, ProtocoloIatfAplicacao.realizada == False)  # noqa: E712
-    ).all()
+    query_ap = select(ProtocoloIatfAplicacao).where(
+        ProtocoloIatfAplicacao.numero_matriz == numero_matriz, ProtocoloIatfAplicacao.realizada == False  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query_ap = query_ap.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    ap = session.exec(query_ap).all()
     if not ap:
         return None
     lanc_ids = {a.lancamento_id for a in ap}
@@ -1094,7 +1237,12 @@ class ServicoLoteIn(BaseModel):
 
 
 @router.post("/servico-lote")
-def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_servico_lote(
+    dados: ServicoLoteIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Inseminação de vários animais de uma vez. `tipo` = cio_natural (IA sem
     protocolo), iatf (IA vinculada a protocolo) ou monta_natural. No IATF, se o
@@ -1103,6 +1251,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
     hormônio. Animais IATF sem protocolo e sem auto-lançar entram em
     `incompativeis` (a UI pergunta o que fazer).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo not in ("cio_natural", "iatf", "monta_natural"):
@@ -1110,21 +1259,27 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
 
     tipo_servico = "Monta natural" if dados.tipo == "monta_natural" else "IA"
     lanc_escolhido = session.get(ProtocoloIatfLancamento, dados.protocolo_lancamento_id) if dados.protocolo_lancamento_id else None
+    if lanc_escolhido and fazenda_id is not None and lanc_escolhido.fazenda_id not in (None, fazenda_id):
+        lanc_escolhido = None
 
     criados, incompativeis = 0, []
     for numero in dados.animais:
         protocolo_name: str | None = None
         if dados.tipo == "iatf":
-            alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero)
+            alvo = lanc_escolhido or _animal_tem_protocolo_pendente(session, numero, fazenda_id=fazenda_id)
             if alvo is None and dados.auto_lancar_iatf:
                 d0 = dados.data_servico - timedelta(days=11)
-                alvo = ProtocoloIatfLancamento(nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True, usuario_id=usuario_id_seguro(user))
+                alvo = ProtocoloIatfLancamento(
+                    nome_protocolo=_nome_auto_iatf(d0), data_d0=d0, retroativo=True,
+                    usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
+                )
                 session.add(alvo)
                 session.flush()
                 for dias, descricao in PASSOS_PROTOCOLO_IATF:
                     session.add(ProtocoloIatfAplicacao(
                         lancamento_id=alvo.id, numero_matriz=numero, dia=dias,
                         descricao=descricao, data_prevista=d0 + timedelta(days=dias),
+                        fazenda_id=fazenda_id,
                     ))
             elif alvo is not None:
                 ja = session.exec(
@@ -1138,6 +1293,7 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
                         session.add(ProtocoloIatfAplicacao(
                             lancamento_id=alvo.id, numero_matriz=numero, dia=dias,
                             descricao=descricao, data_prevista=alvo.data_d0 + timedelta(days=dias),
+                            fazenda_id=fazenda_id,
                         ))
             if alvo is None:
                 incompativeis.append(numero)
@@ -1145,7 +1301,10 @@ def registrar_servico_lote(dados: ServicoLoteIn, session: Session = Depends(get_
             session.flush()
             protocolo_name = alvo.nome_protocolo
 
-        s = _registrar_um_servico(session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel, usuario_id=usuario_id_seguro(user), tipo_semen=dados.tipo_semen)
+        s = _registrar_um_servico(
+            session, numero, dados.data_servico, tipo_servico, protocolo_name, dados.reprodutor, dados.responsavel,
+            usuario_id=usuario_id_seguro(user), tipo_semen=dados.tipo_semen, fazenda_id=fazenda_id,
+        )
         if s is None:
             incompativeis.append(numero)
         else:

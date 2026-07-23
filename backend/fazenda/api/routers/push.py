@@ -150,12 +150,19 @@ def unsubscribe(
 # (rewire em notificacoes.py) quanto por uma varredura periódica (ver
 # despachar_push_pendentes), para o caso de ninguém estar com o app aberto.
 # ---------------------------------------------------------------------------
-def enviar_push(usuario_id: int, titulo: str, corpo: str, url: str, session: Session | None = None) -> None:
+def enviar_push(
+    usuario_id: int, titulo: str, corpo: str, url: str, session: Session | None = None, count: int | None = None,
+) -> None:
     """Manda uma notificação push real para TODAS as subscriptions ativas do
     usuário. Nunca propaga exceção para quem chamou: uma subscription
     expirada/revogada (404/410 do serviço de push do navegador) é removida
     silenciosamente; qualquer outro erro só vai para o log — um push que
-    falha não pode derrubar o fluxo que decidiu o alerta."""
+    falha não pode derrubar o fluxo que decidiu o alerta.
+
+    `count`, quando informado, viaja no payload e é usado pelo service worker
+    (sw.js) para atualizar o "badge" do ícone do app instalado (Badging API)
+    mesmo com o app fechado — hoje só a Agenda do dia informa esse número
+    (ver despachar_agenda_do_dia abaixo)."""
     _session_propria = session is None
     if _session_propria:
         session = Session(engine)
@@ -163,7 +170,10 @@ def enviar_push(usuario_id: int, titulo: str, corpo: str, url: str, session: Ses
         subs = session.exec(select(PushSubscription).where(PushSubscription.usuario_id == usuario_id)).all()
         if not subs:
             return
-        payload = json.dumps({"title": titulo, "body": corpo, "url": url})
+        dados_payload = {"title": titulo, "body": corpo, "url": url}
+        if count is not None:
+            dados_payload["count"] = count
+        payload = json.dumps(dados_payload)
         for sub in subs:
             try:
                 webpush(
@@ -330,6 +340,7 @@ def despachar_agenda_do_dia(session: Session) -> None:
             corpo=f"Você tem {total} atividade{'s' if total != 1 else ''} na agenda hoje",
             url="/agenda",
             session=session,
+            count=total,
         )
         session.add(PushNotificacaoEnviada(usuario_id=usuario_id, chave=_CHAVE_AGENDA_DO_DIA, data_referencia=hoje))
         session.commit()

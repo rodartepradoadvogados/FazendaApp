@@ -9,6 +9,7 @@ a cada poll do sino.
 """
 from __future__ import annotations
 
+import json
 from datetime import date
 
 import pytest
@@ -153,6 +154,32 @@ class TestEnviarPush:
             assert "Financeiro" in c["data"]
             assert "Conta vence hoje" in c["data"]
             assert "/financeiro" in c["data"]
+
+    def test_enviar_push_inclui_count_no_payload_quando_informado(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "webpush", lambda **kwargs: chamadas.append(kwargs))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            push_module.enviar_push(1, "Agenda do dia", "Você tem 2 atividades na agenda hoje", "/agenda", session=session, count=2)
+
+        assert len(chamadas) == 1
+        assert json.loads(chamadas[0]["data"])["count"] == 2
+
+    def test_enviar_push_sem_count_nao_inclui_a_chave_no_payload(self, engine, monkeypatch):
+        chamadas = []
+        monkeypatch.setattr(push_module, "webpush", lambda **kwargs: chamadas.append(kwargs))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+
+            push_module.enviar_push(1, "Financeiro", "Conta vence hoje", "/financeiro", session=session)
+
+        assert len(chamadas) == 1
+        assert "count" not in json.loads(chamadas[0]["data"])
 
     def test_enviar_push_sem_subscription_nao_chama_webpush(self, engine, monkeypatch):
         chamadas = []
@@ -352,6 +379,9 @@ class TestDespacharAgendaDoDia:
         assert chamadas[0]["titulo"] == "Agenda do dia"
         assert chamadas[0]["url"] == "/agenda"
         assert chamadas[0]["corpo"] == "Você tem 3 atividades na agenda hoje"
+        # count viaja no payload para o service worker atualizar o badge do
+        # ícone do app (Badging API) — ver push_module.enviar_push/sw.js.
+        assert chamadas[0]["count"] == 3
 
     def test_nao_envia_de_novo_no_mesmo_dia(self, engine, monkeypatch):
         chamadas = []

@@ -8,6 +8,7 @@ import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
+import { fetchAgenda, today } from "@/lib/api";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -58,6 +59,31 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       navigator.serviceWorker.register("/sw.js").catch(() => {});
     }
     return iniciarSincronizacaoAutomatica();
+  }, []);
+
+  // Bolinha no ícone do app instalado (Badging API) com a quantidade de
+  // eventos da agenda de hoje — mesma contagem do push "Agenda do dia"
+  // (backend/fazenda/api/routers/push.py:despachar_agenda_do_dia), mas
+  // recalculada aqui a cada 5 min (e ao abrir o app) para o badge continuar
+  // certo mesmo sem depender de push (ex.: navegador sem suporte a Web Push,
+  // ou eventos marcados como realizados desde o último push do dia).
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !("setAppBadge" in navigator)) return;
+    let cancelado = false;
+    const atualizarBadge = () => {
+      fetchAgenda(today())
+        .then((agenda) => {
+          if (cancelado) return;
+          const hoje = today();
+          const total = (agenda?.eventos || []).filter((e: { data?: string }) => e.data === hoje).length;
+          if (total > 0) (navigator as any).setAppBadge(total).catch(() => {});
+          else (navigator as any).clearAppBadge?.().catch(() => {});
+        })
+        .catch(() => {}); // offline ou erro de rede — mantém o badge como estava
+    };
+    atualizarBadge();
+    const h = setInterval(atualizarBadge, 5 * 60 * 1000);
+    return () => { cancelado = true; clearInterval(h); };
   }, []);
 
   return (

@@ -33,3 +33,11 @@ def usuario_id_seguro(user) -> int | None:
     não há quem carimbar.
     """
     return user.id if isinstance(user, Usuario) else None
+
+
+def fazenda_id_seguro(fazenda_id) -> int | None:
+    """Mesma situação de usuario_id_seguro, mas para `fazenda_id` — chamadas
+    diretas (telegram_fluxos.py) deixam o parâmetro com o valor padrão não
+    resolvido (`Depends(...)`) em vez de int/None. Sem fazenda resolvida, cai
+    para None (sem filtro/isolamento), igual a um token legado."""
+    return fazenda_id if isinstance(fazenda_id, int) else None
