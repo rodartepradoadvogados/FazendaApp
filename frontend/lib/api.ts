@@ -233,6 +233,30 @@ export function urlAnexoContrato(anexoId: number): string {
   return `${API}/fazendas/contrato/anexos/${anexoId}`;
 }
 
+// Vínculo de usuário a uma fazenda — contratante (administra a fazenda) ou
+// consultor externo (veterinário/contador/agrônomo; só aceito em fazenda com
+// módulo "consultor" contratado — plano Diamond). Ver Fase 2B.
+export type UsuarioVinculado = { usuario_id: number; username: string; nome: string | null; contratante: boolean; consultor: boolean };
+
+export async function fetchUsuariosVinculados(fazendaId: number): Promise<UsuarioVinculado[]> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/usuarios`);
+  if (!res.ok) throw new Error(`Usuários vinculados error: ${res.status}`);
+  return res.json();
+}
+export async function vincularUsuarioFazenda(
+  fazendaId: number, dados: { username: string; contratante?: boolean; consultor?: boolean },
+): Promise<{ vinculado: boolean; usuario_id: number; username: string }> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao vincular usuário"); }
+  return res.json();
+}
+export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: number): Promise<void> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario/${usuarioId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao desvincular usuário"); }
+}
+
 // Fluxo "Esqueci minha senha" — 3 passos: verificar se o login existe (e
 // devolver o e-mail mascarado), pedir o envio do e-mail de redefinição, e
 // finalmente trocar a senha com o token recebido por e-mail.

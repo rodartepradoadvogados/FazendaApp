@@ -1,11 +1,12 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
-  urlAnexoContrato, type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato,
+  urlAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
+  type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
+  type AnexoContrato, type UsuarioVinculado,
 } from "@/lib/api";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
@@ -62,6 +63,11 @@ export default function FazendasAdmin() {
   const [novaUf, setNovaUf] = useState("");
   const [criando, setCriando] = useState(false);
 
+  const [usuarios, setUsuarios] = useState<UsuarioVinculado[] | null>(null);
+  const [novoUsername, setNovoUsername] = useState("");
+  const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor">("funcionario");
+  const [vinculando, setVinculando] = useState(false);
+
   function carregarFazendas() {
     fetchFazendas().then(setFazendas).catch((e) => setErro(e.message));
   }
@@ -80,6 +86,7 @@ export default function FazendasAdmin() {
       }
     }).catch((e) => setErro(e.message));
     fetchAnexosContrato(fazendaId).then(setAnexos).catch((e) => setErro(e.message));
+    fetchUsuariosVinculados(fazendaId).then(setUsuarios).catch((e) => setErro(e.message));
   }
 
   function selecionar(id: number) {
@@ -87,6 +94,32 @@ export default function FazendasAdmin() {
     setErro(null);
     setMsg(null);
     carregarContrato(id);
+  }
+
+  const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
+
+  async function vincular() {
+    if (selecionada == null || !novoUsername.trim()) { setErro("Informe o usuário (username)."); return; }
+    setVinculando(true); setErro(null); setMsg(null);
+    try {
+      await vincularUsuarioFazenda(selecionada, {
+        username: novoUsername.trim(),
+        contratante: novoPapel === "contratante",
+        consultor: novoPapel === "consultor",
+      });
+      setNovoUsername("");
+      fetchUsuariosVinculados(selecionada).then(setUsuarios);
+      setMsg("Usuário vinculado.");
+    } catch (e: any) { setErro(e.message); } finally { setVinculando(false); }
+  }
+
+  async function desvincular(usuarioId: number) {
+    if (selecionada == null) return;
+    setErro(null);
+    try {
+      await desvincularUsuarioFazenda(selecionada, usuarioId);
+      fetchUsuariosVinculados(selecionada).then(setUsuarios);
+    } catch (e: any) { setErro(e.message); }
   }
 
   async function criarNovaFazenda() {
@@ -278,6 +311,38 @@ export default function FazendasAdmin() {
                       <FileText size={14} /> {a.nome_arquivo} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>({formatarBytes(a.tamanho_bytes)} — {formatarData(a.criado_em)})</span>
                     </a>
                     <button onClick={() => excluirAnexo(a.id)} title="Excluir anexo" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
+                      <Trash2 size={14} />
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="card-header mt-4 mb-2 flex items-center gap-2"><Users size={15} /> Usuários vinculados</div>
+            <div className="flex items-center gap-2 mb-2" style={{ flexWrap: "wrap" }}>
+              <input placeholder="username do usuário" style={{ ...inp, width: "auto", flex: "1 1 12rem" }}
+                value={novoUsername} onChange={(e) => setNovoUsername(e.target.value)} />
+              <select style={{ ...inp, width: "auto" }} value={novoPapel} onChange={(e) => setNovoPapel(e.target.value as any)}>
+                <option value="funcionario">Funcionário (acesso normal)</option>
+                <option value="contratante">Contratante (administra a fazenda)</option>
+                <option value="consultor" disabled={!temModuloConsultor}>
+                  Consultor externo{!temModuloConsultor ? " — requer plano Diamond" : ""}
+                </option>
+              </select>
+              <button onClick={vincular} disabled={vinculando} className="btn-primary" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                <UserPlus size={13} /> {vinculando ? "Vinculando…" : "Vincular"}
+              </button>
+            </div>
+            {usuarios && usuarios.length > 0 && (
+              <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+                {usuarios.map((u) => (
+                  <li key={u.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                    <span>
+                      {u.nome || u.username} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>(@{u.username})</span>
+                      {u.contratante && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--dourado)", fontWeight: 700 }}>Contratante</span>}
+                      {u.consultor && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--green-light)", fontWeight: 700 }}>Consultor</span>}
+                    </span>
+                    <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
                       <Trash2 size={14} />
                     </button>
                   </li>

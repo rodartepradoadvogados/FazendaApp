@@ -45,7 +45,14 @@ class UsuarioFazenda(SQLModel, table=True):
     fazenda/api/routers/fazendas.py::exigir_contratante_ou_dono em auth.py),
     mas não as ações reservadas só ao dono da plataforma (criar fazenda nova,
     administrar News/Blog — ver exigir_dono). Um usuário pode ser contratante
-    de mais de uma fazenda (vínculos independentes)."""
+    de mais de uma fazenda (vínculos independentes).
+
+    `consultor` marca um vínculo externo (ex.: veterinário, contador,
+    agrônomo) convidado por uma fazenda no plano Diamond — mesmo acesso de um
+    funcionário comum dentro dela (não administra a fazenda), mas o vínculo
+    só é aceito se a fazenda tiver o módulo comercial "consultor" contratado
+    e ativo (ver fazenda/api/routers/fazendas.py::vincular_usuario). Nunca é
+    True ao mesmo tempo que `contratante` — são papéis mutuamente exclusivos."""
 
     __tablename__ = "usuario_fazenda"
     __table_args__ = (UniqueConstraint("usuario_id", "fazenda_id", name="uq_usuario_fazenda"),)
@@ -54,4 +61,5 @@ class UsuarioFazenda(SQLModel, table=True):
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
     contratante: bool = False
+    consultor: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)

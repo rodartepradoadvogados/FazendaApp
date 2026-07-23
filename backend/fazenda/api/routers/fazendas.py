@@ -74,8 +74,26 @@ class FazendaIn(BaseModel):
 
 
 class VincularUsuarioIn(BaseModel):
-    usuario_id: int
+    usuario_id: int | None = None
+    username: str | None = None  # alternativa a usuario_id — resolvido pelo backend
     contratante: bool = False
+    # Vínculo de consultor externo (veterinário, contador, agrônomo) — só
+    # aceito se a fazenda tiver o módulo comercial "consultor" contratado e
+    # ativo (plano Diamond). Nunca junto de contratante=True.
+    consultor: bool = False
+
+
+def _tem_modulo_consultor_ativo(session: Session, fazenda_id: int) -> bool:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda_id)).first()
+    if not contrato or contrato.status != "ativo":
+        return False
+    return session.exec(
+        select(ContratoFazendaModulo).where(
+            ContratoFazendaModulo.fazenda_id == fazenda_id,
+            ContratoFazendaModulo.modulo == "consultor",
+            ContratoFazendaModulo.ativo == True,  # noqa: E712
+        )
+    ).first() is not None
 
 
 @router.get("/")
@@ -112,20 +130,54 @@ def vincular_usuario(
     session: Session = Depends(get_session),
 ) -> dict:
     _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
+    if dados.contratante and dados.consultor:
+        raise HTTPException(status_code=400, detail="Um vínculo não pode ser contratante e consultor ao mesmo tempo")
     fazenda = session.get(Fazenda, fazenda_id)
     if not fazenda:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
-    usuario = session.get(Usuario, dados.usuario_id)
+    usuario = None
+    if dados.usuario_id is not None:
+        usuario = session.get(Usuario, dados.usuario_id)
+    elif dados.username:
+        usuario = session.exec(select(Usuario).where(Usuario.username == dados.username)).first()
+    else:
+        raise HTTPException(status_code=400, detail="Informe usuario_id ou username")
     if not usuario:
         raise HTTPException(status_code=404, detail="Usuário não encontrado")
+    if dados.consultor and not _tem_modulo_consultor_ativo(session, fazenda_id):
+        raise HTTPException(
+            status_code=403,
+            detail="Esta fazenda não tem o módulo Consultor contratado (disponível no plano Diamond)",
+        )
     ja_vinculado = session.exec(
         select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario.id, UsuarioFazenda.fazenda_id == fazenda_id)
     ).first()
     if ja_vinculado:
         raise HTTPException(status_code=400, detail=f"{usuario.username} já está vinculado a esta fazenda")
-    session.add(UsuarioFazenda(usuario_id=usuario.id, fazenda_id=fazenda_id, contratante=dados.contratante))
+    session.add(UsuarioFazenda(
+        usuario_id=usuario.id, fazenda_id=fazenda_id, contratante=dados.contratante, consultor=dados.consultor,
+    ))
     session.commit()
-    return {"vinculado": True}
+    return {"vinculado": True, "usuario_id": usuario.id, "username": usuario.username}
+
+
+@router.get("/{fazenda_id}/usuarios")
+def listar_usuarios_vinculados(
+    fazenda_id: int, user: Usuario = Depends(exigir_contratante_ou_dono),
+    fazenda_id_token: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
+    vinculos = session.exec(select(UsuarioFazenda).where(UsuarioFazenda.fazenda_id == fazenda_id)).all()
+    resultado = []
+    for v in vinculos:
+        usuario = session.get(Usuario, v.usuario_id)
+        if not usuario:
+            continue
+        resultado.append({
+            "usuario_id": usuario.id, "username": usuario.username, "nome": usuario.nome,
+            "contratante": v.contratante, "consultor": v.consultor,
+        })
+    return resultado
 
 
 @router.delete("/{fazenda_id}/vincular-usuario/{usuario_id}")
