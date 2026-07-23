@@ -68,6 +68,11 @@ type Evento = {
   principio_ativo_id?: number | null;
   veterinario?: string | null;
   evento_sanitario_id?: number | null;
+  // Compromisso "Aplicação de BST hoje" (tipo bst_aplicacao) — números dos
+  // animais já embutidos no evento, sem precisar de outra chamada à API.
+  aptas?: string[] | null;
+  incluir_proximo?: string[] | null;
+  inaptas?: string[] | null;
 };
 
 // Um grupo de aplicações do mesmo protocolo/dia/data (lote) — para oferecer
@@ -182,6 +187,11 @@ export default function AgendaMovel() {
   // (produtos, por cabeça, total/dia, total/trato e kg no vagão) para o funcionário.
   const [dietaAberta, setDietaAberta] = useState<Set<string>>(new Set());
   const [dietaApres, setDietaApres] = useState<Record<string, ApresentacaoDieta | null>>({});
+
+  // Compromisso "Aplicação de BST hoje": cartão expansível com as 3 listas
+  // (aptas, incluir no próximo BST, inaptas) já embutidas no evento.
+  const [bstAberto, setBstAberto] = useState<Set<string>>(new Set());
+  const toggleBst = (id: string) => setBstAberto((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   function abrirDieta(e: Evento) {
     setDietaAberta((p) => { const n = new Set(p); n.has(e.id) ? n.delete(e.id) : n.add(e.id); return n; });
     if (e.ref && !(e.id in dietaApres)) {
@@ -733,6 +743,51 @@ export default function AgendaMovel() {
               </div>
             );
           })()}
+        </MobCard>
+      );
+    }
+
+    // Compromisso "Aplicação de BST hoje" — cartão expansível com as 3 listas
+    // já embutidas no evento (sem outra chamada à API): aptas, incluir no
+    // próximo BST e vacas em lactação inaptas (não elegíveis).
+    if (e.tipo === "bst_aplicacao") {
+      const aberto = bstAberto.has(e.id);
+      const aptas = e.aptas || [];
+      const incluir = e.incluir_proximo || [];
+      const inaptas = e.inaptas || [];
+      const ListaNumeros = ({ titulo, numeros, cor }: { titulo: string; numeros: string[]; cor: string }) => (
+        <div style={{ marginBottom: "0.6rem" }}>
+          <div style={{ fontSize: "0.78rem", fontWeight: 800, color: cor, marginBottom: "0.3rem" }}>{titulo} ({numeros.length})</div>
+          {numeros.length ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "0.35rem" }}>
+              {numeros.map((n) => (
+                <span key={n} style={{ fontSize: "0.78rem", fontWeight: 700, padding: "0.15rem 0.5rem", borderRadius: 999, background: "var(--mob-surface)", border: "1px solid var(--mob-border)" }}>{n}</span>
+              ))}
+            </div>
+          ) : (
+            <p style={{ fontSize: "0.78rem", color: "var(--mob-muted)" }}>Nenhum animal.</p>
+          )}
+        </div>
+      );
+      return (
+        <MobCard key={e.id} alt={alt} style={{ marginBottom: "0.6rem" }}>
+          <button type="button" onClick={() => toggleBst(e.id)}
+            style={{ width: "100%", background: "none", border: "none", padding: 0, textAlign: "left", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.6rem" }}>
+            <IconeCategoria chave={chave} />
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <RotuloCategoria chave={chave} rotulo={rotulo} />
+              <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: "var(--mob-text)" }}>{e.descricao}</div>
+              <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>Toque para ver as listas</div>
+            </div>
+            <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
+          </button>
+          {aberto && (
+            <div style={{ marginTop: "0.7rem", borderTop: "1px solid var(--mob-border)", paddingTop: "0.6rem" }}>
+              <ListaNumeros titulo="BST aptas" numeros={aptas} cor="var(--mob-verde)" />
+              <ListaNumeros titulo="Incluir no próximo BST" numeros={incluir} cor="var(--mob-azul)" />
+              <ListaNumeros titulo="Vacas em lactação inaptas" numeros={inaptas} cor="var(--mob-ambar)" />
+            </div>
+          )}
         </MobCard>
       );
     }

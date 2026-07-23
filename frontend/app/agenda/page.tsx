@@ -754,18 +754,19 @@ export default function AgendaPage() {
                         return `/lancamentos?${p.toString()}`;
                       };
                       const ehSugestaoMov = (e as any).tipo === "sugestao_movimentacao";
+                      const ehBstAplicacao = (e as any).tipo === "bst_aplicacao";
                       return (
                         <React.Fragment key={i}>
                           <tr
-                            style={ehSugestaoMov ? { cursor: "pointer" } : undefined}
-                            onClick={ehSugestaoMov ? () => abrirSugestaoMov(e) : undefined}
+                            style={(ehSugestaoMov || ehBstAplicacao) ? { cursor: "pointer" } : undefined}
+                            onClick={ehSugestaoMov ? () => abrirSugestaoMov(e) : ehBstAplicacao ? () => abrirListasBst() : undefined}
                           >
                             {tdAccent(e.categoria)}
                             <td style={{ fontWeight: e.numero_animal ? 700 : 400 }}>{e.numero_animal || (e.lote ? `Lote: ${e.lote}` : "—")}</td>
                             <td style={{ fontSize: "0.83rem" }} title={categoriaLabel(e.categoria)}>{e.descricao}{mostrarAtraso && pillAtraso(e.data)}</td>
                             <td style={{ color: "var(--text-muted)", fontSize: "0.78rem", whiteSpace: "pre-line", maxWidth: "26rem" }}>{e.observacao || "—"}</td>
                             <td style={{ fontSize: "0.7rem", color: e.fonte === "manual" ? "var(--amber)" : "var(--text-muted)" }}>{e.fonte === "manual" ? "manual" : "auto"}</td>
-                            <td onClick={ehSugestaoMov ? (ev) => ev.stopPropagation() : undefined}>
+                            <td onClick={(ehSugestaoMov || ehBstAplicacao) ? (ev) => ev.stopPropagation() : undefined}>
                               {ehSugestaoMov ? (
                                 <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirSugestaoMov(e)}>
                                   <Layers size={12} /> Ver sugestão
@@ -837,6 +838,10 @@ export default function AgendaPage() {
                                   <button className="btn-ghost" style={{ color: "var(--green-light)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, true)}>Sim</button>
                                   <button className="btn-ghost" style={{ color: "var(--red)", padding: "0.1rem 0.4rem" }} disabled={marcando.has(e.id)} onClick={() => confirmarCura(e, false)}>Não</button>
                                 </span>
+                              ) : ehBstAplicacao ? (
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem", display: "inline-flex", alignItems: "center", gap: "0.3rem" }} onClick={() => abrirListasBst()}>
+                                  <Layers size={12} /> Ver listas
+                                </button>
                               ) : (
                                 <BotaoRealizado chave={e.id} onConfirmar={() => marcarRealizado(e.id)} />
                               )}
@@ -1224,6 +1229,17 @@ export default function AgendaPage() {
     estoqueAlertasRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
   };
 
+  // Compromisso "Aplicação de BST hoje" na Agenda: ao clicar, abre (não
+  // alterna) as listas BST aptos + Incluir no próximo BST e rola até elas —
+  // é a mesma informação já mostrada nos quadros/listas acima, só que o
+  // usuário chega direto nela a partir do evento do dia.
+  const bstIndicadoresRef = useRef<HTMLDivElement>(null);
+  const abrirListasBst = () => {
+    setListaAtiva((p) => { const n = new Set(p); n.add("bstAptos"); n.add("bstNunca"); return n; });
+    const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    bstIndicadoresRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth", block: "start" });
+  };
+
   const ordIatf = useOrdenacao(candidatas);
   const ordBstAptos = useOrdenacao(bstAptos);
   const ordBstExcl = useOrdenacao(bstExcl);
@@ -1366,7 +1382,7 @@ export default function AgendaPage() {
       {loading && !agenda ? (
         <div className="mb-4"><p style={{ color: "var(--text-muted)", padding: "1rem" }}>Carregando…</p></div>
       ) : agenda && (
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+        <div ref={bstIndicadoresRef} className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
           <Indicador categoria="reprodutivo" cor="var(--blue)" valor={candidatas.length} rotulo="Candidatas à próxima IATF"
             onClick={() => toggleLista("iatf")} podeClicar={candidatas.length > 0}
             extra={candidatas.length > 0 && (listaAtiva.has("iatf") ? <ChevronDown size={11} /> : <ChevronRight size={11} />)} />
