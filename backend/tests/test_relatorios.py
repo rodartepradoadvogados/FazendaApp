@@ -112,6 +112,40 @@ class TestManejo:
         assert semen["Convencional Baixo"]["cor"] == "vermelho"  # < 15 convencional
         assert semen["Sexado Bom"]["cor"] == "verde"  # > 15 sexado
 
+    def test_servico_aberto_nunca_coexiste_em_a_inseminar_e_inseminados(self, client):
+        """Regressão: animal com sit_rep desatualizado (ainda "Vaz.") mas com um
+        serviço já lançado (D0/IA) e sem diagnóstico não pode aparecer nas duas
+        listas ao mesmo tempo — só em "inseminados"."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="405", sexo="F", ativo=True, del_dias=80, sit_rep="Vaz. apt."))
+            s.add(Parto(numero_matriz="405", data_parto=hoje - timedelta(days=80), ordem_parto=2))
+            s.add(Servico(numero_matriz="405", data_servico=hoje - timedelta(days=5),
+                          ordem_tentativa=1, reprodutor="Touro Y"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert any(x["numero"] == "405" for x in dados["inseminados"])
+        assert not any(x["numero"] == "405" for x in dados["a_inseminar"])
+
+    def test_novilha_reconfirmada_60_mais_nao_aparece_para_reconfirmar(self, client):
+        """Regressão: novilha (nunca pariu) com toque positivo dispensa a
+        reconfirmação de 60 dias — não deve aparecer na lista de a_reconfirmar
+        mesmo sem data_reconfirmacao lançada."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="900", sexo="F", ativo=True, sit_rep="Ges."))
+            s.add(Servico(numero_matriz="900", data_servico=hoje - timedelta(days=90),
+                          ordem_tentativa=1, diagnostico="POSITIVO"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert not any(x["numero"] == "900" for x in dados["a_reconfirmar"])
+        prenhe = next(x for x in dados["prenhes"] if x["numero"] == "900")
+        assert prenhe["reconfirmada"] is True
+
 
 class TestGerencial:
     def _seed(self, engine):

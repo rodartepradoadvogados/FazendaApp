@@ -8,7 +8,7 @@ from datetime import date
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import Animal, Servico
@@ -41,6 +41,38 @@ def client():
             s.add(Servico(numero_matriz="401", data_servico=date(2026, 6, 1), ult_ocorrencia=1))
             s.commit()
         yield c
+
+    main.app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def client_com_engine():
+    """Variante que expõe o engine para testes que precisam inserir Servico
+    extra diretamente no banco (matriz com mais de um serviço)."""
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    SQLModel.metadata.create_all(engine)
+
+    def _get_session_override():
+        with Session(engine) as session:
+            yield session
+
+    import main
+    from fazenda.auth import get_current_user
+
+    class _FakeUser:
+        id = 1
+        papel = "admin"
+        ativo = True
+        username = "teste"
+
+    main.app.dependency_overrides[database.get_session] = _get_session_override
+    main.app.dependency_overrides[get_current_user] = lambda: _FakeUser()
+
+    with TestClient(main.app) as c:
+        with Session(engine) as s:
+            s.add(Animal(numero="401", sit_rep="Ins.", ativo=True))
+            s.commit()
+        yield c, engine
 
     main.app.dependency_overrides.clear()
 
@@ -92,6 +124,55 @@ class TestRegistrarDiagnostico:
         assert r.status_code == 200
         assert r.json()["metodo_diagnostico"] == "Cio de repasse"
         assert r.json()["diagnostico"] == "NEGATIVO"
+
+    def test_prefere_servico_em_aberto_mesmo_nao_sendo_o_mais_recente(self, client_com_engine):
+        """Regressão: matriz com dois serviços — um antigo ainda em aberto (sem
+        diagnóstico) e um mais recente já diagnosticado — deve gravar no que
+        está em aberto, não cegamente no "mais recente por data"."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 5, 1)))  # em aberto
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 6, 1),
+                          diagnostico="POSITIVO", data_diagnostico=date(2026, 6, 25)))  # mais recente, já fechado
+            s.commit()
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
+        })
+        assert r.status_code == 200
+        assert r.json()["data_servico"] == "2026-05-01"  # gravou no serviço em aberto, não no mais recente
+
+        with Session(engine) as s:
+            fechado = s.exec(
+                select(Servico).where(Servico.numero_matriz == "401", Servico.data_servico == date(2026, 6, 1))
+            ).first()
+            assert fechado.diagnostico == "POSITIVO"  # preservado — não foi sobrescrito
+
+
+class TestRegistrarReconfirmacao:
+    def test_prefere_servico_positivo_aguardando_mesmo_nao_sendo_o_mais_recente(self, client_com_engine):
+        """Regressão: matriz com um serviço antigo positivo aguardando
+        reconfirmação e um serviço mais recente ainda sem diagnóstico (ex.:
+        novo ciclo após perda) — a reconfirmação deve gravar no antigo
+        positivo, não cegamente no "mais recente por data"."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 3, 1),
+                          diagnostico="POSITIVO"))  # aguardando reconfirmação
+            s.add(Servico(numero_matriz="401", data_servico=date(2026, 6, 10)))  # mais recente, sem diagnóstico
+            s.commit()
+
+        r = c.post("/reproducao/reconfirmacao", json={
+            "numero_matriz": "401", "data_reconfirmacao": "2026-07-01", "resultado": "positivo",
+        })
+        assert r.status_code == 200
+        assert r.json()["data_servico"] == "2026-03-01"
+
+        with Session(engine) as s:
+            aberto = s.exec(
+                select(Servico).where(Servico.numero_matriz == "401", Servico.data_servico == date(2026, 6, 10))
+            ).first()
+            assert aberto.data_reconfirmacao is None  # preservado — não foi tocado
 
 
 class TestRetoqueNaAgenda:

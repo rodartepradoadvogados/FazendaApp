@@ -31,6 +31,8 @@ from __future__ import annotations
 from datetime import date
 
 from fazenda.rules.parametros import (
+    dias_adesivo_cio_max,
+    dias_adesivo_cio_min,
     gestacao_dias_referencia,
     idade_apta_min_meses,
     idade_verificar_aptidao_meses,
@@ -86,6 +88,8 @@ def classificar_rebanho(
     pre_parto_de = pre_parto_min()
     pre_parto_ate = pre_parto_max()
     usa_adesivo = usa_adesivo_deteccao_cio()
+    adesivo_min = dias_adesivo_cio_min()
+    adesivo_max = dias_adesivo_cio_max()
 
     for animal in animais:
         if animal.get("eh_semen") or animal.get("sexo") == "M":
@@ -128,7 +132,11 @@ def classificar_rebanho(
         diag1 = (servico or {}).get("diagnostico")
         diag2 = (servico or {}).get("diagnostico_reconfirmacao")
         negativo_toque = tocada and diag1 == "NEGATIVO"
-        gestante_confirmada = tocada and diag1 == "POSITIVO" and reconfirmada and diag2 == "POSITIVO"
+        # Novilha (nunca pariu) dispensa o 2º toque/reconfirmação nesta
+        # fazenda — uma vez tocada positiva já é considerada confirmada; só
+        # vaca passa pelo 2º exame aos 60+ dias (ver relatorios_gerenciais.py).
+        eh_novilha = categoria == "novilha"
+        gestante_confirmada = tocada and diag1 == "POSITIVO" and (eh_novilha or (reconfirmada and diag2 == "POSITIVO"))
         perda_prenhez = reconfirmada and diag2 == "NEGATIVO"
 
         dpp = None
@@ -151,7 +159,7 @@ def classificar_rebanho(
                 # Observação de cio (repasse): subconjunto de "1-29 dias", só
                 # quando a fazenda usa adesivo de detecção de cio (parâmetro
                 # usa_adesivo_deteccao_cio) — ver #365.
-                if usa_adesivo and 15 <= dias_insem <= 28:
+                if usa_adesivo and adesivo_min <= dias_insem <= adesivo_max:
                     listas["observacao_cio"].append(base)
             elif 30 <= dias_insem <= 59:
                 listas["inseminadas_30_59"].append({**base, "atrasada": not tocada})

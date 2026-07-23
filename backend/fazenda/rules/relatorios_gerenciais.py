@@ -119,6 +119,18 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
         prenhe = sit == "Ges." or (ups is not None and not (us or {}).get("data_perda_prenhez") and not sit.startswith("Vaz."))
         vazia = sit.startswith("Vaz.")
         inseminada = sit == "Ins."
+        # Serviço em aberto = já tem data_servico lançada e ainda sem
+        # diagnóstico — fonte viva (Servico), ao contrário de sit_rep (só
+        # atualizado na importação de planilha; nunca pelos lançamentos do
+        # próprio site, então fica desatualizado assim que o usuário lança um
+        # serviço novo pelo app). Sem checar isto, um animal podia cair em "a
+        # inseminar" (por sit_rep desatualizado) e em "inseminados" (pelo
+        # Servico real) ao mesmo tempo — os dois nunca podem coexistir.
+        tem_servico_aberto = bool(us is not None and us.get("data_servico") and not us.get("diagnostico") and not prenhe)
+        # Novilha (nunca pariu) dispensa 2º toque/reconfirmação nesta fazenda —
+        # uma vez tocada positiva já é considerada confirmada; só vacas passam
+        # pelo 2º exame aos 60+ dias.
+        reconfirmada_efetiva = bool(ups and (ups.get("data_reconfirmacao") or not eh_vaca))
 
         # 1) Vacas no PEV (0-45 DPP)
         if eh_vaca and dpp is not None and 0 <= dpp <= pev:
@@ -127,7 +139,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                           "data_parto": dparto, "cor": cor})
 
         # 2) Vacas a inseminar (terminou PEV e não está prenhe nem aguardando diagnóstico)
-        precisa_inseminar = (not prenhe and not inseminada) and (
+        precisa_inseminar = (not prenhe and not inseminada and not tem_servico_aberto) and (
             (eh_vaca and dpp is not None and dpp >= pev) or (not eh_vaca and vazia)
         )
         if precisa_inseminar:
@@ -146,7 +158,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                                  "eh_vaca": eh_vaca, "situacao": sit or "—", "cor": cor})
 
         # 3) Animais inseminados (aguardando diagnóstico)
-        aguardando = inseminada or (us is not None and us.get("data_servico") and not us.get("diagnostico") and not prenhe)
+        aguardando = inseminada or tem_servico_aberto
         if aguardando and us and us.get("data_servico"):
             di = _dias(us["data_servico"], hoje)  # dias de inseminada
             if di is not None:
@@ -175,8 +187,10 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                     l_tocar.append({"numero": num, "grupo": grupo, "dias_inseminada": di,
                                     "touro": us.get("reprodutor"), "cor": cor_t})
 
-        # 4b) Reconfirmação — positivo, passou dias de reconfirmação, ainda sem reconfirmar
-        if ups and ups.get("data_servico") and not ups.get("data_reconfirmacao"):
+        # 4b) Reconfirmação — positivo, passou dias de reconfirmação, ainda sem
+        # reconfirmar. Só vacas: novilha (nunca pariu) dispensa o 2º toque
+        # nesta fazenda, ver reconfirmada_efetiva.
+        if eh_vaca and ups and ups.get("data_servico") and not ups.get("data_reconfirmacao"):
             dp = _dias(ups["data_servico"], hoje)
             if dp is not None and dp >= dias_toque + dias_reconf:
                 cor_r = "amarelo" if dp <= dias_toque + dias_reconf + visita_vet else "vermelho"
@@ -202,7 +216,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                     cor = "vermelho"
             l_prenhes.append({"numero": num, "grupo": grupo, "dias_gestacao": dias_gest,
                               "dpp_concepcao": dpp_conc, "previsao_parto": prev_parto,
-                              "reconfirmada": bool(ups.get("data_reconfirmacao")), "cor": cor})
+                              "reconfirmada": reconfirmada_efetiva, "cor": cor})
 
             # 6) Secagem — vaca prenhe em lactação
             if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
@@ -221,7 +235,7 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
                                      "previsao_secagem": prev_secagem, "luzes": luzes, "cor": cor})
 
             # 7) Previsão de partos — reconfirmada e >200 dias de gestação
-            if ups.get("data_reconfirmacao") and dias_gest is not None and dias_gest > 200 and prev_parto:
+            if reconfirmada_efetiva and dias_gest is not None and dias_gest > 200 and prev_parto:
                 d_parir = _dias(hoje, prev_parto)
                 if d_parir is not None:
                     if d_parir > 15:

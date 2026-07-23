@@ -24,7 +24,7 @@ GRUPO_TITULOS: dict[str, str] = {
     "manejo": "Manejo reprodutivo",
     "aptidao_novilha": "Aptidão de novilhas",
     "gestacao_parto": "Gestação e parto",
-    "bst": "BST (Lactotropin)",
+    "bst": "BST",
     "reinseminacao_cio": "Reinseminação e observação de cio",
     "agenda_sistema": "Agenda e sistema",
     "metas_reproducao": "Metas reprodutivas",
@@ -75,6 +75,8 @@ DEFINICOES: list[dict] = [
     {"chave": "dias_reinseminacao_min", "grupo": "reinseminacao_cio", "label": "Dias para reinseminação — mínimo", "valor": 18, "unidade": "dias"},
     {"chave": "dias_reinseminacao_max", "grupo": "reinseminacao_cio", "label": "Dias para reinseminação — máximo", "valor": 25, "unidade": "dias"},
     {"chave": "usa_adesivo_deteccao_cio", "grupo": "reinseminacao_cio", "label": "Utiliza adesivos para detecção de cio de repasse?", "valor": "false", "tipo": "bool"},
+    {"chave": "dias_adesivo_cio_min", "grupo": "reinseminacao_cio", "label": "Observação de cio (adesivo) — dias mínimo", "valor": 15, "unidade": "dias"},
+    {"chave": "dias_adesivo_cio_max", "grupo": "reinseminacao_cio", "label": "Observação de cio (adesivo) — dias máximo", "valor": 28, "unidade": "dias"},
 
     # ---- Agenda e sistema ------------------------------------------------------
     {"chave": "janela_eventos_sanitarios_passado", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no passado", "valor": 120, "unidade": "dias"},
@@ -278,6 +280,14 @@ def dias_reinseminacao_referencia() -> int:
 
 def usa_adesivo_deteccao_cio() -> bool:
     return get_param_bool("usa_adesivo_deteccao_cio", False)
+
+
+def dias_adesivo_cio_min() -> int:
+    return int(get_param("dias_adesivo_cio_min", 15) or 15)
+
+
+def dias_adesivo_cio_max() -> int:
+    return int(get_param("dias_adesivo_cio_max", 28) or 28)
 
 
 def del_minimo_bst() -> int:
