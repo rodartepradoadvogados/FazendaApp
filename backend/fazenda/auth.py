@@ -19,7 +19,9 @@ from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda
+from fazenda.models import (
+    ContratoConsultor, ContratoFazenda, ContratoFazendaModulo, SeedFlag, Usuario, UsuarioFazenda,
+)
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -275,6 +277,30 @@ def exigir_modulo_contratado(modulo: str):
         ).first()
         if not tem:
             raise HTTPException(status_code=403, detail=f"Módulo '{modulo}' não contratado por esta fazenda")
+    return _dep
+
+
+# ---------------------------------------------------------------------------
+# Trava por assinatura do CONSULTOR (Fase 2C) — produto independente do
+# consultor (fazendas gerenciadas por importação de planilha, fora de
+# qualquer fazenda-tenant). Não confundir com exigir_modulo_contratado
+# ("consultor"), que é o módulo comercial de uma FAZENDA Diamond (Fase 2B).
+# ---------------------------------------------------------------------------
+def _contrato_consultor_ativo(session: Session, usuario_id: int) -> ContratoConsultor | None:
+    contrato = session.exec(select(ContratoConsultor).where(ContratoConsultor.usuario_id == usuario_id)).first()
+    if not contrato or contrato.status != "ativo":
+        return None
+    return contrato
+
+
+def exigir_consultor_ativo():
+    """Dependência: exige que o USUÁRIO LOGADO (não uma fazenda) tenha uma
+    assinatura de consultor ativa — usada pelo router de fazendas gerenciadas/
+    importação/indicadores (fazenda/api/routers/consultores.py)."""
+    def _dep(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> Usuario:
+        if not _contrato_consultor_ativo(session, user.id):
+            raise HTTPException(status_code=403, detail="Assinatura de consultor sem contrato ativo — aguardando aprovação")
+        return user
     return _dep
 
 

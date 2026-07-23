@@ -27,6 +27,7 @@ from fazenda.api.routers import (
     cadastro,
     compra_animal,
     compra_semen,
+    consultores,
     estoque,
     exclusoes,
     farmacia,
@@ -274,6 +275,11 @@ app.include_router(auth.router)
 # Fazendas: gerencia os próprios contratos/planos — não leva a trava de
 # módulo contratado (seria circular).
 app.include_router(fazendas.router)
+# Consultor (Fase 2C): produto independente, escopado por USUÁRIO (não por
+# fazenda) — cada endpoint já tem sua própria trava interna (get_current_user
+# nos públicos, exigir_consultor_ativo/exigir_dono nos demais); não faz
+# sentido usar a trava de módulo contratado por fazenda aqui.
+app.include_router(consultores.router)
 
 _protegido = [Depends(get_current_user)]
 # Trava por PLANO CONTRATADO (fazenda/tenant) — soma-se à permissão por

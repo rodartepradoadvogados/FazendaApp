@@ -1,12 +1,13 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
   urlAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
+  fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado,
+  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin,
 } from "@/lib/api";
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
@@ -67,6 +68,27 @@ export default function FazendasAdmin() {
   const [novoUsername, setNovoUsername] = useState("");
   const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor">("funcionario");
   const [vinculando, setVinculando] = useState(false);
+
+  // Assinaturas do produto de Consultor independente (Fase 2C) — fora de
+  // qualquer fazenda-tenant, ver fazenda/models/consultores.py.
+  const [consultores, setConsultores] = useState<ContratoConsultorAdmin[] | null>(null);
+  const [processandoConsultor, setProcessandoConsultor] = useState<number | null>(null);
+
+  function carregarConsultores() {
+    fetchContratosConsultor().then(setConsultores).catch((e) => setErro(e.message));
+  }
+  useEffect(carregarConsultores, []);
+
+  async function aprovarConsultor(usuarioId: number) {
+    setProcessandoConsultor(usuarioId); setErro(null);
+    try { await aprovarContratoConsultor(usuarioId); carregarConsultores(); }
+    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
+  }
+  async function suspenderConsultor(usuarioId: number) {
+    setProcessandoConsultor(usuarioId); setErro(null);
+    try { await suspenderContratoConsultor(usuarioId); carregarConsultores(); }
+    catch (e: any) { setErro(e.message); } finally { setProcessandoConsultor(null); }
+  }
 
   function carregarFazendas() {
     fetchFazendas().then(setFazendas).catch((e) => setErro(e.message));
@@ -350,6 +372,42 @@ export default function FazendasAdmin() {
               </ul>
             )}
           </div>
+        )}
+      </div>
+
+      <div className="card mt-4">
+        <div className="card-header mb-2 flex items-center gap-2"><Briefcase size={16} style={{ color: "var(--dourado)" }} /> Assinaturas de consultor</div>
+        <p style={{ color: "var(--text-muted)", fontSize: "0.8rem", marginBottom: "0.8rem" }}>
+          Produto independente do consultor (fora de qualquer fazenda) — fazendas gerenciadas por importação de
+          planilha. Nada libera até você aprovar o plano solicitado.
+        </p>
+        {!consultores ? <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Carregando…</p> : consultores.length === 0 ? (
+          <p style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>Nenhuma solicitação de plano de consultor ainda.</p>
+        ) : (
+          <ul style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+            {consultores.map((c) => (
+              <li key={c.usuario_id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", flexWrap: "wrap", fontSize: "0.82rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.5rem 0.7rem" }}>
+                <span>
+                  <strong>@{c.username}</strong>{" "}
+                  <span style={{ color: "var(--text-muted)" }}>— {c.plano || "sem plano"} (até {c.limite_fazendas ?? "—"} fazenda(s))</span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <StatusBadge status={c.status} />
+                  {c.status !== "ativo" ? (
+                    <button onClick={() => aprovarConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
+                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--green-light)", background: "transparent", color: "var(--green-light)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                      <ShieldCheck size={13} /> {processandoConsultor === c.usuario_id ? "Aprovando…" : "Aprovar"}
+                    </button>
+                  ) : (
+                    <button onClick={() => suspenderConsultor(c.usuario_id)} disabled={processandoConsultor === c.usuario_id}
+                      style={{ fontSize: "0.76rem", padding: "0.3rem 0.6rem", borderRadius: "6px", border: "1px solid var(--red)", background: "transparent", color: "var(--red)", cursor: "pointer", display: "flex", alignItems: "center", gap: "0.3rem" }}>
+                      <Ban size={13} /> {processandoConsultor === c.usuario_id ? "Suspendendo…" : "Suspender"}
+                    </button>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         )}
       </div>
     </div>

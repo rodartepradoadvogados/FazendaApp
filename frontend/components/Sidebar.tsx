@@ -19,6 +19,7 @@ import {
   ShoppingCart,
   MessageSquare,
   Users,
+  Briefcase,
   Menu,
   X,
   Search,
@@ -234,6 +235,7 @@ export function Sidebar() {
             const todos = [...visiveis,
               ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
+              { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
             ];
             return GRUPOS.map((grupo, i) => {

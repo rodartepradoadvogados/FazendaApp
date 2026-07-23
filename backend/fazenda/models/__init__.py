@@ -152,6 +152,11 @@ from .planos import (
     ContratoFazendaModulo,
     ContratoAnexo,
 )
+from .consultores import (
+    ContratoConsultor,
+    FazendaGerenciada,
+    RegistroImportado,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -179,6 +184,9 @@ __all__ = [
     "ContratoFazenda",
     "ContratoFazendaModulo",
     "ContratoAnexo",
+    "ContratoConsultor",
+    "FazendaGerenciada",
+    "RegistroImportado",
     "Animal",
     "Lote",
     "MovimentoLote",
