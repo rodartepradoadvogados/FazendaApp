@@ -322,6 +322,45 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             "https://www.brownfieldagnews.com/news/nutritionist-says-heat-stress-costs-dairy-industry-1-5-billion-per-year/",
         ],
     }],
+    "milknews_20260723": [{
+        "manchete": "Projeto de lei propõe piso de R$ 2,50 por litro para o leite pago ao produtor",
+        "resumo": (
+            "Tramita na Câmara dos Deputados o Projeto de Lei 913/26, do deputado Cobalchini "
+            "(MDB-SC), que fixa em R$ 2,50 o valor mínimo inicial do litro de leite pago ao "
+            "produtor rural. Pelo texto, o custo médio de produção passaria a ser a "
+            "principal referência da política de garantia de preços do Ministério da "
+            "Agricultura e Pecuária, que teria de consultar entidades técnicas e "
+            "representativas do setor com ao menos 30 dias de antecedência antes de fixar "
+            "o valor. Como pano de fundo, dados do Centro de Inteligência do Leite, da "
+            "Embrapa, apontam preço líquido médio de R$ 2,51 por litro pago ao produtor em "
+            "2025. O projeto ainda precisa passar pelas comissões, pela Câmara e pelo "
+            "Senado para virar lei. Dados: Câmara dos Deputados (09/07/2026)."
+        ),
+        "materia": (
+            "Tramita na Câmara dos Deputados o Projeto de Lei 913/26, do deputado Cobalchini "
+            "(MDB-SC), que fixa em R$ 2,50 o valor mínimo inicial do litro de leite pago ao "
+            "produtor rural.\n\n"
+            "Pelo texto, o custo médio de produção por litro passaria a ser a principal "
+            "referência da política de garantia de preços conduzida pelo Ministério da "
+            "Agricultura e Pecuária. Antes de fixar o valor de referência, a pasta teria de "
+            "consultar órgãos técnicos e entidades representativas do setor leiteiro, com "
+            "antecedência mínima de 30 dias.\n\n"
+            "Como pano de fundo da proposta, dados do Centro de Inteligência do Leite, "
+            "ligado à Embrapa, apontam que o preço líquido médio pago ao produtor foi de "
+            "R$ 2,51 por litro em 2025. Em valores reais, a série histórica da última "
+            "década oscilou entre R$ 2,20 (2017) e R$ 2,76 (2022).\n\n"
+            "Para virar lei, o projeto ainda precisa ser aprovado, em caráter conclusivo, "
+            "pelas comissões de Agricultura, Pecuária, Abastecimento e Desenvolvimento "
+            "Rural e de Constituição e Justiça e de Cidadania, além de passar pelo "
+            "plenário da Câmara dos Deputados e pelo Senado Federal."
+        ),
+        "link": "/news#milknews-2026-07-23-01",
+        "data_publicacao": "2026-07-23",
+        "fontes": [
+            "https://www.camara.leg.br/noticias/1288571-projeto-fixa-em-r-250-o-preco-minimo-do-litro-de-leite-pago-ao-produtor",
+            "https://www.lancerural.com.br/noticia/projeto-preco-minimo-litro-de-leite-produtor/",
+        ],
+    }],
 }
 
 
