@@ -275,8 +275,11 @@ def calcular_agenda(
         proxima_visita_bst_real = ancora_bst + timedelta(days=intervalo_bst_dias)
         # A aplicação é sempre em ciclo fixo — se a última dose+intervalo já
         # ficou no passado (várias janelas puladas), avança até a próxima
-        # ocorrência futura, em vez de mostrar uma data já vencida.
-        while proxima_visita_bst_real <= data:
+        # ocorrência futura, em vez de mostrar uma data já vencida. Usa "<"
+        # (não "<="): quando a próxima aplicação cai exatamente hoje, ela deve
+        # PERMANECER hoje — antes, o "<=" empurrava a data de hoje para a
+        # janela seguinte e a aplicação do dia sumia da Agenda.
+        while proxima_visita_bst_real < data:
             proxima_visita_bst_real += timedelta(days=intervalo_bst_dias)
 
     engine = AgendaEngine()
@@ -305,6 +308,30 @@ def calcular_agenda(
     # Remove da lista os eventos já marcados como "realizado" (workflow da agenda).
     realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
     eventos = [e for e in result.eventos if e.chave not in realizados]
+
+    # Compromisso de agenda para o dia da aplicação de BST — antes disso a
+    # "próxima aplicação" só existia como número informativo (proxima_visita_bst)
+    # e nos indicadores/tabelas aptos-excluídos-nunca aplicados, sem nunca virar
+    # um evento cronológico de verdade no dia certo. Carrega os números dos
+    # animais direto no evento (aptas/incluir no próximo/inaptas) para que o
+    # app também consiga mostrar as três listas sem precisar de outra chamada.
+    eventos_bst = []
+    if proxima_visita_bst_real is not None and proxima_visita_bst_real == data:
+        total_aptos = len(result.bst_elegiveis)
+        total_incluir = len(bst_nunca_aplicados)
+        total_inaptos = len(result.bst_excluidos)
+        chave_bst = f"bst_aplicacao_{data.isoformat()}"
+        if chave_bst not in realizados:
+            eventos_bst.append({
+                "id": chave_bst, "data": data.isoformat(), "categoria": "Reprodutivo",
+                "descricao": f"Aplicação de BST hoje — {total_aptos} apta(s), {total_incluir} para incluir no próximo BST",
+                "numero_animal": None,
+                "observacao": f"Vacas em lactação inaptas (não elegíveis): {total_inaptos}. Toque para ver as listas.",
+                "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "bst_aplicacao",
+                "aptas": sorted((b.numero_matriz for b in result.bst_elegiveis), key=chave_numero),
+                "incluir_proximo": sorted((b["numero_matriz"] for b in bst_nunca_aplicados), key=chave_numero),
+                "inaptas": sorted((b.numero_matriz for b in result.bst_excluidos), key=chave_numero),
+            })
 
     # Dietas ativas com encerramento previsto: evento de análise (chave própria,
     # fora do AgendaEngine para não mexer no cálculo delicado já testado dele).
@@ -757,7 +784,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
