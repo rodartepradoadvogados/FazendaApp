@@ -129,6 +129,80 @@ export async function exportarPDF(
 export type SecaoFicha = { titulo: string; colunas: ColunaExport[]; linhas: Record<string, unknown>[] };
 
 /**
+ * Excel com várias abas (uma planilha por seção/categoria) — usado quando um
+ * relatório é discriminado em várias listas e o usuário pode escolher quais
+ * exportar juntas num único arquivo (ex.: Agenda Reprodutiva). Cada aba leva
+ * o mesmo cabeçalho padronizado da fazenda; seções sem linha nenhuma não
+ * geram aba (evita abas vazias no meio do arquivo).
+ */
+export async function exportarMultiExcel(
+  tituloGeral: string,
+  secoes: SecaoFicha[],
+  nomeArquivoBase: string,
+) {
+  const ExcelJS = (await import("exceljs")).default;
+  const usuario = getUsuario();
+  const wb = new ExcelJS.Workbook();
+  wb.creator = usuario?.nome || "FazendaApp";
+  wb.created = new Date();
+
+  const nomesUsados = new Set<string>();
+  for (const secao of secoes) {
+    if (!secao.linhas.length) continue;
+    let nomeAba = secao.titulo.replace(/[[\]*/\\?:]/g, "").slice(0, 31) || "Aba";
+    let sufixo = 2;
+    while (nomesUsados.has(nomeAba)) {
+      nomeAba = `${secao.titulo.slice(0, 28)} (${sufixo++})`;
+    }
+    nomesUsados.add(nomeAba);
+
+    const ws = wb.addWorksheet(nomeAba);
+    const nCols = Math.max(secao.colunas.length, 1);
+
+    ws.mergeCells(1, 1, 1, nCols);
+    ws.getCell(1, 1).value = NOME_FAZENDA.toUpperCase();
+    ws.getCell(1, 1).font = { bold: true, size: 14, color: { argb: `FF${COR_VINHO}` } };
+    ws.getCell(1, 1).alignment = { horizontal: "center" };
+    ws.getRow(1).height = 22;
+
+    ws.mergeCells(2, 1, 2, nCols);
+    ws.getCell(2, 1).value = `${tituloGeral} — ${secao.titulo}`;
+    ws.getCell(2, 1).font = { bold: true, size: 12 };
+    ws.getCell(2, 1).alignment = { horizontal: "center" };
+
+    ws.mergeCells(3, 1, 3, nCols);
+    ws.getCell(3, 1).value = `Gerado por ${usuario?.nome || "—"} em ${new Date().toLocaleDateString("pt-BR")}`;
+    ws.getCell(3, 1).font = { italic: true, size: 9, color: { argb: "FF888888" } };
+    ws.getCell(3, 1).alignment = { horizontal: "center" };
+
+    ws.addRow([]);
+
+    const headerRow = ws.addRow(secao.colunas.map((c) => c.header));
+    headerRow.eachCell((c) => {
+      c.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      c.fill = { type: "pattern", pattern: "solid", fgColor: { argb: `FF${COR_VINHO}` } };
+      c.alignment = { horizontal: "center" };
+    });
+
+    secao.linhas.forEach((linha) => {
+      ws.addRow(secao.colunas.map((c) => formatarValor(linha[c.key])));
+    });
+
+    secao.colunas.forEach((c, i) => {
+      ws.getColumn(i + 1).width = c.width || Math.max(12, c.header.length + 2);
+    });
+  }
+
+  if (!wb.worksheets.length) {
+    wb.addWorksheet("Sem dados").getCell(1, 1).value = "Nenhuma categoria selecionada tinha dados para exportar.";
+  }
+
+  const buf = await wb.xlsx.writeBuffer();
+  const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+  baixarBlob(blob, `${nomeArquivoBase}_${dataHoje()}.xlsx`);
+}
+
+/**
  * PDF com várias seções (uma tabela por tipo de lançamento) — usado na ficha
  * única do animal. Pode gerar quantas páginas forem necessárias: cada seção
  * só entra se tiver alguma linha, e o cabeçalho da fazenda é redesenhado em

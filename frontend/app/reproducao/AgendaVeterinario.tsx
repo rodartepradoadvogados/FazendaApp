@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus } from "lucide-react";
+import { ChevronDown, ChevronRight, Stethoscope, AlertTriangle, Check, X, Mail, CalendarPlus, Download } from "lucide-react";
 import { fetchAgendaVeterinario, registrarReconfirmacao, enviarDiagnosticoEmail, atualizarParametro } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { exportarFichaPDF, exportarMultiExcel, type ColunaExport } from "@/lib/export";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Item = {
@@ -31,6 +32,27 @@ const LISTAS: { key: string; label: string; color: string; extra?: "atrasada" | 
   // "usa_adesivo_deteccao_cio" está ativo — ver Configurações > Parâmetros.
   { key: "observacao_cio", label: "Observação de cio — adesivo de repasse (15–28 dias)", color: "var(--dourado)" },
 ];
+
+/** Colunas/linhas de uma categoria — compartilhado entre a exportação por
+ * categoria (dentro de ListaTabela) e a exportação combinada (várias
+ * categorias escolhidas de uma vez, no cabeçalho da página). */
+function colunasDaCategoria(cfg: typeof LISTAS[number]): ColunaExport[] {
+  return [
+    { header: "Matriz", key: "numero_matriz" }, { header: "Categoria", key: "categoria" },
+    { header: "Peso (kg)", key: "peso" }, { header: "Dias insem.", key: "dias_inseminada" },
+    { header: "Data serviço", key: "data_servico_fmt" }, { header: "Toque", key: "tocada_fmt" },
+    { header: "Reconfirmação", key: "reconfirmada_fmt" },
+    ...(cfg.extra === "atrasada" ? [{ header: "Situação", key: "situacao_fmt" }] : []),
+    ...(cfg.extra === "dias_para_parto" ? [{ header: "Dias p/ parto", key: "dias_para_parto" }] : []),
+    ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
+  ];
+}
+function linhasDaCategoria(itens: Item[]): Record<string, unknown>[] {
+  return itens.map((it) => ({
+    ...it, data_servico_fmt: fmtDia(it.data_servico), tocada_fmt: it.tocada ? "Sim" : "—",
+    reconfirmada_fmt: it.reconfirmada ? "Sim" : "—", situacao_fmt: it.atrasada ? "Atrasada" : "No prazo",
+  }));
+}
 
 function FormReconfirmacao({ numero, onSalvo, onCancelar }: { numero: string; onSalvo: (numero: string) => void; onCancelar: () => void }) {
   const [data, setData] = useState(new Date().toISOString().slice(0, 10));
@@ -118,6 +140,13 @@ export default function AgendaVeterinarioPage() {
   const [salvandoParam, setSalvandoParam] = useState(false);
   const [avisoParam, setAvisoParam] = useState<string | null>(null);
 
+  // Exportação combinada — escolher uma, várias ou todas as categorias e
+  // exportar juntas num único arquivo (Excel com uma aba por categoria, ou
+  // PDF com uma seção por categoria), independente de a pílula estar aberta.
+  const [painelExportar, setPainelExportar] = useState(false);
+  const [selecionadasExport, setSelecionadasExport] = useState<Set<string>>(new Set());
+  const [exportando, setExportando] = useState<"excel" | "pdf" | null>(null);
+
   function carregar() {
     fetchAgendaVeterinario(dataRef !== hoje ? dataRef : undefined).then(setDados).catch((e) => setError(e.message));
   }
@@ -159,6 +188,37 @@ export default function AgendaVeterinarioPage() {
     setAvisoParam("Para que a próxima visita reprodutiva seja sugerida automaticamente, vá em Configurações > Parâmetros e defina o intervalo entre serviços.");
   }
 
+  const categoriasComDados = dados ? LISTAS.filter((l) => (dados.totais[l.key] ?? 0) > 0) : [];
+  const subtituloExport = dados
+    ? `Data de referência: ${fmtDia(dados.data_referencia)}${dados.projetado ? " (cenário projetado)" : " (data atual)"}`
+    : "";
+
+  function abrirPainelExportar() {
+    if (!painelExportar) setSelecionadasExport(new Set(categoriasComDados.map((l) => l.key)));
+    setPainelExportar((v) => !v);
+  }
+  function alternarSelecao(key: string) {
+    setSelecionadasExport((s) => { const n = new Set(s); n.has(key) ? n.delete(key) : n.add(key); return n; });
+  }
+  function montarSecoes() {
+    return categoriasComDados
+      .filter((l) => selecionadasExport.has(l.key))
+      .map((l) => ({ titulo: l.label, colunas: colunasDaCategoria(l), linhas: linhasDaCategoria(dados!.listas[l.key] ?? []) }));
+  }
+  async function exportarSelecionadas(formato: "excel" | "pdf") {
+    setExportando(formato);
+    try {
+      const secoes = montarSecoes();
+      if (formato === "excel") {
+        await exportarMultiExcel("Agenda Reprodutiva", secoes, "agenda_reprodutiva_combinado");
+      } else {
+        await exportarFichaPDF("Agenda Reprodutiva", subtituloExport, secoes, "agenda_reprodutiva_combinado");
+      }
+    } finally {
+      setExportando(null);
+    }
+  }
+
   if (error) return <div className="alert-critico"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
 
@@ -178,8 +238,53 @@ export default function AgendaVeterinarioPage() {
           <label style={{ fontSize: "0.8rem", color: "var(--text-muted)", display: "flex", alignItems: "center", gap: "0.4rem", cursor: "pointer" }}>
             <input type="radio" name="modoAgendaRepro" checked={modo === "projecao"} onChange={() => setModo("projecao")} /> Projeção — próximo serviço agendado
           </label>
+          <button onClick={abrirPainelExportar} disabled={categoriasComDados.length === 0}
+            title="Exportar a lista completa, escolhendo quais categorias incluir"
+            style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", padding: "0.35rem 0.7rem", borderRadius: "6px",
+              border: "1px solid var(--dourado)", background: painelExportar ? "rgba(212,160,23,0.15)" : "transparent",
+              color: "var(--dourado-light)", cursor: categoriasComDados.length === 0 ? "not-allowed" : "pointer", opacity: categoriasComDados.length === 0 ? 0.5 : 1 }}>
+            <Download size={14} /> Exportar lista completa
+          </button>
         </div>
       </div>
+
+      {painelExportar && (
+        <div className="card mb-3" style={{ padding: "0.9rem 1rem" }}>
+          <div className="flex items-center justify-between mb-2" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
+            <span style={{ fontWeight: 700, fontSize: "0.9rem" }}>Exportar lista completa</span>
+            <div className="flex items-center gap-2">
+              <button onClick={() => setSelecionadasExport(new Set(categoriasComDados.map((l) => l.key)))}
+                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                Selecionar todas
+              </button>
+              <button onClick={() => setSelecionadasExport(new Set())}
+                style={{ fontSize: "0.75rem", padding: "0.25rem 0.6rem", borderRadius: "6px", border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                Nenhuma
+              </button>
+            </div>
+          </div>
+          <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>{subtituloExport}</p>
+          <div className="flex flex-wrap gap-3 mb-3">
+            {categoriasComDados.map((l) => (
+              <label key={l.key} style={{ display: "flex", alignItems: "center", gap: "0.35rem", fontSize: "0.8rem", color: "var(--text)", cursor: "pointer" }}>
+                <input type="checkbox" checked={selecionadasExport.has(l.key)} onChange={() => alternarSelecao(l.key)} />
+                {l.label} ({dados.totais[l.key]})
+              </label>
+            ))}
+          </div>
+          <div className="flex items-center gap-2">
+            <button onClick={() => exportarSelecionadas("excel")} disabled={selecionadasExport.size === 0 || exportando !== null}
+              className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
+              {exportando === "excel" ? "Gerando…" : "Exportar Excel"}
+            </button>
+            <button onClick={() => exportarSelecionadas("pdf")} disabled={selecionadasExport.size === 0 || exportando !== null}
+              className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem" }}>
+              {exportando === "pdf" ? "Gerando…" : "Exportar PDF"}
+            </button>
+            {selecionadasExport.size === 0 && <span style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>Selecione ao menos uma categoria.</span>}
+          </div>
+        </div>
+      )}
 
       {modo === "projecao" && !dados.proxima_visita_reprodutiva && (
         <div className="mb-3" style={{ background: "rgba(198,58,58,0.12)", border: "1px solid var(--red)", borderRadius: "8px", padding: "0.75rem 1rem", fontSize: "0.85rem" }}>
@@ -311,19 +416,8 @@ function ListaTabela({ cfg, itens, reconfirmando, setReconfirmando, onSalvo, env
   enviandoDg: string | null; setEnviandoDg: (n: string | null) => void; onDgEnviado: (numero: string) => void;
 }) {
   const ord = useOrdenacao(itens);
-  const colunasExport = [
-    { header: "Matriz", key: "numero_matriz" }, { header: "Categoria", key: "categoria" },
-    { header: "Peso (kg)", key: "peso" }, { header: "Dias insem.", key: "dias_inseminada" },
-    { header: "Data serviço", key: "data_servico_fmt" }, { header: "Toque", key: "tocada_fmt" },
-    { header: "Reconfirmação", key: "reconfirmada_fmt" },
-    ...(cfg.extra === "atrasada" ? [{ header: "Situação", key: "situacao_fmt" }] : []),
-    ...(cfg.extra === "dias_para_parto" ? [{ header: "Dias p/ parto", key: "dias_para_parto" }] : []),
-    ...(cfg.extra === "motivo" ? [{ header: "Motivo", key: "motivo" }] : []),
-  ];
-  const linhasExport = ord.linhasOrdenadas.map((it) => ({
-    ...it, data_servico_fmt: fmtDia(it.data_servico), tocada_fmt: it.tocada ? "Sim" : "—",
-    reconfirmada_fmt: it.reconfirmada ? "Sim" : "—", situacao_fmt: it.atrasada ? "Atrasada" : "No prazo",
-  }));
+  const colunasExport = colunasDaCategoria(cfg);
+  const linhasExport = linhasDaCategoria(ord.linhasOrdenadas);
   return (
     <div className="card mb-3" style={{ overflowX: "auto" }}>
       <div className="card-header mb-2 flex items-center justify-between" style={{ flexWrap: "wrap", gap: "0.5rem" }}>
