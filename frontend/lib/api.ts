@@ -48,11 +48,10 @@ export function ehAdmin(): boolean {
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
 }
-// Permissão específica para publicar/gerenciar matérias do blog (News) e
-// confirmar a revisão de publicação definitiva — independente de admin (ver
-// backend/fazenda/auth.py::exigir_pode_publicar). Todo usuário nasce sem ela.
+// Administração de News/Blog (fontes, matérias, revisão) é restrita ao
+// proprietário da plataforma — ver backend/fazenda/auth.py::exigir_dono.
 export function podePublicarMaterias(): boolean {
-  return getUsuario()?.pode_publicar_materias_blog === true;
+  return ehDono();
 }
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
@@ -3448,6 +3447,13 @@ export type MateriaBlogEditIn = { manchete: string; materia?: string; resumo?: s
 export const atualizarMateriaBlog = (id: number, d: MateriaBlogEditIn): Promise<NoticiaNews> => _rSend(`/news/materias/${id}`, "PUT", d);
 export const excluirMateriaBlog = (id: number) => _rSend(`/news/materias/${id}`, "DELETE");
 export const revisarPublicacaoFinal = (id: number): Promise<NoticiaNews> => _rSend(`/news/materias/${id}/revisar-final`, "POST");
+
+// Nota informativa simples na Capa (distinta de matéria de blog) — só o
+// dono da plataforma edita (ver PUT /news/nota-capa em Configurações > News).
+export type NotaCapa = { id: number; titulo: string; texto: string; atualizado_em: string };
+export const fetchNotaCapa = (): Promise<NotaCapa | null> => _rGet(`/news/nota-capa`);
+export const atualizarNotaCapa = (d: { titulo: string; texto: string; ativa: boolean }): Promise<NotaCapa> =>
+  _rSend(`/news/nota-capa`, "PUT", d);
 
 // ── Assistente Claude (protótipo, admin-only) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };

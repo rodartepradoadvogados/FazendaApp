@@ -77,7 +77,9 @@ from fazenda.api.routers.estoque import sindicar_estoque_semen, backfill_estoque
 from fazenda.api.routers.recria import seed_recria
 from fazenda.api.routers.agenda import seed_lembrete_touros
 from fazenda.api.routers.alimentacao import seed_alimentos
-from fazenda.api.routers.news import desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news
+from fazenda.api.routers.news import (
+    desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news, seed_nota_capa_202607,
+)
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -204,6 +206,9 @@ async def lifespan(app: FastAPI):
         # Publica os lotes novos do robô agendado /milknews (MILKNEWS_LOTES) —
         # cada lote roda uma única vez, sob a fonte manual "robô Milknews".
         publicar_lotes_milknews(session)
+        # Nota informativa na Capa para o produtor (jul/2026) — editável só
+        # pelo dono da plataforma depois disso.
+        seed_nota_capa_202607(session)
         # O proprietário já nasce com permissão de publicar matérias no blog
         # (ele já usa essa função hoje); todos os demais usuários começam sem
         # essa permissão, por padrão (uma única vez, ver seed_permissao_publicar_dono).

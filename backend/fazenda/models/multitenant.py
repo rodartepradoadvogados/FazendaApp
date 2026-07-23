@@ -38,7 +38,14 @@ class Fazenda(SQLModel, table=True):
 class UsuarioFazenda(SQLModel, table=True):
     """Vínculo N:N entre Usuario e Fazenda. Um usuário com mais de um vínculo
     vê a tela de seleção de fazenda ao logar (ver POST /auth/login e
-    POST /auth/selecionar-fazenda)."""
+    POST /auth/selecionar-fazenda).
+
+    `contratante` marca o usuário mestre DESTA fazenda — pode gerenciar tudo
+    dela (ex.: vincular/desvincular outros usuários, ver
+    fazenda/api/routers/fazendas.py::exigir_contratante_ou_dono em auth.py),
+    mas não as ações reservadas só ao dono da plataforma (criar fazenda nova,
+    administrar News/Blog — ver exigir_dono). Um usuário pode ser contratante
+    de mais de uma fazenda (vínculos independentes)."""
 
     __tablename__ = "usuario_fazenda"
     __table_args__ = (UniqueConstraint("usuario_id", "fazenda_id", name="uq_usuario_fazenda"),)
@@ -46,4 +53,5 @@ class UsuarioFazenda(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     usuario_id: int = Field(foreign_key="usuario.id", index=True)
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    contratante: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)

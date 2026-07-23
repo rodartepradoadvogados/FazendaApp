@@ -19,7 +19,7 @@ from fastapi import Depends, Header, HTTPException
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import SeedFlag, Usuario
+from fazenda.models import SeedFlag, Usuario, UsuarioFazenda
 
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
@@ -156,6 +156,28 @@ def exigir_dono(user: Usuario = Depends(get_current_user)) -> Usuario:
     Independente de papel/admin: mesmo outro admin não passa por aqui."""
     if (user.email or "").strip().lower() != EMAIL_DONO:
         raise HTTPException(status_code=403, detail="Acesso restrito ao proprietário")
+    return user
+
+
+def exigir_contratante_ou_dono(
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> Usuario:
+    """Contratante = usuário mestre de UMA fazenda (UsuarioFazenda.contratante,
+    ver fazenda/models/multitenant.py) — gerencia a própria fazenda (ex.:
+    vincular/desvincular usuários), mas não as ações reservadas só ao dono da
+    plataforma (exigir_dono), como criar fazenda nova ou administrar News/Blog.
+    O dono sempre passa, independente de fazenda selecionada."""
+    if (user.email or "").strip().lower() == EMAIL_DONO:
+        return user
+    if fazenda_id is None:
+        raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
+    vinculo = session.exec(
+        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+    ).first()
+    if not vinculo or not vinculo.contratante:
+        raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
     return user
 
 

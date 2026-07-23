@@ -186,16 +186,25 @@ def _seed_categorias_alimento(session: Session) -> None:
 
 
 # Alimentos padrão + categoria sugerida — preenche o cadastro na primeira
-# vez com os alimentos já usados pela fazenda (mesmos nomes de ALIMENTOS_PADRAO,
-# para que o vínculo funcione de cara com dietas já lançadas) mais os
-# exemplos adicionais pedidos explicitamente (silagens específicas, mineral).
-# Cada alimento é ligado automaticamente a um item de Estoque de MESMO NOME,
-# se existir um — do contrário fica "sem vínculo" até o usuário linkar.
-_ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str]] = [
-    ("Silagem", "Volumoso"), ("Silagem de milho", "Volumoso"), ("Silagem de sorgo", "Volumoso"),
-    ("Ração Teck Milk 24%", "Concentrado"), ("Milk Proteico", "Concentrado"), ("Corte 21", "Concentrado"),
-    ("Ração Bezerro 1", "Concentrado"), ("Ração Bezerro 2", "Concentrado"),
-    ("Ração Pré-parto", "Mineral"), ("Reprodução 80", "Mineral"),
+# vez com os alimentos já usados pela fazenda. Cada entrada é (nome do
+# Alimento — conceito NUTRICIONAL genérico, categoria, nome do item de
+# Estoque COMERCIAL a vincular automaticamente). Quando o 3º campo é None,
+# genérico e comercial são o mesmo termo (ex.: silagens) e o próprio nome
+# do Alimento é usado na busca por Estoque; do contrário fica "sem vínculo"
+# até o usuário linkar manualmente. Ex.: "Teck Milk 24%" é um produto
+# comercial que É um concentrado proteico 24% de proteína — o Alimento
+# nasce com o nome nutricional e vinculado ao item de Estoque comercial.
+_ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str, str | None]] = [
+    ("Silagem", "Volumoso", None),
+    ("Silagem de milho", "Volumoso", None),
+    ("Silagem de sorgo", "Volumoso", None),
+    ("Concentrado proteico 24%", "Concentrado", "Teck Milk 24%"),
+    ("Milk Proteico", "Concentrado", None),
+    ("Corte 21", "Concentrado", None),
+    ("Ração Bezerro 1", "Concentrado", None),
+    ("Ração Bezerro 2", "Concentrado", None),
+    ("Ração Pré-parto", "Mineral", None),
+    ("Reprodução 80", "Mineral", None),
 ]
 
 
@@ -206,18 +215,18 @@ def seed_alimentos(session: Session) -> None:
     categorias = {c.nome: c.id for c in session.exec(select(CategoriaAlimento)).all()}
     existentes = {a.nome for a in session.exec(select(Alimento)).all()}
     estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(select(Estoque)).all()}
-    novos = []
-    for nome, categoria_nome in _ALIMENTOS_PADRAO_CATEGORIA:
+    novos_com_vinculo = []
+    for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA:
         if nome in existentes:
             continue
         alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome))
-        novos.append(alimento)
-    if novos:
-        session.add_all(novos)
+        novos_com_vinculo.append((alimento, nome_estoque or nome))
+    if novos_com_vinculo:
+        session.add_all([a for a, _ in novos_com_vinculo])
         session.commit()
-        for alimento in novos:
+        for alimento, nome_estoque in novos_com_vinculo:
             session.refresh(alimento)
-            item = estoque_por_nome.get(alimento.nome.strip().lower())
+            item = estoque_por_nome.get(nome_estoque.strip().lower())
             if item and item.alimento_id is None:
                 item.alimento_id = alimento.id
                 session.add(item)

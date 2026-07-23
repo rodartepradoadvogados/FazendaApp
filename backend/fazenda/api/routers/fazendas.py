@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_dono, get_current_user
+from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Fazenda, Usuario, UsuarioFazenda
 
@@ -24,6 +24,17 @@ def _publico(f: Fazenda) -> dict:
     return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa}
 
 
+def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token: int | None) -> None:
+    """Contratante só gerencia vínculos da PRÓPRIA fazenda selecionada (o
+    dono passa sempre) — evita que um contratante da fazenda A manipule
+    vínculos da fazenda B só porque exigir_contratante_ou_dono validou seu
+    vínculo de contratante contra o token, sem saber qual fazenda a URL pede."""
+    if (user.email or "").strip().lower() == EMAIL_DONO:
+        return
+    if fazenda_id_token != fazenda_id:
+        raise HTTPException(status_code=403, detail="Requer ser contratante desta fazenda")
+
+
 class FazendaIn(BaseModel):
     nome: str
     cidade: str | None = None
@@ -32,6 +43,7 @@ class FazendaIn(BaseModel):
 
 class VincularUsuarioIn(BaseModel):
     usuario_id: int
+    contratante: bool = False
 
 
 @router.get("/")
@@ -62,8 +74,11 @@ def criar_fazenda(dados: FazendaIn, _: Usuario = Depends(exigir_dono), session: 
 
 @router.post("/{fazenda_id}/vincular-usuario")
 def vincular_usuario(
-    fazenda_id: int, dados: VincularUsuarioIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    fazenda_id: int, dados: VincularUsuarioIn,
+    user: Usuario = Depends(exigir_contratante_ou_dono), fazenda_id_token: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
 ) -> dict:
+    _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
     fazenda = session.get(Fazenda, fazenda_id)
     if not fazenda:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
@@ -75,15 +90,18 @@ def vincular_usuario(
     ).first()
     if ja_vinculado:
         raise HTTPException(status_code=400, detail=f"{usuario.username} já está vinculado a esta fazenda")
-    session.add(UsuarioFazenda(usuario_id=usuario.id, fazenda_id=fazenda_id))
+    session.add(UsuarioFazenda(usuario_id=usuario.id, fazenda_id=fazenda_id, contratante=dados.contratante))
     session.commit()
     return {"vinculado": True}
 
 
 @router.delete("/{fazenda_id}/vincular-usuario/{usuario_id}")
 def desvincular_usuario(
-    fazenda_id: int, usuario_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)
+    fazenda_id: int, usuario_id: int,
+    user: Usuario = Depends(exigir_contratante_ou_dono), fazenda_id_token: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
 ) -> dict:
+    _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
     vinculo = session.exec(
         select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
     ).first()

@@ -1,8 +1,9 @@
 "use client";
 import { useEffect, useState } from "react";
-import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar } from "lucide-react";
+import { AlertTriangle, Syringe, MilkOff, TrendingDown, Package, HeartPulse, Gauge as GaugeIcon, ChevronDown, ChevronRight, Target, RefreshCw, Skull, Calendar, Newspaper } from "lucide-react";
 import {
   fetchIndicadores, fetchAgenda, fetchProducao, fetchLancamentos, fetchEstoque, fetchAnimais, fetchBaixas, formatBRL,
+  fetchNotaCapa, type NotaCapa,
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
@@ -37,9 +38,14 @@ export default function Home() {
   const [baixas, setBaixas] = useState<any[]>([]);
   const [desdeDescarte, setDesdeDescarte] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [modalDescartados, setModalDescartados] = useState<{ title: string; list: any[] } | null>(null);
+  // Nota informativa simples (distinta de matéria de blog) — atualizável só
+  // pelo dono da plataforma; some quando não há nenhuma ativa.
+  const [nota, setNota] = useState<NotaCapa | null>(null);
+  const [notaFechada, setNotaFechada] = useState(false);
 
   const carregar = () => {
     setRecarregando(true);
+    fetchNotaCapa().then(setNota).catch(() => {});
     Promise.allSettled([
       fetchIndicadores(), fetchAgenda(), fetchProducao(), fetchLancamentos(), fetchEstoque(),
     ]).then(([ind, ag, prod, lanc, est]) => {
@@ -131,6 +137,17 @@ export default function Home() {
           <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
         </button>
       </div>
+
+      {nota && !notaFechada && (
+        <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>
+          <Newspaper size={16} style={{ color: "var(--dourado-light)", marginTop: "0.15rem", flexShrink: 0 }} />
+          <div style={{ flex: 1 }}>
+            <p style={{ fontSize: "0.85rem", fontWeight: 700, color: "var(--text)" }}>{nota.titulo}</p>
+            <p style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>{nota.texto}</p>
+          </div>
+          <button onClick={() => setNotaFechada(true)} className="btn-ghost" aria-label="Fechar nota" style={{ padding: "0.2rem" }}>✕</button>
+        </div>
+      )}
 
       {erroCarga && (
         <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Alguns dados não puderam ser carregados.</span></div>
