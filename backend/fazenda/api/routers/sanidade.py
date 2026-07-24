@@ -852,15 +852,25 @@ def _serializar_lancamento_protocolo(
 
 
 @router.get("/protocolos/lancamentos")
-def listar_lancamentos_protocolo(session: Session = Depends(get_session)) -> list[dict]:
+def listar_lancamentos_protocolo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolos = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
-    lancamentos = session.exec(select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).all()
+    query = select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())
+    if fazenda_id is not None:
+        query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query).all()
     nomes = mapa_usuarios(session, {l.usuario_id for l in lancamentos})
     return [_serializar_lancamento_protocolo(session, l, protocolos, nomes) for l in lancamentos]
 
 
 @router.post("/protocolos/lancamentos", status_code=201)
-def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def lancar_protocolo(
+    dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
@@ -946,7 +956,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
             resultado_cmt=dados.resultado_cmt,
             tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
             del_no_caso=del_no_caso, ccs_ultima=ccs_ultima, recidiva=recidiva,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         )
         session.add(lancamento)
         session.commit()
@@ -956,7 +966,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
-                produto=produto_por_etapa.get(etapa.id),
+                produto=produto_por_etapa.get(etapa.id), fazenda_id=fazenda_id,
             ))
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
