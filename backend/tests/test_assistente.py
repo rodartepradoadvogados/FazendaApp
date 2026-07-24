@@ -15,10 +15,12 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from fazenda.models import Animal, ContaGerencial, Estoque
+from fazenda.models.sanidade import CalendarioSanitario, EventoSanitario
 from fazenda.rules.assistente import (
     _executar_tool,
     _ferramentas_do_usuario,
     _tool_buscar_animal,
+    _tool_consultar_calendario_sanitario,
     _tool_consultar_estoque,
     _tool_consultar_financeiro,
     _tool_consultar_indicadores,
@@ -139,6 +141,27 @@ class TestFerramentas:
         assert resultado["total_em_aberto_a_receber"] == 500.0
         assert resultado["qtd_contas_vencidas_a_pagar"] == 1
         assert resultado["qtd_contas_vencidas_a_receber"] == 0
+
+    def test_consultar_calendario_sanitario_chamado_direto_sem_fazenda_resolvida(self, client):
+        """listar_calendario é chamado diretamente (sem passar por FastAPI/Depends)
+        por este tool — fazenda_id chega como o sentinel Depends(...) não resolvido,
+        não como int/None. Sem normalizar via fazenda_id_seguro(), o filtro
+        `CalendarioSanitario.fazenda_id == fazenda_id` compara contra esse objeto
+        e nunca bate com a regra legada (fazenda_id=None), quebrando a ferramenta."""
+        c, engine = client
+        with Session(engine) as s:
+            evento = EventoSanitario(nome="Vermífugo")
+            s.add(evento)
+            s.commit()
+            s.refresh(evento)
+            s.add(CalendarioSanitario(
+                evento_sanitario_id=evento.id, frequencia_valor=5, frequencia_unidade="dias",
+                data_evento=date.today(),
+            ))
+            s.commit()
+            resultado = _tool_consultar_calendario_sanitario(s)
+        assert resultado["total"] == 1
+        assert resultado["proximos"][0]["evento"] == "Vermífugo"
 
     def test_consultar_estoque(self, client):
         c, engine = client

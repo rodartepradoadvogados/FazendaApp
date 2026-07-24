@@ -21,7 +21,7 @@ from fazenda.models import (
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import pode_baixar_estoque
@@ -430,6 +430,7 @@ def listar_calendario(
     o objetivo é acompanhar o que está por vir — não o histórico já aplicado
     (esse fica em /sanidade/aplicacoes).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     eventos, doencas, principios, categorias = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
@@ -1072,19 +1073,30 @@ class ColostragemIn(BaseModel):
 
 @router.post("/colostragem")
 def registrar_colostragem(
-    dados: ColostragemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    dados: ColostragemIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
-    animal = session.exec(select(Animal).where(Animal.numero == dados.numero_animal)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == dados.numero_animal)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
 
-    registro = session.exec(
-        select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
-    ).first()
+    query_registro = select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
+    if fazenda_id is not None:
+        query_registro = query_registro.where(ColostragemBezerra.fazenda_id == fazenda_id)
+    registro = session.exec(query_registro).first()
     if not registro:
-        registro = ColostragemBezerra(animal_id=animal.id, numero_animal=dados.numero_animal, usuario_id=usuario_id_seguro(user))
+        registro = ColostragemBezerra(
+            animal_id=animal.id, numero_animal=dados.numero_animal, usuario_id=usuario_id_seguro(user),
+            fazenda_id=fazenda_id,
+        )
     for campo, valor in dados.model_dump(exclude={"numero_animal"}).items():
         setattr(registro, campo, valor)
     registro.atualizado_em = datetime.utcnow()
@@ -1101,6 +1113,7 @@ def relatorio_sanitario_bezerras(
     lote: str | None = None,
     numeros: list[str] | None = Query(None),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """
     Indicadores de colostragem e teste de sangue por animal, para identificar
@@ -1108,8 +1121,14 @@ def relatorio_sanitario_bezerras(
     etária (bezerra <=12 meses / animal >12 meses, calculada por data_nasc),
     por animal, por lote atual (grupo_primario) ou por seleção de vários animais.
     """
-    animais = session.exec(select(Animal).where(Animal.eh_semen == False)).all()  # noqa: E712
-    todos_registros = session.exec(select(ColostragemBezerra)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animais = select(Animal).where(Animal.eh_semen == False)  # noqa: E712
+    query_registros = select(ColostragemBezerra)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_registros = query_registros.where(ColostragemBezerra.fazenda_id == fazenda_id)
+    animais = session.exec(query_animais).all()
+    todos_registros = session.exec(query_registros).all()
     registros = {r.numero_animal: r for r in todos_registros}
     nomes = mapa_usuarios(session, {r.usuario_id for r in todos_registros})
     hoje = date.today()

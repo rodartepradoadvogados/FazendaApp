@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Sanidade (medicamentos aplicados nos animais)
@@ -54,6 +54,7 @@ class Sanidade(SQLModel, table=True):
     # ContaGerencial que paga esta aplicação — ver popup de vínculo
     # sanitário/reprodutivo, disparado ao salvar uma vacina/exame preventivo.
     numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class AplicacaoAgendada(SQLModel, table=True):
@@ -82,6 +83,7 @@ class AplicacaoAgendada(SQLModel, table=True):
     natureza: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -94,9 +96,13 @@ class PrincipioAtivo(SQLModel, table=True):
     princípio (ver rules/farmacia)."""
 
     __tablename__ = "principio_ativo"
+    # nome era único globalmente — passa a ser único por fazenda (mesmo padrão
+    # de CentroCusto/ColostragemBezerra), senão a 2ª fazenda nunca conseguiria
+    # cadastrar um princípio ativo com o mesmo nome já usado pela 1ª.
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_principio_ativo_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     # Enriquecimento (documento base de princípios ativos).
     categoria: Optional[str] = None  # grupo amplo do documento base, ex.: "Antimicrobianos e Antibióticos", "Biológicos (Vacinas e Diagnósticos)"
@@ -112,6 +118,7 @@ class PrincipioAtivo(SQLModel, table=True):
     unidade_apresentacao: Optional[str] = None    # frasco | seringa | dose | dispositivo | pote | galão | caixa
     estoque_minimo_apresentacoes: float = 1.0
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class MedicamentoComercial(SQLModel, table=True):
@@ -127,15 +134,18 @@ class MedicamentoComercial(SQLModel, table=True):
     laboratorio: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class Doenca(SQLModel, table=True):
     __tablename__ = "doenca"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_doenca_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ExameDefinicao(SQLModel, table=True):
@@ -150,9 +160,10 @@ class ExameDefinicao(SQLModel, table=True):
     """
 
     __tablename__ = "exame_definicao"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_exame_definicao_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     principio_ativo_id: Optional[int] = Field(default=None, foreign_key="principio_ativo.id")
     tipo_resultado: str = "diagnostico"  # "diagnostico" | "numerico"
@@ -165,6 +176,7 @@ class ExameDefinicao(SQLModel, table=True):
     acao_acima: Optional[str] = None
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ExameResultado(SQLModel, table=True):
@@ -195,6 +207,7 @@ class ExameResultado(SQLModel, table=True):
     # ContaGerencial que paga este exame — ver popup de vínculo
     # sanitário/reprodutivo, disparado ao salvar um exame preventivo.
     numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class EventoSanitario(SQLModel, table=True):
@@ -207,9 +220,10 @@ class EventoSanitario(SQLModel, table=True):
     """
 
     __tablename__ = "evento_sanitario"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_evento_sanitario_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
 
     # Agendamento: "nenhum" (só o nome, retrocompatível) | "epoca" | "evento".
@@ -251,6 +265,7 @@ class EventoSanitario(SQLModel, table=True):
     condicao_evento_id: Optional[int] = Field(default=None, foreign_key="evento_sanitario.id")
 
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class CalendarioSanitario(SQLModel, table=True):
@@ -286,6 +301,7 @@ class CalendarioSanitario(SQLModel, table=True):
     observacao: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ServicoCadastro(SQLModel, table=True):
@@ -295,11 +311,13 @@ class ServicoCadastro(SQLModel, table=True):
     """
 
     __tablename__ = "servico_cadastro"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_servico_cadastro_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -312,14 +330,16 @@ class ProtocoloSanitario(SQLModel, table=True):
     """Um protocolo sanitário cadastrado (ex.: Mastite clínica, Vermifugação padrão)."""
 
     __tablename__ = "protocolo_sanitario"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_protocolo_sanitario_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     doenca_id: Optional[int] = Field(default=None, foreign_key="doenca.id")
     eh_mastite: bool = False  # liga o fluxo diferenciado: CMT, teto afetado, classificação
     dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma (etapas já existentes usam 1)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloSanitarioEtapa(SQLModel, table=True):
@@ -340,6 +360,7 @@ class ProtocoloSanitarioEtapa(SQLModel, table=True):
     unidade: str
     via: Optional[str] = None
     observacao: Optional[str] = None  # nota livre (ex.: "Se necessário", "10ml por orelha")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloSanitarioLancamento(SQLModel, table=True):
@@ -368,6 +389,7 @@ class ProtocoloSanitarioLancamento(SQLModel, table=True):
     curada: Optional[bool] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloSanitarioAplicacao(SQLModel, table=True):
@@ -387,6 +409,7 @@ class ProtocoloSanitarioAplicacao(SQLModel, table=True):
     produto: Optional[str] = None
     realizada: bool = False
     data_realizacao: Optional[date] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -404,13 +427,15 @@ class ProtocoloInducaoLactacao(SQLModel, table=True):
     """Um protocolo de indução de lactação cadastrado (o "molde" do cronograma)."""
 
     __tablename__ = "protocolo_inducao_lactacao"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_protocolo_inducao_lactacao_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     dia_inicial: int = 0  # 0 (D0) ou 1 (D1) — primeiro dia do cronograma
     observacao: Optional[str] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloInducaoLactacaoEtapa(SQLModel, table=True):
@@ -432,6 +457,7 @@ class ProtocoloInducaoLactacaoEtapa(SQLModel, table=True):
     dose: Optional[float] = None
     unidade: Optional[str] = None
     via: Optional[str] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloInducaoLancamento(SQLModel, table=True):
@@ -447,6 +473,7 @@ class ProtocoloInducaoLancamento(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloInducaoMedicamento(SQLModel, table=True):
@@ -465,6 +492,7 @@ class ProtocoloInducaoMedicamento(SQLModel, table=True):
     dose: Optional[float] = None
     unidade: Optional[str] = None
     via: Optional[str] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloInducaoAplicacao(SQLModel, table=True):
@@ -487,6 +515,7 @@ class ProtocoloInducaoAplicacao(SQLModel, table=True):
     data_prevista: date
     realizada: bool = False
     data_realizacao: Optional[date] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class Touro(SQLModel, table=True):
