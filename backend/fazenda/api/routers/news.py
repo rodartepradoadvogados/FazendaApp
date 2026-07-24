@@ -381,6 +381,50 @@ MILKNEWS_LOTES: dict[str, list[dict]] = {
             "https://www.lancerural.com.br/noticia/projeto-preco-minimo-litro-de-leite-produtor/",
         ],
     }],
+    "milknews_20260724": [{
+        "manchete": "Leilão GDT 408 registra alta de 1,5% e sinaliza recuperação pontual no mercado lácteo global",
+        "resumo": (
+            "O 408º leilão da Global Dairy Trade (GDT), realizado em 21 de julho de 2026, "
+            "registrou alta de 1,5% no índice geral de preços, interrompendo dois pregões "
+            "seguidos de queda no mercado internacional de lácteos. O leite em pó integral "
+            "avançou 1,6%, para US$ 3.486 a tonelada, e o leite em pó desnatado subiu 2,8%, "
+            "para US$ 3.234. Já a manteiga teve leve recuo de 0,6%, cotada a US$ 5.303 a "
+            "tonelada. O resultado contrasta com o leilão anterior (GDT 407), quando o índice "
+            "havia caído 4,9% sob pressão de maior volume ofertado. O mercado agora observa se "
+            "a reação se sustenta nos próximos pregões, já que referências internacionais como "
+            "o GDT também orientam, indiretamente, o comportamento de preços no Brasil. "
+            "Dados: MilkPoint/GDT (21/07/2026)."
+        ),
+        "materia": (
+            "O 408º leilão da Global Dairy Trade (GDT), realizado em 21 de julho de 2026, "
+            "registrou alta de 1,5% no índice geral de preços, com valor médio de US$ 3.815 "
+            "por tonelada — interrompendo dois pregões seguidos de queda no mercado "
+            "internacional de lácteos.\n\n"
+            "Entre os principais produtos negociados, o leite em pó integral (LPI) avançou "
+            "1,6%, encerrando cotado a US$ 3.486 a tonelada, enquanto o leite em pó desnatado "
+            "(LPD) teve a maior alta do pregão, de 2,8%, para US$ 3.234 a tonelada. A manteiga "
+            "foi na direção contrária, com leve recuo de 0,6%, negociada a US$ 5.303 a "
+            "tonelada.\n\n"
+            "O resultado contrasta com o leilão anterior, o GDT 407, realizado em 7 de julho, "
+            "quando o índice geral havia recuado 4,9%, pressionado por um volume maior de "
+            "produto ofertado pelos exportadores neozelandeses — a Nova Zelândia é a principal "
+            "fornecedora da plataforma.\n\n"
+            "A plataforma GDT realiza leilões quinzenais de commodities lácteas (leite em pó "
+            "integral e desnatado, manteiga, queijo cheddar, entre outros), servindo de "
+            "referência de preço para o comércio internacional de lácteos. Embora não seja um "
+            "indicador direto do mercado brasileiro — que tem no Cepea/Esalq sua principal "
+            "referência de preço ao produtor —, o resultado do GDT costuma influenciar, com "
+            "alguma defasagem, o custo de importação de derivados lácteos e as exportações "
+            "brasileiras do setor. Participantes do mercado agora acompanham se a recuperação "
+            "pontual observada no GDT 408 se confirma no próximo pregão, previsto para agosto."
+        ),
+        "link": "/news#milknews-2026-07-24-01",
+        "data_publicacao": "2026-07-24",
+        "fontes": [
+            "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/gdt-408-registra-alta-e-indica-recuperacao-pontual-nos-precos-globais-241594/",
+            "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/gdt-407-registra-queda-acentuada-e-reforca-pressao-sobre-os-precos-globais-241452/",
+        ],
+    }],
 }
 
 
