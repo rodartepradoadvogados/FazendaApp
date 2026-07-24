@@ -13,10 +13,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AgendamentoPesagem, CalendarioSanitario, Doenca, EventoSanitario, ExameDefinicao, Lote, PrincipioAtivo,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 
 from ._comum import _crud_nome_ativo
@@ -228,7 +230,7 @@ def configurar_calendario_sanitario_padrao(session: Session) -> None:
     session.commit()
 
 
-_listar_principios, _criar_principio, _atualizar_principio = _crud_nome_ativo(PrincipioAtivo)
+_listar_principios, _criar_principio, _atualizar_principio = _crud_nome_ativo(PrincipioAtivo, com_fazenda=True)
 router.get("/principios-ativos")(_listar_principios)
 router.post("/principios-ativos")(_criar_principio)
 router.put("/principios-ativos/{item_id}")(_atualizar_principio)
@@ -245,7 +247,7 @@ def restaurar_catalogo_principios(session: Session = Depends(get_session)) -> di
     total = len(session.exec(select(PrincipioAtivo)).all())
     return {"criados": total - antes, "total": total}
 
-_listar_doencas, _criar_doenca, _atualizar_doenca = _crud_nome_ativo(Doenca)
+_listar_doencas, _criar_doenca, _atualizar_doenca = _crud_nome_ativo(Doenca, com_fazenda=True)
 router.get("/doencas")(_listar_doencas)
 router.post("/doencas")(_criar_doenca)
 router.put("/doencas/{item_id}")(_atualizar_doenca)
@@ -408,20 +410,32 @@ def _validar_evento_sanitario(dados: EventoSanitarioIn, session: Session, *, ite
 
 
 @router.get("/eventos-sanitarios")
-def listar_eventos_sanitarios(session: Session = Depends(get_session)) -> list[dict]:
-    eventos = session.exec(select(EventoSanitario).order_by(EventoSanitario.nome)).all()
+def listar_eventos_sanitarios(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EventoSanitario).order_by(EventoSanitario.nome)
+    if fazenda_id is not None:
+        query = query.where(EventoSanitario.fazenda_id == fazenda_id)
+    eventos = session.exec(query).all()
     return [_dto_evento_sanitario(session, ev) for ev in eventos]
 
 
 @router.post("/eventos-sanitarios")
-def criar_evento_sanitario(dados: EventoSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def criar_evento_sanitario(
+    dados: EventoSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(EventoSanitario).where(EventoSanitario.nome == nome)).first():
+    query_dup = select(EventoSanitario).where(EventoSanitario.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(EventoSanitario.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um evento sanitário com o nome '{nome}'")
     _validar_evento_sanitario(dados, session)
-    ev = EventoSanitario(**{**dados.model_dump(), "nome": nome})
+    ev = EventoSanitario(**{**dados.model_dump(), "nome": nome}, fazenda_id=fazenda_id)
     session.add(ev)
     session.commit()
     session.refresh(ev)
@@ -488,20 +502,32 @@ def _validar_exame_definicao(dados: ExameDefinicaoIn, session: Session) -> None:
 
 
 @router.get("/exames")
-def listar_exames(session: Session = Depends(get_session)) -> list[dict]:
-    exames = session.exec(select(ExameDefinicao).order_by(ExameDefinicao.nome)).all()
+def listar_exames(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ExameDefinicao).order_by(ExameDefinicao.nome)
+    if fazenda_id is not None:
+        query = query.where(ExameDefinicao.fazenda_id == fazenda_id)
+    exames = session.exec(query).all()
     return [_dto_exame_definicao(session, ex) for ex in exames]
 
 
 @router.post("/exames")
-def criar_exame(dados: ExameDefinicaoIn, session: Session = Depends(get_session)) -> dict:
+def criar_exame(
+    dados: ExameDefinicaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(ExameDefinicao).where(ExameDefinicao.nome == nome)).first():
+    query_dup = select(ExameDefinicao).where(ExameDefinicao.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(ExameDefinicao.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um exame com o nome '{nome}'")
     _validar_exame_definicao(dados, session)
-    ex = ExameDefinicao(**{**dados.model_dump(), "nome": nome})
+    ex = ExameDefinicao(**{**dados.model_dump(), "nome": nome}, fazenda_id=fazenda_id)
     session.add(ex)
     session.commit()
     session.refresh(ex)

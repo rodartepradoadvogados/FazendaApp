@@ -52,7 +52,7 @@ def seed_servicos(session: Session) -> None:
 
 
 
-_listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoCadastro)
+_listar_servicos, _criar_servico, _atualizar_servico = _crud_nome_ativo(ServicoCadastro, com_fazenda=True)
 router.get("/servicos")(_listar_servicos)
 router.post("/servicos")(_criar_servico)
 router.put("/servicos/{item_id}")(_atualizar_servico)
