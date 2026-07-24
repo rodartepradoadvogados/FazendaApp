@@ -239,6 +239,8 @@ class OrcamentoItem(SQLModel, table=True):
     __tablename__ = "orcamento_item"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (Fase 3C) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ano: int = Field(index=True)
     mes: int  # 1-12
     codigo_conta_gerencial: str
@@ -261,6 +263,8 @@ class PlanejamentoCenario(SQLModel, table=True):
     __tablename__ = "planejamento_cenario"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (Fase 3C) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str
     tipo: str = "personalizado"  # "otimista" | "realista" | "pessimista" | "personalizado"
     observacao: Optional[str] = None
@@ -273,6 +277,8 @@ class PlanejamentoItem(SQLModel, table=True):
     __tablename__ = "planejamento_item"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (Fase 3C) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     cenario_id: int = Field(foreign_key="planejamento_cenario.id", index=True)
     mes_competencia: str  # "YYYY-MM"
     codigo_conta_gerencial: str
@@ -292,9 +298,16 @@ class PlanejamentoItem(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 class Pedido(SQLModel, table=True):
     __tablename__ = "pedido"
+    __table_args__ = (UniqueConstraint("numero_pedido", "fazenda_id", name="uq_pedido_numero_pedido_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    numero_pedido: str = Field(index=True, unique=True)
+    # Piloto conservador de multi-fazenda (Fase 3C) — ver PlanoContaGerencial.fazenda_id
+    # acima. numero_pedido é só um rótulo de exibição (o vínculo real com
+    # PedidoItem é por pedido_id, FK), então pode virar unique(numero_pedido,
+    # fazenda_id) sem o mesmo risco de colisão do numero_lancamento do
+    # Financeiro (esse fica global de propósito — ver ContaGerencial).
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    numero_pedido: str = Field(index=True)
     tipo: str  # "compra" | "venda"
     fornecedor_cliente: Optional[str] = None
     centro_custo: Optional[str] = None
@@ -316,6 +329,8 @@ class PedidoItem(SQLModel, table=True):
     __tablename__ = "pedido_item"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (Fase 3C) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     pedido_id: int = Field(foreign_key="pedido.id", index=True)
     tipo_item: str  # "produto" | "servico"
     produto_servico: str

@@ -15,21 +15,23 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     ContaGerencial, Fornecedor, MovimentoEstoque, Pedido, PedidoItem, ServicoCadastro, Usuario,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.centro_custo import mapear_centro_custo
 
 router = APIRouter(prefix="/pedidos", tags=["pedidos"])
 
 
-def _proximo_numero_pedido(session: Session, ano: int) -> str:
+def _proximo_numero_pedido(session: Session, ano: int, fazenda_id: int | None = None) -> str:
     prefixo = f"PED-{ano}-"
-    existentes = session.exec(
-        select(Pedido.numero_pedido).where(Pedido.numero_pedido.like(f"{prefixo}%"))
-    ).all()
+    query = select(Pedido.numero_pedido).where(Pedido.numero_pedido.like(f"{prefixo}%"))
+    if fazenda_id is not None:
+        query = query.where(Pedido.fazenda_id == fazenda_id)
+    existentes = session.exec(query).all()
     maior = 0
     for n in existentes:
         if n and n.startswith(prefixo):
@@ -84,12 +86,17 @@ def _recalcular_status(session: Session, pedido: Pedido) -> None:
     session.add(pedido)
 
 
-def atualizar_status_por_lancamento(session: Session, pedido_id: int, valor_lancamento: float) -> None:
+def atualizar_status_por_lancamento(
+    session: Session, pedido_id: int, valor_lancamento: float, fazenda_id: int | None = None,
+) -> None:
     """Chamado por `financeiro.py` quando um lançamento é vinculado a um
     pedido — soma o valor lançado distribuído pelos itens em aberto (por
-    ordem de cadastro) e recalcula o status do pedido."""
+    ordem de cadastro) e recalcula o status do pedido. `fazenda_id` (já a
+    da fazenda do lançamento que está sendo criado) precisa bater com a do
+    pedido — senão um pedido de outra fazenda poderia ser atualizado só por
+    quem soubesse o id dele."""
     pedido = session.get(Pedido, pedido_id)
-    if not pedido:
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         return
     itens = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id).order_by(PedidoItem.id)).all()
     restante = valor_lancamento
@@ -142,10 +149,17 @@ def listar_pedidos(
     data_inicio: Optional[date] = Query(None),
     data_fim: Optional[date] = Query(None),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
-    pedidos = session.exec(select(Pedido).order_by(Pedido.data_pedido.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_pedidos = select(Pedido)
+    query_itens = select(PedidoItem)
+    if fazenda_id is not None:
+        query_pedidos = query_pedidos.where(Pedido.fazenda_id == fazenda_id)
+        query_itens = query_itens.where(PedidoItem.fazenda_id == fazenda_id)
+    pedidos = session.exec(query_pedidos.order_by(Pedido.data_pedido.desc())).all()
     itens_por_pedido: dict[int, list[dict]] = {}
-    for it in session.exec(select(PedidoItem)).all():
+    for it in session.exec(query_itens).all():
         itens_por_pedido.setdefault(it.pedido_id, []).append(it.model_dump())
 
     resultado = []
@@ -170,9 +184,12 @@ def listar_pedidos(
 
 
 @router.get("/{pedido_id}")
-def obter_pedido(pedido_id: int, session: Session = Depends(get_session)) -> dict:
+def obter_pedido(
+    pedido_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
-    if not pedido:
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     itens = session.exec(select(PedidoItem).where(PedidoItem.pedido_id == pedido_id)).all()
     lancamentos = session.exec(select(ContaGerencial).where(ContaGerencial.pedido_id == pedido_id)).all()
@@ -185,13 +202,17 @@ def obter_pedido(pedido_id: int, session: Session = Depends(get_session)) -> dic
 
 
 @router.post("/", status_code=201)
-def criar_pedido(dados: PedidoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_pedido(
+    dados: PedidoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("compra", "venda"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'compra' ou 'venda'")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um produto ou serviço")
 
-    numero_pedido = _proximo_numero_pedido(session, dados.data_pedido.year)
+    numero_pedido = _proximo_numero_pedido(session, dados.data_pedido.year, fazenda_id)
     pedido = Pedido(
         numero_pedido=numero_pedido,
         tipo=dados.tipo,
@@ -204,6 +225,7 @@ def criar_pedido(dados: PedidoIn, session: Session = Depends(get_session), user:
         origem_tipo=dados.origem_tipo,
         origem_item_id=dados.origem_item_id,
         usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
     )
     session.add(pedido)
     session.commit()
@@ -219,15 +241,20 @@ def criar_pedido(dados: PedidoIn, session: Session = Depends(get_session), user:
             quantidade=item.quantidade,
             valor_unitario_estimado=item.valor_unitario_estimado,
             valor_total_estimado=item.valor_total_estimado,
+            fazenda_id=fazenda_id,
         ))
     session.commit()
     return {"id": pedido.id, "numero_pedido": numero_pedido}
 
 
 @router.put("/{pedido_id}")
-def atualizar_pedido(pedido_id: int, dados: PedidoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_pedido(
+    pedido_id: int, dados: PedidoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
-    if not pedido:
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     if pedido.tipo not in ("compra", "venda") and dados.tipo not in ("compra", "venda"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'compra' ou 'venda'")
@@ -262,6 +289,7 @@ def atualizar_pedido(pedido_id: int, dados: PedidoIn, session: Session = Depends
             valor_total_estimado=item.valor_total_estimado,
             quantidade_atendida=qtd_atendida,
             valor_atendido=val_atendido,
+            fazenda_id=fazenda_id,
         ))
     session.commit()
     _recalcular_status(session, pedido)
@@ -274,9 +302,15 @@ class StatusIn(BaseModel):
 
 
 @router.put("/{pedido_id}/status")
-def atualizar_status_pedido(pedido_id: int, dados: StatusIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_status_pedido(
+    pedido_id: int,
+    dados: StatusIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
-    if not pedido:
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     if dados.status not in ("aberto", "parcialmente_atendido", "atendido", "cancelado"):
         raise HTTPException(status_code=400, detail="Status inválido")
@@ -288,9 +322,14 @@ def atualizar_status_pedido(pedido_id: int, dados: StatusIn, session: Session = 
 
 
 @router.delete("/{pedido_id}", status_code=204)
-def excluir_pedido(pedido_id: int, session: Session = Depends(get_session)) -> None:
+def excluir_pedido(
+    pedido_id: int,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> None:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pedido = session.get(Pedido, pedido_id)
-    if not pedido:
+    if not pedido or (fazenda_id is not None and pedido.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pedido não encontrado")
     vinculado = session.exec(select(ContaGerencial).where(ContaGerencial.pedido_id == pedido_id)).first()
     if vinculado:
