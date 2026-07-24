@@ -19,7 +19,7 @@ from fazenda.models import (
     LancamentoAnexo, LancamentoItem, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade, SeedFlag, Servico,
     TipoDocumento, Usuario,
 )
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
 from fazenda.rules.leitura_documento import MIME_ACEITOS, ler_documento
@@ -287,13 +287,18 @@ def dre(
     centro_custo: Optional[str] = Query(None),
     regime: str = Query("competencia", description="'competencia' ou 'caixa'"),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Retorna DRE (Demonstrativo de Resultado) por regime de competência ou caixa.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     campo_data = "data_competencia" if regime == "competencia" else "data_pagamento"
 
-    contas = session.exec(select(ContaGerencial)).all()
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
 
     filtradas = []
     for c in contas:
@@ -330,13 +335,22 @@ def dre(
 
 
 @router.get("/lancamentos")
-def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
+def listar_lancamentos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Movimentações achatadas para o dashboard financeiro interativo.
     O front filtra por regime (competência/caixa), ano e centro de custo.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_itens = select(LancamentoItem)
+    query_contas = select(ContaGerencial)
+    if fazenda_id is not None:
+        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
+        query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
+
     itens_por_lancamento: dict[str, list[dict]] = {}
-    for it in session.exec(select(LancamentoItem)).all():
+    for it in session.exec(query_itens).all():
         itens_por_lancamento.setdefault(it.numero_lancamento, []).append({
             "id": it.id,
             "codigo_conta_gerencial": it.codigo_conta_gerencial,
@@ -348,7 +362,7 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
             "valor_total": it.valor_total,
         })
 
-    contas = session.exec(select(ContaGerencial)).all()
+    contas = session.exec(query_contas).all()
     nomes_usuarios = mapa_usuarios(session, {c.usuario_id for c in contas})
 
     registros = []
@@ -404,6 +418,7 @@ def listar_lancamentos(session: Session = Depends(get_session)) -> dict:
 def possiveis_duplicados(
     tipo: str, valor_total: float, fornecedor_cliente: str = "", data_emissao: date | None = None,
     excluir_numero_lancamento: str = "", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """
     Lançamentos já existentes parecidos com o que está sendo digitado agora —
@@ -411,11 +426,15 @@ def possiveis_duplicados(
     uma pequena tolerância e data próxima. Usado no formulário para avisar
     "possível duplicado" antes de salvar, com uma comparação lado a lado.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     fornecedor_norm = (fornecedor_cliente or "").strip().lower()
     tolerancia_valor = max(0.01, abs(valor_total) * 0.01)  # 1% do valor, ou 1 centavo — o que for maior
     janela_dias = 10
 
-    candidatos = session.exec(select(ContaGerencial).where(ContaGerencial.tipo == tipo)).all()
+    query = select(ContaGerencial).where(ContaGerencial.tipo == tipo)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    candidatos = session.exec(query).all()
     por_numero: dict[str, ContaGerencial] = {}
     for c in candidatos:
         if excluir_numero_lancamento and c.numero_lancamento == excluir_numero_lancamento:
@@ -453,13 +472,18 @@ def itens_por_conta(
     data_inicio: date = Query(...),
     data_fim: date = Query(...),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """
     Produtos/serviços lançados no período (por competência), um por linha —
     usado no DRE para o detalhamento correto por conta gerencial quando uma
     nota tem vários produtos com contas diferentes.
     """
-    itens = session.exec(select(LancamentoItem)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(LancamentoItem)
+    if fazenda_id is not None:
+        query = query.where(LancamentoItem.fazenda_id == fazenda_id)
+    itens = session.exec(query).all()
     return [
         {
             "numero_lancamento": it.numero_lancamento,
@@ -780,7 +804,9 @@ def _rotulo_exame(exame_definicao_id: int | None, session: Session) -> str:
 
 
 @router.get("/candidatos-vinculo-sanitario-reprodutivo")
-def candidatos_vinculo_sanitario_reprodutivo(session: Session = Depends(get_session)) -> dict:
+def candidatos_vinculo_sanitario_reprodutivo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Lista, para toda a fazenda (não filtrada por animal — o lançamento
     financeiro não guarda animal/matriz), os eventos sanitários/reprodutivos
@@ -791,13 +817,15 @@ def candidatos_vinculo_sanitario_reprodutivo(session: Session = Depends(get_sess
     Usado no popup de vínculo ao salvar uma despesa numa conta gerencial
     marcada (ver PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     # Serviços reprodutivos com diagnóstico já lançado — agrupados por
     # (data do diagnóstico, método), que coincide com a data da visita/D0.
-    servicos = session.exec(
-        select(Servico)
-        .where(Servico.numero_lancamento_vinculado.is_(None), Servico.data_diagnostico.is_not(None))
-        .order_by(Servico.data_diagnostico.desc())
-    ).all()
+    query_servicos = select(Servico).where(
+        Servico.numero_lancamento_vinculado.is_(None), Servico.data_diagnostico.is_not(None)
+    )
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+    servicos = session.exec(query_servicos.order_by(Servico.data_diagnostico.desc())).all()
     grupos_servico: dict[tuple, list[Servico]] = {}
     for s in servicos:
         grupos_servico.setdefault((s.data_diagnostico, s.metodo_diagnostico), []).append(s)
@@ -814,11 +842,12 @@ def candidatos_vinculo_sanitario_reprodutivo(session: Session = Depends(get_sess
 
     # Vacinas aplicadas (Sanidade, categoria "Vacina") — agrupadas por
     # (produto, data de aplicação).
-    vacinas = session.exec(
-        select(Sanidade)
-        .where(Sanidade.numero_lancamento_vinculado.is_(None), Sanidade.categoria == "Vacina")
-        .order_by(Sanidade.data_aplicacao.desc())
-    ).all()
+    query_vacinas = select(Sanidade).where(
+        Sanidade.numero_lancamento_vinculado.is_(None), Sanidade.categoria == "Vacina"
+    )
+    if fazenda_id is not None:
+        query_vacinas = query_vacinas.where(Sanidade.fazenda_id == fazenda_id)
+    vacinas = session.exec(query_vacinas.order_by(Sanidade.data_aplicacao.desc())).all()
     grupos_vacina: dict[tuple, list[Sanidade]] = {}
     for v in vacinas:
         grupos_vacina.setdefault((v.produto, v.data_aplicacao), []).append(v)
@@ -834,11 +863,10 @@ def candidatos_vinculo_sanitario_reprodutivo(session: Session = Depends(get_sess
     ]
 
     # Exames realizados (ExameResultado) — agrupados por (exame, data).
-    exames = session.exec(
-        select(ExameResultado)
-        .where(ExameResultado.numero_lancamento_vinculado.is_(None))
-        .order_by(ExameResultado.data_exame.desc())
-    ).all()
+    query_exames = select(ExameResultado).where(ExameResultado.numero_lancamento_vinculado.is_(None))
+    if fazenda_id is not None:
+        query_exames = query_exames.where(ExameResultado.fazenda_id == fazenda_id)
+    exames = session.exec(query_exames.order_by(ExameResultado.data_exame.desc())).all()
     grupos_exame: dict[tuple, list[ExameResultado]] = {}
     for e in exames:
         grupos_exame.setdefault((e.exame_definicao_id, e.data_exame), []).append(e)
@@ -881,7 +909,10 @@ def vincular_evento_sanitario_reprodutivo(dados: VincularEventoIn, session: Sess
 
 
 @router.get("/lancamentos-por-data")
-def lancamentos_por_data(data: date, tipo: str = "despesa", session: Session = Depends(get_session)) -> list[dict]:
+def lancamentos_por_data(
+    data: date, tipo: str = "despesa", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """
     Lançamentos (agrupados por numero_lancamento) com data de EMISSÃO igual à
     informada — usado no popup de vínculo do lado sanitário/reprodutivo,
@@ -889,9 +920,11 @@ def lancamentos_por_data(data: date, tipo: str = "despesa", session: Session = D
     da vacina/exame/diagnóstico, ver /calendario/cadastrar-preventivo e
     reprodução > diagnóstico de gestação).
     """
-    contas = session.exec(
-        select(ContaGerencial).where(ContaGerencial.data_emissao == data, ContaGerencial.tipo == tipo)
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial).where(ContaGerencial.data_emissao == data, ContaGerencial.tipo == tipo)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     por_lancamento: dict[str, list[ContaGerencial]] = {}
     for c in contas:
         if c.numero_lancamento:
@@ -913,6 +946,7 @@ def rmca(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
     data_fim: date = Query(..., description="Data final (competência)"),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Indicador RMCA (Receita Menos Custo com Alimentação), em duas versões
@@ -921,12 +955,16 @@ def rmca(
     igual, mas custo a partir do consumo real registrado pela Alimentação em
     MovimentoEstoque × valor unitário do item no Estoque).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     plano = session.exec(select(PlanoContaGerencial)).all()
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
+    query_itens = select(LancamentoItem)
+    if fazenda_id is not None:
+        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
-        it.model_dump() for it in session.exec(select(LancamentoItem)).all()
+        it.model_dump() for it in session.exec(query_itens).all()
         if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
     ]
     gerencial = calcular_rmca_gerencial(itens, codigos_receita, codigos_custo)
@@ -958,6 +996,7 @@ def custo_litro_leite(
     data_inicio: date = Query(..., description="Data inicial (competência)"),
     data_fim: date = Query(..., description="Data final (competência)"),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Custo por litro de leite — total gasto com alimentação no período (as
@@ -966,11 +1005,15 @@ def custo_litro_leite(
     (Entrega mensal do leite), projetados proporcionalmente por dia quando o
     período não cobre o mês inteiro.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     plano = session.exec(select(PlanoContaGerencial)).all()
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
+    query_itens = select(LancamentoItem)
+    if fazenda_id is not None:
+        query_itens = query_itens.where(LancamentoItem.fazenda_id == fazenda_id)
     itens = [
-        it.model_dump() for it in session.exec(select(LancamentoItem)).all()
+        it.model_dump() for it in session.exec(query_itens).all()
         if it.data_competencia and data_inicio <= it.data_competencia <= data_fim
     ]
     custo_total = round(sum(i["valor_total"] or 0 for i in itens if i["codigo_conta_gerencial"] in codigos_custo), 2)
@@ -1156,13 +1199,19 @@ def registrar_manutencao(
 
 
 @router.post("/lancamentos", status_code=201)
-def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_lancamento(
+    dados: LancamentoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Cria um lançamento financeiro com um ou mais produtos/serviços (itens).
     Desconto/acréscimo ajustam o valor bruto dos itens para o valor líquido,
     que é o que efetivamente vira parcela(s). Sem data de pagamento, o
     lançamento nasce em aberto (contas a pagar/receber).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in ("receita", "despesa"):
         raise HTTPException(status_code=400, detail="tipo deve ser 'receita' ou 'despesa'")
     if not dados.itens:
@@ -1193,6 +1242,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
             quantidade=item.quantidade,
             valor_unitario=item.valor_unitario,
             valor_total=item.valor_total,
+            fazenda_id=fazenda_id,
         )
         for item in dados.itens
     ]
@@ -1230,6 +1280,7 @@ def criar_lancamento(dados: LancamentoIn, session: Session = Depends(get_session
         # casos `user` não é resolvido pela injeção de dependência e chega aqui
         # como o próprio sentinel Depends(...), não uma instância de Usuario.
         usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
     )
 
     criados: list[ContaGerencial] = []
@@ -1316,10 +1367,14 @@ class LancamentoEditIn(BaseModel):
 
 
 @router.put("/lancamentos/{lancamento_id}/pagar")
-def pagar_lancamento(lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session)) -> dict:
+def pagar_lancamento(
+    lancamento_id: int, dados: PagamentoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Dá baixa (marca como pago/recebido) numa conta a pagar/a receber."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(ContaGerencial, lancamento_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
@@ -1339,13 +1394,17 @@ def pagar_lancamento(lancamento_id: int, dados: PagamentoIn, session: Session = 
 
 
 @router.put("/lancamentos/baixa-lote")
-def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> dict:
+def baixa_lote(
+    dados: BaixaLoteIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Dá baixa em vários lançamentos de uma vez, todos com o mesmo pagamento
     (data, conta corrente, forma de pagamento e nº de comprovante único) —
     cada lançamento é pago pelo próprio valor_total (sem desconto/acréscimo
     na baixa em lote; use a baixa individual para isso).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.lancamento_ids:
         raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento")
     if dados.forma_pagamento == "credito" and not dados.data_vencimento_cartao:
@@ -1355,7 +1414,7 @@ def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> d
     nao_encontrados = []
     for lancamento_id in dados.lancamento_ids:
         registro = session.get(ContaGerencial, lancamento_id)
-        if not registro:
+        if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
             nao_encontrados.append(lancamento_id)
             continue
         registro.data_pagamento = dados.data_pagamento
@@ -1373,13 +1432,17 @@ def baixa_lote(dados: BaixaLoteIn, session: Session = Depends(get_session)) -> d
 
 
 @router.put("/lancamentos/baixa-lote-detalhada")
-def baixa_lote_detalhada(dados: BaixaLoteDetalhadaIn, session: Session = Depends(get_session)) -> dict:
+def baixa_lote_detalhada(
+    dados: BaixaLoteDetalhadaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Dá baixa em várias notas de uma vez, mas cada uma com o SEU próprio
     pagamento (data, valor, conta, forma e comprovante) — permite pagar cada
     conta de forma diferente numa única operação. Valor diferente do total vira
     desconto/acréscimo (como na baixa individual).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Selecione ao menos um lançamento")
     for it in dados.itens:
@@ -1390,7 +1453,7 @@ def baixa_lote_detalhada(dados: BaixaLoteDetalhadaIn, session: Session = Depends
     nao_encontrados = []
     for it in dados.itens:
         registro = session.get(ContaGerencial, it.lancamento_id)
-        if not registro:
+        if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
             nao_encontrados.append(it.lancamento_id)
             continue
         registro.data_pagamento = it.data_pagamento
@@ -1410,7 +1473,10 @@ def baixa_lote_detalhada(dados: BaixaLoteDetalhadaIn, session: Session = Depends
 # Definido DEPOIS de /baixa-lote de propósito: uma rota de segmento único como
 # /lancamentos/{lancamento_id} capturaria "baixa-lote" e quebraria aquela rota.
 @router.put("/lancamentos/{lancamento_id}")
-def editar_lancamento(lancamento_id: int, dados: LancamentoEditIn, session: Session = Depends(get_session)) -> dict:
+def editar_lancamento(
+    lancamento_id: int, dados: LancamentoEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Edita os campos descritivos/de valor de UMA conta gerencial (uma parcela),
     identificada pelo seu id. Não mexe no pagamento — uma conta já paga/recebida
@@ -1418,8 +1484,9 @@ def editar_lancamento(lancamento_id: int, dados: LancamentoEditIn, session: Sess
     exatamente um item, espelha as mudanças no LancamentoItem para manter os
     relatórios por item (DRE/RMCA) coerentes.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(ContaGerencial, lancamento_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
 
     enviados = dados.model_dump(exclude_unset=True)
@@ -1520,12 +1587,17 @@ TAMANHO_MAXIMO_ANEXO = 15 * 1024 * 1024  # 15 MB
 async def anexar_arquivo_lancamento(
     numero_lancamento: str, file: UploadFile,
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Anexa um arquivo (ex.: boleto) a um lançamento já criado — várias chamadas
     para vários arquivos do mesmo lançamento (um boleto por parcela, por
     exemplo). Não faz nenhuma leitura/OCR aqui; isso já aconteceu, se foi o
     caso, em /ler-documento antes de o lançamento ser salvo."""
-    if not session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first():
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_conta = select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query_conta = query_conta.where(ContaGerencial.fazenda_id == fazenda_id)
+    if not session.exec(query_conta).first():
         raise HTTPException(status_code=404, detail="Lançamento não encontrado")
     conteudo = await file.read()
     if len(conteudo) > TAMANHO_MAXIMO_ANEXO:
@@ -1537,6 +1609,7 @@ async def anexar_arquivo_lancamento(
         tamanho_bytes=len(conteudo),
         conteudo=conteudo,
         usuario_id=user.id if isinstance(user, Usuario) else None,
+        fazenda_id=fazenda_id,
     )
     session.add(anexo)
     session.commit()
@@ -1545,11 +1618,16 @@ async def anexar_arquivo_lancamento(
 
 
 @router.get("/lancamentos/{numero_lancamento}/anexos")
-def listar_anexos_lancamento(numero_lancamento: str, session: Session = Depends(get_session)) -> list[dict]:
+def listar_anexos_lancamento(
+    numero_lancamento: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Metadados dos anexos do lançamento — sem o conteúdo (ver /anexos/{id} p/ baixar)."""
-    anexos = session.exec(
-        select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(LancamentoAnexo).where(LancamentoAnexo.numero_lancamento == numero_lancamento)
+    if fazenda_id is not None:
+        query = query.where(LancamentoAnexo.fazenda_id == fazenda_id)
+    anexos = session.exec(query).all()
     return [
         {"id": a.id, "nome_arquivo": a.nome_arquivo, "mime_type": a.mime_type, "tamanho_bytes": a.tamanho_bytes,
          "criado_em": a.criado_em.isoformat()}
@@ -1558,9 +1636,13 @@ def listar_anexos_lancamento(numero_lancamento: str, session: Session = Depends(
 
 
 @router.get("/anexos/{anexo_id}")
-def baixar_anexo(anexo_id: int, session: Session = Depends(get_session)) -> Response:
+def baixar_anexo(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> Response:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(LancamentoAnexo, anexo_id)
-    if not anexo:
+    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     return Response(
         content=anexo.conteudo, media_type=anexo.mime_type,
@@ -1569,9 +1651,13 @@ def baixar_anexo(anexo_id: int, session: Session = Depends(get_session)) -> Resp
 
 
 @router.delete("/anexos/{anexo_id}")
-def excluir_anexo(anexo_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_anexo(
+    anexo_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     anexo = session.get(LancamentoAnexo, anexo_id)
-    if not anexo:
+    if not anexo or (fazenda_id is not None and anexo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Anexo não encontrado")
     session.delete(anexo)
     session.commit()

@@ -17,12 +17,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import CompraSemen, ContaGerencial, EstoqueSemen, Touro, Usuario
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
 from fazenda.api.routers.estoque import sincronizar_item_estoque_semen
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 
 router = APIRouter(prefix="/compras-semen", tags=["compras-semen"])
 
@@ -95,7 +95,11 @@ def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/")
-def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_compra(
+    dados: CompraSemenIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Adicione ao menos um sêmen/touro à compra")
     if not (dados.vendedor or "").strip():
@@ -188,6 +192,7 @@ def registrar_compra(dados: CompraSemenIn, session: Session = Depends(get_sessio
         acrescimo_nota=dados.acrescimo or None,
         tipo="despesa", origem="manual",
         usuario_id=usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
 
     paga_agora = bool(dados.data_pagamento) and not dados.parcelas

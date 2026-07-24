@@ -21,6 +21,12 @@ class ContaGerencial(SQLModel, table=True):
     __tablename__ = "conta_gerencial"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (ver fazenda/models/multitenant.py):
+    # nulo para todo lançamento já existente antes da migração de backfill —
+    # ainda não filtra nada sozinho, só os endpoints que já sabem considerar
+    # fazenda_id (ver fazenda/api/routers/financeiro.py e os demais routers
+    # que também criam ContaGerencial — compra/venda de animal e sêmen, RH).
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_lancamento: Optional[str] = Field(default=None, index=True)  # referência do lançamento (ex.: LC-2026-00001), igual em todas as parcelas
     codigo_conta: Optional[str] = None
     descricao: Optional[str] = None
@@ -76,6 +82,10 @@ class LancamentoItem(SQLModel, table=True):
     __tablename__ = "lancamento_item"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda — ver ContaGerencial.fazenda_id
+    # acima. Precisa da própria coluna porque o vínculo com ContaGerencial é
+    # por numero_lancamento (string), não por id.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_lancamento: str = Field(index=True)
     tipo: Optional[str] = None  # herdado do lançamento (despesa/receita), útil p/ consultas
     data_competencia: Optional[date] = None  # herdado, p/ DRE por conta
@@ -98,6 +108,8 @@ class LancamentoAnexo(SQLModel, table=True):
     __tablename__ = "lancamento_anexo"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda — ver ContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_lancamento: str = Field(index=True)
     nome_arquivo: str
     mime_type: str
