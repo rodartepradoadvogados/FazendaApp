@@ -52,16 +52,25 @@ FREQUENCIAS = ["dias", "meses", "anos"]
 
 
 @router.get("/aplicacoes")
-def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
+def listar_aplicacoes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
     # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto
     # acima, que também reflete o estado de hoje, não o de quando aconteceu).
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
-    sanidades = session.exec(select(Sanidade)).all()
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
+    query_sanidades = select(Sanidade)
+    if fazenda_id is not None:
+        query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
+    sanidades = session.exec(query_sanidades).all()
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
     registros = []
     for s in sanidades:
@@ -127,7 +136,9 @@ def registrar_aplicacao(
     dados: AplicacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -146,6 +157,7 @@ def registrar_aplicacao(
                     dose=item.quantidade, unidade=item.unidade, via=item.via,
                     responsavel=dados.responsavel, observacao=dados.observacao,
                     usuario_id=usuario_id_seguro(user), natureza=dados.natureza,
+                    fazenda_id=fazenda_id,
                 ))
                 agendadas += 1
         session.commit()
@@ -181,6 +193,7 @@ def registrar_aplicacao(
                 obs=dados.observacao,
                 usuario_id=usuario_id_seguro(user),
                 natureza=dados.natureza,
+                fazenda_id=fazenda_id,
             )
             session.add(sanidade)
             session.flush()
