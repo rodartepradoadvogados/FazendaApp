@@ -502,7 +502,10 @@ def itens_por_conta(
 @router.get("/opcoes")
 def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> dict:
     """Listas para os seletores do lançamento — plano de contas real + dados já importados."""
-    plano = session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.ativa == True)).all()
+    query_plano = select(PlanoContaGerencial).where(PlanoContaGerencial.ativa == True)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
     # Só as contas-FOLHA são lançáveis (nível mais baixo da hierarquia): uma
     # conta é folha quando nenhuma outra tem o código dela como prefixo "X.".
     todos_codigos = [c.codigo for c in plano]
@@ -529,8 +532,13 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
     if fazenda_id is not None:
         query_contas_correntes = query_contas_correntes.where(ContaCorrente.fazenda_id == fazenda_id)
     contas_correntes = session.exec(query_contas_correntes.order_by(ContaCorrente.banco)).all()
-    tipos_doc_cadastrados = [t.nome for t in session.exec(select(TipoDocumento).where(TipoDocumento.ativo == True).order_by(TipoDocumento.nome)).all()]
-    formas_pgto_cadastradas = [f.nome for f in session.exec(select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.ativo == True).order_by(FormaPagamentoCadastro.nome)).all()]
+    query_tipos_doc = select(TipoDocumento).where(TipoDocumento.ativo == True)
+    query_formas_pgto = select(FormaPagamentoCadastro).where(FormaPagamentoCadastro.ativo == True)
+    if fazenda_id is not None:
+        query_tipos_doc = query_tipos_doc.where(TipoDocumento.fazenda_id == fazenda_id)
+        query_formas_pgto = query_formas_pgto.where(FormaPagamentoCadastro.fazenda_id == fazenda_id)
+    tipos_doc_cadastrados = [t.nome for t in session.exec(query_tipos_doc.order_by(TipoDocumento.nome)).all()]
+    formas_pgto_cadastradas = [f.nome for f in session.exec(query_formas_pgto.order_by(FormaPagamentoCadastro.nome)).all()]
     return {
         "contas_gerenciais": contas_gerenciais,
         "centros_custo": centros_custo,
@@ -543,13 +551,19 @@ def opcoes(session: Session = Depends(get_session), fazenda_id: int | None = Dep
 
 
 @router.get("/plano-contas")
-def plano_contas(session: Session = Depends(get_session)) -> list[dict]:
+def plano_contas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """
     Plano de contas gerenciais COMPLETO (inclui os códigos de grupo/cabeçalho,
     que vêm com Ativa=Não e não aparecem em /opcoes — aqui servem só para dar
     nome à hierarquia nos relatórios, não para lançar diretamente neles).
     """
-    plano = session.exec(select(PlanoContaGerencial)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query).all()
     return sorted(
         [
             {
@@ -666,19 +680,33 @@ class NomeAtivoFinanceiroIn(BaseModel):
 
 
 def _crud_nome_ativo_financeiro(model, rotulo: str):
-    """Mesma fábrica de CRUD nome+ativo do cadastro.py, para os cadastros que
-    vivem em Parâmetros financeiros (Tipo de documento, Forma de pagamento)."""
+    """Mesma fábrica de CRUD nome+ativo do cadastro/_comum.py (não reusada
+    diretamente por import cruzado — cadastro/__init__.py já importa deste
+    módulo via rh_contratos.py, então importar cadastro._comum aqui de volta
+    criaria um import circular). Filtra a listagem e a checagem de duplicata
+    pela fazenda atual, e carimba fazenda_id no registro criado (piloto
+    conservador de multi-fazenda, Fase 3B)."""
 
-    def listar(session: Session = Depends(get_session)) -> list[dict]:
-        return [m.model_dump() for m in session.exec(select(model).order_by(model.nome)).all()]
+    def listar(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> list[dict]:
+        fazenda_id = fazenda_id_seguro(fazenda_id)
+        query = select(model).order_by(model.nome)
+        if fazenda_id is not None:
+            query = query.where(model.fazenda_id == fazenda_id)
+        return [m.model_dump() for m in session.exec(query).all()]
 
-    def criar(dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session)) -> dict:
+    def criar(
+        dados: NomeAtivoFinanceiroIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    ) -> dict:
+        fazenda_id = fazenda_id_seguro(fazenda_id)
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")
-        if session.exec(select(model).where(model.nome == nome)).first():
+        query_dup = select(model).where(model.nome == nome)
+        if fazenda_id is not None:
+            query_dup = query_dup.where(model.fazenda_id == fazenda_id)
+        if session.exec(query_dup).first():
             raise HTTPException(status_code=409, detail=f"Já existe um(a) {rotulo} com esse nome")
-        obj = model(nome=nome, ativo=dados.ativo)
+        obj = model(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
         session.add(obj)
         session.commit()
         session.refresh(obj)
@@ -754,13 +782,19 @@ class PlanoContaGerencialIn(BaseModel):
 
 
 @router.post("/plano-contas")
-def criar_conta_gerencial(dados: PlanoContaGerencialIn, session: Session = Depends(get_session)) -> dict:
+def criar_conta_gerencial(
+    dados: PlanoContaGerencialIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     codigo = dados.codigo.strip()
     if not codigo or not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
-    if session.exec(select(PlanoContaGerencial).where(PlanoContaGerencial.codigo == codigo)).first():
+    query_dup = select(PlanoContaGerencial).where(PlanoContaGerencial.codigo == codigo)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail="Já existe uma conta gerencial com esse código")
-    campos = {**dados.model_dump(), "codigo": codigo}
+    campos = {**dados.model_dump(), "codigo": codigo, "fazenda_id": fazenda_id}
     # Item de "3.01.01 - Alimentação do rebanho" já nasce marcado para o RMCA
     # (custo de alimentação), a menos que o usuário tenha desmarcado no formulário.
     if codigo.startswith("3.01.01") and dados.rmca_custo_alimentacao is None:
@@ -956,7 +990,10 @@ def rmca(
     MovimentoEstoque × valor unitário do item no Estoque).
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    plano = session.exec(select(PlanoContaGerencial)).all()
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
     codigos_receita = {c.codigo for c in plano if c.rmca_receita_leite}
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
@@ -1006,7 +1043,10 @@ def custo_litro_leite(
     período não cobre o mês inteiro.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    plano = session.exec(select(PlanoContaGerencial)).all()
+    query_plano = select(PlanoContaGerencial)
+    if fazenda_id is not None:
+        query_plano = query_plano.where(PlanoContaGerencial.fazenda_id == fazenda_id)
+    plano = session.exec(query_plano).all()
     codigos_custo = {c.codigo for c in plano if c.rmca_custo_alimentacao}
 
     query_itens = select(LancamentoItem)

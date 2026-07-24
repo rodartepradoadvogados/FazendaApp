@@ -126,9 +126,16 @@ class PlanoContaGerencial(SQLModel, table=True):
     """Hierarquia do plano de contas gerenciais — LISTA_DE_PLANO_DE_CONTAS_GERENCIAIS.csv."""
 
     __tablename__ = "plano_conta_gerencial"
+    __table_args__ = (UniqueConstraint("codigo", "fazenda_id", name="uq_plano_conta_gerencial_codigo_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    codigo: str = Field(index=True, unique=True)
+    # Piloto conservador de multi-fazenda (Fase 3B — ver fazenda/models/multitenant.py):
+    # nulo para todo item já cadastrado antes da migração de backfill. Trocou
+    # o unique(codigo) global por unique(codigo, fazenda_id) — dois tenants
+    # podem, cada um, ter sua própria conta "3.01.01", mesmo padrão de
+    # centro_custo/sanidade.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    codigo: str = Field(index=True)
     nome: str
     ativa: bool = True
     participa_atividade: Optional[bool] = None
@@ -200,18 +207,24 @@ class CentroCusto(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 class TipoDocumento(SQLModel, table=True):
     __tablename__ = "tipo_documento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_tipo_documento_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    # Piloto conservador de multi-fazenda (Fase 3B) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 class FormaPagamentoCadastro(SQLModel, table=True):
     __tablename__ = "forma_pagamento_cadastro"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_forma_pagamento_cadastro_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    # Piloto conservador de multi-fazenda (Fase 3B) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
