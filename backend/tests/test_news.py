@@ -876,3 +876,37 @@ class TestPublicarLotesMilknews:
         with Session(engine) as s:
             noticia = s.exec(select(NoticiaNews).where(NoticiaNews.link == "/news#milknews-2026-07-20-01")).first()
             assert json.loads(noticia.fontes) == ["https://fonte-original.example.com"]
+
+
+class TestCarregarLotesMilknews:
+    """_carregar_lotes_milknews() — lê cada <chave>.json de uma pasta como um
+    lote (dict[chave] = lista de itens). Fonte de dados real de MILKNEWS_LOTES;
+    um arquivo por lote existe justamente para publicar não gerar conflito de
+    merge nem risco de um branch antigo apagar lotes alheios."""
+
+    def test_le_cada_json_da_pasta_como_um_lote(self, tmp_path):
+        from fazenda.api.routers import news as news_module
+
+        (tmp_path / "milknews_20260101.json").write_text(
+            json.dumps([{"manchete": "A", "link": "/news#a", "data_publicacao": "2026-01-01"}]),
+            encoding="utf-8",
+        )
+        (tmp_path / "milknews_20260102_b.json").write_text(
+            json.dumps([
+                {"manchete": "B1", "link": "/news#b1", "data_publicacao": "2026-01-02"},
+                {"manchete": "B2", "link": "/news#b2", "data_publicacao": "2026-01-02"},
+            ]),
+            encoding="utf-8",
+        )
+
+        lotes = news_module._carregar_lotes_milknews(tmp_path)
+
+        assert set(lotes.keys()) == {"milknews_20260101", "milknews_20260102_b"}
+        assert len(lotes["milknews_20260101"]) == 1
+        assert len(lotes["milknews_20260102_b"]) == 2
+        assert lotes["milknews_20260101"][0]["manchete"] == "A"
+
+    def test_pasta_inexistente_retorna_vazio(self, tmp_path):
+        from fazenda.api.routers import news as news_module
+
+        assert news_module._carregar_lotes_milknews(tmp_path / "nao-existe") == {}
