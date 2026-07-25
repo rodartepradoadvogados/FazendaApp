@@ -8,8 +8,8 @@
 // diferenças (etapas da empreita, "sem frequência definida" do contrato, etc.)
 // via as props abaixo. Nenhum endpoint ou modelo de dado foi alterado — os
 // wrappers continuam chamando os mesmos endpoints de sempre.
-import { useState } from "react";
-import { Plus } from "lucide-react";
+import { Fragment, useState } from "react";
+import { Plus, Pencil, Shuffle } from "lucide-react";
 import { formatBRL } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { ParcelamentoEditor, type Parcela } from "@/components/ParcelamentoEditor";
@@ -33,6 +33,7 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   tituloNovo, descricaoNovo, labelSalvar, salvar,
   tituloVale, descricaoVale, valeOrigemTipo, valeStatusExcluido,
   tituloListagem, textoVazioListagem, statusLabel = (s: string) => s, acaoItem, renderItemExtra,
+  onEditarParcela, onRedistribuirParcelas,
 }: {
   itens: T[] | null;
   error: string | null;
@@ -78,6 +79,10 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   statusLabel?: (status: string) => string;
   acaoItem?: (item: T) => React.ReactNode;
   renderItemExtra?: (item: T) => React.ReactNode;
+  /** Edita valor/vencimento de uma parcela pendente (bloqueado se já paga). */
+  onEditarParcela?: (parcelaId: number, dados: { data_vencimento: string; valor: number }) => Promise<any>;
+  /** Redivide igualmente o valor pendente entre as parcelas ainda não pagas do item. */
+  onRedistribuirParcelas?: (itemId: number) => Promise<any>;
 }) {
   const [pessoaId, setPessoaId] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -88,6 +93,49 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
+
+  const [editandoParcelaId, setEditandoParcelaId] = useState<number | null>(null);
+  const [editParcelaData, setEditParcelaData] = useState("");
+  const [editParcelaValor, setEditParcelaValor] = useState("");
+  const [parcelaMsg, setParcelaMsg] = useState<string | null>(null);
+  const [salvandoParcela, setSalvandoParcela] = useState(false);
+  const [redistribuindoId, setRedistribuindoId] = useState<number | null>(null);
+
+  function iniciarEdicaoParcela(p: ParcelaAvulsa) {
+    setEditandoParcelaId(p.id);
+    setEditParcelaData(p.data_vencimento);
+    setEditParcelaValor(String(p.valor));
+    setParcelaMsg(null);
+  }
+
+  async function salvarEdicaoParcela(parcelaId: number) {
+    if (!onEditarParcela) return;
+    setParcelaMsg(null);
+    if (!editParcelaValor || parseFloat(editParcelaValor) <= 0) { setParcelaMsg("Informe o valor da parcela."); return; }
+    setSalvandoParcela(true);
+    try {
+      await onEditarParcela(parcelaId, { data_vencimento: editParcelaData, valor: parseFloat(editParcelaValor) });
+      setEditandoParcelaId(null);
+      recarregar();
+    } catch (e: any) {
+      setParcelaMsg(e.message || "Erro ao editar parcela.");
+    } finally {
+      setSalvandoParcela(false);
+    }
+  }
+
+  async function redistribuir(itemId: number) {
+    if (!onRedistribuirParcelas) return;
+    setRedistribuindoId(itemId);
+    try {
+      await onRedistribuirParcelas(itemId);
+      recarregar();
+    } catch (e: any) {
+      setMsg({ tipo: "erro", texto: e.message || "Erro ao redistribuir parcelas." });
+    } finally {
+      setRedistribuindoId(null);
+    }
+  }
 
   const isDataUnica = formasDataUnica.includes(formaPagamento);
   const isSemParcelamento = formasSemParcelamento.includes(formaPagamento);
@@ -211,14 +259,56 @@ export default function CadastroAvulsoParceladoGenerico<T extends ItemAvulso>({
               </div>
             </div>
             {item.parcelas.length > 0 && (
-              <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
-                <thead><tr><th>Vencimento</th><th>Valor</th><th>Status</th></tr></thead>
-                <tbody>
-                  {item.parcelas.map((p) => (
-                    <tr key={p.id}><td>{p.data_vencimento}</td><td>{formatBRL(p.valor)}</td><td>{p.status}</td></tr>
-                  ))}
-                </tbody>
-              </table>
+              <>
+                {onRedistribuirParcelas && item.parcelas.filter((p) => p.status !== "pago").length >= 2 && (
+                  <button className="btn-ghost mt-2" style={{ fontSize: "0.72rem" }} disabled={redistribuindoId === item.id}
+                    title="Redivide igualmente o valor pendente entre as parcelas ainda não pagas"
+                    onClick={() => redistribuir(item.id)}>
+                    <Shuffle size={12} /> {redistribuindoId === item.id ? "Redistribuindo…" : "Redistribuir parcelas pendentes"}
+                  </button>
+                )}
+                <table className="fazenda-table" style={{ fontSize: "0.78rem", marginTop: "0.5rem" }}>
+                  <thead><tr><th>Vencimento</th><th>Valor</th><th>Status</th>{onEditarParcela && <th>Ações</th>}</tr></thead>
+                  <tbody>
+                    {item.parcelas.map((p) => (
+                      <Fragment key={p.id}>
+                        <tr>
+                          <td>{p.data_vencimento}</td><td>{formatBRL(p.valor)}</td><td>{p.status}</td>
+                          {onEditarParcela && (
+                            <td>
+                              {p.status !== "pago" && (
+                                <button className="btn-ghost" title="Editar esta parcela" style={{ fontSize: "0.72rem" }}
+                                  onClick={() => iniciarEdicaoParcela(p)}>
+                                  <Pencil size={12} />
+                                </button>
+                              )}
+                            </td>
+                          )}
+                        </tr>
+                        {editandoParcelaId === p.id && (
+                          <tr>
+                            <td colSpan={onEditarParcela ? 4 : 3} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                              <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-2">
+                                <div><label style={lbl}>Vencimento</label>
+                                  <input type="date" style={inputSm} value={editParcelaData} onChange={(e) => setEditParcelaData(e.target.value)} /></div>
+                                <div><label style={lbl}>Valor (R$)</label>
+                                  <input type="number" step="0.01" style={inputSm} value={editParcelaValor} onChange={(e) => setEditParcelaValor(e.target.value)} /></div>
+                              </div>
+                              {parcelaMsg && <p style={{ color: "var(--red)", fontSize: "0.78rem", margin: "0 0 0.5rem" }}>{parcelaMsg}</p>}
+                              <div style={{ display: "flex", gap: "0.5rem" }}>
+                                <button className="btn-primary" style={{ fontSize: "0.75rem" }} disabled={salvandoParcela} onClick={() => salvarEdicaoParcela(p.id)}>
+                                  {salvandoParcela ? "Salvando…" : "Salvar"}
+                                </button>
+                                <button className="btn-ghost" style={{ fontSize: "0.75rem" }} onClick={() => setEditandoParcelaId(null)}>Cancelar</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    ))}
+                  </tbody>
+                </table>
+              </>
             )}
             {renderItemExtra?.(item)}
             {item.vales.length > 0 && (

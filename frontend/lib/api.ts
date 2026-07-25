@@ -1002,6 +1002,30 @@ export async function excluirParcelaContrato(id: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir parcela de contrato"); }
   return res.json();
 }
+export async function atualizarParcelaEmpreitada(id: number, dados: { data_vencimento: string; valor: number }) {
+  const res = await authFetch(`${API}/cadastro/empreitadas/parcelas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de empreitada"); }
+  return res.json();
+}
+export async function atualizarParcelaContrato(id: number, dados: { data_vencimento: string; valor: number }) {
+  const res = await authFetch(`${API}/cadastro/contratos/parcelas/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar parcela de contrato"); }
+  return res.json();
+}
+export async function redistribuirParcelasEmpreitada(empreitadaId: number) {
+  const res = await authFetch(`${API}/cadastro/empreitadas/${empreitadaId}/parcelas/redistribuir`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  return res.json();
+}
+export async function redistribuirParcelasContrato(contratoId: number) {
+  const res = await authFetch(`${API}/cadastro/contratos/${contratoId}/parcelas/redistribuir`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao redistribuir parcelas"); }
+  return res.json();
+}
 
 // ── Vale de funcionário (Financeiro > Folha de pagamento) ──
 export async function fetchVales() {

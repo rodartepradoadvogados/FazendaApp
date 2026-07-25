@@ -355,6 +355,78 @@ def excluir_parcela_empreitada(parcela_id: int, session: Session = Depends(get_s
     return {"ok": True}
 
 
+class ParcelaEditIn(BaseModel):
+    data_vencimento: date
+    valor: float
+
+
+def _sincronizar_conta_parcela(session: Session, numero_lancamento: str | None, data_vencimento: date, valor: float) -> None:
+    """Mantém o lançamento gerado (ContaGerencial) alinhado após editar/
+    redistribuir uma parcela de Empreitada/Contrato — só toca contas ainda
+    não pagas (parcela paga é bloqueada antes de chegar aqui)."""
+    if not numero_lancamento:
+        return
+    conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+    if conta and conta.valor_pago is None:
+        conta.data_vencimento = data_vencimento
+        conta.data_competencia = data_vencimento.replace(day=1)
+        conta.valor_total = valor
+        session.add(conta)
+
+
+def _redistribuir_parcelas_pendentes(session: Session, pendentes: list) -> None:
+    """Redivide igualmente o total das parcelas pendentes informadas (mantendo
+    as datas de vencimento de cada uma), ajustando o arredondamento na
+    última para o somatório bater exatamente com o total original."""
+    if len(pendentes) < 2:
+        raise HTTPException(status_code=400, detail="É preciso ao menos 2 parcelas pendentes para redistribuir.")
+    total = round(sum(p.valor for p in pendentes), 2)
+    valor_base = round(total / len(pendentes), 2)
+    restante = total
+    for i, p in enumerate(pendentes):
+        valor = valor_base if i < len(pendentes) - 1 else round(restante, 2)
+        restante = round(restante - valor, 2)
+        p.valor = valor
+        session.add(p)
+        _sincronizar_conta_parcela(session, p.numero_lancamento_gerado, p.data_vencimento, valor)
+
+
+@router.put("/empreitadas/parcelas/{parcela_id}")
+def atualizar_parcela_empreitada(parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session)) -> dict:
+    parcela = session.get(EmpreitadaParcela, parcela_id)
+    if not parcela:
+        raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+        raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
+    parcela.data_vencimento = dados.data_vencimento
+    parcela.valor = dados.valor
+    session.add(parcela)
+    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
+    session.commit()
+    empreitada = session.get(Empreitada, parcela.empreitada_id)
+    return _serializar_empreitada(session, empreitada)
+
+
+@router.post("/empreitadas/{empreitada_id}/parcelas/redistribuir")
+def redistribuir_parcelas_empreitada(empreitada_id: int, session: Session = Depends(get_session)) -> dict:
+    """Redivide igualmente o valor total ainda pendente entre as parcelas
+    pendentes da empreitada (ex.: após um vale abater desproporcionalmente
+    uma única parcela, redistribui o saldo entre as próximas)."""
+    empreitada = session.get(Empreitada, empreitada_id)
+    if not empreitada:
+        raise HTTPException(status_code=404, detail="Empreitada não encontrada")
+    parcelas = session.exec(
+        select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == empreitada_id).order_by(EmpreitadaParcela.data_vencimento)
+    ).all()
+    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
+    pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
+    _redistribuir_parcelas_pendentes(session, pendentes)
+    session.commit()
+    return _serializar_empreitada(session, empreitada)
+
+
 # ---------------------------------------------------------------------------
 # Contrato — valor total pago por frequência fixa (parcelas editáveis, mesmo
 # padrão do Financeiro) ou, sem frequência definida, com lembrete mensal na
@@ -506,6 +578,39 @@ def excluir_parcela_contrato(parcela_id: int, session: Session = Depends(get_ses
     session.delete(parcela)
     session.commit()
     return {"ok": True}
+
+
+@router.put("/contratos/parcelas/{parcela_id}")
+def atualizar_parcela_contrato(parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session)) -> dict:
+    parcela = session.get(ContratoParcela, parcela_id)
+    if not parcela:
+        raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
+    if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
+        raise HTTPException(status_code=400, detail="Parcela já paga não pode ser editada aqui — edite em Lançamentos > Financeiro.")
+    parcela.data_vencimento = dados.data_vencimento
+    parcela.valor = dados.valor
+    session.add(parcela)
+    _sincronizar_conta_parcela(session, parcela.numero_lancamento_gerado, dados.data_vencimento, dados.valor)
+    session.commit()
+    contrato = session.get(Contrato, parcela.contrato_id)
+    return _serializar_contrato(session, contrato)
+
+
+@router.post("/contratos/{contrato_id}/parcelas/redistribuir")
+def redistribuir_parcelas_contrato(contrato_id: int, session: Session = Depends(get_session)) -> dict:
+    contrato = session.get(Contrato, contrato_id)
+    if not contrato:
+        raise HTTPException(status_code=404, detail="Contrato não encontrado")
+    parcelas = session.exec(
+        select(ContratoParcela).where(ContratoParcela.contrato_id == contrato_id).order_by(ContratoParcela.data_vencimento)
+    ).all()
+    pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in parcelas if p.numero_lancamento_gerado])
+    pendentes = [p for p in parcelas if p.numero_lancamento_gerado not in pagos]
+    _redistribuir_parcelas_pendentes(session, pendentes)
+    session.commit()
+    return _serializar_contrato(session, contrato)
 
 
 # ---------------------------------------------------------------------------

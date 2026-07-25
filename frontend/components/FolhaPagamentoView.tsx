@@ -4,6 +4,7 @@ import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, P
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
+  atualizarParcelaEmpreitada, atualizarParcelaContrato,
   fetchVales, criarVale, atualizarVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
@@ -211,6 +212,42 @@ export default function FolhaPagamentoView() {
       setExcluirErro(e.message || "Erro ao excluir lançamento");
     } finally {
       setExcluindoChave(null);
+    }
+  }
+
+  // Editar parcela de Empreita/Contrato diretamente na Folha de pagamento
+  // unificada — mesma UX de "Editar lançamento" já usada para funcionário.
+  const [editingLinhaChave, setEditingLinhaChave] = useState<string | null>(null);
+  const [editLinhaData, setEditLinhaData] = useState("");
+  const [editLinhaValor, setEditLinhaValor] = useState("");
+  const [editLinhaMsg, setEditLinhaMsg] = useState<string | null>(null);
+  const [salvandoLinha, setSalvandoLinha] = useState(false);
+
+  function podeEditarLinha(l: LinhaFolhaUnificada) {
+    return l.status !== "pago" && l.origem_subtipo === "parcela" && (l.tipo === "empreita" || l.tipo === "contrato");
+  }
+
+  function iniciarEdicaoLinha(l: LinhaFolhaUnificada) {
+    setEditingLinhaChave(`${l.tipo}-${l.origem_subtipo}-${l.origem_id}`);
+    setEditLinhaData(l.data_vencimento || "");
+    setEditLinhaValor(String(l.valor));
+    setEditLinhaMsg(null);
+  }
+
+  async function salvarEdicaoLinha(l: LinhaFolhaUnificada) {
+    setEditLinhaMsg(null);
+    if (!editLinhaValor || parseFloat(editLinhaValor) <= 0) { setEditLinhaMsg("Informe o valor."); return; }
+    setSalvandoLinha(true);
+    try {
+      const dados = { data_vencimento: editLinhaData, valor: parseFloat(editLinhaValor) };
+      if (l.tipo === "empreita") await atualizarParcelaEmpreitada(l.origem_id, dados);
+      else await atualizarParcelaContrato(l.origem_id, dados);
+      setEditingLinhaChave(null);
+      carregarUnificada();
+    } catch (e: any) {
+      setEditLinhaMsg(e.message || "Erro ao editar lançamento.");
+    } finally {
+      setSalvandoLinha(false);
     }
   }
 
@@ -707,8 +744,11 @@ export default function FolhaPagamentoView() {
               {unificadaOrdenada.map((l) => {
                 const chave = `${l.tipo}-${l.origem_subtipo}-${l.origem_id}`;
                 if (l.tipo !== "funcionario") {
+                  const editavel = podeEditarLinha(l);
+                  const editandoLinha = editingLinhaChave === chave;
                   return (
-                    <tr key={chave} style={l.vencido ? { background: VENCIDO_BG } : undefined}>
+                    <Fragment key={chave}>
+                    <tr style={l.vencido ? { background: VENCIDO_BG } : undefined}>
                       <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{LABEL_TIPO[l.tipo]}</td>
                       <td style={{ fontWeight: 600, fontSize: "0.82rem", whiteSpace: "nowrap" }}>
                         {(() => { const d = l.data_pagamento || l.data_vencimento; return d ? mesCompLabel(d.slice(0, 7)) : "—"; })()}
@@ -723,15 +763,43 @@ export default function FolhaPagamentoView() {
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{l.status === "pago" ? formatBRL(l.valor) : "—"}</td>
                       {admin && <td>—</td>}
                       <td style={{ textAlign: "right" }}>
-                        {l.pode_excluir && (
-                          <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
-                            disabled={excluindoChave === chave}
-                            onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
-                            <Trash2 size={13} />
-                          </button>
-                        )}
+                        <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          {editavel && (
+                            <button className="btn-ghost" title="Editar este lançamento (enquanto não estiver pago)" style={{ fontSize: "0.72rem" }}
+                              onClick={() => (editandoLinha ? setEditingLinhaChave(null) : iniciarEdicaoLinha(l))}>
+                              <Pencil size={13} />
+                            </button>
+                          )}
+                          {l.pode_excluir && (
+                            <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                              disabled={excluindoChave === chave}
+                              onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
+                              <Trash2 size={13} />
+                            </button>
+                          )}
+                        </span>
                       </td>
                     </tr>
+                    {editandoLinha && (
+                      <tr>
+                        <td colSpan={admin ? 12 : 11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+                            <div><label style={labelStyleLote}>Vencimento</label>
+                              <input type="date" style={selStyleLote} value={editLinhaData} onChange={(e) => setEditLinhaData(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Valor (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editLinhaValor} onChange={(e) => setEditLinhaValor(e.target.value)} /></div>
+                          </div>
+                          {editLinhaMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editLinhaMsg}</p>}
+                          <div style={{ display: "flex", gap: "0.5rem" }}>
+                            <button className="btn-primary" disabled={salvandoLinha} onClick={() => salvarEdicaoLinha(l)}>
+                              <Check size={14} /> {salvandoLinha ? "Salvando…" : "Salvar"}
+                            </button>
+                            <button className="btn-ghost" onClick={() => setEditingLinhaChave(null)}>Cancelar</button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                    </Fragment>
                   );
                 }
                 const r = regsPorId[l.origem_id];

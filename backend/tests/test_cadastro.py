@@ -1310,6 +1310,7 @@ class TestValeAvulso:
         assert dados["valor_vale"] == 200.0
         assert dados["saldo_devedor"] == 300.0
 
+
     def test_listar_vales_por_origem(self, client):
         c, engine = client
         pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Diarista V", "tipos": ["Diarista"]}).json()["id"]
@@ -1422,3 +1423,140 @@ class TestValeAvulso:
 
         r2 = c.get("/cadastro/vale-avulso/todos")
         assert all(v["id"] != vale["id"] for v in r2.json())
+
+
+class TestEditarERedistribuirParcelas:
+    def _empreitada(self, c):
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Editor", "tipos": ["Empreiteiro"]}).json()["id"]
+        return c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem", "valor_total": 3000.0, "tipo_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-05", "valor": 1000.0},
+                {"data_vencimento": "2026-09-05", "valor": 1000.0},
+                {"data_vencimento": "2026-10-05", "valor": 1000.0},
+            ],
+        }).json()
+
+    def _contrato(self, c):
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Prestador Editor", "tipos": ["Prestador de serviços"]}).json()["id"]
+        return c.post("/cadastro/contratos", json={
+            "pessoa_id": pessoa_id, "descricao": "Consultoria", "valor_total": 3000.0, "forma_pagamento": "mensal",
+            "parcelas": [
+                {"data_vencimento": "2026-08-10", "valor": 1000.0},
+                {"data_vencimento": "2026-09-10", "valor": 1000.0},
+                {"data_vencimento": "2026-10-10", "valor": 1000.0},
+            ],
+        }).json()
+
+    def _pagar_por_numero_lancamento(self, c, engine, numero_lancamento, valor):
+        from fazenda.models import ContaGerencial
+        with Session(engine) as s:
+            conta_id = s.exec(select(ContaGerencial.id).where(ContaGerencial.numero_lancamento == numero_lancamento)).first()
+        return c.put(f"/financeiro/lancamentos/{conta_id}/pagar", json={
+            "data_pagamento": "2026-08-01", "valor_pago": valor, "forma_pagamento": "pix",
+        })
+
+    def test_edita_parcela_pendente_de_empreitada_e_sincroniza_conta(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcela = empreitada["parcelas"][0]
+        r = c.put(f"/cadastro/empreitadas/parcelas/{parcela['id']}", json={
+            "data_vencimento": "2026-08-15", "valor": 1234.56,
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        editada = next(p for p in dados["parcelas"] if p["id"] == parcela["id"])
+        assert editada["data_vencimento"] == "2026-08-15"
+        assert editada["valor"] == 1234.56
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta = s.exec(select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == editada["numero_lancamento_gerado"]
+            )).first()
+            assert conta.valor_total == 1234.56
+            assert conta.data_vencimento.isoformat() == "2026-08-15"
+
+    def test_edita_parcela_pendente_de_contrato(self, client):
+        c, engine = client
+        contrato = self._contrato(c)
+        parcela = contrato["parcelas"][0]
+        r = c.put(f"/cadastro/contratos/parcelas/{parcela['id']}", json={
+            "data_vencimento": "2026-08-20", "valor": 777.0,
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        editada = next(p for p in dados["parcelas"] if p["id"] == parcela["id"])
+        assert editada["data_vencimento"] == "2026-08-20"
+        assert editada["valor"] == 777.0
+
+    def test_edita_parcela_rejeita_valor_nao_positivo(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcela = empreitada["parcelas"][0]
+        r = c.put(f"/cadastro/empreitadas/parcelas/{parcela['id']}", json={
+            "data_vencimento": "2026-08-15", "valor": 0,
+        })
+        assert r.status_code == 400
+
+    def test_edita_parcela_ja_paga_e_bloqueada(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcela = empreitada["parcelas"][0]
+        r = self._pagar_por_numero_lancamento(c, engine, parcela["numero_lancamento_gerado"], 1000.0)
+        assert r.status_code == 200
+        r = c.put(f"/cadastro/empreitadas/parcelas/{parcela['id']}", json={
+            "data_vencimento": "2026-08-15", "valor": 500.0,
+        })
+        assert r.status_code == 400
+
+    def test_redistribui_parcelas_pendentes_de_empreitada_preserva_total(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcelas = sorted(empreitada["parcelas"], key=lambda p: p["data_vencimento"])
+        # Simula um vale que abateu desproporcionalmente a 1ª parcela.
+        c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 700.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20",
+        })
+        r = c.post(f"/cadastro/empreitadas/{empreitada['id']}/parcelas/redistribuir")
+        assert r.status_code == 200
+        dados = r.json()
+        novas = sorted(dados["parcelas"], key=lambda p: p["data_vencimento"])
+        assert len(novas) == 3
+        total = round(sum(p["valor"] for p in novas), 2)
+        assert total == round(sum(p["valor"] for p in parcelas) - 700.0, 2)
+        valores = [p["valor"] for p in novas]
+        assert max(valores) - min(valores) < 0.02  # divisão igual (com resto na última)
+
+    def test_redistribui_parcelas_pendentes_de_contrato(self, client):
+        c, engine = client
+        contrato = self._contrato(c)
+        r = c.post(f"/cadastro/contratos/{contrato['id']}/parcelas/redistribuir")
+        assert r.status_code == 200
+        dados = r.json()
+        valores = [p["valor"] for p in dados["parcelas"]]
+        assert round(sum(valores), 2) == 3000.0
+        assert max(valores) - min(valores) < 0.02
+
+    def test_redistribuir_nao_toca_parcelas_ja_pagas(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcelas = sorted(empreitada["parcelas"], key=lambda p: p["data_vencimento"])
+        paga = parcelas[0]
+        self._pagar_por_numero_lancamento(c, engine, paga["numero_lancamento_gerado"], 1000.0)
+        r = c.post(f"/cadastro/empreitadas/{empreitada['id']}/parcelas/redistribuir")
+        assert r.status_code == 200
+        dados = r.json()
+        reencontrada_paga = next(p for p in dados["parcelas"] if p["id"] == paga["id"])
+        assert reencontrada_paga["valor"] == 1000.0  # intocada
+        pendentes = [p for p in dados["parcelas"] if p["id"] != paga["id"]]
+        assert round(sum(p["valor"] for p in pendentes), 2) == 2000.0
+
+    def test_redistribuir_com_menos_de_2_pendentes_da_erro(self, client):
+        c, engine = client
+        empreitada = self._empreitada(c)
+        parcelas = sorted(empreitada["parcelas"], key=lambda p: p["data_vencimento"])
+        for p in parcelas[:2]:
+            self._pagar_por_numero_lancamento(c, engine, p["numero_lancamento_gerado"], p["valor"])
+        r = c.post(f"/cadastro/empreitadas/{empreitada['id']}/parcelas/redistribuir")
+        assert r.status_code == 400

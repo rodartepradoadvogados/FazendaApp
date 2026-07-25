@@ -6,7 +6,10 @@
 // Nenhum endpoint mudou.
 import { useEffect, useState } from "react";
 import { XCircle } from "lucide-react";
-import { fetchPessoas, fetchContratos, criarContrato, encerrarContrato } from "@/lib/api";
+import {
+  fetchPessoas, fetchContratos, criarContrato, encerrarContrato,
+  atualizarParcelaContrato, redistribuirParcelasContrato,
+} from "@/lib/api";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 
 type Pessoa = { id: number; nome: string; tipos: string[] };
@@ -62,6 +65,8 @@ export default function ContratoView() {
       }}
       tituloVale="Vale de contrato" descricaoVale="Adiantamento abatido da próxima parcela pendente"
       valeOrigemTipo="contrato" valeStatusExcluido="encerrado"
+      onEditarParcela={atualizarParcelaContrato}
+      onRedistribuirParcelas={redistribuirParcelasContrato}
       tituloListagem="Contratos lançados" textoVazioListagem="Nenhum contrato lançado ainda."
       acaoItem={(item) => item.status === "ativo" && (
         <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }} onClick={() => encerrar(item.id)}>
