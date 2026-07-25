@@ -250,6 +250,23 @@ class ValeAvulso(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
 
 
+class ValeAvulsoAbatimento(SQLModel, table=True):
+    """Registro de quanto um `ValeAvulso` abateu de cada parcela/etapa
+    pendente, para permitir reverter o efeito exatamente (editar/excluir o
+    vale) sem depender de recalcular a partir do zero — ao contrário do vale
+    de funcionário (que tem `ValeParcela` recomputável), aqui o abatimento é
+    uma mutação direta no valor da parcela/etapa/conta gerencial."""
+
+    __tablename__ = "vale_avulso_abatimento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    vale_avulso_id: int = Field(foreign_key="vale_avulso.id", index=True)
+    item_tipo: str  # empreitada_parcela | empreitada_etapa | contrato_parcela
+    item_id: int
+    valor_abatido: float
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 # ---------------------------------------------------------------------------
 # Empreitada — trabalho contratado com um empreiteiro (Pessoa do tipo
 # "Empreiteiro"), pago por frequência fixa (mensal/semanal/quinzenal, parcelas

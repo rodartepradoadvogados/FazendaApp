@@ -1276,6 +1276,26 @@ export async function criarValeAvulso(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar vale"); }
   return res.json();
 }
+export async function fetchValesAvulsos() {
+  const res = await authFetch(`${API}/cadastro/vale-avulso/todos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Vales avulsos error: ${res.status}`);
+  return res.json();
+}
+export async function atualizarValeAvulso(valeId: number, dados: {
+  origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
+  forma_pagamento: string; data_pagamento: string; observacao?: string;
+}) {
+  const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar vale"); }
+  return res.json();
+}
+export async function excluirValeAvulso(valeId: number) {
+  const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
+  return res.json();
+}
 
 export async function criarAnimalFicha(dados: Record<string, any>) {
   const res = await authFetch(`${API}/cadastro/animais`, {

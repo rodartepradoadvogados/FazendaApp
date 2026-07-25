@@ -659,17 +659,6 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
               ))}
             </div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <Campo label="Conta gerencial">
-                <SeletorContaGerencial
-                  contas={planoContas}
-                  tipo={tipo}
-                  natureza={it.tipo_item}
-                  codigo={it.codigo_conta_gerencial}
-                  nome={it.nome_conta_gerencial}
-                  onSelect={(codigo, nome) => atualizarItem(idx, { codigo_conta_gerencial: codigo, nome_conta_gerencial: nome })}
-                  placeholder="Escolha a conta (só o galho mais baixo)…"
-                />
-              </Campo>
               {it.tipo_item === "servico" ? (
                 <Campo label="Serviço">
                   <input list={`fin-servicos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Frete" />
@@ -691,6 +680,17 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
                   </select>
                 </Campo>
               )}
+              <Campo label="Conta gerencial">
+                <SeletorContaGerencial
+                  contas={planoContas}
+                  tipo={tipo}
+                  natureza={it.tipo_item}
+                  codigo={it.codigo_conta_gerencial}
+                  nome={it.nome_conta_gerencial}
+                  onSelect={(codigo, nome) => atualizarItem(idx, { codigo_conta_gerencial: codigo, nome_conta_gerencial: nome })}
+                  placeholder="Escolha a conta (só o galho mais baixo)…"
+                />
+              </Campo>
               <Campo label="Descrição (opcional)">
                 <input style={inputStyle} value={it.descricao} onChange={(e) => atualizarItem(idx, { descricao: e.target.value })} />
               </Campo>

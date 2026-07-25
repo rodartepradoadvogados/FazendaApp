@@ -20,7 +20,7 @@ from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento, Empreitada,
-    EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso,
+    EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso, ValeAvulsoAbatimento,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
 from fazenda.rules.auditoria import fazenda_id_seguro
@@ -757,7 +757,46 @@ def _numeros_pagos(session: Session, numeros: list[str]) -> set[str]:
     return {c.numero_lancamento for c in contas if c.valor_pago is not None}
 
 
-def _aplicar_vale_avulso(session: Session, origem_tipo: str, origem_id: int, valor: float) -> None:
+def _itens_pendentes_vale_avulso(session: Session, origem_tipo: str, origem_id: int) -> tuple[str, list]:
+    """Retorna (item_tipo, itens pendentes em ordem de vencimento) para o
+    abatimento/reversão de um vale avulso de Empreitada/Contrato."""
+    if origem_tipo == "empreitada":
+        empreitada = session.get(Empreitada, origem_id)
+        if empreitada and empreitada.tipo_pagamento == "por_etapa":
+            itens = session.exec(
+                select(EmpreitadaEtapa)
+                .where(EmpreitadaEtapa.empreitada_id == origem_id, EmpreitadaEtapa.concluida == False)  # noqa: E712
+                .order_by(EmpreitadaEtapa.ordem, EmpreitadaEtapa.id)
+            ).all()
+            return "empreitada_etapa", list(itens)
+        todas = session.exec(
+            select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == origem_id).order_by(EmpreitadaParcela.data_vencimento)
+        ).all()
+        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+        return "empreitada_parcela", [p for p in todas if p.numero_lancamento_gerado not in pagos]
+    if origem_tipo == "contrato":
+        todas = session.exec(
+            select(ContratoParcela).where(ContratoParcela.contrato_id == origem_id).order_by(ContratoParcela.data_vencimento)
+        ).all()
+        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
+        return "contrato_parcela", [p for p in todas if p.numero_lancamento_gerado not in pagos]
+    return "", []
+
+
+def _modelo_item_vale_avulso(item_tipo: str):
+    return {"empreitada_parcela": EmpreitadaParcela, "empreitada_etapa": EmpreitadaEtapa, "contrato_parcela": ContratoParcela}[item_tipo]
+
+
+def _sincronizar_conta_do_item(session: Session, item) -> None:
+    numero = getattr(item, "numero_lancamento_gerado", None)
+    if numero:
+        conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
+        if conta and conta.valor_pago is None:
+            conta.valor_total = item.valor
+            session.add(conta)
+
+
+def _aplicar_vale_avulso(session: Session, vale_avulso_id: int, origem_tipo: str, origem_id: int, valor: float) -> None:
     """
     Abate `valor` da(s) próxima(s) parcela(s)/etapa(s) PENDENTE(S), na ordem em
     que vencem — mesmo efeito do vale de funcionário (reduzir o valor líquido
@@ -769,47 +808,46 @@ def _aplicar_vale_avulso(session: Session, origem_tipo: str, origem_id: int, val
     - Contrato: mesma lógica com ContratoParcela.
     - Diária: não há parcela agendada (o pagamento é sob demanda) — o valor só
       soma ao "saldo abatido", já calculado em `_resumo_diaria`.
+
+    Cada abatimento é registrado em `ValeAvulsoAbatimento`, para permitir
+    reverter exatamente ao editar/excluir o vale (ver `_reverter_vale_avulso`).
     """
     restante = round(valor, 2)
     if restante <= 0 or origem_tipo == "diaria":
         return
 
-    if origem_tipo == "empreitada":
-        empreitada = session.get(Empreitada, origem_id)
-        if empreitada and empreitada.tipo_pagamento == "por_etapa":
-            itens = session.exec(
-                select(EmpreitadaEtapa)
-                .where(EmpreitadaEtapa.empreitada_id == origem_id, EmpreitadaEtapa.concluida == False)  # noqa: E712
-                .order_by(EmpreitadaEtapa.ordem, EmpreitadaEtapa.id)
-            ).all()
-        else:
-            todas = session.exec(
-                select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == origem_id).order_by(EmpreitadaParcela.data_vencimento)
-            ).all()
-            pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
-            itens = [p for p in todas if p.numero_lancamento_gerado not in pagos]
-    elif origem_tipo == "contrato":
-        todas = session.exec(
-            select(ContratoParcela).where(ContratoParcela.contrato_id == origem_id).order_by(ContratoParcela.data_vencimento)
-        ).all()
-        pagos = _numeros_pagos(session, [p.numero_lancamento_gerado for p in todas if p.numero_lancamento_gerado])
-        itens = [p for p in todas if p.numero_lancamento_gerado not in pagos]
-    else:
+    item_tipo, itens = _itens_pendentes_vale_avulso(session, origem_tipo, origem_id)
+    if not item_tipo:
         return
 
     for item in itens:
         if restante <= 0:
             break
         abatido = min(item.valor, restante)
+        if abatido <= 0:
+            continue
         item.valor = round(item.valor - abatido, 2)
         restante = round(restante - abatido, 2)
         session.add(item)
-        numero = getattr(item, "numero_lancamento_gerado", None)
-        if numero:
-            conta = session.exec(select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero)).first()
-            if conta and conta.valor_pago is None:
-                conta.valor_total = item.valor
-                session.add(conta)
+        _sincronizar_conta_do_item(session, item)
+        session.add(ValeAvulsoAbatimento(vale_avulso_id=vale_avulso_id, item_tipo=item_tipo, item_id=item.id, valor_abatido=abatido))
+
+
+def _reverter_vale_avulso(session: Session, vale_avulso_id: int) -> None:
+    """Desfaz o efeito de `_aplicar_vale_avulso`: devolve a cada item exatamente
+    o valor que foi abatido dele (registrado em ValeAvulsoAbatimento), na
+    ordem inversa em que foi abatido, e sincroniza a ContaGerencial vinculada."""
+    abatimentos = session.exec(
+        select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale_avulso_id).order_by(ValeAvulsoAbatimento.id.desc())
+    ).all()
+    for ab in abatimentos:
+        Modelo = _modelo_item_vale_avulso(ab.item_tipo)
+        item = session.get(Modelo, ab.item_id)
+        if item:
+            item.valor = round(item.valor + ab.valor_abatido, 2)
+            session.add(item)
+            _sincronizar_conta_do_item(session, item)
+        session.delete(ab)
 
 
 @router.get("/vale-avulso")
@@ -849,8 +887,9 @@ def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_sessio
     )
     session.add(vale)
     session.commit()
+    session.refresh(vale)
 
-    _aplicar_vale_avulso(session, dados.origem_tipo, dados.origem_id, dados.valor)
+    _aplicar_vale_avulso(session, vale.id, dados.origem_tipo, dados.origem_id, dados.valor)
     session.commit()
 
     if dados.origem_tipo == "empreitada":
@@ -861,6 +900,69 @@ def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_sessio
         pessoa = session.get(Pessoa, origem.pessoa_id)
         resultado = _resumo_diaria(session, origem, pessoa.nome if pessoa else "—")
     return {"vale": vale.model_dump(), "origem": resultado}
+
+
+@router.get("/vale-avulso/todos")
+def listar_todos_vales_avulsos(session: Session = Depends(get_session)) -> list[dict]:
+    """Relatório unificado de vales avulsos (Empreitada/Contrato/Diária), para
+    aparecer junto do Relatório de vales e descontos (vale de funcionário)."""
+    vales = session.exec(select(ValeAvulso).order_by(ValeAvulso.data_pagamento.desc())).all()
+    pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
+    empreitadas = {e.id: e.descricao for e in session.exec(select(Empreitada)).all()}
+    contratos = {c.id: c.descricao for c in session.exec(select(Contrato)).all()}
+    saida = []
+    for v in vales:
+        if v.origem_tipo == "empreitada":
+            origem_descricao = f"Empreitada — {empreitadas.get(v.origem_id, '—')}"
+        elif v.origem_tipo == "contrato":
+            origem_descricao = f"Contrato — {contratos.get(v.origem_id, '—')}"
+        else:
+            origem_descricao = "Diária"
+        saida.append({
+            **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"), "origem_descricao": origem_descricao,
+        })
+    return saida
+
+
+@router.put("/vale-avulso/{vale_id}")
+def atualizar_vale_avulso(vale_id: int, dados: ValeAvulsoIn, session: Session = Depends(get_session)) -> dict:
+    vale = session.get(ValeAvulso, vale_id)
+    if not vale:
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
+        raise HTTPException(status_code=400, detail="Tipo de origem inválido")
+    if dados.valor <= 0:
+        raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
+    if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE_AVULSO:
+        raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
+    if dados.origem_tipo != vale.origem_tipo or dados.origem_id != vale.origem_id:
+        raise HTTPException(status_code=400, detail="Não é possível trocar a origem (Empreitada/Contrato/Diária) de um vale já lançado")
+
+    _reverter_vale_avulso(session, vale_id)
+    session.commit()
+
+    vale.valor = dados.valor
+    vale.forma_pagamento = dados.forma_pagamento
+    vale.data_pagamento = dados.data_pagamento
+    vale.observacao = dados.observacao
+    session.add(vale)
+    session.commit()
+
+    _aplicar_vale_avulso(session, vale_id, dados.origem_tipo, dados.origem_id, dados.valor)
+    session.commit()
+    session.refresh(vale)
+    return vale.model_dump()
+
+
+@router.delete("/vale-avulso/{vale_id}")
+def excluir_vale_avulso(vale_id: int, session: Session = Depends(get_session)) -> dict:
+    vale = session.get(ValeAvulso, vale_id)
+    if not vale:
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    _reverter_vale_avulso(session, vale_id)
+    session.delete(vale)
+    session.commit()
+    return {"ok": True}
 
 
 

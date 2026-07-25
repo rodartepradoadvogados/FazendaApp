@@ -5,6 +5,7 @@ import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
   fetchVales, criarVale, atualizarVale, excluirVale, ehAdmin, formatBRL,
+  fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -177,10 +178,24 @@ export default function FolhaPagamentoView() {
   const [excluindoValeId, setExcluindoValeId] = useState<number | null>(null);
   const [excluirValeErro, setExcluirValeErro] = useState<string | null>(null);
 
+  // Vale avulso (Empreitada/Contrato/Diária) — mesma seção de relatório, tabela própria.
+  const [valesAvulsos, setValesAvulsos] = useState<any[] | null>(null);
+  const [expandedValeAvulsoId, setExpandedValeAvulsoId] = useState<number | null>(null);
+  const [editingValeAvulsoId, setEditingValeAvulsoId] = useState<number | null>(null);
+  const [editValeAvulsoValor, setEditValeAvulsoValor] = useState("");
+  const [editValeAvulsoFormaPagamento, setEditValeAvulsoFormaPagamento] = useState("dinheiro");
+  const [editValeAvulsoDataPagamento, setEditValeAvulsoDataPagamento] = useState("");
+  const [editValeAvulsoObservacao, setEditValeAvulsoObservacao] = useState("");
+  const [editValeAvulsoSalvando, setEditValeAvulsoSalvando] = useState(false);
+  const [editValeAvulsoMsg, setEditValeAvulsoMsg] = useState<string | null>(null);
+  const [excluindoValeAvulsoId, setExcluindoValeAvulsoId] = useState<number | null>(null);
+  const [excluirValeAvulsoErro, setExcluirValeAvulsoErro] = useState<string | null>(null);
+
   const carregar = () => fetchFolhaPagamento().then(setRegs).catch((e) => setError(e.message));
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
-  useEffect(() => { carregar(); carregarUnificada(); carregarVales(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+  const carregarValesAvulsos = () => fetchValesAvulsos().then(setValesAvulsos).catch(() => {});
+  useEffect(() => { carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
 
   async function excluirLinha(linha: LinhaFolhaUnificada) {
     const chave = `${linha.tipo}-${linha.origem_subtipo}-${linha.origem_id}`;
@@ -283,6 +298,58 @@ export default function FolhaPagamentoView() {
       setExcluirValeErro(e.message || "Erro ao excluir vale");
     } finally {
       setExcluindoValeId(null);
+    }
+  }
+
+  const valesAvulsosFiltrados = useMemo(() => (valesAvulsos || []).filter((v: any) =>
+    (!fValeDe || v.data_pagamento >= fValeDe) &&
+    (!fValeAte || v.data_pagamento <= fValeAte) &&
+    (!fValePessoa || String(v.pessoa_id) === fValePessoa)
+  ), [valesAvulsos, fValeDe, fValeAte, fValePessoa]);
+  const { linhasOrdenadas: valesAvulsosOrdenados, coluna: valeAvulsoColuna, dir: valeAvulsoDir, ordenar: valeAvulsoOrdenar } = useOrdenacao(valesAvulsosFiltrados);
+
+  function iniciarEdicaoValeAvulso(v: any) {
+    setEditingValeAvulsoId(v.id);
+    setExpandedValeAvulsoId(v.id);
+    setEditValeAvulsoValor(String(v.valor));
+    setEditValeAvulsoFormaPagamento(v.forma_pagamento);
+    setEditValeAvulsoDataPagamento(v.data_pagamento);
+    setEditValeAvulsoObservacao(v.observacao || "");
+    setEditValeAvulsoMsg(null);
+  }
+
+  async function salvarEdicaoValeAvulso(v: any) {
+    setEditValeAvulsoMsg(null);
+    if (!editValeAvulsoValor || parseFloat(editValeAvulsoValor) <= 0) { setEditValeAvulsoMsg("Informe o valor do vale."); return; }
+    setEditValeAvulsoSalvando(true);
+    try {
+      await atualizarValeAvulso(v.id, {
+        origem_tipo: v.origem_tipo, origem_id: v.origem_id, valor: parseFloat(editValeAvulsoValor),
+        forma_pagamento: editValeAvulsoFormaPagamento, data_pagamento: editValeAvulsoDataPagamento,
+        observacao: editValeAvulsoObservacao || undefined,
+      });
+      setEditingValeAvulsoId(null);
+      setExpandedValeAvulsoId(null);
+      carregarValesAvulsos(); carregarUnificada();
+    } catch (e: any) {
+      setEditValeAvulsoMsg(e.message || "Erro ao editar vale");
+    } finally {
+      setEditValeAvulsoSalvando(false);
+    }
+  }
+
+  async function excluirValeAvulsoHandler(v: any) {
+    if (!window.confirm("Excluir este vale? O valor abatido da(s) parcela(s)/etapa(s) pendente(s) será revertido.")) return;
+    setExcluirValeAvulsoErro(null);
+    setExcluindoValeAvulsoId(v.id);
+    try {
+      await excluirValeAvulso(v.id);
+      if (expandedValeAvulsoId === v.id) setExpandedValeAvulsoId(null);
+      carregarValesAvulsos(); carregarUnificada();
+    } catch (e: any) {
+      setExcluirValeAvulsoErro(e.message || "Erro ao excluir vale");
+    } finally {
+      setExcluindoValeAvulsoId(null);
     }
   }
 
@@ -982,6 +1049,84 @@ export default function FolhaPagamentoView() {
             </tbody>
           </table>
         </div>
+
+        <p style={{ fontSize: "0.82rem", fontWeight: 600, margin: "1.25rem 0 0.5rem" }}>Vales de empreitada, contrato e diária</p>
+        {excluirValeAvulsoErro && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{excluirValeAvulsoErro}</p>}
+        <div className="overflow-x-auto">
+          <table className="fazenda-table">
+            <thead><tr>
+              <th style={{ width: "1.5rem" }} />
+              <ThOrdenavel label="Data" campo="data_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdenavel label="Pessoa" campo="pessoa_nome" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdenavel label="Origem" campo="origem_descricao" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <ThOrdenavel label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
+              <ThOrdenavel label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <th>Ações</th>
+            </tr></thead>
+            <tbody>
+              {valesAvulsosOrdenados.map((v: any) => (
+                <Fragment key={v.id}>
+                <tr style={{ cursor: "pointer" }} onClick={() => setExpandedValeAvulsoId(expandedValeAvulsoId === v.id ? null : v.id)}>
+                  <td>{expandedValeAvulsoId === v.id ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{v.data_pagamento ? v.data_pagamento.split("-").reverse().join("/") : "—"}</td>
+                  <td style={{ fontSize: "0.82rem" }}>{v.pessoa_nome}</td>
+                  <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{v.origem_descricao}</td>
+                  <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor)}</td>
+                  <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE_AVULSO.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
+                  <td>
+                    <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                      disabled={excluindoValeAvulsoId === v.id}
+                      onClick={(e) => { e.stopPropagation(); excluirValeAvulsoHandler(v); }}>
+                      <Trash2 size={13} />
+                    </button>
+                  </td>
+                </tr>
+                {expandedValeAvulsoId === v.id && (
+                  <tr>
+                    <td colSpan={7} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                      {editingValeAvulsoId === v.id ? (
+                        <div>
+                          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Origem</label>
+                              <input style={selStyleLote} value={v.origem_descricao} disabled /></div>
+                            <div><label style={labelStyleLote}>Valor (R$)</label>
+                              <input type="number" inputMode="decimal" style={selStyleLote} value={editValeAvulsoValor} onChange={(e) => setEditValeAvulsoValor(e.target.value)} /></div>
+                            <div><label style={labelStyleLote}>Forma de pagamento</label>
+                              <select style={selStyleLote} value={editValeAvulsoFormaPagamento} onChange={(e) => setEditValeAvulsoFormaPagamento(e.target.value)}>
+                                {FORMAS_VALE_AVULSO.map((f) => <option key={f.value} value={f.value}>{f.label}</option>)}
+                              </select></div>
+                            <div><label style={labelStyleLote}>Data do pagamento</label>
+                              <input type="date" style={selStyleLote} value={editValeAvulsoDataPagamento} onChange={(e) => setEditValeAvulsoDataPagamento(e.target.value)} /></div>
+                          </div>
+                          <div className="grid grid-cols-1 gap-3 mb-3">
+                            <div><label style={labelStyleLote}>Observação</label>
+                              <input style={selStyleLote} value={editValeAvulsoObservacao} onChange={(e) => setEditValeAvulsoObservacao(e.target.value)} /></div>
+                          </div>
+                          {editValeAvulsoMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeAvulsoMsg}</p>}
+                          <div style={{ display: "flex", gap: "0.5rem" }}>
+                            <button className="btn-primary" disabled={editValeAvulsoSalvando} onClick={() => salvarEdicaoValeAvulso(v)}>
+                              <Check size={14} /> {editValeAvulsoSalvando ? "Salvando…" : "Salvar"}
+                            </button>
+                            <button className="btn-ghost" onClick={() => { setEditingValeAvulsoId(null); setExpandedValeAvulsoId(null); }}>Cancelar</button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div>
+                          {v.observacao && <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginBottom: "0.5rem" }}>Observação: {v.observacao}</p>}
+                          <button className="btn-ghost" onClick={() => iniciarEdicaoValeAvulso(v)}>
+                            <Pencil size={12} /> Editar vale
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                )}
+                </Fragment>
+              ))}
+              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
+            </tbody>
+          </table>
+        </div>
       </SecaoRecolhivel>
     </div>
   );
@@ -990,6 +1135,11 @@ export default function FolhaPagamentoView() {
 const FORMAS_VALE = [
   { value: "dinheiro", label: "Dinheiro" }, { value: "pix", label: "Pix" },
   { value: "transferencia", label: "Transferência" }, { value: "desconto_integral_folha", label: "Desconto integral na próxima folha" },
+];
+
+const FORMAS_VALE_AVULSO = [
+  { value: "dinheiro", label: "Dinheiro" }, { value: "pix", label: "Pix" },
+  { value: "transferencia", label: "Transferência" }, { value: "desconto_proximo_pagamento", label: "Descontar do próximo pagamento" },
 ];
 
 /**
