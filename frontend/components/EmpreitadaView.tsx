@@ -6,7 +6,10 @@
 // listagem das etapas já lançadas. Nenhum endpoint mudou.
 import { useEffect, useMemo, useState } from "react";
 import { Plus, Trash2, CheckCircle2 } from "lucide-react";
-import { fetchPessoas, fetchEmpreitadas, criarEmpreitada, concluirEtapaEmpreitada, formatBRL } from "@/lib/api";
+import {
+  fetchPessoas, fetchEmpreitadas, criarEmpreitada, concluirEtapaEmpreitada, formatBRL,
+  atualizarParcelaEmpreitada, redistribuirParcelasEmpreitada,
+} from "@/lib/api";
 import CadastroAvulsoParceladoGenerico, { type ParcelaAvulsa, type ValeItemAvulso } from "@/components/CadastroAvulsoParceladoGenerico";
 import { inputSm } from "@/components/estiloCampoAvulso";
 
@@ -124,6 +127,8 @@ export default function EmpreitadaView() {
       }}
       tituloVale="Vale de empreita" descricaoVale="Adiantamento abatido da próxima parcela/etapa pendente"
       valeOrigemTipo="empreitada" valeStatusExcluido="concluida"
+      onEditarParcela={atualizarParcelaEmpreitada}
+      onRedistribuirParcelas={redistribuirParcelasEmpreitada}
       tituloListagem="Empreitas lançadas" textoVazioListagem="Nenhuma empreita lançada ainda."
       statusLabel={(status) => (status === "concluida" ? "concluída" : "em andamento")}
       renderItemExtra={(item) => (
