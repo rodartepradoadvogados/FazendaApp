@@ -1,18 +1,16 @@
 "use client";
-// Sub-tela: Menu > Rebanho — painel de indicadores do rebanho (só leitura).
-// O 1º card ("Rebanho") abre a aba Rebanho de verdade (mesma do rodapé); os
-// demais abrem uma lista de animais por trás do número, só com os campos
-// pertinentes ao indicador (nunca Raça, nunca Nome ao lado de Número).
-import { useRouter } from "next/navigation";
+// Sub-tela: Rebanho > Indicadores — painel de indicadores do rebanho (só
+// leitura). Cada card abre uma lista de animais por trás do número, só com
+// os campos pertinentes ao indicador (nunca Raça, nunca Nome ao lado de
+// Número).
 import { useState } from "react";
 import { ChevronRight } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
-import { CowIcon } from "@/components/CowIcon";
 import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, formatDate } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
 
-type Indicadores = {
+type IndicadoresResp = {
   rebanho?: { total?: number | null };
   reproducao?: {
     prenhes?: number | null; inseminadas?: number | null; vazias?: number | null; aptas?: number | null;
@@ -88,9 +86,8 @@ function LinhaAnimal({ campos, onVerAnimal }: { campos: React.ReactNode; onVerAn
   );
 }
 
-export default function RebanhoDashboard({ onVoltar }: { onVoltar: () => void }) {
-  const router = useRouter();
-  const { dados, doCache, carregando } = useCarregar<Indicadores>("menu_rebanho_dash", fetchIndicadores);
+export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
+  const { dados, doCache, carregando } = useCarregar<IndicadoresResp>("menu_rebanho_dash", fetchIndicadores);
   const animaisReq = useCarregar<Animal[]>("menu_rebanho_dash_animais", () => fetchAnimais() as Promise<Animal[]>);
   const secagemReq = useCarregar<Record<string, ItemSecagem[]>>("menu_rebanho_dash_secagem", fetchRelatoriosManejo);
   const [drill, setDrill] = useState<Drill | null>(null);
@@ -244,14 +241,12 @@ export default function RebanhoDashboard({ onVoltar }: { onVoltar: () => void })
   }
 
   // ── Painel de cards ──────────────────────────────────────────────────────
-  const reb = dados?.rebanho || {};
   const rep = dados?.reproducao || {};
   const pev = dados?.reproducao_categorias?.todas?.pev;
   const prod = dados?.producao || {};
 
   type Cartao = { chave: string; titulo: string; valor: string; sufixo?: string; onClick: () => void; combo?: { valor: string; rotulo: string }[] };
   const cartoes: Cartao[] = [
-    { chave: "rebanho", titulo: "Rebanho", valor: val(reb.total), onClick: () => router.push("/app/rebanho") },
     { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes") },
     { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas") },
     { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev") },
@@ -272,7 +267,7 @@ export default function RebanhoDashboard({ onVoltar }: { onVoltar: () => void })
 
   return (
     <div>
-      <MobVoltar titulo="Rebanho" onVoltar={onVoltar} />
+      <MobVoltar titulo="Indicadores" onVoltar={onVoltar} />
       <AvisoCopia chave="menu_rebanho_dash" mostrar={doCache} />
 
       {carregando && !dados ? (
@@ -284,9 +279,6 @@ export default function RebanhoDashboard({ onVoltar }: { onVoltar: () => void })
           {cartoes.map((c) => (
             <button key={c.chave} type="button" onClick={c.onClick}
               className="mob-card" style={{ padding: "1rem 0.9rem", textAlign: "center", cursor: "pointer", border: "1px solid var(--mob-border)", gridColumn: c.combo ? "1 / -1" : undefined }}>
-              {c.chave === "rebanho" && (
-                <div style={{ display: "flex", justifyContent: "center", marginBottom: "0.3rem" }}><CowIcon size={22} /></div>
-              )}
               {c.combo ? (
                 <div style={{ display: "flex", justifyContent: "space-around" }}>
                   {c.combo.map((x) => (
@@ -301,7 +293,7 @@ export default function RebanhoDashboard({ onVoltar }: { onVoltar: () => void })
               )}
               <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
               <div style={{ fontSize: "0.68rem", color: "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
-                {c.chave === "rebanho" ? "abrir" : "ver lista"} <ChevronRight size={12} />
+                ver lista <ChevronRight size={12} />
               </div>
             </button>
           ))}

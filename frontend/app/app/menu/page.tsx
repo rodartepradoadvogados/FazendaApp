@@ -16,7 +16,6 @@ import {
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
-import { CowIcon } from "@/components/CowIcon";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import AgendaVet from "@/components/mobile/menu/AgendaVet";
@@ -39,7 +38,6 @@ import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
-import RebanhoDashboard from "@/components/mobile/menu/RebanhoDashboard";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -95,7 +93,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "portal" | "rebanhoDash" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -149,10 +147,6 @@ export default function Pagina() {
     ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
 
-  if (secaoAberta === "rebanhoDash") {
-    return <RebanhoDashboard onVoltar={() => setSecaoAberta(null)} />;
-  }
-
   if (secaoAberta === "estoque") {
     return <Estoque onVoltar={() => setSecaoAberta(null)} />;
   }
@@ -198,7 +192,6 @@ export default function Pagina() {
   // Acesso" só aparece para o proprietário (ver ehDono()) — já reúne últimos
   // acessos + auditoria de atividade, então não há uma aba separada para isso.
   const secoesOpcoes: OpcaoAcao[] = [
-    { id: "rebanhoDash", label: "Rebanho", icone: <CowIcon size={26} />, cor: "var(--mob-vinho)" },
     ...grupos.map((g) => ({ id: g.secao as string, label: g.titulo, icone: g.iconeSecao, cor: g.cor })),
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
@@ -214,7 +207,7 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "rebanhoDash")}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso")}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}
