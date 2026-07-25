@@ -11,7 +11,9 @@ from fastapi import Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 
 class NomeAtivoIn(BaseModel):
@@ -19,19 +21,35 @@ class NomeAtivoIn(BaseModel):
     ativo: bool = True
 
 
-def _crud_nome_ativo(model):
-    """Fábrica de CRUD idêntico para os 3 cadastros simples (nome + ativo)."""
+def _crud_nome_ativo(model, com_fazenda: bool = False):
+    """Fábrica de CRUD idêntico para os cadastros simples (nome + ativo).
 
-    def listar(session: Session = Depends(get_session)) -> list[dict]:
-        return [m.model_dump() for m in session.exec(select(model).order_by(model.nome)).all()]
+    `com_fazenda=True` para os modelos que já têm fazenda_id (unique(nome,
+    fazenda_id) em vez de unique(nome) global) — filtra a listagem e a
+    checagem de duplicata pela fazenda atual, e carimba fazenda_id no
+    registro criado. Os demais (sem fazenda_id na tabela) ignoram o parâmetro.
+    """
 
-    def criar(dados: NomeAtivoIn, session: Session = Depends(get_session)) -> dict:
+    def listar(session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> list[dict]:
+        query = select(model).order_by(model.nome)
+        if com_fazenda:
+            fazenda_id = fazenda_id_seguro(fazenda_id)
+            if fazenda_id is not None:
+                query = query.where(model.fazenda_id == fazenda_id)
+        return [m.model_dump() for m in session.exec(query).all()]
+
+    def criar(dados: NomeAtivoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)) -> dict:
         nome = dados.nome.strip()
         if not nome:
             raise HTTPException(status_code=400, detail="Nome é obrigatório")
-        if session.exec(select(model).where(model.nome == nome)).first():
+        query_dup = select(model).where(model.nome == nome)
+        if com_fazenda:
+            fazenda_id = fazenda_id_seguro(fazenda_id)
+            if fazenda_id is not None:
+                query_dup = query_dup.where(model.fazenda_id == fazenda_id)
+        if session.exec(query_dup).first():
             raise HTTPException(status_code=409, detail=f"Já existe um registro com o nome '{nome}'")
-        obj = model(nome=nome, ativo=dados.ativo)
+        obj = model(nome=nome, ativo=dados.ativo, **({"fazenda_id": fazenda_id} if com_fazenda else {}))
         session.add(obj)
         session.commit()
         session.refresh(obj)

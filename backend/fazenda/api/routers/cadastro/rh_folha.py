@@ -16,13 +16,13 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, Pessoa, Usuario, ValeFuncionario, ValeParcela,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
 from fazenda.rules.parametros import (
     dias_ferias_padrao,
@@ -157,7 +157,7 @@ def _marcar_vale_aplicado(session: Session, pessoa_id: int, competencia: str) ->
         session.add(p)
 
 
-def _gerar_folha_recorrente(session: Session) -> None:
+def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> None:
     """
     Para cada lançamento de folha marcado como recorrente (o "modelo"), gera
     automaticamente os lançamentos das competências seguintes até o mês atual
@@ -205,6 +205,7 @@ def _gerar_folha_recorrente(session: Session) -> None:
                     valor_total=valor_liquido,
                     parcela_num=1, parcela_total=1,
                     tipo="despesa", origem="auto",
+                    fazenda_id=fazenda_id,
                 ))
                 session.commit()
             competencia = _competencia_seguinte(competencia)
@@ -249,8 +250,11 @@ def _detalhe_folha(session: Session, registro: FolhaPagamento) -> list[dict]:
 
 
 @router.get("/folha-pagamento")
-def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict]:
-    _gerar_folha_recorrente(session)
+def listar_folha_pagamento(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id)
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _gerar_folha_recorrente(session, fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
 
@@ -308,7 +312,13 @@ def listar_folha_pagamento(session: Session = Depends(get_session)) -> list[dict
 
 
 @router.post("/folha-pagamento")
-def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_folha_pagamento(
+    dados: FolhaPagamentoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -359,6 +369,7 @@ def criar_folha_pagamento(dados: FolhaPagamentoIn, session: Session = Depends(ge
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=valor_liquido if dados.status == "pago" else None,
+        fazenda_id=fazenda_id,
     ))
     session.commit()
     session.refresh(registro)
@@ -529,7 +540,10 @@ def preview_guias_fgts_dctf(competencia: str, session: Session = Depends(get_ses
 
 @router.post("/folha-pagamento/gerar-guias")
 def gerar_guias_fgts_dctf(
-    dados: GerarGuiasFgtsDctfIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+    dados: GerarGuiasFgtsDctfIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Cria as DUAS contas a pagar consolidadas (Guia FGTS e Guia DCTF) de uma
@@ -540,6 +554,7 @@ def gerar_guias_fgts_dctf(
     guias já existirem para a competência, aponta para editá-las em Contas a
     Pagar em vez de gerar de novo.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if _guias_ja_geradas(session, dados.competencia):
         raise HTTPException(
             status_code=400,
@@ -578,6 +593,7 @@ def gerar_guias_fgts_dctf(
             parcela_num=1, parcela_total=1,
             tipo="despesa", origem="auto",
             usuario_id=user.id,
+            fazenda_id=fazenda_id,
         )
         session.add(conta_fgts)
         contas_criadas.append(conta_fgts)
@@ -594,6 +610,7 @@ def gerar_guias_fgts_dctf(
             parcela_num=1, parcela_total=1,
             tipo="despesa", origem="auto",
             usuario_id=user.id,
+            fazenda_id=fazenda_id,
         )
         session.add(conta_dctf)
         contas_criadas.append(conta_dctf)
@@ -654,7 +671,13 @@ def listar_ferias(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/ferias")
-def criar_ferias(dados: FeriasIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_ferias(
+    dados: FeriasIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -692,6 +715,7 @@ def criar_ferias(dados: FeriasIn, session: Session = Depends(get_session), user:
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+        fazenda_id=fazenda_id,
     ))
     session.commit()
     session.refresh(registro)
@@ -812,7 +836,13 @@ def listar_decimo_terceiro(session: Session = Depends(get_session)) -> list[dict
 
 
 @router.post("/decimo-terceiro")
-def criar_decimo_terceiro(dados: DecimoTerceiroIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_decimo_terceiro(
+    dados: DecimoTerceiroIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -850,6 +880,7 @@ def criar_decimo_terceiro(dados: DecimoTerceiroIn, session: Session = Depends(ge
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=valor_liquido if dados.status == "pago" else None,
+        fazenda_id=fazenda_id,
     ))
     session.commit()
     session.refresh(registro)
@@ -1015,7 +1046,13 @@ def listar_rescisoes(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/rescisao")
-def criar_rescisao(dados: RescisaoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_rescisao(
+    dados: RescisaoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa, calculo = _calcular_rescisao_pessoa(dados, session)
 
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_desligamento.year)
@@ -1032,6 +1069,7 @@ def criar_rescisao(dados: RescisaoIn, session: Session = Depends(get_session), u
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
         valor_pago=calculo["valor_total"] if dados.status == "pago" else None,
+        fazenda_id=fazenda_id,
     )
     session.add(conta)
     session.commit()

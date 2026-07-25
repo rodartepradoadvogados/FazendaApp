@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Serviço (IA / IATF / Cobertura)
@@ -63,6 +63,7 @@ class Servico(SQLModel, table=True):
     # ver popup de vínculo sanitário/reprodutivo, disparado ao salvar o
     # diagnóstico (data_diagnostico == data_servico == D0 do protocolo IATF).
     numero_lancamento_vinculado: Optional[str] = Field(default=None, index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -82,6 +83,7 @@ class TipoServicoReprodutivo(SQLModel, table=True):
     nome: str = Field(index=True, unique=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class MetodoServicoReprodutivo(SQLModel, table=True):
@@ -95,6 +97,7 @@ class MetodoServicoReprodutivo(SQLModel, table=True):
     codigo_interno: Optional[str] = None  # "monta_natural" | "cio_natural" | "iatf" | None (customizado)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -121,6 +124,7 @@ class ProtocoloIatfLancamento(SQLModel, table=True):
     retroativo: bool = Field(default=False)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloIatfAplicacao(SQLModel, table=True):
@@ -136,6 +140,7 @@ class ProtocoloIatfAplicacao(SQLModel, table=True):
     data_prevista: date
     realizada: bool = False
     data_realizacao: Optional[date] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ProtocoloIatfHormonio(SQLModel, table=True):
@@ -155,6 +160,7 @@ class ProtocoloIatfHormonio(SQLModel, table=True):
     dose: Optional[float] = None
     unidade: Optional[str] = None
     via: Optional[str] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +188,7 @@ class Parto(SQLModel, table=True):
     gemelar_sexo: Optional[str] = None
     retencao_placenta: Optional[bool] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -194,10 +201,14 @@ class ColostragemBezerra(SQLModel, table=True):
     """Registro de colostragem e teste de sangue (IgG) de uma cria."""
 
     __tablename__ = "colostragem_bezerra"
+    # numero_animal era único globalmente (uq antigo, dropado na migração de
+    # fazenda_id) — passa a ser único por fazenda, senão a 2ª fazenda nunca
+    # conseguiria cadastrar colostragem de uma cria com o mesmo número da 1ª.
+    __table_args__ = (UniqueConstraint("numero_animal", "fazenda_id", name="uq_colostragem_bezerra_numero_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
-    numero_animal: str = Field(index=True, unique=True)
+    numero_animal: str = Field(index=True)
     tomou_colostro: Optional[bool] = None
     litros_colostro: Optional[float] = None
     brix_colostro: Optional[float] = None  # Ouro >25% · Prata 18-25% · Bronze <18%
@@ -215,3 +226,4 @@ class ColostragemBezerra(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

@@ -16,11 +16,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Doenca, PrincipioAtivo, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa, ProtocoloSanitario,
     ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, SeedFlag,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 logger = logging.getLogger(__name__)
 
@@ -89,24 +91,36 @@ def _serializar_protocolo(session: Session, p: ProtocoloSanitario, doencas: dict
 
 
 @router.get("/protocolos-sanitarios")
-def listar_protocolos_sanitarios(session: Session = Depends(get_session)) -> list[dict]:
+def listar_protocolos_sanitarios(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     doencas = {d.id: d.nome for d in session.exec(select(Doenca)).all()}
-    protocolos = session.exec(select(ProtocoloSanitario).order_by(ProtocoloSanitario.nome)).all()
+    query = select(ProtocoloSanitario).order_by(ProtocoloSanitario.nome)
+    if fazenda_id is not None:
+        query = query.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+    protocolos = session.exec(query).all()
     return [_serializar_protocolo(session, p, doencas) for p in protocolos]
 
 
 @router.post("/protocolos-sanitarios")
-def criar_protocolo_sanitario(dados: ProtocoloSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def criar_protocolo_sanitario(
+    dados: ProtocoloSanitarioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first():
+    query_dup = select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um protocolo com o nome '{nome}'")
     _validar_etapas(dados.etapas)
 
     protocolo = ProtocoloSanitario(
         nome=nome, doenca_id=dados.doenca_id, eh_mastite=dados.eh_mastite,
-        dia_inicial=dados.dia_inicial, ativo=dados.ativo,
+        dia_inicial=dados.dia_inicial, ativo=dados.ativo, fazenda_id=fazenda_id,
     )
     session.add(protocolo)
     session.commit()
@@ -150,18 +164,25 @@ def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn
 
 def _upsert_protocolo_sanitario(
     session: Session, nome: str, etapas: list[dict], *, doenca_id: int | None = None, eh_mastite: bool | None = None,
+    fazenda_id: int | None = None,
 ) -> ProtocoloSanitario:
     """Cria o protocolo se ele ainda não existir, ou substitui as etapas se já
     existir (mesma regra do PUT manual) — usado tanto pela importação de
-    planilha quanto pelo cadastro automático dos protocolos padrão."""
+    planilha (fazenda_id da requisição) quanto pelo cadastro automático dos
+    protocolos padrão no startup (sem fazenda_id — dado legado/compartilhado,
+    mesmo padrão de seed_cadastro_sanitario)."""
     etapas_in = [ProtocoloEtapaIn(**e) for e in etapas]
     _validar_etapas(etapas_in)
 
-    protocolo = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first()
+    query_dup = select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+    protocolo = session.exec(query_dup).first()
     if protocolo is None:
         protocolo = ProtocoloSanitario(
             nome=nome, doenca_id=doenca_id,
             eh_mastite=eh_mastite if eh_mastite is not None else ("mastite" in nome.lower()),
+            fazenda_id=fazenda_id,
         )
         session.add(protocolo)
         session.commit()
@@ -320,7 +341,11 @@ def ler_planilha_protocolos_sanitarios(content: bytes, filename: str | None) -> 
 
 
 @router.post("/protocolos-sanitarios/importar")
-async def importar_protocolos_sanitarios(file: UploadFile = File(...), session: Session = Depends(get_session)) -> dict:
+async def importar_protocolos_sanitarios(
+    file: UploadFile = File(...), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     conteudo = await file.read()
     protocolos = ler_planilha_protocolos_sanitarios(conteudo, file.filename)
     if not protocolos:
@@ -332,9 +357,12 @@ async def importar_protocolos_sanitarios(file: UploadFile = File(...), session: 
     criados, atualizados, erros = [], [], []
     for nome, etapas in protocolos.items():
         etapas.sort(key=lambda e: e["dia"])
-        existia = session.exec(select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)).first() is not None
+        query_dup = select(ProtocoloSanitario).where(ProtocoloSanitario.nome == nome)
+        if fazenda_id is not None:
+            query_dup = query_dup.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+        existia = session.exec(query_dup).first() is not None
         try:
-            _upsert_protocolo_sanitario(session, nome, etapas)
+            _upsert_protocolo_sanitario(session, nome, etapas, fazenda_id=fazenda_id)
             (atualizados if existia else criados).append(nome)
         except HTTPException as e:
             erros.append(f"{nome}: {e.detail}")
@@ -394,22 +422,35 @@ def _serializar_protocolo_inducao(session: Session, p: ProtocoloInducaoLactacao)
 
 
 @router.get("/protocolos-inducao-lactacao")
-def listar_protocolos_inducao(session: Session = Depends(get_session)) -> list[dict]:
-    protocolos = session.exec(select(ProtocoloInducaoLactacao).order_by(ProtocoloInducaoLactacao.nome)).all()
+def listar_protocolos_inducao(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ProtocoloInducaoLactacao).order_by(ProtocoloInducaoLactacao.nome)
+    if fazenda_id is not None:
+        query = query.where(ProtocoloInducaoLactacao.fazenda_id == fazenda_id)
+    protocolos = session.exec(query).all()
     return [_serializar_protocolo_inducao(session, p) for p in protocolos]
 
 
 @router.post("/protocolos-inducao-lactacao")
-def criar_protocolo_inducao(dados: ProtocoloInducaoIn, session: Session = Depends(get_session)) -> dict:
+def criar_protocolo_inducao(
+    dados: ProtocoloInducaoIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.nome == nome)).first():
+    query_dup = select(ProtocoloInducaoLactacao).where(ProtocoloInducaoLactacao.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(ProtocoloInducaoLactacao.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um protocolo com o nome '{nome}'")
     _validar_etapas_inducao(dados.etapas)
 
     protocolo = ProtocoloInducaoLactacao(
         nome=nome, dia_inicial=dados.dia_inicial, observacao=dados.observacao, ativo=dados.ativo,
+        fazenda_id=fazenda_id,
     )
     session.add(protocolo)
     session.commit()

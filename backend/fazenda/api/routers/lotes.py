@@ -88,6 +88,38 @@ def _validar_faixas(dados: LoteIn) -> None:
     for minimo, maximo, nome in pares:
         if minimo is not None and maximo is not None and minimo > maximo:
             raise HTTPException(status_code=400, detail=f"{nome} mínimo não pode ser maior que o máximo")
+    # "Pré-parto" e "Secas" (status_lactacao="seca") são identidades
+    # exclusivas — o mesmo lote não pode ser as duas coisas ao mesmo tempo
+    # (ver _lote_das_secas em producao.py e lote_pre_parto em
+    # cadastro/sanitario.py, que buscam UM lote por flag). Sem essa checagem,
+    # um cadastro errado (ex.: marcar as duas caixas no mesmo lote) fica
+    # silencioso até aparecer como "nome errado" numa sugestão de secagem.
+    if dados.pre_parto and dados.status_lactacao == "seca":
+        raise HTTPException(
+            status_code=400,
+            detail="Um lote não pode ser 'Pré-parto' e 'Secas' (status de lactação = seca) ao mesmo tempo — são identidades exclusivas.",
+        )
+
+
+def _validar_flags_unicos(session: Session, dados: LoteIn, lote_id: int | None) -> None:
+    """Só pode haver UM lote com pre_parto=True e UM com status_lactacao="seca"
+    — várias regras (secagem, calendário sanitário) buscam "o" lote por essa
+    flag com `.first()`; um segundo lote com a mesma flag faria a sugestão
+    virar silenciosamente para o lote errado, sem erro nenhum."""
+    outros = session.exec(select(Lote)).all()
+    for outro in outros:
+        if outro.id == lote_id:
+            continue
+        if dados.pre_parto and outro.pre_parto:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Já existe um lote marcado como Pré-parto ({_rotulo(outro.codigo, outro.nome)}) — desmarque-o antes de marcar este.",
+            )
+        if dados.status_lactacao == "seca" and outro.status_lactacao == "seca":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Já existe um lote com status de lactação = Seca ({_rotulo(outro.codigo, outro.nome)}) — altere-o antes de marcar este.",
+            )
 
 
 def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
@@ -134,6 +166,7 @@ def listar_lotes(session: Session = Depends(get_session)) -> list[dict]:
 @router.post("/")
 def criar_lote(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
     _validar_faixas(dados)
+    _validar_flags_unicos(session, dados, lote_id=None)
     codigo = _normalizar_codigo(dados.codigo)
     if not codigo or not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
@@ -155,6 +188,7 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     lote = session.get(Lote, lote_id)
     if not lote:
         raise HTTPException(status_code=404, detail="Lote não encontrado")
+    _validar_flags_unicos(session, dados, lote_id=lote_id)
 
     codigo_novo = _normalizar_codigo(dados.codigo) if dados.codigo.strip() else lote.codigo
     if codigo_novo != lote.codigo:

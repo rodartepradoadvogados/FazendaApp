@@ -16,13 +16,14 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, exigir_admin
+from fazenda.auth import get_current_user, exigir_admin, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, ContaGerencial, Contrato, ContratoParcela, Diaria, DiariaAuditoria, DiariaPagamento, Empreitada,
     EmpreitadaEtapa, EmpreitadaParcela, ParametroDiariaPadrao, Pessoa, Usuario, ValeAvulso,
 )
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 from .rh_folha import _competencia_seguinte, listar_folha_pagamento
 
@@ -230,7 +231,11 @@ def listar_empreitadas(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/empreitadas")
-def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_empreitada(
+    dados: EmpreitadaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -268,6 +273,7 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
                 valor_total=parcela.valor,
                 parcela_num=1, parcela_total=1,
                 tipo="despesa", origem="auto",
+                fazenda_id=fazenda_id,
             ))
     else:
         for i, etapa in enumerate(dados.etapas):
@@ -278,7 +284,8 @@ def criar_empreitada(dados: EmpreitadaIn, session: Session = Depends(get_session
 
 @router.put("/empreitadas/{empreitada_id}/etapas/{etapa_id}/concluir")
 def concluir_etapa_empreitada(
-    empreitada_id: int, etapa_id: int, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+    empreitada_id: int, etapa_id: int, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Marca uma etapa como concluída e lança a conta a pagar correspondente no
@@ -286,6 +293,7 @@ def concluir_etapa_empreitada(
     a partir da própria data_vencimento da conta) e em Contas a Pagar, para
     análise/pagamento.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     etapa = session.get(EmpreitadaEtapa, etapa_id)
     if not etapa or etapa.empreitada_id != empreitada_id:
         raise HTTPException(status_code=404, detail="Etapa não encontrada")
@@ -315,6 +323,7 @@ def concluir_etapa_empreitada(
         valor_total=etapa.valor,
         parcela_num=1, parcela_total=1,
         tipo="despesa", origem="auto",
+        fazenda_id=fazenda_id,
     ))
     # Autoflush reflete etapa.concluida=True antes desta consulta — se não
     # sobrar nenhuma etapa pendente, a empreitada como um todo está concluída.
@@ -398,7 +407,11 @@ def listar_contratos(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/contratos")
-def criar_contrato(dados: ContratoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_contrato(
+    dados: ContratoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
@@ -434,6 +447,7 @@ def criar_contrato(dados: ContratoIn, session: Session = Depends(get_session), u
                 valor_total=parcela.valor,
                 parcela_num=1, parcela_total=1,
                 tipo="despesa", origem="auto",
+                fazenda_id=fazenda_id,
             ))
     else:
         # Sem frequência definida: lembrete mensal na Agenda (todo dia 1º) para
@@ -673,8 +687,10 @@ def responder_auditoria_diaria(
 
 @router.post("/diarias/{diaria_id}/pagamentos")
 def registrar_pagamento_diaria(
-    diaria_id: int, dados: DiariaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+    diaria_id: int, dados: DiariaPagamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = session.get(Diaria, diaria_id)
     if not diaria:
         raise HTTPException(status_code=404, detail="Diária não encontrada")
@@ -700,6 +716,7 @@ def registrar_pagamento_diaria(
         tipo="despesa", origem="auto",
         data_pagamento=dados.data_pagamento,
         valor_pago=dados.valor,
+        fazenda_id=fazenda_id,
     ))
     session.commit()
     return _resumo_diaria(session, diaria, pessoa.nome)

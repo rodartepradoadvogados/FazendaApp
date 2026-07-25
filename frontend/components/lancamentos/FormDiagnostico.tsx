@@ -79,6 +79,25 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
   // Popup de vínculo financeiro — a data do diagnóstico coincide com a data
   // da visita reprodutiva/D0 do protocolo (ver PopupVinculoFinanceiro).
   const [popupOrigem, setPopupOrigem] = useState<OrigemPopupVinculo | null>(null);
+  // Snapshot do que foi salvo — usado só se o usuário clicar "Cancelar" no
+  // popup, pra restaurar a seleção/data/resultado e poder editar e reenviar.
+  const [dadosParaCancelar, setDadosParaCancelar] = useState<{ numeros: Set<string>; data: string; metodo: string; resultado: string } | null>(null);
+
+  function cancelarDiagnostico() {
+    if (dadosParaCancelar) {
+      setVinculo("animal");
+      setSelecionados(dadosParaCancelar.numeros);
+      setLotesSelecionados([]);
+      setCategoriasAgenda([]);
+      setData(dadosParaCancelar.data);
+      setMetodo(dadosParaCancelar.metodo);
+      setResultado(dadosParaCancelar.resultado);
+    }
+    setSucesso(null);
+    setErro("Diagnóstico cancelado — ajuste os dados e salve novamente.");
+    setPopupOrigem(null);
+    setDadosParaCancelar(null);
+  }
 
   // Animais selecionados com menos de 30 dias desde a última inseminação/cobertura.
   const animaisComAviso = useMemo(() => {
@@ -100,6 +119,13 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
     const salvos: string[] = [];
     const falhados: string[] = [];
     const servicoIds: number[] = [];
+    // Guardados para restaurar a tela caso o usuário cancele no popup de
+    // vínculo financeiro (ver onCancelarDiagnostico) — o resto do fluxo já
+    // limpa esses campos assim que salva com sucesso.
+    const numerosSalvos = new Set(numerosAlvo);
+    const dataSalva = data;
+    const metodoSalvo = metodo;
+    const resultadoSalvo = resultado;
     try {
       for (const numero of numerosAlvo) {
         try {
@@ -112,6 +138,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       }
       if (!falhados.length && servicoIds.length) {
         setPopupOrigem({ tipo: "servico", ids: servicoIds, produto: "Diagnóstico de gestação — visita reprodutiva", data, responsavel: null });
+        setDadosParaCancelar({ numeros: numerosSalvos, data: dataSalva, metodo: metodoSalvo, resultado: resultadoSalvo });
       }
       if (falhados.length) {
         // Sucesso parcial: passa para seleção individual só com quem falhou, para reenviar.
@@ -287,7 +314,13 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
 
-      {popupOrigem && <PopupVinculoFinanceiro origem={popupOrigem} onFechar={() => setPopupOrigem(null)} />}
+      {popupOrigem && (
+        <PopupVinculoFinanceiro
+          origem={popupOrigem}
+          onFechar={() => { setPopupOrigem(null); setDadosParaCancelar(null); }}
+          onCancelar={cancelarDiagnostico}
+        />
+      )}
     </>
   );
 }

@@ -13,11 +13,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, Usuario, VendaAnimal
 from fazenda.api.routers.financeiro import ParcelaIn, _proximo_numero_lancamento
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
 router = APIRouter(prefix="/vendas-animais", tags=["vendas-animais"])
@@ -81,7 +81,11 @@ def listar_vendas(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/")
-def registrar_venda(dados: VendaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_venda(
+    dados: VendaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Informe ao menos um animal")
     if not (dados.comprador or "").strip():
@@ -131,6 +135,7 @@ def registrar_venda(dados: VendaIn, session: Session = Depends(get_session), use
         acrescimo_nota=dados.acrescimo or None,
         tipo="receita", origem="manual",
         usuario_id=usuario_id_seguro(user),
+        fazenda_id=fazenda_id,
     )
 
     paga_agora = bool(dados.data_pagamento) and not dados.parcelas
@@ -171,6 +176,7 @@ def registrar_venda(dados: VendaIn, session: Session = Depends(get_session), use
             origem_conta_bancaria=dados.conta_bancaria,
             data_vencimento_comissao=dados.data_vencimento_comissao,
             parcelas_comissao=[(p.data_vencimento, p.valor) for p in dados.parcelas_comissao] or None,
+            fazenda_id=fazenda_id,
         )
 
     vendidos = []

@@ -26,13 +26,14 @@ from fazenda.api.routers.producao import (
     ControlesIn, OrdenhaIn, PesagensIn, PesoIn, QualidadeLeiteIn, criar_controles, criar_pesagens, criar_qualidade_leite,
 )
 from fazenda.api.routers.sanidade import AplicacaoIn, ItemAplicacaoIn, registrar_aplicacao
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ContaGerencial, CurvaABC, Dieta, Doenca, Estoque,
     EventoRealizado, EventoSanitario, Fornecedor, LancamentoItem, Parto, Sanidade, Usuario,
 )
 from fazenda.parsers.utils import iter_csv_rows, parse_date, parse_float, parse_int
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import _datas_gatilho
 
@@ -310,7 +311,11 @@ async def importar_controle_leiteiro_simples(
 
 
 @router.post("/financeiro")
-async def importar_financeiro(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_financeiro(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -333,7 +338,7 @@ async def importar_financeiro(file: UploadFile, session: Session = Depends(get_s
                 data_competencia=data,
                 parcelas=[ParcelaIn(data_vencimento=data, valor=valor)],
             )
-            criar_lancamento(dados, session)
+            criar_lancamento(dados, session, fazenda_id=fazenda_id)
             criados += 1
         except HTTPException as exc:
             erros.append(f"Linha {i}: {exc.detail}")

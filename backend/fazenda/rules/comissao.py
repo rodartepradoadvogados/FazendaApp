@@ -66,6 +66,7 @@ def criar_comissao(
     # "separado": vencimento e parcelamento próprios da comissão.
     data_vencimento_comissao: date | None = None,
     parcelas_comissao: list[tuple[date, float]] | None = None,
+    fazenda_id: int | None = None,
 ) -> ComissaoCorretagem:
     """Cria a(s) despesa(s) de comissão (ContaGerencial) e o registro de acompanhamento."""
     numero_lancamento_comissao = _proximo_numero_lancamento(session, data_transacao.year)
@@ -80,6 +81,7 @@ def criar_comissao(
         fornecedor_cliente=corretor_nome,
         tipo_documento="Comissão de corretagem",
         tipo="despesa", origem="auto",
+        fazenda_id=fazenda_id,
     )
 
     if forma == "redirecionado":

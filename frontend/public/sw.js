@@ -29,12 +29,20 @@ self.addEventListener("push", (event) => {
     if (event.data) dados = { ...dados, ...event.data.json() };
   } catch (e) { /* payload não veio em JSON — usa os padrões acima */ }
   event.waitUntil(
-    self.registration.showNotification(dados.title, {
-      body: dados.body,
-      icon: "/icons/icone-192.png",
-      badge: "/icons/icone-192.png",
-      data: { url: dados.url || "/agenda" },
-    })
+    Promise.all([
+      self.registration.showNotification(dados.title, {
+        body: dados.body,
+        icon: "/icons/icone-192.png",
+        badge: "/icons/icone-192.png",
+        data: { url: dados.url || "/agenda" },
+      }),
+      // Bolinha com a quantidade de eventos no ícone do app instalado
+      // (Badging API) — só o push da Agenda do dia informa `count`; os
+      // demais (pendências/comunicados) não mexem no badge.
+      typeof dados.count === "number" && "setAppBadge" in self.registration
+        ? (dados.count > 0 ? self.registration.setAppBadge(dados.count) : self.registration.clearAppBadge()).catch(() => {})
+        : Promise.resolve(),
+    ])
   );
 });
 

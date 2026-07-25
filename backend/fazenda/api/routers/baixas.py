@@ -11,11 +11,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, BaixaAnimal, ContaGerencial, MotivoBaixa, Usuario
 from fazenda.api.routers.financeiro import _proximo_numero_lancamento
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.comissao import FORMAS_COMISSAO, criar_comissao
 
 router = APIRouter(prefix="/baixas", tags=["baixas"])
@@ -105,7 +105,11 @@ def listar_baixas(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/")
-def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_baixa(
+    dados: BaixaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     if dados.tipo_baixa not in TIPOS_BAIXA:
@@ -160,6 +164,7 @@ def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session), use
             valor_total=valor_total,
             parcela_num=1, parcela_total=1,
             tipo="receita", origem="auto",
+            fazenda_id=fazenda_id,
         ))
 
         if dados.pagar_comissao:
@@ -174,6 +179,7 @@ def registrar_baixa(dados: BaixaIn, session: Session = Depends(get_session), use
                 descricao_origem=f"venda de {quantidade} animal(is) para {dados.cliente}",
                 origem_paga=True,
                 origem_data_pagamento=dados.data_baixa,
+                fazenda_id=fazenda_id,
             )
 
     baixados = []

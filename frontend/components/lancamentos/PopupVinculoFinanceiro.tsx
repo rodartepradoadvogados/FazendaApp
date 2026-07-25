@@ -1,7 +1,7 @@
 "use client";
 import { useState } from "react";
 import { X, Link2 } from "lucide-react";
-import { fetchLancamentosPorData, vincularEventoSanitarioReprodutivo, formatBRL } from "@/lib/api";
+import { fetchLancamentosPorData, vincularEventoSanitarioReprodutivo, confirmarExclusao, formatBRL } from "@/lib/api";
 import { pedirLancamentoFinanceiroDeEvento } from "@/lib/vinculoSanitarioFinanceiroBridge";
 
 export type OrigemPopupVinculo = {
@@ -20,10 +20,21 @@ export type OrigemPopupVinculo = {
  * financeiro (ver PlanoContaGerencial.pede_vinculo_sanitario_reprodutivo e
  * POST /financeiro/vincular-evento-sanitario-reprodutivo).
  */
-export function PopupVinculoFinanceiro({ origem, onFechar }: { origem: OrigemPopupVinculo; onFechar: () => void }) {
+export function PopupVinculoFinanceiro({
+  origem, onFechar, onCancelar,
+}: {
+  origem: OrigemPopupVinculo;
+  onFechar: () => void;
+  /** Opcional — quando presente, mostra um 4º botão "Cancelar" que desfaz o
+   * lançamento recém-salvo (exclui os registros de `origem.ids`, mesma trilha
+   * de auditoria/aprovação da Exclusão) e volta para a tela de lançamento
+   * pronta para editar, em vez de só fechar o popup. */
+  onCancelar?: () => void;
+}) {
   const [associando, setAssociando] = useState(false);
   const [candidatos, setCandidatos] = useState<{ numero_lancamento: string; fornecedor_cliente: string | null; descricao: string | null; valor_total: number; status: string }[] | null>(null);
   const [vinculando, setVinculando] = useState(false);
+  const [cancelando, setCancelando] = useState(false);
 
   function lancarEmContasAPagar() {
     pedirLancamentoFinanceiroDeEvento({
@@ -47,6 +58,16 @@ export function PopupVinculoFinanceiro({ origem, onFechar }: { origem: OrigemPop
     onFechar();
   }
 
+  async function cancelar() {
+    if (!onCancelar) return;
+    setCancelando(true);
+    try {
+      await Promise.all(origem.ids.map((id) => confirmarExclusao(origem.tipo, String(id))));
+    } catch { /* ignore — o botão "Cancelar" não deve travar por falha de rede aqui */ }
+    setCancelando(false);
+    onCancelar();
+  }
+
   return (
     <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 80, padding: "1rem" }}>
       <div className="card" style={{ width: "520px", maxWidth: "95vw" }}>
@@ -66,6 +87,13 @@ export function PopupVinculoFinanceiro({ origem, onFechar }: { origem: OrigemPop
               <button type="button" className="btn-ghost" style={{ fontSize: "0.82rem", justifyContent: "flex-start" }} onClick={onFechar}>
                 3) Não se aplica
               </button>
+              {onCancelar && (
+                <button type="button" className="btn-ghost" disabled={cancelando}
+                  style={{ fontSize: "0.82rem", justifyContent: "flex-start", color: "var(--red)", border: "1px solid var(--red)" }}
+                  onClick={cancelar}>
+                  <X size={14} /> {cancelando ? "Cancelando…" : "Cancelar — não salvar, voltar para editar"}
+                </button>
+              )}
             </div>
           </>
         ) : (

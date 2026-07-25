@@ -21,7 +21,7 @@ from fazenda.models import (
 )
 from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
 from fazenda.rules.farmacia import pode_baixar_estoque
@@ -52,16 +52,25 @@ FREQUENCIAS = ["dias", "meses", "anos"]
 
 
 @router.get("/aplicacoes")
-def listar_aplicacoes(session: Session = Depends(get_session)) -> dict:
+def listar_aplicacoes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Aplicações achatadas para o dashboard interativo (filtra no cliente)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     partos_por_numero: dict[str, int] = {}
     for p in session.exec(select(Parto)).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
     # Lote/categoria ATUAIS do animal (a Sanidade não guarda o lote histórico de
     # quando o produto foi aplicado — mesma limitação já aceita para ordem_parto
     # acima, que também reflete o estado de hoje, não o de quando aconteceu).
-    animais_por_numero = {a.numero: a for a in session.exec(select(Animal)).all()}
-    sanidades = session.exec(select(Sanidade)).all()
+    query_animais = select(Animal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais_por_numero = {a.numero: a for a in session.exec(query_animais).all()}
+    query_sanidades = select(Sanidade)
+    if fazenda_id is not None:
+        query_sanidades = query_sanidades.where(Sanidade.fazenda_id == fazenda_id)
+    sanidades = session.exec(query_sanidades).all()
     nomes = mapa_usuarios(session, {s.usuario_id for s in sanidades})
     registros = []
     for s in sanidades:
@@ -127,7 +136,9 @@ def registrar_aplicacao(
     dados: AplicacaoIn,
     session: Session = Depends(get_session),
     user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal ou lote")
     if not dados.itens:
@@ -146,6 +157,7 @@ def registrar_aplicacao(
                     dose=item.quantidade, unidade=item.unidade, via=item.via,
                     responsavel=dados.responsavel, observacao=dados.observacao,
                     usuario_id=usuario_id_seguro(user), natureza=dados.natureza,
+                    fazenda_id=fazenda_id,
                 ))
                 agendadas += 1
         session.commit()
@@ -181,6 +193,7 @@ def registrar_aplicacao(
                 obs=dados.observacao,
                 usuario_id=usuario_id_seguro(user),
                 natureza=dados.natureza,
+                fazenda_id=fazenda_id,
             )
             session.add(sanidade)
             session.flush()
@@ -430,6 +443,7 @@ def listar_calendario(
     o objetivo é acompanhar o que está por vir — não o histórico já aplicado
     (esse fica em /sanidade/aplicacoes).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     eventos, doencas, principios, categorias = _nomes(session)
     ultimos = _ultimo_evento_por_produto(session)
     query = select(CalendarioSanitario).where(CalendarioSanitario.ativo == True)  # noqa: E712
@@ -838,15 +852,25 @@ def _serializar_lancamento_protocolo(
 
 
 @router.get("/protocolos/lancamentos")
-def listar_lancamentos_protocolo(session: Session = Depends(get_session)) -> list[dict]:
+def listar_lancamentos_protocolo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolos = {p.id: p for p in session.exec(select(ProtocoloSanitario)).all()}
-    lancamentos = session.exec(select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).all()
+    query = select(ProtocoloSanitarioLancamento).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())
+    if fazenda_id is not None:
+        query = query.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    lancamentos = session.exec(query).all()
     nomes = mapa_usuarios(session, {l.usuario_id for l in lancamentos})
     return [_serializar_lancamento_protocolo(session, l, protocolos, nomes) for l in lancamentos]
 
 
 @router.post("/protocolos/lancamentos", status_code=201)
-def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def lancar_protocolo(
+    dados: ProtocoloLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     protocolo = session.get(ProtocoloSanitario, dados.protocolo_id)
     if not protocolo:
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
@@ -932,7 +956,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
             resultado_cmt=dados.resultado_cmt,
             tetos_afetados=",".join(dados.tetos_afetados) if dados.tetos_afetados else None,
             del_no_caso=del_no_caso, ccs_ultima=ccs_ultima, recidiva=recidiva,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         )
         session.add(lancamento)
         session.commit()
@@ -942,7 +966,7 @@ def lancar_protocolo(dados: ProtocoloLancamentoIn, session: Session = Depends(ge
             data_prevista = dados.data_inicio + timedelta(days=etapa.dia - protocolo.dia_inicial)
             session.add(ProtocoloSanitarioAplicacao(
                 lancamento_id=lancamento.id, etapa_id=etapa.id, data_prevista=data_prevista,
-                produto=produto_por_etapa.get(etapa.id),
+                produto=produto_por_etapa.get(etapa.id), fazenda_id=fazenda_id,
             ))
         session.commit()
         lancamentos_criados.append(_serializar_lancamento_protocolo(session, lancamento, protocolos))
@@ -1072,19 +1096,30 @@ class ColostragemIn(BaseModel):
 
 @router.post("/colostragem")
 def registrar_colostragem(
-    dados: ColostragemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    dados: ColostragemIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Grava (ou atualiza) o registro de colostragem/teste de sangue de uma
     cria — uma linha por animal, chamada pela calculadora de Parto/nascimento."""
-    animal = session.exec(select(Animal).where(Animal.numero == dados.numero_animal)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == dados.numero_animal)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
 
-    registro = session.exec(
-        select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
-    ).first()
+    query_registro = select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == dados.numero_animal)
+    if fazenda_id is not None:
+        query_registro = query_registro.where(ColostragemBezerra.fazenda_id == fazenda_id)
+    registro = session.exec(query_registro).first()
     if not registro:
-        registro = ColostragemBezerra(animal_id=animal.id, numero_animal=dados.numero_animal, usuario_id=usuario_id_seguro(user))
+        registro = ColostragemBezerra(
+            animal_id=animal.id, numero_animal=dados.numero_animal, usuario_id=usuario_id_seguro(user),
+            fazenda_id=fazenda_id,
+        )
     for campo, valor in dados.model_dump(exclude={"numero_animal"}).items():
         setattr(registro, campo, valor)
     registro.atualizado_em = datetime.utcnow()
@@ -1101,6 +1136,7 @@ def relatorio_sanitario_bezerras(
     lote: str | None = None,
     numeros: list[str] | None = Query(None),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """
     Indicadores de colostragem e teste de sangue por animal, para identificar
@@ -1108,8 +1144,14 @@ def relatorio_sanitario_bezerras(
     etária (bezerra <=12 meses / animal >12 meses, calculada por data_nasc),
     por animal, por lote atual (grupo_primario) ou por seleção de vários animais.
     """
-    animais = session.exec(select(Animal).where(Animal.eh_semen == False)).all()  # noqa: E712
-    todos_registros = session.exec(select(ColostragemBezerra)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animais = select(Animal).where(Animal.eh_semen == False)  # noqa: E712
+    query_registros = select(ColostragemBezerra)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_registros = query_registros.where(ColostragemBezerra.fazenda_id == fazenda_id)
+    animais = session.exec(query_animais).all()
+    todos_registros = session.exec(query_registros).all()
     registros = {r.numero_animal: r for r in todos_registros}
     nomes = mapa_usuarios(session, {r.usuario_id for r in todos_registros})
     hoje = date.today()
