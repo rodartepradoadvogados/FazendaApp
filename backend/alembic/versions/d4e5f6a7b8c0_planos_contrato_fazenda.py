@@ -116,7 +116,7 @@ def upgrade() -> None:
             conn.execute(
                 sa.text(
                     "INSERT INTO contrato_fazenda_modulo (fazenda_id, modulo, preco, ativo, criado_em) "
-                    "VALUES (1, :m, 0.0, 1, :agora)"
+                    "VALUES (1, :m, 0.0, true, :agora)"
                 ),
                 {"m": modulo, "agora": agora},
             )
