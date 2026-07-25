@@ -353,6 +353,8 @@ class Patrimonio(SQLModel, table=True):
     __tablename__ = "patrimonio"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    # Piloto conservador de multi-fazenda (Fase 3D) — ver PlanoContaGerencial.fazenda_id acima.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     tipo: Optional[str] = None
     nome: str
     numero: Optional[str] = None
@@ -393,6 +395,7 @@ class ManutencaoPatrimonio(SQLModel, table=True):
     __tablename__ = "manutencao_patrimonio"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     patrimonio_id: int = Field(foreign_key="patrimonio.id", index=True)
     data_realizacao: date
     descricao: Optional[str] = None
@@ -421,6 +424,7 @@ class CurvaABC(SQLModel, table=True):
     __tablename__ = "curva_abc"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     item: Optional[int] = None
     classificacao: Optional[str] = None          # A, B ou C
     produto: Optional[str] = None

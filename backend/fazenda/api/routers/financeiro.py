@@ -1071,12 +1071,19 @@ def custo_litro_leite(
 
 
 @router.get("/patrimonio")
-def listar_patrimonio(session: Session = Depends(get_session)) -> dict:
+def listar_patrimonio(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Lista o patrimônio/imobilizado da fazenda (LISTA_DE_PATRIMONIO.csv),
     já com a depreciação linear calculada (valor atual = valor total menos a
     depreciação acumulada desde a imobilização)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    itens_raw = session.exec(select(Patrimonio)).all()
+    query = select(Patrimonio)
+    if fazenda_id is not None:
+        query = query.where(Patrimonio.fazenda_id == fazenda_id)
+    itens_raw = session.exec(query).all()
     itens: list[dict] = []
     inconsistencias: list[dict] = []
     valor_total_bruto = 0.0
@@ -1110,13 +1117,19 @@ class PlanoManutencaoIn(BaseModel):
 
 
 @router.put("/patrimonio/{item_id}/manutencao-plano")
-def atualizar_plano_manutencao(item_id: int, dados: PlanoManutencaoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_plano_manutencao(
+    item_id: int,
+    dados: PlanoManutencaoIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Cadastra/edita o plano de manutenção preventiva (opcional) de um item de
     patrimônio — só periodicidade por data (ver rules/patrimonio.py). Sem
     frequência informada, `data_proxima_manutencao` só é aceita se vier
     explícita (não há como calculá-la)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Patrimonio, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
     if dados.frequencia_manutencao_meses is not None and dados.frequencia_manutencao_meses <= 0:
         raise HTTPException(status_code=400, detail="Frequência da manutenção deve ser um número de meses maior que zero")
@@ -1139,10 +1152,15 @@ def atualizar_plano_manutencao(item_id: int, dados: PlanoManutencaoIn, session: 
 
 
 @router.get("/patrimonio/{item_id}/manutencoes")
-def listar_manutencoes(item_id: int, session: Session = Depends(get_session)) -> list[dict]:
+def listar_manutencoes(
+    item_id: int,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Histórico de manutenções registradas para um item de patrimônio."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Patrimonio, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
     registros = session.exec(
         select(ManutencaoPatrimonio)
@@ -1173,6 +1191,7 @@ class ManutencaoRealizadaIn(BaseModel):
 def registrar_manutencao(
     item_id: int, dados: ManutencaoRealizadaIn,
     session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Registra que a manutenção preventiva de um item foi paga/realizada:
@@ -1184,8 +1203,9 @@ def registrar_manutencao(
       (quando houver) — sem frequência, a próxima data fica em aberto até o
       usuário cadastrar/editar o plano de novo.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Patrimonio, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Item de patrimônio não encontrado")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido — use 'pendente' ou 'pago'")
@@ -1210,6 +1230,7 @@ def registrar_manutencao(
             tipo="despesa", origem="auto",
             data_pagamento=dados.data_pagamento if dados.status == "pago" else None,
             valor_pago=dados.valor if dados.status == "pago" else None,
+            fazenda_id=fazenda_id,
         ))
 
     registro = ManutencaoPatrimonio(
@@ -1217,6 +1238,7 @@ def registrar_manutencao(
         fornecedor=dados.fornecedor, valor=dados.valor, centro_custo=dados.centro_custo,
         status=dados.status, data_pagamento=dados.data_pagamento, observacao=dados.observacao,
         usuario_id=user.id, numero_lancamento_gerado=numero_lancamento,
+        fazenda_id=fazenda_id,
     )
     session.add(registro)
 
