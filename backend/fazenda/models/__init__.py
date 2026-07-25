@@ -87,6 +87,7 @@ from .pessoal import (
     ValeFuncionario,
     ValeParcela,
     ValeAvulso,
+    ValeAvulsoAbatimento,
     Empreitada,
     EmpreitadaParcela,
     EmpreitadaEtapa,

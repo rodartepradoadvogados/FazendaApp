@@ -1352,3 +1352,73 @@ class TestValeAvulso:
             "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
         })
         assert r.status_code == 400
+
+    def test_listar_todos_aparece_no_relatorio_geral(self, client):
+        # Reproduz o cenário relatado: vale de empreita lançado deve aparecer
+        # no relatório geral de vales (GET /vale-avulso/todos), com descrição
+        # de origem — antes desse endpoint existir, só aparecia filtrado por
+        # origem_tipo/origem_id (ver test_listar_vales_por_origem).
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Relatorio", "tipos": ["Empreiteiro"]}).json()["id"]
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem relatório", "valor_total": 3000.0, "tipo_pagamento": "mensal",
+            "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
+        }).json()
+        c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+        })
+        r = c.get("/cadastro/vale-avulso/todos")
+        assert r.status_code == 200
+        vales = r.json()
+        assert any(v["valor"] == 200.0 and v["pessoa_nome"] == "Empreiteiro Relatorio" and "Empreitada" in v["origem_descricao"] for v in vales)
+
+    def test_editar_vale_avulso_reverte_e_reaplica(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Edicao", "tipos": ["Empreiteiro"]}).json()["id"]
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem edição", "valor_total": 3000.0, "tipo_pagamento": "mensal",
+            "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
+        }).json()
+        vale = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+        }).json()["vale"]
+
+        r = c.put(f"/cadastro/vale-avulso/{vale['id']}", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
+            "forma_pagamento": "pix", "data_pagamento": "2026-07-25", "observacao": "corrigido",
+        })
+        assert r.status_code == 200
+        assert r.json()["valor"] == 500.0
+        assert r.json()["forma_pagamento"] == "pix"
+
+        parcelas = c.get(f"/cadastro/empreitadas").json()
+        empreitada_atualizada = next(e for e in parcelas if e["id"] == empreitada["id"])
+        parcelas_ordenadas = sorted(empreitada_atualizada["parcelas"], key=lambda p: p["data_vencimento"])
+        assert parcelas_ordenadas[0]["valor"] == 1000.0  # 1500 - 500 (não 1500-200-500)
+        assert parcelas_ordenadas[1]["valor"] == 1500.0
+
+    def test_excluir_vale_avulso_reverte_valor(self, client):
+        c, engine = client
+        pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Exclusao", "tipos": ["Empreiteiro"]}).json()["id"]
+        empreitada = c.post("/cadastro/empreitadas", json={
+            "pessoa_id": pessoa_id, "descricao": "Roçagem exclusão", "valor_total": 3000.0, "tipo_pagamento": "mensal",
+            "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
+        }).json()
+        vale = c.post("/cadastro/vale-avulso", json={
+            "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+        }).json()["vale"]
+
+        r = c.delete(f"/cadastro/vale-avulso/{vale['id']}")
+        assert r.status_code == 200
+        assert r.json()["ok"] is True
+
+        parcelas = c.get(f"/cadastro/empreitadas").json()
+        empreitada_atualizada = next(e for e in parcelas if e["id"] == empreitada["id"])
+        parcelas_ordenadas = sorted(empreitada_atualizada["parcelas"], key=lambda p: p["data_vencimento"])
+        assert parcelas_ordenadas[0]["valor"] == 1500.0  # revertido integralmente
+
+        r2 = c.get("/cadastro/vale-avulso/todos")
+        assert all(v["id"] != vale["id"] for v in r2.json())
