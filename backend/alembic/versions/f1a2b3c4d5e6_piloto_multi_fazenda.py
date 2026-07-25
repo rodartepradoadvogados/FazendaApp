@@ -66,7 +66,7 @@ def upgrade() -> None:
     # extra visível (ver fazenda/api/routers/auth.py::login).
     conn = op.get_bind()
     conn.execute(sa.text(
-        "INSERT INTO fazenda (nome, ativa, criado_em) VALUES (:nome, 1, CURRENT_TIMESTAMP)"
+        "INSERT INTO fazenda (nome, ativa, criado_em) VALUES (:nome, true, CURRENT_TIMESTAMP)"
     ), {"nome": "Jairo Nasser"})
     fazenda_id = conn.execute(sa.text("SELECT id FROM fazenda WHERE nome = :nome ORDER BY id DESC LIMIT 1"), {"nome": "Jairo Nasser"}).scalar()
     conn.execute(sa.text(
