@@ -310,6 +310,25 @@ class TestIndicadores:
         # Sem o filtro, a média cairia para ~190d (366 e 14). Com o filtro: 366d.
         assert r["reproducao"]["iep_dias"] == 366
 
+    def test_iep_por_matriz_drill_down(self):
+        # Drill-down do card "IEP médio": uma linha por matriz com >=2 partos
+        # distintos, usando o intervalo mais recente. Matriz com 1 único parto
+        # (110) não entra (ainda não tem intervalo).
+        animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
+        partos = [
+            {"numero_matriz": "100", "data_parto": date(2024, 1, 1)},
+            {"numero_matriz": "100", "data_parto": date(2024, 1, 15)},  # duplicidade, ignorada
+            {"numero_matriz": "100", "data_parto": date(2025, 1, 1)},   # 366d do 1º
+            {"numero_matriz": "110", "data_parto": date(2025, 6, 1)},
+        ]
+        r = calcular_indicadores(animais, [], partos, data_ref=date(2026, 7, 5))
+        lista = r["reproducao"]["iep_por_matriz"]
+        assert len(lista) == 1
+        assert lista[0]["numero"] == "100"
+        assert lista[0]["iep_dias"] == 366
+        assert lista[0]["data_parto_anterior"] == date(2024, 1, 1).isoformat()
+        assert lista[0]["data_ultimo_parto"] == date(2025, 1, 1).isoformat()
+
     def test_partos_previstos_so_prenhes_gestacao_280(self):
         hoje = date(2026, 7, 7)
         animais = [
@@ -331,6 +350,26 @@ class TestIndicadores:
         assert rep["partos_previstos"]["em_90_dias"] == len(rep["partos_previstos_nums"]["em_90_dias"])
         # gestação de referência (ponto médio de gestacao_dias_min/max, 288 dias): parto ~ serviço + 288
         assert rep["partos_previstos_datas"]["10"] == (hoje - timedelta(days=260) + timedelta(days=288)).isoformat()
+
+    def test_gestantes_detalhe_drill_down(self):
+        # Drill-down do card "Gestantes": TODA gestante com serviço positivo
+        # conhecido entra (mesmo fora da janela de 90 dias de partos_previstos).
+        hoje = date(2026, 7, 7)
+        animais = [
+            {"numero": "10", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},
+            {"numero": "30", "grupo_primario": "02 - VACAS", "sit_rep": "Ges."},  # bem longe do parto
+        ]
+        servicos = [
+            {"numero_matriz": "10", "data_servico": hoje - timedelta(days=260), "diagnostico": "POSITIVO"},
+            {"numero_matriz": "30", "data_servico": hoje - timedelta(days=20), "diagnostico": "POSITIVO"},
+        ]
+        r = calcular_indicadores(animais, servicos, [], data_ref=hoje)
+        detalhe = {d["numero"]: d for d in r["reproducao"]["gestantes_detalhe"]}
+        assert set(detalhe) == {"10", "30"}
+        assert detalhe["10"]["dias_gestacao"] == 260
+        assert detalhe["30"]["dias_gestacao"] == 20
+        # "30" não aparece em partos_previstos (fora dos 90 dias) mas está no detalhe
+        assert "30" not in r["reproducao"]["partos_previstos_nums"]["em_90_dias"]
 
     def test_iep_so_duplicidades_fica_none(self):
         animais = [{"grupo_primario": "01 - VACAS", "sit_rep": "Ges."}]
