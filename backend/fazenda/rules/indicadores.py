@@ -121,6 +121,33 @@ def _iep_dias(partos: list[dict]) -> Optional[int]:
     return round(sum(intervalos) / len(intervalos)) if intervalos else None
 
 
+def _iep_por_matriz(partos: list[dict]) -> list[dict]:
+    """Detalhamento por matriz do IEP (drill-down do card 'IEP médio'): o
+    intervalo entre os dois partos distintos mais recentes de cada matriz.
+    Matrizes com um único parto (ainda sem intervalo) não entram na lista."""
+    iep_minimo = _iep_minimo_dias()
+    por_matriz: dict[str, list[date]] = {}
+    for p in partos:
+        d = p.get("data_parto")
+        m = p.get("numero_matriz")
+        if d and m:
+            por_matriz.setdefault(m, []).append(d)
+    resultado: list[dict] = []
+    for numero, datas in por_matriz.items():
+        distintos: list[date] = []
+        for d in sorted(set(datas)):
+            if not distintos or (d - distintos[-1]).days >= iep_minimo:
+                distintos.append(d)
+        if len(distintos) >= 2:
+            resultado.append({
+                "numero": numero,
+                "iep_dias": (distintos[-1] - distintos[-2]).days,
+                "data_parto_anterior": distintos[-2].isoformat(),
+                "data_ultimo_parto": distintos[-1].isoformat(),
+            })
+    return resultado
+
+
 # Rótulo/unidade de cada indicador do benchmark reprodutivo.
 _BENCH_LABELS: dict[str, tuple[str, str]] = {
     "taxa_servico": ("Taxa de serviço", "%"),
@@ -444,6 +471,11 @@ def calcular_indicadores(
     previstos = {"em_30_dias": 0, "em_60_dias": 0, "em_90_dias": 0}
     previstos_nums: dict[str, list[str]] = {"em_30_dias": [], "em_60_dias": [], "em_90_dias": []}
     previstos_datas: dict[str, str] = {}  # numero -> data provável de parto (ISO)
+    # Detalhe de TODAS as gestantes (drill-down do card "Gestantes") — ao
+    # contrário de `previstos_datas` acima (só as com parto em até 90 dias),
+    # aqui entra qualquer matriz prenhe com um serviço positivo conhecido,
+    # não importa o quão distante esteja do parto.
+    gestantes_detalhe: list[dict] = []
     for a in animais:
         if (a.get("sit_rep") or "").strip() != "Ges.":
             continue
@@ -453,6 +485,11 @@ def calcular_indicadores(
             continue
         parto = data_serv + timedelta(days=gestacao_prevista_dias)
         dias = (parto - hoje).days
+        gestantes_detalhe.append({
+            "numero": num,
+            "dias_gestacao": (hoje - data_serv).days,
+            "parto_previsto": parto.isoformat(),
+        })
         if 0 <= dias <= 90:
             previstos_datas[num] = parto.isoformat()
             previstos["em_90_dias"] += 1
@@ -498,6 +535,8 @@ def calcular_indicadores(
             "partos_previstos": previstos,
             "partos_previstos_nums": previstos_nums,
             "partos_previstos_datas": previstos_datas,
+            "gestantes_detalhe": gestantes_detalhe,
+            "iep_por_matriz": _iep_por_matriz(partos),
             "concepcao_desde": concepcao_desde.isoformat(),
             "taxa_servico_pct": _bt.get("taxa_servico"),
             "taxa_prenhez_ciclo_pct": _bt.get("taxa_prenhez_ciclo"),

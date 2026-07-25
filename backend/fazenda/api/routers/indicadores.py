@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, Lote, Parto, PesagemCorporal, Servico
 from fazenda.rules.indicadores import calcular_indicadores
@@ -110,6 +111,7 @@ def relatorio_personalizado(dados: RelatorioPersonalizadoIn, session: Session = 
 @router.get("/")
 def obter_indicadores(
     data: date = date.today(),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
     """
@@ -117,10 +119,20 @@ def obter_indicadores(
     (taxa de prenhez, concepção, IEP, partos previstos) e produção (DEL médio,
     litros/dia). Calculado sobre os dados já carregados via upload.
     """
-    todos = session.exec(select(Animal).where(Animal.ativo == True)).all()
+    query_animais = select(Animal).where(Animal.ativo == True)
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    # Piloto conservador de multi-fazenda (ver animais.py:listar_animais): só
+    # filtra quando o token carrega uma fazenda selecionada.
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+
+    todos = session.exec(query_animais).all()
     animais = [a.model_dump() for a in todos if not a.eh_semen and a.sexo != "M"]  # só fêmeas
-    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
-    partos = [p.model_dump() for p in session.exec(select(Parto)).all()]
+    servicos = [s.model_dump() for s in session.exec(query_servicos).all()]
+    partos = [p.model_dump() for p in session.exec(query_partos).all()]
 
     # Peso vivo mais recente por matriz (mesmo padrão de
     # routers/reproducao.py e routers/lotes.py:coletar_dados_criterios) — só
