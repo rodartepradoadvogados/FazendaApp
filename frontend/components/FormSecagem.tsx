@@ -15,7 +15,7 @@ import {
   animalEmLactacao,
 } from "@/components/lancamentos/comumForms";
 
-export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] }) {
+export function FormSecagem({ animais, estoque, produtos, numeroInicial }: { animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[]; numeroInicial?: string }) {
   // Secagem só faz sentido para quem está em lactação — sem este filtro, a
   // lista de candidatas (e a tabela de lotes, com sua contagem e DEL médio)
   // misturava secas, novilhas e machos que só compartilham o grupo_primario.
@@ -24,7 +24,9 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
   // Animal(is) ou lote(s) — dentro de lote, pode escolher mais de um; mesmo
   // padrão do Diagnóstico (TabBar + AnimalPickerModal/LotePicker).
   const [vinculo, setVinculo] = useState<"animal" | "lote">("animal");
-  const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
+  // Chegou de uma lista de trabalho (ex.: Listas > Previsão de secagem) já
+  // com o animal escolhido — pré-seleciona, sem exigir passar pelo seletor.
+  const [selecionados, setSelecionados] = useState<Set<string>>(() => (numeroInicial ? new Set([numeroInicial]) : new Set()));
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
   const [lotesSelecionados, setLotesSelecionados] = useState<string[]>([]);
   const codigosLotes = useMemo(

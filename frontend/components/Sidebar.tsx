@@ -24,12 +24,49 @@ import {
   X,
   Search,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { LogOut, UserCircle } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { useSubNav, type SubNavNode } from "@/components/SubNavContext";
+import { useCliqueOuDuploClique, abrirNovaAba } from "@/lib/tabs";
+
+// Link de módulo com duplo clique = abrir aba nova (ver TabsShell), sem
+// perder a aba atual onde ela estava. Clique com Ctrl/Cmd/Shift ou botão do
+// meio passa direto (abre nova guia do NAVEGADOR, comportamento nativo do
+// <a> preservado) — só o clique simples é interceptado para navegar por
+// dentro do app como hoje, e o duplo clique vira aba interna.
+function SidebarLink({ href, title, label, active, children }: {
+  href: string; title?: string; label: string; active: boolean; children: React.ReactNode;
+}) {
+  const router = useRouter();
+  const aoClicar = useCliqueOuDuploClique(
+    () => router.push(href),
+    () => abrirNovaAba(href, label),
+  );
+  return (
+    <Link
+      href={href}
+      title={title || label}
+      className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
+      style={{
+        background: active ? "var(--sidebar-active-bg)" : "transparent",
+        color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
+        borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
+        fontSize: "10px",
+      }}
+      onClick={(e) => {
+        if (e.ctrlKey || e.metaKey || e.shiftKey || e.button === 1) return; // deixa o navegador tratar normalmente
+        e.preventDefault();
+        aoClicar();
+      }}
+    >
+      {children}
+    </Link>
+  );
+}
 
 // Grupos visuais da navegação (rótulo discreto acima de cada seção) — mesma
 // ordem do fluxo de gestão: (1) ciclo diário; (2) manejo do rebanho; (3)
@@ -252,21 +289,10 @@ export function Sidebar() {
                   {itens.map(({ href, label, icon: Icon, title }) => {
                     const active = path === href || (href !== "/" && path.startsWith(href));
                     return (
-                      <Link
-                        key={href}
-                        href={href}
-                        title={title || label}
-                        className="flex items-center gap-3 px-3 py-2 rounded-lg text-xs font-medium transition-all duration-150"
-                        style={{
-                          background: active ? "var(--sidebar-active-bg)" : "transparent",
-                          color: active ? "var(--sidebar-active-fg)" : "var(--sidebar-muted)",
-                          borderLeft: active ? "3px solid var(--sidebar-active-border)" : "3px solid transparent",
-                          fontSize: "10px",
-                        }}
-                      >
+                      <SidebarLink key={href} href={href} title={title} label={label} active={active}>
                         <Icon size={16} />
                         {label}
-                      </Link>
+                      </SidebarLink>
                     );
                   })}
                 </div>

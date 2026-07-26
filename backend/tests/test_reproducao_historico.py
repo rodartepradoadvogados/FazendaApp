@@ -123,3 +123,43 @@ class TestRegistrarPerdaPrenhez:
         assert reg["perda"] is True
         assert reg["motivo_perda"] == "natimorto"
         assert reg["data_perda"] == "2026-03-01"
+
+
+class TestDataD0DoServicoIatf:
+    """GET /reproducao/servicos deve trazer o D0 real do protocolo IATF que
+    originou o serviço (usado pela tela para agrupar "ciclo" corretamente —
+    ver _mapa_data_d0_por_servico). Sem isso, a tela ancorava o ciclo na
+    data do serviço mais recente do filtro, não no D0 verdadeiro."""
+
+    def test_servico_de_iatf_traz_o_d0_do_protocolo(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="700", sit_rep="Vaz. apt.", ativo=True))
+            s.commit()
+        c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["700"], "data_d0": "2026-06-12", "protocolo": "IATF 12/06 a 23/06",
+        })
+        # D11 = D0 + 11 dias — a inseminação em si é lançada à parte, e resolve
+        # a ProtocoloIatfAplicacao (dia 11) em aberto automaticamente pelo nome
+        # do protocolo (mesma regra de registrar_servico).
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-06-23", "tipo_servico": "IA",
+            "protocolo": "IATF 12/06 a 23/06",
+        })
+        assert r.status_code == 200
+
+        servicos = c.get("/reproducao/servicos").json()["servicos"]
+        reg = next(x for x in servicos if x["numero"] == "700")
+        assert reg["data_d0"] == "2026-06-12"
+
+    def test_servico_sem_protocolo_nao_tem_d0(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="701", sit_rep="Vaz. apt.", ativo=True))
+            s.commit()
+        c.post("/reproducao/servico", json={
+            "numero_matriz": "701", "data_servico": "2026-06-23", "tipo_servico": "Monta natural",
+        })
+        servicos = c.get("/reproducao/servicos").json()["servicos"]
+        reg = next(x for x in servicos if x["numero"] == "701")
+        assert reg["data_d0"] is None

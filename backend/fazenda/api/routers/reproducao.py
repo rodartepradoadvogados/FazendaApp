@@ -270,6 +270,7 @@ def listar_servicos_analise(
     registros = analisar_servicos(servicos)
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     tipo_por_touro = _mapa_tipo_semen_por_touro(session)
+    data_d0_por_servico = _mapa_data_d0_por_servico(session, fazenda_id)
     for r in registros:
         r["usuario_nome"] = nomes.get(r.pop("usuario_id"))
         # Serviços antigos (lançados antes de o tipo ser perguntado) não têm
@@ -277,7 +278,35 @@ def listar_servicos_analise(
         # de Sêmen atual, mesma regra usada na baixa de dose.
         if not r.get("tipo_semen") and r.get("touro") and r["touro"] != "(sem touro)":
             r["tipo_semen"] = tipo_por_touro.get(r["touro"].strip().lower())
+        # D0 real do protocolo IATF (se o serviço veio de um) — usado pela tela
+        # para agrupar por "ciclo" de verdade, em vez de uma janela de calendário
+        # ancorada na data do serviço mais recente do filtro (ver data_d0_por_servico).
+        # analisar_servicos já renomeou/serializou os campos: "numero" (não
+        # numero_matriz) e "data" como string ISO (não data_servico/date).
+        r["data_d0"] = data_d0_por_servico.get((r["numero"], r["data"]))
     return {"servicos": registros, "total": len(registros)}
+
+
+def _mapa_data_d0_por_servico(session: Session, fazenda_id: int | None) -> dict[tuple[str, str], str]:
+    """(numero_matriz, data_servico ISO) -> data_d0 (ISO) do protocolo IATF que
+    originou aquele serviço — mesma chave que registrar_servico usa para
+    resolver a ProtocoloIatfAplicacao (dia 11) na hora de registrar
+    (numero_matriz + data_realizacao == data_servico), então funciona igual
+    para qualquer serviço já lançado, não só os novos. Sem isso a tela
+    agrupava "ciclo" numa janela de calendário arbitrária, sem nenhuma relação
+    com o D0 real de cada protocolo (bug relatado — datas de ciclo não
+    batiam com os D0 verdadeiros)."""
+    query = (
+        select(ProtocoloIatfAplicacao.numero_matriz, ProtocoloIatfAplicacao.data_realizacao, ProtocoloIatfLancamento.data_d0)
+        .join(ProtocoloIatfLancamento, ProtocoloIatfAplicacao.lancamento_id == ProtocoloIatfLancamento.id)
+        .where(ProtocoloIatfAplicacao.dia == 11, ProtocoloIatfAplicacao.realizada == True)  # noqa: E712
+    )
+    if fazenda_id is not None:
+        query = query.where(ProtocoloIatfLancamento.fazenda_id == fazenda_id)
+    return {
+        (numero, realizacao.isoformat()): d0.isoformat()
+        for numero, realizacao, d0 in session.exec(query).all() if realizacao is not None
+    }
 
 
 class ServicoEditIn(BaseModel):

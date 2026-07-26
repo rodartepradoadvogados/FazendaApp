@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { Bell, BellRing, X } from "lucide-react";
 import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin, fetchPushChavePublica, subscribePush, unsubscribePush } from "@/lib/api";
 
-type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string };
+type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string; ref?: string | null };
 
 // base64url (formato da chave VAPID) -> Uint8Array, exigido pela Push API.
 function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -22,7 +22,12 @@ function destino(i: Item): string {
   const chave = `${i.categoria || ""} ${i.tipo || ""}`.toLowerCase();
   if (chave.includes("aprova")) return "/aprovacoes";
   if (chave.includes("portal")) return "/portal";
-  if (chave.includes("financ")) return "/financeiro";
+  if (chave.includes("financ")) {
+    // Conta a pagar com nº de lançamento conhecido — vai direto nela (mesmo
+    // link "?ir=a_pagar&ref=..." que a Agenda já usa), não na lista genérica.
+    if (i.ref) return `/financeiro?ir=a_pagar&ref=${encodeURIComponent(i.ref)}`;
+    return "/financeiro";
+  }
   if (chave.includes("estoque")) return "/estoque";
   // reprodutivo, sanidade e o restante são resolvidos na Agenda.
   return "/agenda";

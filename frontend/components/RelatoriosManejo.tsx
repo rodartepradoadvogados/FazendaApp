@@ -1,14 +1,23 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
 import {
   ClipboardList, RefreshCw, AlertTriangle, Hourglass, Syringe, CalendarClock,
-  Stethoscope, HeartPulse, MilkOff, Baby, FlaskConical,
+  Stethoscope, HeartPulse, MilkOff, Baby, FlaskConical, Droplets,
 } from "lucide-react";
-import { fetchRelatoriosManejo } from "@/lib/api";
+import { fetchRelatoriosManejo, fetchAnimais, fetchEstoque, fetchSanidade } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { SecaoRecolhivel } from "@/components/ui";
+import { Modal } from "@/components/Modal";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { estiloSexado } from "@/lib/constants";
+import type { AnimalRow } from "@/components/AnimalModal";
+import type { EstoqueItem } from "@/components/lancamentos/comumForms";
+
+// Import tardio (mesmo padrão de app/lancamentos/page.tsx) — a tela de Listas
+// de trabalho é aberta bem mais vezes que o formulário de secagem em si, não
+// vale carregar o form inteiro (produtos/vacinas/etc.) toda vez.
+const FormSecagem = dynamic(() => import("@/components/FormSecagem").then((m) => m.FormSecagem), { ssr: false });
 
 /**
  * RelatoriosManejo — listas de trabalho diárias da reprodução (PEV, a inseminar,
@@ -212,6 +221,21 @@ export default function RelatoriosManejo() {
   }, []);
 
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Secar direto da lista (sem passar pela tela de Lançamentos) — busca os
+  // dados do formulário só quando a matriz é escolhida (evita pesar o
+  // carregamento normal da tela, que é aberta bem mais vezes que isso é usado).
+  const [secandoMatriz, setSecandoMatriz] = useState<string | null>(null);
+  const [dadosSecagem, setDadosSecagem] = useState<{ animais: AnimalRow[]; estoque: EstoqueItem[]; produtos: string[] } | null>(null);
+  const abrirSecagem = (numero: string) => {
+    setSecandoMatriz(numero);
+    if (dadosSecagem) return;
+    Promise.all([
+      fetchAnimais(),
+      fetchEstoque().then((d: any) => d.itens || []),
+      fetchSanidade().then((d: any) => Array.from(new Set((d.aplicacoes || d.registros || []).map((r: any) => r.produto).filter(Boolean))).sort() as string[]),
+    ]).then(([animais, estoque, produtos]) => setDadosSecagem({ animais, estoque, produtos })).catch(() => {});
+  };
 
   const p = dados?.parametros;
   const linhaParametros = useMemo(() => {
@@ -460,6 +484,15 @@ export default function RelatoriosManejo() {
                 { header: "Grupo", campo: "grupo", render: (r) => r.grupo, style: estiloMudo },
                 { header: "Dias para secagem", campo: "dias_para_secagem", render: (r) => r.dias_para_secagem },
                 { header: "Previsão de secagem", campo: "previsao_secagem", render: (r) => fmtData(r.previsao_secagem) },
+                {
+                  header: "", render: (r) => (
+                    <button type="button" className="btn-ghost" title="Secar esta matriz agora"
+                      style={{ fontSize: "0.75rem", display: "flex", alignItems: "center", gap: "0.3rem", whiteSpace: "nowrap" }}
+                      onClick={() => abrirSecagem(String(r.numero))}>
+                      <Droplets size={13} /> Secar
+                    </button>
+                  ),
+                },
               ]}
             />
           </SecaoRecolhivel>
@@ -538,6 +571,16 @@ export default function RelatoriosManejo() {
             )}
           </SecaoRecolhivel>
         </>
+      )}
+
+      {secandoMatriz && (
+        <Modal title={`Secar matriz ${secandoMatriz}`} onClose={() => setSecandoMatriz(null)}>
+          {!dadosSecagem ? (
+            <p style={{ color: "var(--text-muted)" }}>Carregando…</p>
+          ) : (
+            <FormSecagem animais={dadosSecagem.animais} estoque={dadosSecagem.estoque} produtos={dadosSecagem.produtos} numeroInicial={secandoMatriz} />
+          )}
+        </Modal>
       )}
     </div>
   );
