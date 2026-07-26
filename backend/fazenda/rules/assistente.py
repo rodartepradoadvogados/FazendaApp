@@ -1,5 +1,5 @@
 """
-Assistente Claude — protótipo de um assistente conversacional embutido no
+Assistente Virtual — protótipo de um assistente conversacional embutido no
 site, capaz de consultar os dados reais da fazenda via tool-use antes de
 responder.
 
@@ -123,6 +123,30 @@ _TOOLS_DISPONIVEIS = [
             "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
         },
     },
+    {
+        "modulo": "rebanho",
+        "spec": {
+            "name": "listar_lotes",
+            "description": "Retorna todos os lotes de manejo cadastrados, com código, nome e quantidade de animais em cada um.",
+            "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
+        },
+    },
+    {
+        "modulo": "rebanho",
+        "spec": {
+            "name": "consultar_lote",
+            "description": (
+                "Retorna os animais de um lote específico (pelo código de 2 dígitos, ex.: '04') — número, "
+                "categoria, DEL e situação reprodutiva de cada um. Use para perguntas sobre o que tem em um lote."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {"codigo": {"type": "string", "description": "Código do lote, 2 dígitos, ex.: '04'."}},
+                "required": ["codigo"],
+                "additionalProperties": False,
+            },
+        },
+    },
 ]
 
 
@@ -163,6 +187,45 @@ def _tool_buscar_animal(session: Session, numero: str) -> dict:
     if not animal:
         return {"erro": f"Animal {numero} não encontrado."}
     return animal.model_dump()
+
+
+def _codigo_grupo(grupo: str | None) -> str | None:
+    """Extrai o código de 2 dígitos de Animal.grupo_primario (ex.: "04 - SECAS" -> "04") —
+    mesma lógica de frontend/components/lancamentos/comumForms.tsx:codigoGrupo()."""
+    g = (grupo or "").strip()
+    return g[:2] if len(g) >= 2 and g[:2].isdigit() else None
+
+
+def _tool_listar_lotes(session: Session) -> dict:
+    lotes = session.exec(select(Lote).where(Lote.ativo == True)).all()  # noqa: E712
+    animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+    contagem: dict[str, int] = {}
+    for a in animais:
+        if a.eh_semen:
+            continue
+        cod = _codigo_grupo(a.grupo_primario)
+        if cod:
+            contagem[cod] = contagem.get(cod, 0) + 1
+    return {"lotes": [{"codigo": l.codigo, "nome": l.nome, "total_animais": contagem.get(l.codigo, 0)} for l in lotes]}
+
+
+def _tool_consultar_lote(session: Session, codigo: str) -> dict:
+    codigo = (codigo or "").strip().zfill(2)[:2]
+    lote = session.exec(select(Lote).where(Lote.codigo == codigo)).first()
+    animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+    do_lote = [a for a in animais if not a.eh_semen and _codigo_grupo(a.grupo_primario) == codigo]
+    if not lote and not do_lote:
+        return {"erro": f"Lote {codigo} não encontrado."}
+    return {
+        "codigo": codigo,
+        "nome": lote.nome if lote else None,
+        "total_animais": len(do_lote),
+        "animais": [
+            {"numero": a.numero, "categoria": a.categoria_completa or a.categoria_abrev,
+             "del_dias": a.del_dias, "sit_rep": a.sit_rep, "diagnostico": a.diagnostico}
+            for a in do_lote
+        ],
+    }
 
 
 def _tool_consultar_agenda_hoje(session: Session, usuario: Usuario) -> dict:
@@ -236,6 +299,8 @@ _EXECUTORES = {
     "consultar_estoque": lambda session, usuario, entrada: _tool_consultar_estoque(session),
     "consultar_calendario_sanitario": lambda session, usuario, entrada: _tool_consultar_calendario_sanitario(session),
     "consultar_analise_reprodutiva": lambda session, usuario, entrada: _tool_consultar_analise_reprodutiva(session),
+    "listar_lotes": lambda session, usuario, entrada: _tool_listar_lotes(session),
+    "consultar_lote": lambda session, usuario, entrada: _tool_consultar_lote(session, entrada.get("codigo", "")),
 }
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}

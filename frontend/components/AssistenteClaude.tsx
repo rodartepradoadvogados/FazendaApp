@@ -6,7 +6,7 @@ import { perguntarAssistente } from "@/lib/api";
 type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
 
 /**
- * Botão flutuante do Assistente Claude (protótipo) — abre um painel de chat
+ * Botão flutuante do Assistente Virtual (protótipo) — abre um painel de chat
  * simples que consulta os dados reais da fazenda via tool-use no backend
  * (/assistente/perguntar). Restrito a administradores enquanto o recurso
  * está em avaliação (mesmo gate do backend).
@@ -45,7 +45,7 @@ export default function AssistenteClaude() {
     <>
       <button
         onClick={() => setAberto((v) => !v)}
-        title="Assistente Claude (protótipo)"
+        title="Assistente Virtual (protótipo)"
         style={{
           position: "fixed", bottom: "1.5rem", right: "1.5rem", zIndex: 70,
           width: "3.2rem", height: "3.2rem", borderRadius: "50%", border: "none",
@@ -66,7 +66,7 @@ export default function AssistenteClaude() {
         }}>
           <div style={{ padding: "0.7rem 1rem", borderBottom: "1px solid var(--border)", display: "flex", alignItems: "center", gap: "0.5rem" }}>
             <Sparkles size={16} style={{ color: "var(--dourado-light)" }} />
-            <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>Assistente Claude</span>
+            <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>Assistente Virtual</span>
             <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginLeft: "auto" }}>protótipo</span>
           </div>
 

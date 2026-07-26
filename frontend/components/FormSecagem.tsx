@@ -8,6 +8,7 @@ import { RESPONSAVEIS } from "@/lib/constants";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
+import { Modal } from "@/components/Modal";
 import { TabBar } from "@/components/ui";
 import {
   Campo, Secao, inputStyle, nota,
@@ -60,6 +61,10 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Após secar 1 vaca só, oferece mover pro lote sugerido (das secas) numa
+  // janela suspensa em vez do window.confirm nativo.
+  const [transferenciaPendente, setTransferenciaPendente] = useState<{ numero: string; lote: { codigo: string; rotulo: string } } | null>(null);
+  const [transferindo, setTransferindo] = useState(false);
 
   useEffect(() => {
     if (!matriz) { setInfo(null); return; }
@@ -126,14 +131,12 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
           setErro(`Nenhuma secagem lançada. Falharam: ${falhados.join(", ")} — tente novamente.`);
         }
       } else {
-        let msg = `Secagem lançada com sucesso para ${salvos.length} animal(is).`;
+        setSucesso(`Secagem lançada com sucesso para ${salvos.length} animal(is).`);
         // Só oferece mover para o lote sugerido no caso de 1 animal — com vários,
         // cada um pode precisar de um lote diferente; mova manualmente se preciso.
-        if (salvos.length === 1 && loteSugerido && window.confirm(`Deseja alocar a vaca ${salvos[0]} no lote ${loteSugerido.rotulo} (lote das secas)?`)) {
-          await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: loteSugerido.codigo, animais: salvos });
-          msg += ` Movida para o lote ${loteSugerido.rotulo}.`;
+        if (salvos.length === 1 && loteSugerido) {
+          setTransferenciaPendente({ numero: salvos[0], lote: loteSugerido });
         }
-        setSucesso(msg);
         setSelecionados(new Set()); setLotesSelecionados([]);
         setMotivo(""); setEcc(""); setObservacao(""); setItens([itemSanidadeVazio()]);
         setAplicarVacinaPreParto(false); setVacinasPreParto([]); setVacinaPreParteAplicadaAgora(false);
@@ -142,6 +145,21 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
       setErro(e.message || "Erro ao lançar secagem");
     } finally {
       setSalvando(false);
+    }
+  }
+
+  async function confirmarTransferenciaLote() {
+    if (!transferenciaPendente) return;
+    const { numero, lote } = transferenciaPendente;
+    setTransferindo(true);
+    try {
+      await criarMovimentacao({ data_movimento: dataSecagem, motivo: "Secagem", lote_destino_codigo: lote.codigo, animais: [numero] });
+      setSucesso((s) => `${s || ""} Movida para o lote ${lote.rotulo}.`);
+      setTransferenciaPendente(null);
+    } catch (e: any) {
+      setErro(e.message || "Erro ao mover para o lote.");
+    } finally {
+      setTransferindo(false);
     }
   }
 
@@ -332,6 +350,21 @@ export function FormSecagem({ animais, estoque, produtos }: { animais: AnimalRow
           {salvando ? "Salvando…" : `Salvar (${numerosAlvo.size || 0} animal${numerosAlvo.size !== 1 ? "is" : ""})`}
         </button>
       </div>
+
+      {transferenciaPendente && (
+        <Modal title="Mover para o lote das secas" onClose={() => setTransferenciaPendente(null)} width="420px" zIndex={95}>
+          <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
+            Deseja transferir a vaca <strong>{transferenciaPendente.numero}</strong> para o lote{" "}
+            <strong>{transferenciaPendente.lote.rotulo}</strong>?
+          </p>
+          <div className="flex items-center justify-end gap-2">
+            <button className="btn-ghost" onClick={() => setTransferenciaPendente(null)} disabled={transferindo}>Não</button>
+            <button className="btn-primary" onClick={confirmarTransferenciaLote} disabled={transferindo}>
+              {transferindo ? "Movendo…" : "Sim, transferir"}
+            </button>
+          </div>
+        </Modal>
+      )}
     </>
   );
 }
