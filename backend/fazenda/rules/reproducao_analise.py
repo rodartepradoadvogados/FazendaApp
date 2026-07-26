@@ -45,6 +45,7 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
         mes = f"{ds.year}-{ds.month:02d}" if isinstance(ds, date) else None
         dpp = s.get("data_perda_prenhez")
         mes_perda = f"{dpp.year}-{dpp.month:02d}" if isinstance(dpp, date) else None
+        dd = s.get("data_diagnostico")
 
         registros.append({
             "id": s.get("id"),
@@ -68,6 +69,7 @@ def analisar_servicos(servicos: list[dict]) -> list[dict]:
             "data": ds.isoformat() if isinstance(ds, date) else None,
             "del_servico": _del_servico(ds, s.get("data_ult_parto")),
             "diagnostico": diag,
+            "data_diagnostico": dd.isoformat() if isinstance(dd, date) else None,
             "diagnosticado": diagnosticado,
             "positivo": diag == "POSITIVO",
             "perda": bool(s.get("data_perda_prenhez")),

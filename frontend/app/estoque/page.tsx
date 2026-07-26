@@ -276,9 +276,10 @@ function EstoqueInventario() {
 
 // Mapa de entradas / Mapa de saídas: mesmo histórico de movimentos manuais do
 // estoque (ver /estoque/movimentos), só filtrado por tipo de movimento —
-// entrada ou saída — com filtro de período e busca por produto.
-function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcone, corQtd, nomeArquivoBase }: {
+// entrada ou saída — com filtro de período e produto.
+function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcone, corQtd, nomeArquivoBase, produtos }: {
   titulo: string; descricao: string; tiposIncluidos: string[]; icon: any; corIcone: string; corQtd: string; nomeArquivoBase: string;
+  produtos: string[];
 }) {
   const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -295,7 +296,7 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
       tiposIncluidos.includes(m.movimento) &&
       (!de || (m.data_movimento || "") >= de) &&
       (!ate || (m.data_movimento || "") <= ate) &&
-      (!busca || m.nome_item.toLowerCase().includes(busca.toLowerCase()))
+      (!busca || m.nome_item === busca)
     );
   }, [movimentos, tiposIncluidos, de, ate, busca]);
 
@@ -322,11 +323,11 @@ function MapaMovimentos({ titulo, descricao, tiposIncluidos, icon: Icon, corIcon
                 <input type="date" style={selStyle} value={de} onChange={(e) => setDe(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
-                </div></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
+                <select title="Filtrar pelo produto" style={selStyle} value={busca} onChange={(e) => setBusca(e.target.value)}>
+                  <option value="">Todos</option>
+                  {produtos.map((p) => <option key={p}>{p}</option>)}
+                </select></div>
             </div>
           </div>
 
@@ -381,7 +382,7 @@ type LinhaPorProduto = { produto: string; unidade: string; totalEntradas: number
 
 // Some as entradas e saídas de cada produto no período — mesmo histórico dos
 // mapas acima, só agrupado por item em vez de listado movimento a movimento.
-function EstoquePorProduto() {
+function EstoquePorProduto({ produtos }: { produtos: string[] }) {
   const [movimentos, setMovimentos] = useState<MovimentoEstoqueRow[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [de, setDe] = useState("");
@@ -404,7 +405,7 @@ function EstoquePorProduto() {
       atual.saldo = atual.totalEntradas - atual.totalSaidas;
       by.set(m.nome_item, atual);
     });
-    return Array.from(by.values()).filter((l) => !busca || l.produto.toLowerCase().includes(busca.toLowerCase()));
+    return Array.from(by.values()).filter((l) => !busca || l.produto === busca);
   }, [noPeriodo, busca]);
 
   const ord = useOrdenacao(porProduto);
@@ -429,11 +430,11 @@ function EstoquePorProduto() {
                 <input type="date" style={selStyle} value={de} onChange={(e) => setDe(e.target.value)} /></div>
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
                 <input type="date" style={selStyle} value={ate} onChange={(e) => setAte(e.target.value)} /></div>
-              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar produto</label>
-                <div style={{ position: "relative" }}>
-                  <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
-                  <input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="ex.: Sincrogest" />
-                </div></div>
+              <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
+                <select title="Filtrar pelo produto" style={selStyle} value={busca} onChange={(e) => setBusca(e.target.value)}>
+                  <option value="">Todos</option>
+                  {produtos.map((p) => <option key={p}>{p}</option>)}
+                </select></div>
             </div>
           </div>
 
@@ -489,20 +490,32 @@ export default function EstoquePage() {
   const subNavTree: SubNavNode[] = useMemo(() => ABAS_ESTOQUE.map((a) => ({ id: a.id, label: a.label, icon: a.icon })), []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: aba, onSelect: setAba as (id: string) => void }), [subNavTree, aba]));
 
+  // Lista de produtos para os filtros dos mapas de movimento/por-produto —
+  // só itens marcados como estocáveis (estocavel !== false: None/True =
+  // estocável, ver backend/fazenda/models/estoque.py), pois só eles têm
+  // movimentos de entrada/saída de fato.
+  const [produtosEstocaveis, setProdutosEstocaveis] = useState<string[]>([]);
+  useEffect(() => {
+    fetchEstoque().then((d) => {
+      const nomes = (d.itens as Item[]).filter((i) => i.estocavel !== false).map((i) => i.nome);
+      setProdutosEstocaveis(Array.from(new Set(nomes)).sort((a, b) => a.localeCompare(b)));
+    }).catch(() => {});
+  }, []);
+
   return (
     <div className="px-6 pt-6">
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "mapaEntradas" && (
           <MapaMovimentos titulo="Mapa de entradas" descricao="Histórico de entradas manuais no estoque."
             tiposIncluidos={MOVIMENTOS_ENTRADA} icon={ArrowDownToLine} corIcone="var(--green-light)" corQtd="var(--green-light)"
-            nomeArquivoBase="mapa_entradas_estoque" />
+            nomeArquivoBase="mapa_entradas_estoque" produtos={produtosEstocaveis} />
         )}
         {aba === "mapaSaidas" && (
           <MapaMovimentos titulo="Mapa de saídas" descricao="Histórico de saídas manuais do estoque."
             tiposIncluidos={MOVIMENTOS_SAIDA} icon={ArrowUpFromLine} corIcone="var(--red)" corQtd="var(--red)"
-            nomeArquivoBase="mapa_saidas_estoque" />
+            nomeArquivoBase="mapa_saidas_estoque" produtos={produtosEstocaveis} />
         )}
-        {aba === "porProduto" && <EstoquePorProduto />}
+        {aba === "porProduto" && <EstoquePorProduto produtos={produtosEstocaveis} />}
         {aba === "inventario" && <EstoqueInventario />}
       </div>
     </div>

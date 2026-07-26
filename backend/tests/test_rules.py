@@ -444,7 +444,8 @@ class TestAnaliseReprodutiva:
         from fazenda.rules.reproducao_analise import analisar_servicos
         servicos = [
             {"numero_matriz": "1", "raca_matriz": "Girolando", "data_servico": date(2026, 3, 10),
-             "data_ult_parto": date(2026, 1, 1), "diagnostico": "POSITIVO", "reprodutor": "ROBO",
+             "data_ult_parto": date(2026, 1, 1), "diagnostico": "POSITIVO", "data_diagnostico": date(2026, 4, 10),
+             "reprodutor": "ROBO",
              "tipo_servico": "Inseminação Artificial", "ordem_parto": 2, "ordem_tentativa": 1,
              "data_perda_prenhez": None},
             {"numero_matriz": "2", "raca_matriz": "Holandês", "data_servico": date(2026, 3, 20),
@@ -462,6 +463,10 @@ class TestAnaliseReprodutiva:
         assert r0["ano"] == 2026 and r0["mes"] == "2026-03"
         assert r0["del_servico"] == (date(2026, 3, 10) - date(2026, 1, 1)).days
         assert r0["diagnosticado"] and r0["positivo"]
+        # data do diagnóstico é distinta da data do serviço — filtro por data em
+        # Histórico > Reprodução > Diagnósticos usa esta, não `data` (serviço).
+        assert r0["data_diagnostico"] == "2026-04-10"
+        assert r[1]["data_diagnostico"] is None
         # ABERTO não conta como diagnosticado
         assert r[2]["diagnosticado"] is False and r[2]["positivo"] is False
         # perda de prenhez detectada pela data

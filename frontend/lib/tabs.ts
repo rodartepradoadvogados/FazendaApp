@@ -7,10 +7,27 @@ import { useRef } from "react";
 // window.top (a janela de cima trata a abertura), nunca tenta abrir por
 // conta própria — evita duas barras de abas aninhadas.
 export const MENSAGEM_ABRIR_ABA = "fazenda:abrir-aba";
+// Cada aba (nativa ou iframe) reporta pro topo qual é a PÁGINA atual (não a
+// sub-aba) sempre que muda — é assim que a guia mostra "Reprodução" em vez
+// de ficar presa em "Principal"/no nome de quando foi aberta. Só quem está
+// DENTRO de uma aba precisa mandar isso (ver notificarTituloAtual); a aba
+// nativa lê o próprio pathname direto, sem mensagem.
+export const MENSAGEM_TITULO_ATUALIZADO = "fazenda:titulo-atualizado";
 
-export function abrirNovaAba(url: string, titulo: string): void {
+// Profundidade da sub-navegação de onde a aba foi aberta — 0 (ou undefined)
+// = link direto da Sidebar (guia com contorno dourado, como já era). 1 = veio
+// de uma sub-aba (2º nível); 2 = de uma sub-sub-aba (3º nível). Só afeta a
+// cor de fundo da guia na faixa (ver TabsShell) — nunca o conteúdo.
+export type ProfundidadeAba = 0 | 1 | 2;
+
+export function abrirNovaAba(url: string, titulo: string, profundidade?: ProfundidadeAba): void {
   if (typeof window === "undefined") return;
-  window.top?.postMessage({ tipo: MENSAGEM_ABRIR_ABA, url, titulo }, window.location.origin);
+  window.top?.postMessage({ tipo: MENSAGEM_ABRIR_ABA, url, titulo, profundidade }, window.location.origin);
+}
+
+export function notificarTituloAtual(titulo: string): void {
+  if (typeof window === "undefined" || !estaDentroDeAba()) return;
+  window.top?.postMessage({ tipo: MENSAGEM_TITULO_ATUALIZADO, titulo }, window.location.origin);
 }
 
 export function estaDentroDeAba(): boolean {

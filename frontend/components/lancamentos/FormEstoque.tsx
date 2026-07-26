@@ -20,6 +20,11 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
   const [tipo, setTipo] = useState<"entrada" | "saida" | "">("");
   const [mov, setMov] = useState("");
   const [qtd, setQtd] = useState("");
+  // Facilita o balanço: às vezes quem lança não sabe quanto SAIU (ex.: um
+  // medicamento fracionado em ml), só sabe quanto HÁ no estoque agora — nesse
+  // modo, a quantidade digitada é o saldo atual, e o sistema calcula a
+  // diferença (ver `qtdEfetiva`/nota abaixo) em vez de exigir a conta manual.
+  const [modoQtd, setModoQtd] = useState<"saiu" | "atual">("saiu");
   const [unidade, setUnidade] = useState("");
   const [dataMov, setDataMov] = useState(() => new Date().toISOString().slice(0, 10));
   const [observacao, setObservacao] = useState("");
@@ -89,14 +94,28 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
   const [gerarFinanceiro, setGerarFinanceiro] = useState(false);
 
   const item = estoque.find((e) => e.nome === produto);
-  const q = Number(qtd) || 0;
+  const estoqueAtual = item?.quantidade ?? 0;
   const baixa = MOV_BAIXA.has(mov);
-  const restante = item ? (item.quantidade ?? 0) + (baixa ? -q : q) : null;
+
+  // Modo "atual": o valor digitado é o saldo, não o movimento — a diferença
+  // contra o saldo de ANTES do lançamento é que vira a quantidade do
+  // movimento (positiva = entrou, negativa = saiu).
+  const diferenca = modoQtd === "atual" && qtd !== "" ? (Number(qtd) || 0) - estoqueAtual : null;
+  const direcaoImplicita: "entrada" | "saida" | null = diferenca === null || diferenca === 0 ? null : diferenca > 0 ? "entrada" : "saida";
+  const q = modoQtd === "saiu" ? (Number(qtd) || 0) : Math.abs(diferenca ?? 0);
+
+  const restante = item ? estoqueAtual + (baixa ? -q : q) : null;
   const valorTotalCalc = lancarValor && valorUnitario ? q * Number(valorUnitario) : null;
+
+  // Contradição: o saldo informado implica um sentido (entrada/saída)
+  // diferente do que o usuário marcou em Tipo de movimento — ex.: marcou
+  // "saída" mas o saldo informado é MAIOR que o atual (na verdade entrou).
+  const contradicao = modoQtd === "atual" && direcaoImplicita !== null && tipo !== "" && direcaoImplicita !== tipo;
 
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!produto || !tipo || !mov || !q) { setErro("Selecione o produto, o tipo de movimento e a quantidade."); return; }
+    if (contradicao) { setErro("Esse lançamento não é uma " + (tipo === "saida" ? "saída" : "entrada") + ". Corrija nos campos \"Tipo de movimento\" e \"Movimento\"."); return; }
     setSalvando(true);
     try {
       const r = await movimentarEstoque({
@@ -180,21 +199,31 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
           )}
         </Campo>
         <Campo label="Tipo de movimento">
-          <select style={inputStyle} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setMov(""); }}>
+          <select style={{ ...inputStyle, ...(contradicao ? { border: "1px solid var(--red)" } : {}) }} value={tipo} onChange={(e) => { setTipo(e.target.value as any); setMov(""); }}>
             <option value="" disabled>Selecione…</option>
             <option value="entrada">Entrada</option>
             <option value="saida">Saída</option>
           </select>
         </Campo>
         <Campo label="Movimento">
-          <select style={inputStyle} value={mov} onChange={(e) => setMov(e.target.value)} disabled={!tipo}>
+          <select style={{ ...inputStyle, ...(contradicao ? { border: "1px solid var(--red)" } : {}) }} value={mov} onChange={(e) => setMov(e.target.value)} disabled={!tipo}>
             <option value="" disabled>{tipo ? "Selecione…" : "Escolha o tipo primeiro"}</option>
             {(tipo === "entrada" ? MOVIMENTOS_ENTRADA : tipo === "saida" ? MOVIMENTOS_SAIDA : [])
               .filter((m) => item?.estocavel !== false || !MOVIMENTOS_SOMENTE_ESTOCAVEL.has(m))
               .map((m) => <option key={m}>{m}</option>)}
           </select>
         </Campo>
-        <Campo label="Quantidade"><input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} /></Campo>
+        <Campo label={modoQtd === "saiu" ? "Quantidade (quanto saiu/entrou?)" : "Quantidade (quanto há no estoque agora?)"} full>
+          <div className="flex items-center gap-4 mb-2" style={{ fontSize: "0.8rem" }}>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoQtd === "saiu"} onChange={() => setModoQtd("saiu")} /> 1) Quanto saiu/entrou
+            </label>
+            <label className="flex items-center gap-2" style={{ cursor: "pointer" }}>
+              <input type="radio" checked={modoQtd === "atual"} onChange={() => setModoQtd("atual")} /> 2) Quanto há no estoque
+            </label>
+          </div>
+          <input type="number" inputMode="decimal" style={inputStyle} value={qtd} onChange={(e) => setQtd(e.target.value)} />
+        </Campo>
         <Campo label="Unidade">
           <select style={inputStyle} value={unidade || item?.unidade || "unidade"} onChange={(e) => setUnidade(e.target.value)}>
             {UNIDADES.map((u) => <option key={u}>{u}</option>)}
@@ -240,7 +269,7 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
         </Campo>
         <Campo label="Observação" full><textarea style={{ ...inputStyle, minHeight: "3rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></Campo>
       </div>
-      {item && mov && (
+      {item && mov && modoQtd === "saiu" && qtd !== "" && (
         <p style={{ fontSize: "0.78rem", marginTop: "0.3rem" }}>
           {baixa ? "Baixa" : "Entrada"} · Estoque atual: <strong>{item.quantidade ?? 0} {item.unidade || ""}</strong> → depois:{" "}
           <strong style={{ color: (restante ?? 0) < 0 ? "var(--red)" : "var(--green-light)" }}>{restante} {item.unidade || ""}</strong>
@@ -248,10 +277,27 @@ export function FormEstoque({ estoque, onIrParaFinanceiro }: { estoque: EstoqueI
           {valorTotalCalc != null && <> · Valor do movimento: <strong>{valorTotalCalc.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></>}
         </p>
       )}
+      {item && modoQtd === "atual" && qtd !== "" && direcaoImplicita && (
+        <p style={{ fontSize: "0.78rem", marginTop: "0.3rem" }}>
+          Se há <strong>{Number(qtd) || 0} {item.unidade || ""}</strong> no estoque, {direcaoImplicita === "saida" ? "saíram" : "entraram"}{" "}
+          <strong>{q} {item.unidade || ""}</strong>
+          {valorTotalCalc != null && <> · Valor do movimento: <strong>{valorTotalCalc.toLocaleString("pt-BR", { style: "currency", currency: "BRL" })}</strong></>}
+        </p>
+      )}
+      {contradicao && (
+        <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.4rem", fontWeight: 600 }}>
+          Esse lançamento não é uma {tipo === "saida" ? "saída" : "entrada"}. Corrija nos campos "Tipo de movimento" e "Movimento".
+        </p>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
-        <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
+        <button
+          className="btn-primary" onClick={salvar} disabled={salvando || contradicao}
+          style={contradicao ? { background: "var(--text-muted)", cursor: "not-allowed", opacity: 0.7 } : undefined}
+        >
+          {salvando ? "Salvando…" : "Salvar"}
+        </button>
       </div>
     </>
   );

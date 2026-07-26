@@ -2047,10 +2047,17 @@ export const CLASSIFICACOES_MEDICAMENTO = ["Antimicrobiano", "Anti-inflamatório
 // equipamento deles. Sêmen não usa este campo (tabela própria).
 export const FINALIDADES_ESTOQUE = ["Medicamento", "Ração/Alimento", "Material/Insumo", "Equipamento", "Outro"];
 
-// Categoria do item de estoque — mesma lista de fazenda.rules.categorias.CATEGORIAS_FORNECEDOR
-// no backend (o produto e o fornecedor que o vende compartilham a mesma categoria).
+// Categoria do item de estoque — lista própria (não é mais a mesma de
+// Fornecedor): itens de alimentação animal ganharam subcategorias mais
+// específicas (concentrado energético/proteico, minerais, forragens) pra
+// filtrar melhor no Balanço de Estoque; um fornecedor continua categorizado
+// de forma mais genérica (ver CadastroFornecedores.tsx).
 export const CATEGORIAS_ESTOQUE = [
   "Ração e insumos alimentares",
+  "Concentrado energético",
+  "Concentrado proteico",
+  "Minerais",
+  "Forragens",
   "Sêmen e genética",
   "Medicamentos e produtos veterinários",
   "Equipamentos e manutenção",
@@ -2059,6 +2066,14 @@ export const CATEGORIAS_ESTOQUE = [
   "Energia e utilidades",
   "Embalagens e materiais",
   "Outros",
+];
+
+// Categorias que representam alimentação animal — usadas para sugerir
+// automaticamente a finalidade "Ração/Alimento" ao cadastrar um item nessas
+// categorias (ver NovoItemEstoque.tsx), e para o Balanço de Estoque
+// reconhecer todas elas como "ingredientes para alimentação animal".
+export const CATEGORIAS_ALIMENTACAO_ANIMAL = [
+  "Ração e insumos alimentares", "Concentrado energético", "Concentrado proteico", "Minerais", "Forragens",
 ];
 
 // Medicamentos (itens de estoque) que cumprem um critério — usado ao lançar um

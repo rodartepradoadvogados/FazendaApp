@@ -18,12 +18,19 @@ export type Serv = {
   tipo_servico: string; touro: string; metodo_ia?: string;
   tipo_semen?: string | null; inseminador?: string | null;
   data: string | null; del_servico: number | null; data_d0?: string | null;
-  diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
+  diagnostico: string | null; data_diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
   data_perda: string | null; motivo_perda: string | null;
   usuario_nome?: string | null;
 };
 
 export type Foco = "todos" | "ias" | "diagnosticos" | "perdas";
+
+// Rótulo da coluna/filtro de data principal — muda conforme o foco, já que o
+// VALOR também muda (ver `base` abaixo): cada visão passa a filtrar/ordenar
+// pela sua própria data, não sempre pela data do serviço.
+const LABEL_DATA: Record<Foco, string> = {
+  todos: "Data do serviço", ias: "Data da IA", diagnosticos: "Data do diagnóstico", perdas: "Data da perda de prenhez",
+};
 
 const DIAG_COR: Record<string, string> = { POSITIVO: "var(--green-light)", NEGATIVO: "var(--red)", ABERTO: "var(--amber)" };
 const MOTIVO_LABEL: Record<string, string> = { aborto: "Aborto", natimorto: "Natimorto", outros: "Outros" };
@@ -109,10 +116,18 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
   // só mostra o que já foi diagnosticado, "Perda de prenhez" só as perdas.
   const base = useMemo(() => {
     if (!regs) return [];
-    if (foco === "ias") return regs.filter((s) => s.metodo_ia !== "Monta natural");
-    if (foco === "diagnosticos") return regs.filter((s) => s.diagnosticado);
-    if (foco === "perdas") return regs.filter((s) => s.perda);
-    return regs;
+    let arr = regs;
+    if (foco === "ias") arr = arr.filter((s) => s.metodo_ia !== "Monta natural");
+    if (foco === "diagnosticos") arr = arr.filter((s) => s.diagnosticado);
+    if (foco === "perdas") arr = arr.filter((s) => s.perda);
+    // A partir daqui, `s.data` passa a ser a data RELEVANTE deste foco (não
+    // sempre a data do serviço) — sem isso, o filtro "Por data" de
+    // Diagnósticos comparava contra a data do serviço, escondendo
+    // diagnósticos reais lançados dentro do intervalo escolhido pelo usuário
+    // (a coluna/edição de diagnóstico também herdava a data errada).
+    if (foco === "diagnosticos") arr = arr.map((s) => ({ ...s, data: s.data_diagnostico }));
+    if (foco === "perdas") arr = arr.map((s) => ({ ...s, data: s.data_perda }));
+    return arr;
   }, [regs, foco]);
 
   const ciclos = useMemo(() => {
@@ -249,7 +264,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
             <table className="fazenda-table">
               <thead><tr>
                 <ThOrdenavel label="Matriz" campo="numero" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
-                <ThOrdenavel label="Data serviço" campo="data" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
+                <ThOrdenavel label={LABEL_DATA[foco]} campo="data" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 <ThOrdenavel label="Tipo" campo="tipo_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 <ThOrdenavel label="Método" campo="metodo_ia" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
                 <ThOrdenavel label="Diagnóstico" campo="diagnostico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
@@ -257,7 +272,7 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                 <ThOrdenavel label="Tentativa" campo="ordem_tentativa" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="DEL" campo="del_servico" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} alinhar="right" />
                 <ThOrdenavel label="Touro" campo="touro" coluna={ordServ.coluna} dir={ordServ.dir} ordenar={ordServ.ordenar} />
-                {foco === "perdas" && <><th style={{ textAlign: "left" }}>Data da perda</th><th style={{ textAlign: "left" }}>Motivo</th></>}
+                {foco === "perdas" && <th style={{ textAlign: "left" }}>Motivo</th>}
                 {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               </tr></thead>
               <tbody>
@@ -274,10 +289,9 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                     <td style={{ textAlign: "right" }}>{s.ordem_tentativa ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{s.del_servico ?? "—"}</td>
                     <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{s.touro}</td>
-                    {foco === "perdas" && <>
-                      <td style={{ whiteSpace: "nowrap", fontSize: "0.78rem" }}>{fmtDia(s.data_perda)}</td>
+                    {foco === "perdas" && (
                       <td style={{ fontSize: "0.78rem" }}>{s.motivo_perda ? (MOTIVO_LABEL[s.motivo_perda] || s.motivo_perda) : "—"}</td>
-                    </>}
+                    )}
                     {admin && <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{s.usuario_nome ?? "—"}</td>}
                   </tr>
                 ))}

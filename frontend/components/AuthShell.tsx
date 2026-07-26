@@ -3,6 +3,8 @@ import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { getToken, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
+import { notificarTituloAtual } from "@/lib/tabs";
+import { rotuloDaPagina } from "@/lib/paginaAtual";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
@@ -58,6 +60,14 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     if (estado !== "logado") return;
     return iniciarMonitorInatividade();
   }, [estado]);
+
+  // Reporta a PÁGINA atual pro topo (só tem efeito quando esta janela está
+  // dentro de uma aba extra — ver notificarTituloAtual) — é assim que a guia
+  // troca de nome sozinha ao navegar por clique simples dentro dela, em vez
+  // de ficar presa no nome de quando foi aberta.
+  useEffect(() => {
+    if (estado === "logado") notificarTituloAtual(rotuloDaPagina(path));
+  }, [path, estado]);
 
   // /sobre/* já vem com a própria casca pública (PublicPage) — igual /login,
   // não precisa da sidebar do sistema, esteja a pessoa logada ou não.

@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
-import { criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE } from "@/lib/api";
+import { criarItemEstoque, atualizarItemEstoque, fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, fetchPrincipiosAtivos, CLASSIFICACOES_MEDICAMENTO, FINALIDADES_ESTOQUE, CATEGORIAS_ESTOQUE, CATEGORIAS_ALIMENTACAO_ANIMAL } from "@/lib/api";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { pedirCadastroDeAlimento, type PrefillNovoEstoque } from "@/lib/alimentoEstoqueBridge";
@@ -164,7 +164,14 @@ export default function NovoItemEstoque({ onCriado, onCancelar, prefill, editand
         <div><label style={labelStyle}>Nome</label><input style={inputStyle} value={form.nome} onChange={(e) => set({ nome: e.target.value })} /></div>
         <div><label style={labelStyle}>Número</label><input style={inputStyle} value={form.numero_produto} onChange={(e) => set({ numero_produto: e.target.value })} /></div>
         <div><label style={labelStyle}>Categoria</label>
-          <select style={inputStyle} value={form.categoria} onChange={(e) => set({ categoria: e.target.value })}>
+          <select style={inputStyle} value={form.categoria} onChange={(e) => {
+            const categoria = e.target.value;
+            // Categoria de alimentação animal sugere a finalidade certa de
+            // cara — sem isso, o item ficava sem finalidade e sumia dos
+            // filtros de Medicamento/finalidade no Balanço de Estoque.
+            const sugereRacao = CATEGORIAS_ALIMENTACAO_ANIMAL.includes(categoria) && !form.finalidade;
+            set({ categoria, ...(sugereRacao ? { finalidade: "Ração/Alimento" } : {}) });
+          }}>
             <option value="">—</option>{CATEGORIAS_ESTOQUE.map((c) => <option key={c} value={c}>{c}</option>)}
           </select>
         </div>
