@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Animal, ContaGerencial, Estoque
+from fazenda.models import Animal, ContaGerencial, Estoque, ExameResultado, Lote
 from fazenda.models.sanidade import CalendarioSanitario, EventoSanitario
 from fazenda.rules.assistente import (
     _executar_tool,
@@ -22,8 +22,11 @@ from fazenda.rules.assistente import (
     _tool_buscar_animal,
     _tool_consultar_calendario_sanitario,
     _tool_consultar_estoque,
+    _tool_consultar_exames,
     _tool_consultar_financeiro,
     _tool_consultar_indicadores,
+    _tool_consultar_lote,
+    _tool_listar_lotes,
 )
 
 
@@ -93,7 +96,7 @@ class TestPermissoesPorFerramenta:
         nomes = {t["name"] for t in _ferramentas_do_usuario(_Usuario(papel="admin"))}
         assert {"consultar_indicadores", "buscar_animal", "consultar_agenda_hoje",
                 "consultar_financeiro", "consultar_estoque", "consultar_calendario_sanitario",
-                "consultar_analise_reprodutiva"} <= nomes
+                "consultar_analise_reprodutiva", "listar_lotes", "consultar_lote", "consultar_exames"} <= nomes
 
     def test_usuario_sem_permissoes_nao_ve_nenhuma(self):
         assert _ferramentas_do_usuario(_Usuario(papel="operador", permissoes="")) == []
@@ -162,6 +165,64 @@ class TestFerramentas:
             resultado = _tool_consultar_calendario_sanitario(s)
         assert resultado["total"] == 1
         assert resultado["proximos"][0]["evento"] == "Vermífugo"
+
+    def test_listar_lotes(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="04", nome="SECAS"))
+            s.add(Animal(numero="600", sexo="F", grupo_primario="04 - SECAS"))
+            s.commit()
+            resultado = _tool_listar_lotes(s)
+        lote04 = next(l for l in resultado["lotes"] if l["codigo"] == "04")
+        # "500" (fixture do client) fica sem grupo_primario e não conta em nenhum lote.
+        assert lote04 == {"codigo": "04", "nome": "SECAS", "total_animais": 1}
+
+    def test_consultar_lote_encontrado(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Lote(codigo="04", nome="SECAS"))
+            s.add(Animal(numero="600", sexo="F", grupo_primario="04 - SECAS", del_dias=300))
+            s.commit()
+            resultado = _tool_consultar_lote(s, "4")
+        assert resultado["nome"] == "SECAS"
+        assert resultado["total_animais"] == 1
+        assert resultado["animais"][0] == {
+            "numero": "600", "categoria": None, "del_dias": 300, "sit_rep": None, "diagnostico": None,
+        }
+
+    def test_consultar_lote_inexistente(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            resultado = _tool_consultar_lote(s, "99")
+        assert "erro" in resultado
+
+    def test_consultar_exames_sem_filtro_pede_para_refinar(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            resultado = _tool_consultar_exames(s, None, None)
+        assert "erro" in resultado
+
+    def test_consultar_exames_por_data_e_doenca(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            evento = EventoSanitario(nome="Brucelose B19")
+            s.add(evento)
+            s.commit()
+            s.refresh(evento)
+            s.add(ExameResultado(numero_matriz="500", evento_sanitario_id=evento.id, data_exame=date(2026, 7, 16), resultado="positivo"))
+            s.add(ExameResultado(numero_matriz="501", evento_sanitario_id=evento.id, data_exame=date(2026, 7, 10), resultado="negativo"))
+            s.commit()
+            por_data = _tool_consultar_exames(s, "2026-07-16", None)
+            por_doenca = _tool_consultar_exames(s, None, "brucelose")
+        assert por_data["total"] == 1
+        assert por_data["exames"][0] == {"numero_animal": "500", "evento": "Brucelose B19", "data_exame": "2026-07-16", "resultado": "positivo", "veterinario": None}
+        assert por_doenca["total"] == 2
+
+    def test_consultar_exames_data_invalida(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            resultado = _tool_consultar_exames(s, "16/07/2026", None)
+        assert "erro" in resultado
 
     def test_consultar_estoque(self, client):
         c, engine = client
