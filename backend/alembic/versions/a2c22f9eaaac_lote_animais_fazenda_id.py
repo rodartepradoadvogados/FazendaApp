@@ -16,14 +16,14 @@ código ou nome já usado pela 1ª.
 `MovimentoLote`, `BaixaAnimal`, `CompraAnimal`, `VendaAnimal` e
 `ComissaoCorretagem` são só coluna aditiva, sem constraint a ajustar.
 
-`ParametroSugestaoMovimentacao` (configuração singleton, id=1, mesmo padrão
-de `ParametroDiariaPadrao`) fica de fora de propósito — precisa de um
-redesenho maior antes de fazer sentido ganhar a coluna; ver proposta de
-separação fazenda/empresa, Parte 1.6. `Touro` (banco de dados genético
+`ParametroSugestaoMovimentacao` (configuração singleton, id=1 — mesmo padrão
+que `ParametroDiariaPadrao` tinha antes de ser de-singletonizado na Fase 4B,
+PR #304) fica de fora de propósito — precisa do mesmo tipo de redesenho antes
+de fazer sentido ganhar a coluna. `Touro` (banco de dados genético
 compartilhado) também fica de fora, mesma razão documentada em c9d1e2f3a4b5.
 
 Revision ID: a2c22f9eaaac
-Revises: 910971e4d9ea
+Revises: 2a7d86fb27f5
 Create Date: 2026-07-26 00:15:00.000000
 
 """
@@ -35,7 +35,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'a2c22f9eaaac'
-down_revision: Union[str, Sequence[str], None] = '910971e4d9ea'
+down_revision: Union[str, Sequence[str], None] = '2a7d86fb27f5'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
