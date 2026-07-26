@@ -16,14 +16,14 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
     DietaRegistroReal, Estoque, IngredienteMS, Lote, MovimentoEstoque, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.farmacia import pode_baixar_estoque
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
@@ -39,28 +39,41 @@ ALIMENTOS_PADRAO = [
 ]
 
 
-def _dietas_e_animais(session: Session) -> tuple[list[dict], list[dict]]:
-    dietas = [d.model_dump() for d in session.exec(select(Dieta)).all()]
+def _dietas_e_animais(session: Session, fazenda_id: int | None) -> tuple[list[dict], list[dict]]:
+    query_dieta = select(Dieta)
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_dieta = query_dieta.where(Dieta.fazenda_id == fazenda_id)
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    dietas = [d.model_dump() for d in session.exec(query_dieta).all()]
     animais = [
-        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        a.model_dump() for a in session.exec(query_animal).all()
         if not a.eh_semen and a.sexo != "M"
     ]
     return dietas, animais
 
 
-def _lotes_cadastro(session: Session) -> list[dict]:
-    return [l.model_dump() for l in session.exec(select(Lote)).all()]
+def _lotes_cadastro(session: Session, fazenda_id: int | None) -> list[dict]:
+    query = select(Lote)
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
+    return [l.model_dump() for l in session.exec(query).all()]
 
 
-def _estoque_por_alimento(session: Session) -> tuple[dict[str, list[dict]], set[str]]:
+def _estoque_por_alimento(session: Session, fazenda_id: int | None) -> tuple[dict[str, list[dict]], set[str]]:
     """Vínculo Alimento → Estoque (ver `Estoque.alimento_id`), chaveado pelo
     nome do Alimento normalizado (trim + minúsculas) — usado como segunda
     tentativa quando o nome do ingrediente do plano de dieta não casa
     diretamente com nenhum `Estoque.nome` (ver `calcular_necessidade_mensal`
     e `_dar_baixa_automatica`)."""
-    alimentos = {a.id: a for a in session.exec(select(Alimento)).all()}
+    query_alimento = select(Alimento)
+    query_estoque = select(Estoque).where(Estoque.alimento_id.is_not(None))  # type: ignore[union-attr]
+    if fazenda_id is not None:
+        query_alimento = query_alimento.where(Alimento.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    alimentos = {a.id: a for a in session.exec(query_alimento).all()}
     por_alimento: dict[str, list[dict]] = {}
-    for e in session.exec(select(Estoque).where(Estoque.alimento_id.is_not(None))).all():  # type: ignore[union-attr]
+    for e in session.exec(query_estoque).all():
         alimento = alimentos.get(e.alimento_id)
         if not alimento:
             continue
@@ -70,7 +83,7 @@ def _estoque_por_alimento(session: Session) -> tuple[dict[str, list[dict]], set[
     return por_alimento, cadastrados
 
 
-def _dar_baixa_automatica(session: Session) -> dict:
+def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     """
     Baixa automática de estoque por dias decorridos (opção A). Usa uma trava
     otimista (compare-and-swap) na linha única de AlimentacaoEstado: só quem
@@ -106,13 +119,16 @@ def _dar_baixa_automatica(session: Session) -> dict:
         atualizado = session.get(AlimentacaoEstado, 1)
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
-    dietas, animais = _dietas_e_animais(session)
-    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
-    estoque_por_alimento, _ = _estoque_por_alimento(session)
+    dietas, animais = _dietas_e_animais(session, fazenda_id)
+    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))["consumo_total"]
+    estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
 
     itens_baixados = []
     for item in consumo_total:
-        estoque_item = session.exec(select(Estoque).where(Estoque.nome == item["ingrediente"])).first()
+        query_estoque_item = select(Estoque).where(Estoque.nome == item["ingrediente"])
+        if fazenda_id is not None:
+            query_estoque_item = query_estoque_item.where(Estoque.fazenda_id == fazenda_id)
+        estoque_item = session.exec(query_estoque_item).first()
         if not estoque_item:
             # Sem item de Estoque com o mesmo nome — tenta pelo vínculo via
             # cadastro de Alimento (mesma resolução usada na necessidade mensal).
@@ -135,6 +151,7 @@ def _dar_baixa_automatica(session: Session) -> dict:
             nome_item=estoque_item.nome, movimento="Saída de ajuste", quantidade=baixa,
             unidade=estoque_item.unidade, data_movimento=hoje,
             observacao=f"Baixa automática da Alimentação — {dias} dia(s) desde a última baixa",
+            fazenda_id=fazenda_id,
         ))
         itens_baixados.append({"ingrediente": item["ingrediente"], "baixa": baixa})
 
@@ -143,21 +160,30 @@ def _dar_baixa_automatica(session: Session) -> dict:
 
 
 @router.get("/")
-def obter_alimentacao(session: Session = Depends(get_session)) -> dict:
+def obter_alimentacao(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Plano de dieta por lote cruzado com o efetivo atual → consumo/dia por ingrediente."""
-    _dar_baixa_automatica(session)
-    dietas, animais = _dietas_e_animais(session)
-    return calcular_consumo(dietas, animais, _lotes_cadastro(session))
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _dar_baixa_automatica(session, fazenda_id)
+    dietas, animais = _dietas_e_animais(session, fazenda_id)
+    return calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))
 
 
 @router.get("/necessidade-mensal")
-def necessidade_mensal(session: Session = Depends(get_session)) -> dict:
+def necessidade_mensal(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Projeção de 30 dias por ingrediente, convertida em sacos quando o item é ensacado."""
-    _dar_baixa_automatica(session)
-    dietas, animais = _dietas_e_animais(session)
-    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session))["consumo_total"]
-    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(select(Estoque)).all()}
-    estoque_por_alimento, alimentos_cadastrados = _estoque_por_alimento(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    _dar_baixa_automatica(session, fazenda_id)
+    dietas, animais = _dietas_e_animais(session, fazenda_id)
+    consumo_total = calcular_consumo(dietas, animais, _lotes_cadastro(session, fazenda_id))["consumo_total"]
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    estoque_por_nome = {e.nome: e.model_dump() for e in session.exec(query_estoque).all()}
+    estoque_por_alimento, alimentos_cadastrados = _estoque_por_alimento(session, fazenda_id)
     return {"itens": calcular_necessidade_mensal(consumo_total, estoque_por_nome, estoque_por_alimento, alimentos_cadastrados)}
 
 
@@ -234,9 +260,15 @@ def seed_alimentos(session: Session) -> None:
 
 
 @router.get("/categorias")
-def listar_categorias_alimento(session: Session = Depends(get_session)) -> list[dict]:
+def listar_categorias_alimento(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
     _seed_categorias_alimento(session)
-    return [c.model_dump() for c in session.exec(select(CategoriaAlimento).order_by(CategoriaAlimento.nome)).all()]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CategoriaAlimento)
+    if fazenda_id is not None:
+        query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    return [c.model_dump() for c in session.exec(query.order_by(CategoriaAlimento.nome)).all()]
 
 
 class CategoriaAlimentoIn(BaseModel):
@@ -245,10 +277,16 @@ class CategoriaAlimentoIn(BaseModel):
 
 
 @router.post("/categorias", status_code=201)
-def criar_categoria_alimento(dados: CategoriaAlimentoIn, session: Session = Depends(get_session)) -> dict:
-    if session.exec(select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome)).first():
+def criar_categoria_alimento(
+    dados: CategoriaAlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_dup = select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
-    cat = CategoriaAlimento(nome=dados.nome, ativo=dados.ativo)
+    cat = CategoriaAlimento(nome=dados.nome, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(cat)
     session.commit()
     session.refresh(cat)
@@ -256,11 +294,17 @@ def criar_categoria_alimento(dados: CategoriaAlimentoIn, session: Session = Depe
 
 
 @router.put("/categorias/{categoria_id}")
-def atualizar_categoria_alimento(categoria_id: int, dados: CategoriaAlimentoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_categoria_alimento(
+    categoria_id: int, dados: CategoriaAlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     cat = session.get(CategoriaAlimento, categoria_id)
     if not cat:
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
-    outra = session.exec(select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome, CategoriaAlimento.id != categoria_id)).first()
+    query_outra = select(CategoriaAlimento).where(CategoriaAlimento.nome == dados.nome, CategoriaAlimento.id != categoria_id)
+    if fazenda_id is not None:
+        query_outra = query_outra.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    outra = session.exec(query_outra).first()
     if outra:
         raise HTTPException(status_code=409, detail=f'Já existe uma categoria chamada "{dados.nome}"')
     cat.nome = dados.nome
@@ -283,14 +327,23 @@ def excluir_categoria_alimento(categoria_id: int, session: Session = Depends(get
     return {"ok": True}
 
 
-def _serializar_alimento(session: Session, a: Alimento) -> dict:
-    vinculados = session.exec(select(Estoque).where(Estoque.alimento_id == a.id)).all()
+def _serializar_alimento(session: Session, a: Alimento, fazenda_id: int | None) -> dict:
+    query = select(Estoque).where(Estoque.alimento_id == a.id)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    vinculados = session.exec(query).all()
     return {**a.model_dump(), "estoque_vinculado": [e.model_dump() for e in vinculados]}
 
 
 @router.get("/alimentos")
-def listar_alimentos(session: Session = Depends(get_session)) -> list[dict]:
-    return [_serializar_alimento(session, a) for a in session.exec(select(Alimento).order_by(Alimento.nome)).all()]
+def listar_alimentos(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Alimento)
+    if fazenda_id is not None:
+        query = query.where(Alimento.fazenda_id == fazenda_id)
+    return [_serializar_alimento(session, a, fazenda_id) for a in session.exec(query.order_by(Alimento.nome)).all()]
 
 
 class AlimentoIn(BaseModel):
@@ -303,12 +356,15 @@ class AlimentoIn(BaseModel):
     estoque_ids: list[int] = []
 
 
-def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_ids: list[int]) -> None:
+def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_ids: list[int], fazenda_id: int | None) -> None:
     """Substitui o conjunto de itens de Estoque vinculados a este Alimento
     pelos informados. Um item de Estoque só pode estar vinculado a UM
     alimento por vez (campo escalar `Estoque.alimento_id`) — vincular aqui
     "rouba" o vínculo de qualquer outro alimento que o item estivesse usando."""
-    atuais = session.exec(select(Estoque).where(Estoque.alimento_id == alimento_id)).all()
+    query = select(Estoque).where(Estoque.alimento_id == alimento_id)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    atuais = session.exec(query).all()
     for e in atuais:
         if e.id not in estoque_ids:
             e.alimento_id = None
@@ -322,26 +378,38 @@ def _vincular_estoque_ao_alimento(session: Session, alimento_id: int, estoque_id
 
 
 @router.post("/alimentos", status_code=201)
-def criar_alimento(dados: AlimentoIn, session: Session = Depends(get_session)) -> dict:
-    if session.exec(select(Alimento).where(Alimento.nome == dados.nome)).first():
+def criar_alimento(
+    dados: AlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_dup = select(Alimento).where(Alimento.nome == dados.nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(Alimento.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe um alimento chamado "{dados.nome}"')
     alimento = Alimento(
         nome=dados.nome, categoria_alimento_id=dados.categoria_alimento_id,
-        observacao=dados.observacao, ativo=dados.ativo,
+        observacao=dados.observacao, ativo=dados.ativo, fazenda_id=fazenda_id,
     )
     session.add(alimento)
     session.commit()
     session.refresh(alimento)
-    _vincular_estoque_ao_alimento(session, alimento.id, dados.estoque_ids)
-    return _serializar_alimento(session, alimento)
+    _vincular_estoque_ao_alimento(session, alimento.id, dados.estoque_ids, fazenda_id)
+    return _serializar_alimento(session, alimento, fazenda_id)
 
 
 @router.put("/alimentos/{alimento_id}")
-def atualizar_alimento(alimento_id: int, dados: AlimentoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_alimento(
+    alimento_id: int, dados: AlimentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     alimento = session.get(Alimento, alimento_id)
     if not alimento:
         raise HTTPException(status_code=404, detail="Alimento não encontrado")
-    outro = session.exec(select(Alimento).where(Alimento.nome == dados.nome, Alimento.id != alimento_id)).first()
+    query_outro = select(Alimento).where(Alimento.nome == dados.nome, Alimento.id != alimento_id)
+    if fazenda_id is not None:
+        query_outro = query_outro.where(Alimento.fazenda_id == fazenda_id)
+    outro = session.exec(query_outro).first()
     if outro:
         raise HTTPException(status_code=409, detail=f'Já existe um alimento chamado "{dados.nome}"')
     alimento.nome = dados.nome
@@ -351,8 +419,8 @@ def atualizar_alimento(alimento_id: int, dados: AlimentoIn, session: Session = D
     alimento.atualizado_em = datetime.utcnow()
     session.add(alimento)
     session.commit()
-    _vincular_estoque_ao_alimento(session, alimento_id, dados.estoque_ids)
-    return _serializar_alimento(session, alimento)
+    _vincular_estoque_ao_alimento(session, alimento_id, dados.estoque_ids, fazenda_id)
+    return _serializar_alimento(session, alimento, fazenda_id)
 
 
 @router.delete("/alimentos/{alimento_id}")
@@ -397,11 +465,17 @@ def _seed_materia_seca(session: Session) -> None:
 
 
 @router.get("/materia-seca")
-def listar_materia_seca(session: Session = Depends(get_session)) -> list[dict]:
+def listar_materia_seca(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
     """Lista de ingredientes padrão com seu % de matéria seca (editável)."""
     from fazenda.models import IngredienteMS
     _seed_materia_seca(session)
-    itens = session.exec(select(IngredienteMS).order_by(IngredienteMS.nome)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(IngredienteMS)
+    if fazenda_id is not None:
+        query = query.where(IngredienteMS.fazenda_id == fazenda_id)
+    itens = session.exec(query.order_by(IngredienteMS.nome)).all()
     return [i.model_dump() for i in itens]
 
 
@@ -411,17 +485,23 @@ class IngredienteMSIn(BaseModel):
 
 
 @router.put("/materia-seca")
-def salvar_materia_seca(dados: IngredienteMSIn, session: Session = Depends(get_session)) -> dict:
+def salvar_materia_seca(
+    dados: IngredienteMSIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Upsert do % de matéria seca de um ingrediente (cadastro/edição)."""
     from fazenda.models import IngredienteMS
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do ingrediente é obrigatório")
     if dados.ms_pct is not None and not (0 < dados.ms_pct <= 100):
         raise HTTPException(status_code=400, detail="% de matéria seca deve ser maior que 0 e no máximo 100.")
-    item = session.exec(select(IngredienteMS).where(IngredienteMS.nome == nome)).first()
+    query = select(IngredienteMS).where(IngredienteMS.nome == nome)
+    if fazenda_id is not None:
+        query = query.where(IngredienteMS.fazenda_id == fazenda_id)
+    item = session.exec(query).first()
     if not item:
-        item = IngredienteMS(nome=nome)
+        item = IngredienteMS(nome=nome, fazenda_id=fazenda_id)
     item.ms_pct = dados.ms_pct
     item.atualizado_em = datetime.utcnow()
     session.add(item)
@@ -449,10 +529,15 @@ def _seed_tabela_nutricional(session: Session) -> None:
     session.commit()
 
 
-def _tabela_nutricional_montada(session: Session):
+def _tabela_nutricional_montada(session: Session, fazenda_id: int | None = None):
     from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
-    produtos = session.exec(select(TabelaNutricionalProduto).order_by(TabelaNutricionalProduto.ordem, TabelaNutricionalProduto.nome)).all()
-    valores = session.exec(select(TabelaNutricionalValor).order_by(TabelaNutricionalValor.id)).all()
+    query_produto = select(TabelaNutricionalProduto)
+    query_valor = select(TabelaNutricionalValor)
+    if fazenda_id is not None:
+        query_produto = query_produto.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+        query_valor = query_valor.where(TabelaNutricionalValor.fazenda_id == fazenda_id)
+    produtos = session.exec(query_produto.order_by(TabelaNutricionalProduto.ordem, TabelaNutricionalProduto.nome)).all()
+    valores = session.exec(query_valor.order_by(TabelaNutricionalValor.id)).all()
     por_produto: dict[int, dict[str, str]] = {}
     nutrientes_ordem: list[str] = []
     for v in valores:
@@ -463,11 +548,14 @@ def _tabela_nutricional_montada(session: Session):
 
 
 @router.get("/tabela-nutricional")
-def obter_tabela_nutricional(session: Session = Depends(get_session)) -> dict:
+def obter_tabela_nutricional(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Tabela nutricional (nutriente × produto), cadastrável em Alimentação >
     Tabela nutricional — consulta rápida (modal + calculadora) e edição."""
     _seed_tabela_nutricional(session)
-    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session, fazenda_id)
     linhas = [[nutriente] + [por_produto.get(p.id, {}).get(nutriente, "") for p in produtos] for nutriente in nutrientes_ordem]
     return {"alimentos": [p.nome for p in produtos], "produto_ids": [p.id for p in produtos], "linhas": linhas}
 
@@ -477,15 +565,23 @@ class TabelaNutricionalProdutoIn(BaseModel):
 
 
 @router.post("/tabela-nutricional/produtos", status_code=201)
-def criar_produto_tabela_nutricional(dados: TabelaNutricionalProdutoIn, session: Session = Depends(get_session)) -> dict:
+def criar_produto_tabela_nutricional(
+    dados: TabelaNutricionalProdutoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     from fazenda.models import TabelaNutricionalProduto
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome do produto é obrigatório")
-    if session.exec(select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.nome == nome)).first():
+    query_dup = select(TabelaNutricionalProduto).where(TabelaNutricionalProduto.nome == nome)
+    query_ordem = select(TabelaNutricionalProduto).order_by(TabelaNutricionalProduto.ordem.desc())
+    if fazenda_id is not None:
+        query_dup = query_dup.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+        query_ordem = query_ordem.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f'Já existe um produto chamado "{nome}" na tabela nutricional')
-    maior_ordem = session.exec(select(TabelaNutricionalProduto).order_by(TabelaNutricionalProduto.ordem.desc())).first()
-    produto = TabelaNutricionalProduto(nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0)
+    maior_ordem = session.exec(query_ordem).first()
+    produto = TabelaNutricionalProduto(nome=nome, ordem=(maior_ordem.ordem + 1) if maior_ordem else 0, fazenda_id=fazenda_id)
     session.add(produto)
     session.commit()
     session.refresh(produto)
@@ -532,10 +628,16 @@ class SalvarValoresTabelaNutricionalIn(BaseModel):
 
 
 @router.put("/tabela-nutricional/valores")
-def salvar_valores_tabela_nutricional(dados: SalvarValoresTabelaNutricionalIn, session: Session = Depends(get_session)) -> dict:
+def salvar_valores_tabela_nutricional(
+    dados: SalvarValoresTabelaNutricionalIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Upsert em lote — salva a grade inteira (nutriente × produto) de uma vez."""
     from fazenda.models import TabelaNutricionalValor
-    existentes = {(v.produto_id, v.nutriente): v for v in session.exec(select(TabelaNutricionalValor)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(TabelaNutricionalValor)
+    if fazenda_id is not None:
+        query = query.where(TabelaNutricionalValor.fazenda_id == fazenda_id)
+    existentes = {(v.produto_id, v.nutriente): v for v in session.exec(query).all()}
     salvos = 0
     for item in dados.itens:
         nutriente = item.nutriente.strip()
@@ -547,14 +649,16 @@ def salvar_valores_tabela_nutricional(dados: SalvarValoresTabelaNutricionalIn, s
             v.valor = item.valor
             session.add(v)
         elif item.valor.strip():
-            session.add(TabelaNutricionalValor(produto_id=item.produto_id, nutriente=nutriente, valor=item.valor))
+            session.add(TabelaNutricionalValor(produto_id=item.produto_id, nutriente=nutriente, valor=item.valor, fazenda_id=fazenda_id))
         salvos += 1
     session.commit()
     return {"salvos": salvos}
 
 
 @router.get("/tabela-nutricional/modelo")
-def baixar_modelo_tabela_nutricional(session: Session = Depends(get_session)) -> Response:
+def baixar_modelo_tabela_nutricional(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> Response:
     """Planilha (.xlsx) com os produtos e nutrientes já cadastrados — baixe,
     edite/complete e reimporte em POST /tabela-nutricional/importar."""
     import io
@@ -562,7 +666,8 @@ def baixar_modelo_tabela_nutricional(session: Session = Depends(get_session)) ->
     from openpyxl.styles import Font, PatternFill
 
     _seed_tabela_nutricional(session)
-    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    produtos, nutrientes_ordem, por_produto = _tabela_nutricional_montada(session, fazenda_id)
 
     wb = Workbook()
     ws = wb.active
@@ -587,7 +692,9 @@ def baixar_modelo_tabela_nutricional(session: Session = Depends(get_session)) ->
 
 
 @router.post("/tabela-nutricional/importar")
-async def importar_tabela_nutricional(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_tabela_nutricional(
+    file: UploadFile, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """
     Importa a planilha no mesmo formato do modelo baixado: 1ª coluna =
     nutriente, demais colunas = um produto cada (nome no cabeçalho). Produtos
@@ -598,6 +705,7 @@ async def importar_tabela_nutricional(file: UploadFile, session: Session = Depen
     from openpyxl import load_workbook
     from fazenda.models import TabelaNutricionalProduto, TabelaNutricionalValor
 
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     try:
         wb = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
@@ -611,7 +719,10 @@ async def importar_tabela_nutricional(file: UploadFile, session: Session = Depen
     if len(cabecalho) < 2 or not any(cabecalho[1:]):
         raise HTTPException(status_code=400, detail="A planilha precisa de ao menos uma coluna de produto (além de 'Nutriente')")
 
-    existentes = {p.nome: p for p in session.exec(select(TabelaNutricionalProduto)).all()}
+    query_produtos = select(TabelaNutricionalProduto)
+    if fazenda_id is not None:
+        query_produtos = query_produtos.where(TabelaNutricionalProduto.fazenda_id == fazenda_id)
+    existentes = {p.nome: p for p in session.exec(query_produtos).all()}
     maior_ordem = max([p.ordem for p in existentes.values()], default=-1)
     produto_por_coluna: dict[int, "TabelaNutricionalProduto"] = {}
     for idx, nome in enumerate(cabecalho[1:], start=1):
@@ -620,14 +731,17 @@ async def importar_tabela_nutricional(file: UploadFile, session: Session = Depen
         produto = existentes.get(nome)
         if not produto:
             maior_ordem += 1
-            produto = TabelaNutricionalProduto(nome=nome, ordem=maior_ordem)
+            produto = TabelaNutricionalProduto(nome=nome, ordem=maior_ordem, fazenda_id=fazenda_id)
             session.add(produto)
             session.commit()
             session.refresh(produto)
             existentes[nome] = produto
         produto_por_coluna[idx] = produto
 
-    valores_existentes = {(v.produto_id, v.nutriente): v for v in session.exec(select(TabelaNutricionalValor)).all()}
+    query_valores = select(TabelaNutricionalValor)
+    if fazenda_id is not None:
+        query_valores = query_valores.where(TabelaNutricionalValor.fazenda_id == fazenda_id)
+    valores_existentes = {(v.produto_id, v.nutriente): v for v in session.exec(query_valores).all()}
     nutrientes_importados = 0
     for row in linhas[1:]:
         if not row or not row[0]:
@@ -646,7 +760,7 @@ async def importar_tabela_nutricional(file: UploadFile, session: Session = Depen
                 v.valor = valor
                 session.add(v)
             else:
-                v = TabelaNutricionalValor(produto_id=produto.id, nutriente=nutriente, valor=valor)
+                v = TabelaNutricionalValor(produto_id=produto.id, nutriente=nutriente, valor=valor, fazenda_id=fazenda_id)
                 session.add(v)
                 valores_existentes[chave] = v
         if teve_valor:
@@ -676,9 +790,15 @@ class AnaliseBromatologicaIn(BaseModel):
 
 
 @router.get("/analise-bromatologica")
-def listar_analise_bromatologica(session: Session = Depends(get_session)) -> dict:
+def listar_analise_bromatologica(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     from fazenda.models import AnaliseBromatologica
-    registros = session.exec(select(AnaliseBromatologica).order_by(AnaliseBromatologica.data.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(AnaliseBromatologica)
+    if fazenda_id is not None:
+        query = query.where(AnaliseBromatologica.fazenda_id == fazenda_id)
+    registros = session.exec(query.order_by(AnaliseBromatologica.data.desc())).all()
     nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
     linhas = []
     for r in registros:
@@ -690,12 +810,14 @@ def listar_analise_bromatologica(session: Session = Depends(get_session)) -> dic
 
 @router.post("/analise-bromatologica", status_code=201)
 def criar_analise_bromatologica(
-    dados: AnaliseBromatologicaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    dados: AnaliseBromatologicaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
 ) -> dict:
     from fazenda.models import AnaliseBromatologica
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.alimento.strip():
         raise HTTPException(status_code=400, detail="Alimento é obrigatório")
-    registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id)
+    registro = AnaliseBromatologica(**dados.model_dump(), usuario_id=user.id, fazenda_id=fazenda_id)
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -735,19 +857,25 @@ class DietaLancamentoIn(BaseModel):
     encerrar_anterior: bool = False
 
 
-def _serializar_dieta(session: Session, d: DietaLancamento) -> dict:
-    itens = session.exec(
-        select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == d.id)
-    ).all()
+def _serializar_dieta(session: Session, d: DietaLancamento, fazenda_id: int | None) -> dict:
+    query = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == d.id)
+    if fazenda_id is not None:
+        query = query.where(DietaItemProgramado.fazenda_id == fazenda_id)
+    itens = session.exec(query).all()
     return {**d.model_dump(), "ativa": d.data_efetivo_encerramento is None, "itens_programados": [i.model_dump() for i in itens]}
 
 
 @router.get("/dietas")
 def listar_dietas(
-    lote: int | None = None, ativo: bool | None = None, session: Session = Depends(get_session),
+    lote: int | None = None, ativo: bool | None = None,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> list[dict]:
-    dietas = session.exec(select(DietaLancamento)).all()
-    saida = [_serializar_dieta(session, d) for d in dietas]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(DietaLancamento)
+    if fazenda_id is not None:
+        query = query.where(DietaLancamento.fazenda_id == fazenda_id)
+    dietas = session.exec(query).all()
+    saida = [_serializar_dieta(session, d, fazenda_id) for d in dietas]
     nomes = mapa_usuarios(session, {s["usuario_id"] for s in saida})
     for s in saida:
         s["usuario_nome"] = nomes.get(s["usuario_id"])
@@ -759,10 +887,17 @@ def listar_dietas(
 
 
 @router.post("/dietas", status_code=201)
-def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_dieta(
+    dados: DietaLancamentoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento do plano programado")
-    ms_por_nome = {i.nome: i.ms_pct for i in session.exec(select(IngredienteMS)).all()}
+    query_ms = select(IngredienteMS)
+    if fazenda_id is not None:
+        query_ms = query_ms.where(IngredienteMS.fazenda_id == fazenda_id)
+    ms_por_nome = {i.nome: i.ms_pct for i in session.exec(query_ms).all()}
     for item in dados.itens:
         if item.ms_pct is None:
             item.ms_pct = ms_por_nome.get(item.alimento)
@@ -774,11 +909,12 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
             )
         if item.ms_pct is not None and not (0 < item.ms_pct <= 100):
             raise HTTPException(status_code=400, detail=f'% de matéria seca inválido para "{item.alimento}" — deve ser entre 0 e 100.')
-    ativa_existente = session.exec(
-        select(DietaLancamento).where(
-            DietaLancamento.lote == dados.lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
-        )
-    ).first()
+    query_ativa = select(DietaLancamento).where(
+        DietaLancamento.lote == dados.lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query_ativa = query_ativa.where(DietaLancamento.fazenda_id == fazenda_id)
+    ativa_existente = session.exec(query_ativa).first()
     if ativa_existente:
         if dados.encerrar_anterior:
             ativa_existente.data_efetivo_encerramento = dados.data_abertura
@@ -794,7 +930,7 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
         data_prevista_encerramento=dados.data_prevista_encerramento, observacao=dados.observacao,
         base_quantidade=dados.base_quantidade or "total",
         leite_bezerros_kg_dia=dados.leite_bezerros_kg_dia,
-        usuario_id=user.id,
+        usuario_id=user.id, fazenda_id=fazenda_id,
     )
     session.add(dieta)
     session.commit()
@@ -803,18 +939,26 @@ def criar_dieta(dados: DietaLancamentoIn, session: Session = Depends(get_session
     # escolhido no formulário (EstoquePicker) — sem exigir nenhuma mudança na
     # tela de lançamento: se existir um Alimento com esse mesmo nome (ou um
     # item de Estoque já vinculado a um Alimento), o vínculo entra sozinho.
-    estoque_por_nome = {e.nome: e for e in session.exec(select(Estoque)).all()}
-    alimento_por_nome = {a.nome: a.id for a in session.exec(select(Alimento)).all()}
+    query_estoque = select(Estoque)
+    query_alimento = select(Alimento)
+    if fazenda_id is not None:
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+        query_alimento = query_alimento.where(Alimento.fazenda_id == fazenda_id)
+    estoque_por_nome = {e.nome: e for e in session.exec(query_estoque).all()}
+    alimento_por_nome = {a.nome: a.id for a in session.exec(query_alimento).all()}
     for item in dados.itens:
         estoque_item = estoque_por_nome.get(item.alimento)
         alimento_id = (estoque_item.alimento_id if estoque_item else None) or alimento_por_nome.get(item.alimento)
-        session.add(DietaItemProgramado(dieta_lancamento_id=dieta.id, alimento_id=alimento_id, **item.model_dump()))
+        session.add(DietaItemProgramado(dieta_lancamento_id=dieta.id, alimento_id=alimento_id, fazenda_id=fazenda_id, **item.model_dump()))
     session.commit()
-    return _serializar_dieta(session, dieta)
+    return _serializar_dieta(session, dieta, fazenda_id)
 
 
-def _animais_do_lote(session: Session, lote: int) -> list[Animal]:
-    ativos = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+def _animais_do_lote(session: Session, lote: int, fazenda_id: int | None = None) -> list[Animal]:
+    query = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    ativos = session.exec(query).all()
     return [
         a for a in ativos
         if not a.eh_semen and a.sexo != "M" and (_codigo_grupo(a.grupo_primario) or "") == f"{lote:02d}"
@@ -822,12 +966,18 @@ def _animais_do_lote(session: Session, lote: int) -> list[Animal]:
 
 
 @router.get("/dietas/contexto/{lote}")
-def contexto_dieta(lote: int, session: Session = Depends(get_session)) -> dict:
+def contexto_dieta(
+    lote: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Contexto do lote para o veterinário formular a dieta: nome/nº do lote,
     nº de animais, última dieta (produtos e qtd/cabeça/dia), último controle
     leiteiro de cada animal e um resumo (DEL médio, média do CL, data do CL)."""
-    lote_cad = session.exec(select(Lote).where(Lote.codigo == f"{lote:02d}")).first()
-    animais = _animais_do_lote(session, lote)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_lote = select(Lote).where(Lote.codigo == f"{lote:02d}")
+    if fazenda_id is not None:
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
+    lote_cad = session.exec(query_lote).first()
+    animais = _animais_do_lote(session, lote, fazenda_id)
     n = len(animais)
 
     dels = [a.del_dias for a in animais if a.del_dias is not None]
@@ -835,14 +985,18 @@ def contexto_dieta(lote: int, session: Session = Depends(get_session)) -> dict:
     datas_cl = [a.data_ult_leite for a in animais if a.data_ult_leite is not None]
 
     # Última dieta ativa do lote (produtos + qtd total/dia → por cabeça/dia).
-    ativa = session.exec(
-        select(DietaLancamento).where(
-            DietaLancamento.lote == lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
-        )
-    ).first()
+    query_ativa = select(DietaLancamento).where(
+        DietaLancamento.lote == lote, DietaLancamento.data_efetivo_encerramento == None  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query_ativa = query_ativa.where(DietaLancamento.fazenda_id == fazenda_id)
+    ativa = session.exec(query_ativa).first()
     ultima_dieta = None
     if ativa:
-        itens = session.exec(select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == ativa.id)).all()
+        query_itens = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == ativa.id)
+        if fazenda_id is not None:
+            query_itens = query_itens.where(DietaItemProgramado.fazenda_id == fazenda_id)
+        itens = session.exec(query_itens).all()
         ultima_dieta = {
             "data_abertura": ativa.data_abertura.isoformat(),
             "responsavel": ativa.responsavel,
@@ -873,15 +1027,24 @@ def contexto_dieta(lote: int, session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/dietas/{dieta_id}/apresentacao")
-def apresentacao_dieta(dieta_id: int, session: Session = Depends(get_session)) -> dict:
+def apresentacao_dieta(
+    dieta_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Como o funcionário vê a dieta para conferir no vagão: por produto — qtd/
     cabeça, total/dia, total/trato; e o somatório de kg no vagão do lote."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
     if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
-    n = len(_animais_do_lote(session, dieta.lote))
-    lote_cad = session.exec(select(Lote).where(Lote.codigo == f"{dieta.lote:02d}")).first()
-    itens = session.exec(select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)).all()
+    n = len(_animais_do_lote(session, dieta.lote, fazenda_id))
+    query_lote = select(Lote).where(Lote.codigo == f"{dieta.lote:02d}")
+    if fazenda_id is not None:
+        query_lote = query_lote.where(Lote.fazenda_id == fazenda_id)
+    lote_cad = session.exec(query_lote).first()
+    query_itens = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)
+    if fazenda_id is not None:
+        query_itens = query_itens.where(DietaItemProgramado.fazenda_id == fazenda_id)
+    itens = session.exec(query_itens).all()
     linhas = []
     total_dia = 0.0
     for it in itens:
@@ -928,26 +1091,42 @@ class RegistroRealIn(BaseModel):
 
 
 @router.post("/dietas/{dieta_id}/real", status_code=201)
-def registrar_real(dieta_id: int, dados: RegistroRealIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def registrar_real(
+    dieta_id: int, dados: RegistroRealIn,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
     if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
     if not dados.itens:
         raise HTTPException(status_code=400, detail="Informe ao menos um alimento oferecido")
     for item in dados.itens:
-        session.add(DietaRegistroReal(dieta_lancamento_id=dieta_id, data=dados.data, usuario_id=user.id, **item.model_dump()))
+        session.add(DietaRegistroReal(
+            dieta_lancamento_id=dieta_id, data=dados.data, usuario_id=user.id, fazenda_id=fazenda_id,
+            **item.model_dump(),
+        ))
     session.commit()
     return {"registrados": len(dados.itens)}
 
 
 @router.get("/dietas/{dieta_id}/comparativo")
-def comparativo_dieta(dieta_id: int, session: Session = Depends(get_session)) -> dict:
+def comparativo_dieta(
+    dieta_id: int, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Programado × real por alimento — soma total real e média por dia distinto registrado."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     dieta = session.get(DietaLancamento, dieta_id)
     if not dieta:
         raise HTTPException(status_code=404, detail="Dieta não encontrada")
-    programados = session.exec(select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)).all()
-    reais = session.exec(select(DietaRegistroReal).where(DietaRegistroReal.dieta_lancamento_id == dieta_id)).all()
+    query_prog = select(DietaItemProgramado).where(DietaItemProgramado.dieta_lancamento_id == dieta_id)
+    query_reais = select(DietaRegistroReal).where(DietaRegistroReal.dieta_lancamento_id == dieta_id)
+    if fazenda_id is not None:
+        query_prog = query_prog.where(DietaItemProgramado.fazenda_id == fazenda_id)
+        query_reais = query_reais.where(DietaRegistroReal.fazenda_id == fazenda_id)
+    programados = session.exec(query_prog).all()
+    reais = session.exec(query_reais).all()
 
     por_alimento: dict[str, dict] = {}
     for p in programados:
@@ -964,4 +1143,4 @@ def comparativo_dieta(dieta_id: int, session: Session = Depends(get_session)) ->
         por_alimento[alimento]["real_dias"] = len(dias)
         por_alimento[alimento]["real_media_dia"] = round(por_alimento[alimento]["real_total"] / len(dias), 2) if dias else None
 
-    return {"dieta": _serializar_dieta(session, dieta), "itens": sorted(por_alimento.values(), key=lambda x: x["alimento"])}
+    return {"dieta": _serializar_dieta(session, dieta, fazenda_id), "itens": sorted(por_alimento.values(), key=lambda x: x["alimento"])}

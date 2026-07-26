@@ -22,6 +22,31 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_remetente: str = "recibos@fazendaestreito.com"
 
+    # Assinatura eletrônica do contrato CowData via ZapSign. Vazio = desligado
+    # (o botão "Assinar contrato" retorna erro claro pedindo a configuração).
+    # Token em Configurações > Integrações > API ZapSign; o webhook secret é
+    # definido por você mesmo e cadastrado igual nos dois lados (ZapSign e aqui).
+    zapsign_api_token: str = ""
+    zapsign_webhook_secret: str = ""
+
+    # Cobrança (boleto + PIX) via API do Banco do Brasil — scaffold inicial,
+    # mantido para referência/plano B. Vazio = desligado (endpoints devolvem
+    # erro claro). Ver ASAAS_* abaixo — é a integração ativa (jul/2026).
+    bb_client_id: str = ""
+    bb_client_secret: str = ""
+    bb_developer_application_key: str = ""
+    bb_ambiente: str = "sandbox"            # "sandbox" ou "producao"
+    bb_pix_chave: str = ""                  # chave PIX recebedora cadastrada no BB
+
+    # Cobrança da assinatura CowData via Asaas (boleto mensal + Pix Automático/
+    # recorrente + QR Code Pix dinâmico avulso para o desconto semestral) —
+    # ver fazenda/rules/asaas.py. Vazio = desligado. Chave de API em
+    # Asaas > Integrações > API Key; asaas_webhook_token é definido por você
+    # mesmo e cadastrado igual nos dois lados (Asaas e aqui).
+    asaas_api_key: str = ""
+    asaas_ambiente: str = "sandbox"         # "sandbox" ou "producao"
+    asaas_webhook_token: str = ""
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
