@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<title>Contrato de Licença de Uso e Suporte — CowData</title>
+<style>
+  @page { size: A4; margin: 2.2cm 2cm; }
+  body { font-family: Georgia, "Times New Roman", serif; font-size: 11.5pt; line-height: 1.5; color: #1a1a1a; max-width: 780px; margin: 0 auto; padding: 2rem 1rem; }
+  h1 { font-size: 15pt; text-align: center; margin-bottom: 0.2rem; }
+  h2 { font-size: 12.5pt; margin-top: 1.6rem; margin-bottom: 0.4rem; border-bottom: 1px solid #999; padding-bottom: 0.15rem; }
+  .subtitulo { text-align: center; font-size: 9.5pt; color: #555; margin-bottom: 1.6rem; }
+  .qualificacao { margin: 0.6rem 0; text-align: justify; }
+  .clausula { text-align: justify; margin: 0.5rem 0; }
+  .clausula b { font-weight: 700; }
+  .nota { background: #fff6df; border-left: 3px solid #b8860b; padding: 0.4rem 0.7rem; margin: 0.5rem 0; font-size: 10pt; font-style: italic; }
+  .preencher { background: #ffe9e9; padding: 0 0.2rem; }
+  table.planos { width: 100%; border-collapse: collapse; margin: 0.6rem 0; font-size: 10.5pt; }
+  table.planos th, table.planos td { border: 1px solid #bbb; padding: 0.3rem 0.5rem; text-align: left; }
+  table.planos th { background: #f0f0f0; }
+  .assinaturas { margin-top: 3rem; display: flex; justify-content: space-between; gap: 2rem; }
+  .assinatura-bloco { flex: 1; text-align: center; }
+  .linha-assinatura { border-top: 1px solid #333; margin-top: 3rem; padding-top: 0.3rem; }
+  @media print { .nota { display: none; } }
+</style>
+</head>
+<body>
+
+<h1>CONTRATO DE LICENÇA DE USO DE SOFTWARE, HOSPEDAGEM E SUPORTE TÉCNICO — SISTEMA COWDATA</h1>
+<p class="subtitulo">Instrumento particular de prestação de serviços de tecnologia para gestão de fazenda leiteira</p>
+
+<p class="qualificacao">
+Pelo presente instrumento particular, de um lado:
+</p>
+<p class="qualificacao">
+<b>{{ empresa_nome }}</b>, inscrita no CNPJ sob o nº <span class="preencher">{{ empresa_cnpj or "[PREENCHER — CNPJ a definir]" }}</span>,
+com sede em <span class="preencher">{{ empresa_endereco or "[PREENCHER — endereço da sede]" }}</span>,
+doravante denominada simplesmente <b>CONTRATADA</b>;
+</p>
+<p class="qualificacao">e de outro lado:</p>
+<p class="qualificacao">
+<b>{{ fazenda_nome }}</b>, inscrita no CPF/CNPJ sob o nº <span class="preencher">{{ fazenda_documento or "[PREENCHER]" }}</span>,
+com endereço em <span class="preencher">{{ fazenda_endereco or "[PREENCHER]" }}</span>,
+neste ato representada por <span class="preencher">{{ representante_nome or "[PREENCHER — nome do representante]" }}</span>,
+portador(a) do CPF nº <span class="preencher">{{ representante_cpf or "[PREENCHER]" }}</span>,
+doravante denominada simplesmente <b>CONTRATANTE</b>;
+</p>
+<p class="qualificacao">
+têm entre si justo e contratado o presente instrumento, que se rege pelas cláusulas seguintes.
+</p>
+
+<h2>1. DEFINIÇÕES</h2>
+<p class="clausula"><b>1.1.</b> <b>"Sistema" ou "CowData":</b> plataforma de software como serviço (SaaS) para gestão de fazendas leiteiras, abrangendo os módulos de Rebanho, Reprodução, Sanidade, Produção, Financeiro, Estoque, Alimentação, Agricultura/Plantio e Consultor externo, conforme o plano contratado.</p>
+<p class="clausula"><b>1.2.</b> <b>"Dados do Produtor":</b> todo dado operacional, zootécnico, genético, produtivo, sanitário e financeiro inserido, gerado ou coletado no Sistema em razão do uso pela CONTRATANTE — incluindo, sem limitação, dados de animais, produção leiteira, reprodução, genética, manejo, insumos e custos da fazenda.</p>
+<p class="clausula"><b>1.3.</b> <b>"Plataforma de Assinatura Eletrônica":</b> serviço ZapSign, utilizado facultativamente para formalização de assinatura eletrônica deste e de outros instrumentos relacionados.</p>
+
+<h2>2. OBJETO</h2>
+<p class="clausula"><b>2.1.</b> O presente contrato tem por objeto a concessão, pela CONTRATADA à CONTRATANTE, de licença de uso não exclusiva, não transferível e limitada ao número de fazendas/unidades contratadas, do Sistema CowData, incluindo hospedagem em nuvem, manutenção corretiva e evolutiva, atualizações e suporte técnico, nos termos e limites do plano contratado (Cláusula 4).</p>
+<p class="clausula"><b>2.2.</b> A licença não confere à CONTRATANTE qualquer direito sobre o código-fonte, a marca, o layout, a arquitetura ou quaisquer outros ativos de propriedade intelectual da CONTRATADA, aplicando-se a Cláusula 8.</p>
+
+<h2>3. OBRIGAÇÕES DAS PARTES</h2>
+<p class="clausula"><b>3.1. Obrigações da CONTRATADA:</b> (a) manter o Sistema disponível em regime de melhores esforços (Cláusula 9); (b) prestar suporte técnico em horário comercial; (c) realizar cópias de segurança periódicas dos dados; (d) zelar pela confidencialidade e integridade dos Dados do Produtor, nos termos da Cláusula 6; (e) comunicar a CONTRATANTE sobre manutenções programadas com antecedência razoável.</p>
+<p class="clausula"><b>3.2. Obrigações da CONTRATANTE:</b> (a) efetuar o pagamento nas datas e formas ajustadas (Cláusula 5); (b) fornecer informações verídicas para uso do Sistema; (c) não ceder, sublicenciar ou compartilhar suas credenciais de acesso com terceiros não autorizados; (d) utilizar o Sistema em conformidade com a legislação aplicável.</p>
+
+<h2>4. PLANOS, MÓDULOS E VALORES</h2>
+<p class="clausula"><b>4.1.</b> A CONTRATANTE contrata o plano <b>{{ plano_nome }}</b>, no valor mensal de <b>R$ {{ preco_mensal }}</b>, compreendendo os módulos: {{ modulos_lista }}.</p>
+<table class="planos">
+  <tr><th>Plano</th><th>Valor mensal</th><th>Módulos inclusos</th></tr>
+  <tr><td>Standard</td><td>R$ 250,00</td><td>Rebanho, Reprodutivo</td></tr>
+  <tr><td>Silver</td><td>R$ 350,00</td><td>+ Produtivo, Sanitário, Financeiro</td></tr>
+  <tr><td>Gold</td><td>R$ 420,00</td><td>+ Planejamento, Pedidos, Estoque, Alimentação, Agricultura</td></tr>
+  <tr><td>Diamond</td><td>R$ 500,00</td><td>+ Consultor externo</td></tr>
+</table>
+<p class="clausula"><b>4.2. Periodicidade e desconto por pagamento antecipado:</b> a assinatura é mensal por padrão, cobrada via Pix Automático (recorrência autorizada uma única vez pela CONTRATANTE, nos termos da Cláusula 5.1) ou boleto. Caso a CONTRATANTE opte por pagamento adiantado de mais de um mês, aplicam-se os seguintes descontos sobre o valor mensal do plano: <b>5% (cinco por cento)</b> no ciclo trimestral; <b>20% (vinte por cento)</b> no ciclo semestral, este último exclusivo para pagamento via QR Code Pix dinâmico gerado para o período. A CONTRATANTE optou pelo ciclo <b>{{ periodicidade }}</b>{% if desconto_pct %}, com desconto de <b>{{ desconto_pct }}%</b> aplicado, resultando no valor total de <b>R$ {{ valor_total_ciclo }}</b> para o período{% endif %}.</p>
+<p class="clausula"><b>4.3.</b> Os valores serão reajustados anualmente pela variação acumulada do IPCA (ou índice que vier a substituí-lo), a contar da data de assinatura.</p>
+
+<h2>5. FATURAMENTO E PAGAMENTO</h2>
+<p class="clausula"><b>5.1.</b> O pagamento poderá ser efetuado, à escolha da CONTRATANTE: (a) via Pix Automático, mediante autorização de débito recorrente concedida uma única vez pela CONTRATANTE em seu aplicativo bancário, com cobrança mensal automática do valor do plano; (b) via QR Code Pix dinâmico avulso; ou (c) via boleto bancário. As cobranças são emitidas pela CONTRATADA através de instituição de pagamento/financeira integrada ao Pix, regulada pelo Banco Central do Brasil.</p>
+<p class="clausula"><b>5.2.</b> O atraso no pagamento por mais de 10 (dez) dias corridos autoriza a CONTRATADA a suspender o acesso ao Sistema, mediante aviso prévio de 3 (três) dias úteis, sem prejuízo da cobrança de multa de 2% (dois por cento) sobre o valor em atraso, juros de mora de 1% (um por cento) ao mês e correção monetária.</p>
+<p class="nota">[NOTA DO ADVOGADO] Confirmar se a suspensão automática por inadimplência exige notificação formal (carta/e-mail) antes de produzir efeitos, e ajustar o prazo de tolerância conforme política comercial final.</p>
+
+<h2>6. CONFIDENCIALIDADE, SEGREDO EMPRESARIAL E PROTEÇÃO DE DADOS (LGPD)</h2>
+<p class="clausula"><b>6.1. Titularidade dos Dados do Produtor.</b> Os Dados do Produtor são de propriedade exclusiva da CONTRATANTE. A CONTRATADA não adquire, por força deste contrato ou do uso do Sistema, qualquer direito de propriedade sobre tais dados.</p>
+<p class="clausula"><b>6.2. Papel da CONTRATADA na LGPD.</b> Para os fins da Lei nº 13.709/2018 (LGPD), a CONTRATADA atua exclusivamente na qualidade de <b>operadora</b>, e a CONTRATANTE na qualidade de <b>controladora</b> dos Dados do Produtor, cabendo à CONTRATADA tratá-los estrita e unicamente conforme as instruções da CONTRATANTE e as finalidades deste contrato (prestação do serviço de gestão da fazenda).</p>
+<p class="clausula"><b>6.3. Vedação de uso próprio.</b> A CONTRATADA se obriga a <b>não acessar, copiar, exportar, agregar, analisar ou utilizar</b> os Dados do Produtor para finalidade própria — incluindo, sem limitação, desenvolvimento de produto, treinamento de modelos, benchmarking setorial, comparação entre clientes, estudos de mercado ou qualquer uso comercial, direto ou indireto, com concorrentes da CONTRATANTE — sem autorização prévia, expressa, específica e por escrito da CONTRATANTE para cada finalidade.</p>
+<p class="clausula"><b>6.4. Segredo empresarial e industrial.</b> Sem prejuízo da proteção conferida pela LGPD, as Partes reconhecem que os Dados do Produtor constituem também segredo de empresa e informação confidencial de caráter industrial/comercial da CONTRATANTE, protegidos nos termos do art. 195, incisos XI e XII, da Lei nº 9.279/1996 (Lei da Propriedade Industrial) e do art. 2º, III, da Lei nº 12.965/2014, cuja violação sujeita o infrator às sanções cíveis e penais cabíveis.</p>
+<p class="clausula"><b>6.5. Acesso emergencial ("break-glass").</b> Em caráter excepcional, a CONTRATADA poderá acessar os Dados do Produtor sem autorização prévia unicamente para (i) diagnóstico e correção de falhas técnicas que impeçam o funcionamento do Sistema, ou (ii) cumprimento de ordem judicial ou determinação de autoridade competente — devendo, em qualquer caso, (a) restringir o acesso ao mínimo necessário, (b) registrar o acesso em log de auditoria específico, com data, motivo, escopo e responsável, e (c) comunicar a CONTRATANTE em até 5 (cinco) dias úteis do ocorrido, salvo vedação legal expressa.</p>
+<p class="clausula"><b>6.6.</b> As obrigações desta cláusula sobrevivem à extinção deste contrato por prazo indeterminado, enquanto persistir a posse de qualquer Dado do Produtor pela CONTRATADA.</p>
+
+<h2>7. ASSINATURA ELETRÔNICA</h2>
+<p class="clausula"><b>7.1.</b> As Partes reconhecem que este contrato poderá ser assinado eletronicamente por meio da Plataforma de Assinatura Eletrônica (ZapSign), aceitando desde já sua validade jurídica plena, nos termos do art. 10, §2º, da Medida Provisória nº 2.200-2/2001 e da legislação civil aplicável (autonomia da vontade e livre pactuação da forma de aceite entre as partes), dispensada a presença de testemunhas ou reconhecimento de firma, salvo disposição legal expressa em contrário.</p>
+<p class="clausula"><b>7.2.</b> Alternativamente, o contrato poderá ser impresso, assinado fisicamente pelas Partes e devolvido à CONTRATADA, digitalizado, para os mesmos efeitos.</p>
+
+<h2>8. PROPRIEDADE INTELECTUAL</h2>
+<p class="clausula"><b>8.1.</b> O Sistema, seu código-fonte, layout, banco de dados estrutural (schema), marcas, nome comercial e demais ativos de propriedade intelectual são e permanecerão de propriedade exclusiva da CONTRATADA, não se transferindo à CONTRATANTE qualquer direito além da licença de uso descrita na Cláusula 2.</p>
+
+<h2>9. DISPONIBILIDADE E LIMITAÇÃO DE RESPONSABILIDADE</h2>
+<p class="clausula"><b>9.1.</b> A CONTRATADA envidará seus melhores esforços para manter o Sistema disponível de forma contínua, não garantindo, todavia, disponibilidade ininterrupta de 100% (cem por cento), em razão de fatores como manutenção programada, caso fortuito, força maior ou falhas de terceiros (provedores de nuvem, conectividade).</p>
+<p class="clausula"><b>9.2.</b> A CONTRATADA não se responsabiliza por decisões zootécnicas, sanitárias, reprodutivas ou financeiras tomadas pela CONTRATANTE com base nas informações, relatórios ou sugestões geradas pelo Sistema, os quais têm caráter de apoio à gestão, cabendo à CONTRATANTE a avaliação técnica final.</p>
+<p class="nota">[NOTA DO ADVOGADO] Avaliar, conforme o volume de faturamento e o perfil de risco, se convém incluir um teto indenizatório (ex.: limitado aos valores pagos nos últimos 12 meses) e excluir expressamente danos indiretos/lucros cessantes.</p>
+
+<h2>10. VIGÊNCIA, RENOVAÇÃO E RESCISÃO</h2>
+<p class="clausula"><b>10.1.</b> O presente contrato vigora a partir da data de sua assinatura, por prazo indeterminado, renovando-se automaticamente a cada ciclo de faturamento contratado (Cláusula 4.2), salvo manifestação em contrário.</p>
+<p class="clausula"><b>10.2.</b> Qualquer das Partes poderá rescindir o contrato imotivadamente, mediante aviso prévio por escrito de 30 (trinta) dias, sem multa rescisória, ressalvados os valores já devidos até a data de encerramento.</p>
+<p class="clausula"><b>10.3. Portabilidade dos dados.</b> Em caso de rescisão, por qualquer motivo, a CONTRATADA garantirá à CONTRATANTE a exportação integral dos Dados do Produtor, em formato estruturado e de uso comum (ex.: planilha/CSV), no prazo de até 15 (quinze) dias corridos contados do pedido, e realizará a exclusão definitiva dos dados de seus sistemas em até 90 (noventa) dias após a exportação, salvo obrigação legal de retenção.</p>
+
+<h2>11. DISPOSIÇÕES GERAIS</h2>
+<p class="clausula"><b>11.1.</b> Este contrato não poderá ser cedido por qualquer das Partes sem o consentimento prévio e por escrito da outra, ressalvada cessão da CONTRATADA em razão de reorganização societária que preserve as obrigações aqui assumidas.</p>
+<p class="clausula"><b>11.2.</b> A tolerância de uma Parte quanto ao descumprimento de qualquer cláusula não implicará novação ou renúncia de direitos.</p>
+<p class="clausula"><b>11.3.</b> As comunicações entre as Partes serão válidas quando realizadas por escrito, inclusive por e-mail, aos endereços de contato informados no cadastro da CONTRATANTE no Sistema.</p>
+
+<h2>12. FORO</h2>
+<p class="clausula"><b>12.1.</b> Fica eleito o foro da comarca de <span class="preencher">{{ cidade_foro or "[PREENCHER — comarca]" }}</span>, Estado de <span class="preencher">{{ estado_foro or "[PREENCHER]" }}</span>, para dirimir quaisquer questões oriundas deste contrato, com renúncia a qualquer outro, por mais privilegiado que seja.</p>
+
+<p class="clausula">E por estarem assim justas e contratadas, as Partes firmam o presente instrumento, em duas vias de igual teor, ou eletronicamente via plataforma de assinatura digital.</p>
+
+<p class="clausula" style="margin-top: 1.6rem;">{{ cidade_foro or "[Cidade]" }}, {{ data_hoje }}.</p>
+
+<div class="assinaturas">
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ empresa_nome }} — CONTRATADA</div>
+  </div>
+  <div class="assinatura-bloco">
+    <div class="linha-assinatura">{{ fazenda_nome }} — CONTRATANTE</div>
+  </div>
+</div>
+
+</body>
+</html>

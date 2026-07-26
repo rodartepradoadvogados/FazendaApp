@@ -39,17 +39,17 @@ MODULOS_COMERCIAIS = [
 PLANOS_CATALOGO: dict[str, dict] = {
     "standard": {
         "nome": "Standard",
-        "preco": 150.00,
+        "preco": 250.00,
         "modulos": [MODULO_REBANHO, "reprodutivo"],
     },
     "silver": {
         "nome": "Silver",
-        "preco": 250.00,
+        "preco": 350.00,
         "modulos": [MODULO_REBANHO, "reprodutivo", "produtivo", "sanitario", "financeiro"],
     },
     "gold": {
         "nome": "Gold",
-        "preco": 320.00,
+        "preco": 420.00,
         "modulos": [
             MODULO_REBANHO, "reprodutivo", "produtivo", "sanitario", "financeiro",
             "planejamento", "pedidos", "estoque", "alimentacao", "agricultura",
@@ -57,13 +57,27 @@ PLANOS_CATALOGO: dict[str, dict] = {
     },
     "diamond": {
         "nome": "Diamond",
-        "preco": 400.00,
+        "preco": 500.00,
         "modulos": [
             MODULO_REBANHO, "reprodutivo", "produtivo", "sanitario", "financeiro",
             "planejamento", "pedidos", "estoque", "alimentacao", "agricultura", "consultor",
         ],
     },
 }
+
+# Desconto por periodicidade de pagamento adiantado (ver ContratoFazenda.ciclo_pagamento)
+# — aplicado sobre preco_mensal do plano/módulos. Mesmos percentuais usados no
+# contrato-modelo (fazenda/templates/contrato_cowdata.html) e no Painel CowData.
+# Sem tier "anual" de propósito (revisão jul/2026: assinatura é mensal por
+# padrão via Pix Automático; semestral virou o teto de desconto — 20%, mesmo
+# valor que o "anual" tinha antes — manter os dois lado a lado não faria
+# sentido, então o anual saiu).
+DESCONTO_CICLO_PAGAMENTO: dict[str, float] = {
+    "mensal": 0.0,
+    "trimestral": 0.05,
+    "semestral": 0.20,
+}
+MESES_POR_CICLO: dict[str, int] = {"mensal": 1, "trimestral": 3, "semestral": 6}
 
 STATUS_CONTRATO = ["aguardando_aprovacao", "ativo", "suspenso"]
 
@@ -94,6 +108,11 @@ class ContratoFazenda(SQLModel, table=True):
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True, unique=True)
     plano: Optional[str] = None
     status: str = "aguardando_aprovacao"
+    # "mensal" (padrão, sem desconto), "trimestral" (-5%) ou "semestral" (-20%,
+    # via Pix Automático/QR dinâmico) — ver DESCONTO_CICLO_PAGAMENTO. Só o
+    # valor à vista do pagamento adiantado muda; os módulos/preço-base do
+    # plano são os mesmos.
+    ciclo_pagamento: str = "mensal"
     aprovado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     data_fechamento: Optional[datetime] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -134,3 +153,27 @@ class ContratoAnexo(SQLModel, table=True):
     conteudo: bytes
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+STATUS_ASSINATURA_ZAPSIGN = ["pending", "signed", "refused"]
+
+
+class ContratoAssinaturaZapSign(SQLModel, table=True):
+    """Uma tentativa de assinatura eletrônica do contrato-modelo via ZapSign
+    (ver fazenda/rules/zapsign.py e fazenda/templates/contrato_cowdata.md) —
+    histórico completo (mais de uma linha por fazenda: reenvio, correção).
+    `status` começa "pending" e é atualizado pelo webhook
+    (fazenda/api/routers/zapsign.py::zapsign_webhook) quando o signatário
+    assina — nunca por polling do frontend."""
+
+    __tablename__ = "contrato_assinatura_zapsign"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
+    document_token: str = Field(index=True, unique=True)
+    signer_token: Optional[str] = None
+    sign_url: Optional[str] = None
+    status: str = "pending"
+    solicitado_por_usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    assinado_em: Optional[datetime] = None

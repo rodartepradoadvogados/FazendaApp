@@ -28,9 +28,9 @@ from sqlmodel import Field, SQLModel
 # 3/8/15) — ver migração c9e0f1a2b3c4 para o remapeamento dos contratos já
 # existentes.
 PLANOS_CONSULTOR_CATALOGO: dict[str, dict] = {
-    "consultor_standard": {"nome": "Até 3 fazendas", "preco": 250.00, "limite_fazendas": 3},
-    "consultor_gold": {"nome": "Até 8 fazendas", "preco": 500.00, "limite_fazendas": 8},
-    "consultor_diamond": {"nome": "Até 20 fazendas", "preco": 1000.00, "limite_fazendas": 20},
+    "consultor_standard": {"nome": "Até 3 fazendas", "preco": 300.00, "limite_fazendas": 3},
+    "consultor_gold": {"nome": "Até 8 fazendas", "preco": 550.00, "limite_fazendas": 8},
+    "consultor_diamond": {"nome": "Até 20 fazendas", "preco": 1050.00, "limite_fazendas": 20},
 }
 
 STATUS_CONTRATO_CONSULTOR = ["aguardando_aprovacao", "ativo", "suspenso"]

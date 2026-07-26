@@ -1,14 +1,22 @@
 "use client";
 import { useEffect, useState } from "react";
-import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase } from "lucide-react";
+import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat } from "lucide-react";
 import {
   fetchFazendas, criarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
   urlAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
   fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
+  baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
+  criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
   type Fazenda, type ContratoFazenda, type PlanoCatalogo, type PlanoNome, type ModuloComercial,
-  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin,
+  type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type CicloPagamento, type AssinaturaZapSign,
+  type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
+
+const NOME_CICLO: Record<CicloPagamento, string> = {
+  mensal: "Mensal (sem desconto)", trimestral: "Trimestral (5% off)",
+  semestral: "Semestral — Pix Automático QR dinâmico (20% off)",
+};
 
 const inp: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem" };
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
@@ -54,9 +62,17 @@ export default function FazendasAdmin() {
 
   const [planoEscolhido, setPlanoEscolhido] = useState<PlanoNome | "custom">("standard");
   const [modulosCustom, setModulosCustom] = useState<Record<ModuloComercial, number | null>>({} as any);
+  const [cicloEscolhido, setCicloEscolhido] = useState<CicloPagamento>("mensal");
   const [salvando, setSalvando] = useState(false);
   const [aprovando, setAprovando] = useState(false);
   const [enviandoAnexo, setEnviandoAnexo] = useState(false);
+  const [baixandoModelo, setBaixandoModelo] = useState(false);
+  const [assinandoZapSign, setAssinandoZapSign] = useState(false);
+  const [assinaturaZapSign, setAssinaturaZapSign] = useState<AssinaturaZapSign>(null);
+
+  const [cobrancas, setCobrancas] = useState<CobrancaAsaas[] | null>(null);
+  const [pagador, setPagador] = useState<CobrancaAsaasIn>({ pagador_nome: "", pagador_documento: "", pagador_email: "" });
+  const [gerandoCobranca, setGerandoCobranca] = useState<"assinatura" | "semestral" | "boleto" | null>(null);
 
   const [abrirNova, setAbrirNova] = useState(false);
   const [novoNome, setNovoNome] = useState("");
@@ -99,6 +115,7 @@ export default function FazendasAdmin() {
   function carregarContrato(fazendaId: number) {
     fetchContratoFazenda(fazendaId).then((ct) => {
       setContrato(ct);
+      setCicloEscolhido(ct.ciclo_pagamento || "mensal");
       if (ct.plano) setPlanoEscolhido(ct.plano);
       else {
         setPlanoEscolhido("custom");
@@ -109,6 +126,8 @@ export default function FazendasAdmin() {
     }).catch((e) => setErro(e.message));
     fetchAnexosContrato(fazendaId).then(setAnexos).catch((e) => setErro(e.message));
     fetchUsuariosVinculados(fazendaId).then(setUsuarios).catch((e) => setErro(e.message));
+    fetchStatusAssinaturaZapSign(fazendaId).then(setAssinaturaZapSign).catch((e) => setErro(e.message));
+    fetchCobrancasAsaas(fazendaId).then(setCobrancas).catch((e) => setErro(e.message));
   }
 
   function selecionar(id: number) {
@@ -161,8 +180,8 @@ export default function FazendasAdmin() {
     setSalvando(true); setErro(null); setMsg(null);
     try {
       const dados = planoEscolhido === "custom"
-        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })) }
-        : { plano: planoEscolhido, modulos: [] };
+        ? { plano: null, modulos: Object.entries(modulosCustom).filter(([, v]) => v != null).map(([modulo, preco]) => ({ modulo: modulo as ModuloComercial, preco: preco || 0 })), ciclo_pagamento: cicloEscolhido }
+        : { plano: planoEscolhido, modulos: [], ciclo_pagamento: cicloEscolhido };
       const ct = await definirContratoFazenda(selecionada, dados);
       setContrato(ct);
       setMsg("Contrato atualizado. Lembre de aprovar/fechar para liberar os módulos.");
@@ -204,6 +223,40 @@ export default function FazendasAdmin() {
       await excluirAnexoContrato(anexoId);
       fetchAnexosContrato(selecionada).then(setAnexos);
     } catch (e: any) { setErro(e.message); }
+  }
+
+  async function baixarContrato() {
+    if (selecionada == null) return;
+    setBaixandoModelo(true); setErro(null);
+    try { await baixarModeloContrato(selecionada); }
+    catch (e: any) { setErro(e.message); } finally { setBaixandoModelo(false); }
+  }
+
+  async function assinarZapSign() {
+    if (selecionada == null) return;
+    setAssinandoZapSign(true); setErro(null); setMsg(null);
+    try {
+      const tentativa = await assinarContratoZapSign(selecionada);
+      setAssinaturaZapSign(tentativa);
+      if (tentativa?.sign_url) window.open(tentativa.sign_url, "_blank", "noreferrer");
+      setMsg("Solicitação de assinatura enviada pelo ZapSign — confira o e-mail cadastrado no seu usuário.");
+    } catch (e: any) { setErro(e.message); } finally { setAssinandoZapSign(false); }
+  }
+
+  async function gerarCobranca(tipo: "assinatura" | "semestral" | "boleto") {
+    if (selecionada == null) return;
+    if (!pagador.pagador_nome.trim() || !pagador.pagador_documento.trim()) {
+      setErro("Informe nome e CPF/CNPJ do pagador antes de gerar a cobrança."); return;
+    }
+    setGerandoCobranca(tipo); setErro(null); setMsg(null);
+    try {
+      const criar = tipo === "assinatura" ? criarAssinaturaAsaas : tipo === "semestral" ? criarPixSemestralAsaas : criarBoletoAsaas;
+      const resultado = await criar(selecionada, pagador);
+      if (resultado.pix_qr_code) setMsg("QR Code Pix gerado — copie o código ou escaneie para pagar.");
+      else if (resultado.invoice_url) { window.open(resultado.invoice_url, "_blank", "noreferrer"); setMsg("Cobrança gerada — abrindo o link de pagamento."); }
+      else setMsg("Cobrança gerada com sucesso.");
+      fetchCobrancasAsaas(selecionada).then(setCobrancas);
+    } catch (e: any) { setErro(e.message); } finally { setGerandoCobranca(null); }
   }
 
   const modulosDoPlano = planoEscolhido !== "custom" && catalogo ? catalogo[planoEscolhido]?.modulos || [] : [];
@@ -282,10 +335,31 @@ export default function FazendasAdmin() {
             </div>
 
             {planoEscolhido !== "custom" ? (
-              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
                 Módulos inclusos: {modulosDoPlano.map((m) => NOME_MODULO[m]).join(", ")}.
               </p>
-            ) : (
+            ) : null}
+
+            <label style={lbl}>Ciclo de pagamento (desconto por adiantamento)</label>
+            <div className="flex flex-wrap gap-2 mb-3">
+              {(["mensal", "trimestral", "semestral"] as const).map((c) => (
+                <label key={c} style={{ display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.78rem", cursor: "pointer",
+                  border: "1px solid " + (cicloEscolhido === c ? "var(--dourado)" : "var(--border)"), borderRadius: "6px", padding: "0.3rem 0.55rem",
+                  background: cicloEscolhido === c ? "rgba(212,160,23,0.12)" : "transparent" }}>
+                  <input type="radio" name="ciclo" checked={cicloEscolhido === c} onChange={() => setCicloEscolhido(c)} />
+                  {NOME_CICLO[c]}
+                </label>
+              ))}
+            </div>
+            {contrato.preco_mensal != null && (
+              <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "1rem" }}>
+                {cicloEscolhido === "mensal"
+                  ? <>R$ {contrato.preco_mensal.toFixed(2)}/mês.</>
+                  : <>R$ {contrato.preco_mensal.toFixed(2)}/mês — total do ciclo com desconto: <b style={{ color: "var(--text)" }}>R$ {contrato.valor_total_ciclo?.toFixed(2)}</b>.</>}
+              </p>
+            )}
+
+            {planoEscolhido === "custom" && (
               <div className="mb-3" style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: "0.4rem 0.8rem", alignItems: "center" }}>
                 {(Object.keys(NOME_MODULO) as ModuloComercial[]).map((m) => (
                   <label key={m} style={{ display: "contents" }}>
@@ -319,12 +393,32 @@ export default function FazendasAdmin() {
               )}
             </div>
 
-            <div className="card-header mb-2">Contrato assinado (anexos)</div>
-            <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-              <Upload size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar PDF/imagem"}
-              <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={enviandoAnexo}
-                onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
-            </label>
+            <div className="card-header mb-2">Contrato assinado</div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              <button onClick={baixarContrato} disabled={baixandoModelo}
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                <Download size={13} /> {baixandoModelo ? "Gerando…" : "Baixar contrato"}
+              </button>
+              <label style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text-muted)" }}>
+                <Upload size={13} /> {enviandoAnexo ? "Enviando…" : "Anexar contrato assinado"}
+                <input type="file" accept="application/pdf,image/*" style={{ display: "none" }} disabled={enviandoAnexo}
+                  onChange={(e) => { const f = e.target.files?.[0]; if (f) enviarAnexo(f); e.target.value = ""; }} />
+              </label>
+              <button onClick={assinarZapSign} disabled={assinandoZapSign}
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                <PenLine size={13} /> {assinandoZapSign ? "Enviando ao ZapSign…" : "Assinar contrato (ZapSign)"}
+              </button>
+            </div>
+            {assinaturaZapSign && (
+              <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                Última solicitação ZapSign: <b style={{
+                  color: assinaturaZapSign.status === "signed" ? "var(--green-light)" : assinaturaZapSign.status === "refused" ? "var(--red)" : "var(--dourado)",
+                }}>{assinaturaZapSign.status === "signed" ? "assinado" : assinaturaZapSign.status === "refused" ? "recusado" : "pendente"}</b>
+                {" "}({formatarData(assinaturaZapSign.criado_em)}){assinaturaZapSign.sign_url && assinaturaZapSign.status !== "signed" && (
+                  <> — <a href={assinaturaZapSign.sign_url} target="_blank" rel="noreferrer" style={{ color: "var(--dourado)" }}>reabrir link de assinatura</a></>
+                )}
+              </p>
+            )}
             {anexos && anexos.length > 0 && (
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {anexos.map((a) => (
@@ -335,6 +429,40 @@ export default function FazendasAdmin() {
                     <button onClick={() => excluirAnexo(a.id)} title="Excluir anexo" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
                       <Trash2 size={14} />
                     </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+
+            <div className="card-header mt-4 mb-2">Cobrança da assinatura (Asaas)</div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              <input placeholder="Nome do pagador" style={{ ...inp, width: "auto", flex: "1 1 10rem" }}
+                value={pagador.pagador_nome} onChange={(e) => setPagador((s) => ({ ...s, pagador_nome: e.target.value }))} />
+              <input placeholder="CPF/CNPJ" style={{ ...inp, width: "auto", flex: "1 1 8rem" }}
+                value={pagador.pagador_documento} onChange={(e) => setPagador((s) => ({ ...s, pagador_documento: e.target.value }))} />
+              <input placeholder="E-mail (opcional)" style={{ ...inp, width: "auto", flex: "1 1 10rem" }}
+                value={pagador.pagador_email} onChange={(e) => setPagador((s) => ({ ...s, pagador_email: e.target.value }))} />
+            </div>
+            <div className="flex flex-wrap gap-2 mb-2">
+              <button onClick={() => gerarCobranca("assinatura")} disabled={gerandoCobranca !== null}
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                <Repeat size={13} /> {gerandoCobranca === "assinatura" ? "Criando…" : "Assinatura mensal (Pix)"}
+              </button>
+              <button onClick={() => gerarCobranca("semestral")} disabled={gerandoCobranca !== null}
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--dourado)", cursor: "pointer", color: "var(--dourado)", background: "transparent" }}>
+                <QrCode size={13} /> {gerandoCobranca === "semestral" ? "Gerando…" : "QR semestral (-20%)"}
+              </button>
+              <button onClick={() => gerarCobranca("boleto")} disabled={gerandoCobranca !== null}
+                style={{ display: "inline-flex", alignItems: "center", gap: "0.4rem", fontSize: "0.78rem", padding: "0.35rem 0.7rem", borderRadius: "6px", border: "1px solid var(--border)", cursor: "pointer", color: "var(--text)", background: "transparent" }}>
+                <Receipt size={13} /> {gerandoCobranca === "boleto" ? "Gerando…" : "Boleto"}
+              </button>
+            </div>
+            {cobrancas && cobrancas.length > 0 && (
+              <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem", marginBottom: "0.5rem" }}>
+                {cobrancas.map((c) => (
+                  <li key={c.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.78rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
+                    <span>{c.tipo.replace("_", " ")} — R$ {c.valor.toFixed(2)} <span style={{ color: "var(--text-muted)", fontSize: "0.7rem" }}>({formatarData(c.criado_em)})</span></span>
+                    <span style={{ fontWeight: 700, color: c.status === "paga" ? "var(--green-light)" : "var(--dourado)" }}>{c.status === "paga" ? "paga" : "aguardando"}</span>
                   </li>
                 ))}
               </ul>

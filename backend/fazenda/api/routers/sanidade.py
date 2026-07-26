@@ -764,7 +764,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
         if dados.resultado_exame == "positivo":
             marcar_a_descartar(
                 ADescartarIn(animais=dados.animais, descartar=True, observacao=f"Exame {ev.nome}: positivo"),
-                session,
+                session=session,
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 

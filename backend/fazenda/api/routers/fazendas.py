@@ -19,10 +19,14 @@ from sqlmodel import Session, select
 from fazenda.auth import EMAIL_DONO, exigir_contratante_ou_dono, exigir_dono, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    CentroCusto, ContaCorrente, ContratoAnexo, ContratoFazenda, ContratoFazendaModulo, Fazenda, PrecoModulo,
-    Usuario, UsuarioFazenda,
+    CentroCusto, ContaCorrente, ContratoAnexo, ContratoAssinaturaZapSign, ContratoFazenda, ContratoFazendaModulo,
+    EmpresaOperadora, Fazenda, PrecoModulo, Usuario, UsuarioFazenda,
 )
-from fazenda.models.planos import MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO
+from fazenda.models.planos import (
+    DESCONTO_CICLO_PAGAMENTO, MESES_POR_CICLO, MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO,
+)
+from fazenda.rules.contrato_render import render_contrato
+from fazenda.rules import zapsign
 from fazenda.api.routers.cadastro.servicos import seed_tipos_metodos_servico
 from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_pessoa
 
@@ -222,6 +226,13 @@ class ModuloContratoIn(BaseModel):
 class ContratoIn(BaseModel):
     plano: str | None = None  # chave de PLANOS_CATALOGO, ou None para "sob medida"
     modulos: list[ModuloContratoIn] = []  # só usado quando plano é None
+    ciclo_pagamento: str = "mensal"  # "mensal"/"trimestral"/"semestral" — ver DESCONTO_CICLO_PAGAMENTO
+
+
+def _preco_mensal_contrato(contrato: ContratoFazenda, modulos: list[ContratoFazendaModulo]) -> float:
+    if contrato.plano and contrato.plano in PLANOS_CATALOGO:
+        return PLANOS_CATALOGO[contrato.plano]["preco"]
+    return sum(m.preco for m in modulos if m.ativo)
 
 
 def _publico_contrato(session: Session, fazenda_id: int) -> dict:
@@ -230,7 +241,10 @@ def _publico_contrato(session: Session, fazenda_id: int) -> dict:
         select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda_id)
     ).all()
     if not contrato:
-        return {"fazenda_id": fazenda_id, "status": None, "plano": None, "modulos": []}
+        return {"fazenda_id": fazenda_id, "status": None, "plano": None, "modulos": [], "ciclo_pagamento": "mensal"}
+    preco_mensal = _preco_mensal_contrato(contrato, modulos)
+    desconto = DESCONTO_CICLO_PAGAMENTO.get(contrato.ciclo_pagamento, 0.0)
+    meses = MESES_POR_CICLO.get(contrato.ciclo_pagamento, 1)
     return {
         "fazenda_id": fazenda_id,
         "status": contrato.status,
@@ -238,6 +252,10 @@ def _publico_contrato(session: Session, fazenda_id: int) -> dict:
         "aprovado_por_usuario_id": contrato.aprovado_por_usuario_id,
         "data_fechamento": contrato.data_fechamento.isoformat() if contrato.data_fechamento else None,
         "modulos": [{"modulo": m.modulo, "preco": m.preco, "ativo": m.ativo} for m in modulos],
+        "ciclo_pagamento": contrato.ciclo_pagamento,
+        "desconto_pct": desconto * 100,
+        "preco_mensal": preco_mensal,
+        "valor_total_ciclo": round(preco_mensal * meses * (1 - desconto), 2),
     }
 
 
@@ -261,6 +279,8 @@ def definir_contrato(
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
     if dados.plano is not None and dados.plano not in PLANOS_CATALOGO:
         raise HTTPException(status_code=400, detail=f"Plano inválido: {dados.plano}")
+    if dados.ciclo_pagamento not in DESCONTO_CICLO_PAGAMENTO:
+        raise HTTPException(status_code=400, detail=f"Ciclo de pagamento inválido: {dados.ciclo_pagamento}")
 
     if dados.plano is not None:
         pacote = PLANOS_CATALOGO[dados.plano]
@@ -281,6 +301,7 @@ def definir_contrato(
         contrato = ContratoFazenda(fazenda_id=fazenda_id)
         session.add(contrato)
     contrato.plano = dados.plano
+    contrato.ciclo_pagamento = dados.ciclo_pagamento
     contrato.atualizado_em = datetime.utcnow()
     session.add(contrato)
 
@@ -345,6 +366,31 @@ def suspender_contrato(
 @router.get("/catalogo/planos")
 def listar_planos_catalogo(_: Usuario = Depends(exigir_dono)) -> dict:
     return PLANOS_CATALOGO
+
+
+@router.get("/catalogo/resumo-cowdata")
+def resumo_cowdata(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
+    """Números agregados pra o Cockpit do Painel CowData (ver frontend
+    app/painel-cowdata/) — MRR real (soma do preço mensal só dos contratos
+    "ativo"), nunca um valor fixo/mockado."""
+    fazendas = session.exec(select(Fazenda)).all()
+    contratos = {c.fazenda_id: c for c in session.exec(select(ContratoFazenda)).all()}
+    modulos_por_fazenda: dict[int, list[ContratoFazendaModulo]] = {}
+    for m in session.exec(select(ContratoFazendaModulo).where(ContratoFazendaModulo.ativo == True)).all():  # noqa: E712
+        modulos_por_fazenda.setdefault(m.fazenda_id, []).append(m)
+
+    mrr = 0.0
+    contagem = {"ativo": 0, "aguardando_aprovacao": 0, "suspenso": 0, "sem_contrato": 0}
+    for f in fazendas:
+        c = contratos.get(f.id)
+        if not c:
+            contagem["sem_contrato"] += 1
+            continue
+        contagem[c.status] = contagem.get(c.status, 0) + 1
+        if c.status == "ativo":
+            mrr += _preco_mensal_contrato(c, modulos_por_fazenda.get(f.id, []))
+
+    return {"total_fazendas": len(fazendas), "mrr": round(mrr, 2), **contagem}
 
 
 @router.get("/catalogo/precos-modulo")
@@ -435,3 +481,109 @@ def excluir_anexo_contrato(
     session.delete(anexo)
     session.commit()
     return {"excluido": True}
+
+
+# ---------------------------------------------------------------------------
+# Contrato-modelo (minuta CowData) — "Baixar contrato" gera o HTML pronto pra
+# imprimir/assinar a partir do plano real da fazenda (ver
+# fazenda/rules/contrato_render.py); "Assinar contrato" manda a mesma minuta
+# (em markdown) pro ZapSign e devolve o link de assinatura (ver
+# fazenda/rules/zapsign.py). Nenhum dos dois documentos é gravado aqui — o
+# que fica registrado é só a tentativa de assinatura (ContratoAssinaturaZapSign)
+# e, quando o cliente devolve assinado, o anexo (endpoints acima).
+# ---------------------------------------------------------------------------
+def _dados_para_minuta(session: Session, fazenda: Fazenda) -> tuple[str | None, list[str], float, str]:
+    contrato = session.exec(select(ContratoFazenda).where(ContratoFazenda.fazenda_id == fazenda.id)).first()
+    if not contrato:
+        raise HTTPException(status_code=400, detail="Fazenda ainda não tem contrato definido — defina o plano antes (PUT .../contrato)")
+    modulos = session.exec(
+        select(ContratoFazendaModulo).where(ContratoFazendaModulo.fazenda_id == fazenda.id, ContratoFazendaModulo.ativo == True)  # noqa: E712
+    ).all()
+    preco_mensal = _preco_mensal_contrato(contrato, modulos)
+    return contrato.plano, [m.modulo for m in modulos], preco_mensal, contrato.ciclo_pagamento
+
+
+@router.get("/{fazenda_id}/contrato/modelo")
+def baixar_modelo_contrato(
+    fazenda_id: int, documento: str | None = None, endereco: str | None = None,
+    representante_nome: str | None = None, representante_cpf: str | None = None,
+    cidade_foro: str | None = None, estado_foro: str | None = None,
+    _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> Response:
+    """Minuta do contrato pronta pra ler/imprimir/assinar à mão — os campos
+    de query (documento/endereço/representante/foro) são opcionais: sem eles
+    o modelo sai com "[PREENCHER]" nos campos que dependem de dado que a
+    Fazenda ainda não cadastra (CNPJ/CPF, endereço completo, representante)."""
+    fazenda = session.get(Fazenda, fazenda_id)
+    if not fazenda:
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    empresa = session.exec(select(EmpresaOperadora)).first()
+    plano, modulos, preco_mensal, ciclo = _dados_para_minuta(session, fazenda)
+    html = render_contrato(
+        "html", fazenda, empresa, plano, modulos, preco_mensal, ciclo,
+        documento, endereco, representante_nome, representante_cpf, cidade_foro, estado_foro,
+    )
+    return Response(
+        content=html, media_type="text/html",
+        headers={"Content-Disposition": f'inline; filename="contrato-cowdata-{fazenda.nome}.html"'},
+    )
+
+
+@router.post("/{fazenda_id}/contrato/assinar-zapsign")
+def assinar_contrato_zapsign(
+    fazenda_id: int, user: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    """Cria a solicitação de assinatura eletrônica no ZapSign para o contrato
+    desta fazenda e devolve o link de assinatura. Requer ZAPSIGN_API_TOKEN
+    configurado (ver fazenda/config.py) — sem isso, erro 400 explicando o que falta."""
+    fazenda = session.get(Fazenda, fazenda_id)
+    if not fazenda:
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    if not user.email:
+        raise HTTPException(status_code=400, detail="Seu usuário precisa de um e-mail cadastrado para assinar via ZapSign")
+    empresa = session.exec(select(EmpresaOperadora)).first()
+    plano, modulos, preco_mensal, ciclo = _dados_para_minuta(session, fazenda)
+    markdown = render_contrato("md", fazenda, empresa, plano, modulos, preco_mensal, ciclo)
+    try:
+        resposta = zapsign.criar_documento_para_assinatura(
+            f"Contrato CowData — {fazenda.nome}", markdown, user.nome or user.username, user.email,
+        )
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:  # erro de rede/API do ZapSign — não é bug nosso, mas o usuário precisa saber
+        raise HTTPException(status_code=502, detail=f"Falha ao comunicar com o ZapSign: {e}")
+
+    signer = (resposta.get("signers") or [{}])[0]
+    tentativa = ContratoAssinaturaZapSign(
+        fazenda_id=fazenda_id,
+        document_token=resposta["token"],
+        signer_token=signer.get("token"),
+        sign_url=signer.get("sign_url"),
+        status=resposta.get("status", "pending"),
+        solicitado_por_usuario_id=user.id,
+    )
+    session.add(tentativa)
+    session.commit()
+    session.refresh(tentativa)
+    return {"id": tentativa.id, "document_token": tentativa.document_token, "sign_url": tentativa.sign_url, "status": tentativa.status}
+
+
+@router.get("/{fazenda_id}/contrato/assinatura-zapsign")
+def status_assinatura_zapsign(
+    fazenda_id: int, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict | None:
+    """Última tentativa de assinatura via ZapSign desta fazenda (o status é
+    atualizado pelo webhook — ver fazenda/api/routers/zapsign.py — não faz
+    polling na API do ZapSign aqui)."""
+    tentativa = session.exec(
+        select(ContratoAssinaturaZapSign)
+        .where(ContratoAssinaturaZapSign.fazenda_id == fazenda_id)
+        .order_by(ContratoAssinaturaZapSign.criado_em.desc())
+    ).first()
+    if not tentativa:
+        return None
+    return {
+        "id": tentativa.id, "document_token": tentativa.document_token, "sign_url": tentativa.sign_url,
+        "status": tentativa.status, "criado_em": tentativa.criado_em.isoformat(),
+        "assinado_em": tentativa.assinado_em.isoformat() if tentativa.assinado_em else None,
+    }

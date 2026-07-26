@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Dieta (plano alimentar por lote)
@@ -21,9 +21,11 @@ class CategoriaAlimento(SQLModel, table=True):
     cadastrados — puramente organizacional, sem regra de cálculo própria."""
 
     __tablename__ = "categoria_alimento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_categoria_alimento_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -38,9 +40,11 @@ class Alimento(SQLModel, table=True):
     pendente de vínculo nas telas onde aparece."""
 
     __tablename__ = "alimento"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_alimento_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     categoria_alimento_id: Optional[int] = Field(default=None, foreign_key="categoria_alimento.id")
     observacao: Optional[str] = None
     ativo: bool = True
@@ -54,6 +58,7 @@ class Dieta(SQLModel, table=True):
     __tablename__ = "dieta"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     lote: Optional[int] = Field(default=None, index=True)
     categoria: Optional[str] = None
     ingrediente: str
@@ -74,6 +79,7 @@ class DietaLancamento(SQLModel, table=True):
     __tablename__ = "dieta_lancamento"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     lote: int = Field(index=True)
     responsavel: Optional[str] = None  # nutricionista — ex. "Alexandre Scarpa"
     data_abertura: date
@@ -97,6 +103,7 @@ class DietaItemProgramado(SQLModel, table=True):
     __tablename__ = "dieta_item_programado"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     dieta_lancamento_id: int = Field(foreign_key="dieta_lancamento.id", index=True)
     alimento: str
     # Vínculo com o cadastro de Alimento, quando escolhido via o seletor (em
@@ -118,9 +125,11 @@ class IngredienteMS(SQLModel, table=True):
     Matéria seca da Alimentação. Alimenta a conversão MN↔MS das dietas."""
 
     __tablename__ = "ingrediente_ms"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_ingrediente_ms_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ms_pct: Optional[float] = None
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -130,9 +139,11 @@ class TabelaNutricionalProduto(SQLModel, table=True):
     matriz nutriente × produto) — editável em Alimentação > Tabela nutricional."""
 
     __tablename__ = "tabela_nutricional_produto"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_tabela_nutricional_produto_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ordem: int = 0
     # Vínculo opcional com o cadastro de Alimento — quando presente, a tela de
     # cadastro do Alimento pode oferecer "cadastrar tabela nutricional" direto.
@@ -147,6 +158,7 @@ class TabelaNutricionalValor(SQLModel, table=True):
     __tablename__ = "tabela_nutricional_valor"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     produto_id: int = Field(foreign_key="tabela_nutricional_produto.id", index=True)
     nutriente: str = Field(index=True)
     valor: str = ""
@@ -161,6 +173,7 @@ class AnaliseBromatologica(SQLModel, table=True):
     __tablename__ = "analise_bromatologica"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     data: date
     alimento: str = Field(index=True)
     # Vínculo opcional com o cadastro de Alimento (ver `Alimento`) — permite
@@ -186,6 +199,7 @@ class DietaRegistroReal(SQLModel, table=True):
     __tablename__ = "dieta_registro_real"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     dieta_lancamento_id: int = Field(foreign_key="dieta_lancamento.id", index=True)
     data: date
     alimento: str

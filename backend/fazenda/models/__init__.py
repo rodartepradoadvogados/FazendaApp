@@ -153,6 +153,12 @@ from .planos import (
     ContratoFazenda,
     ContratoFazendaModulo,
     ContratoAnexo,
+    ContratoAssinaturaZapSign,
+)
+from .cobranca import (
+    CobrancaBoleto,
+    CobrancaPix,
+    CobrancaAsaas,
 )
 from .consultores import (
     ContratoConsultor,
@@ -187,6 +193,9 @@ __all__ = [
     "ContratoFazenda",
     "ContratoFazendaModulo",
     "ContratoAnexo",
+    "ContratoAssinaturaZapSign",
+    "CobrancaBoleto",
+    "CobrancaPix",
     "ContratoConsultor",
     "FazendaGerenciada",
     "RegistroImportado",

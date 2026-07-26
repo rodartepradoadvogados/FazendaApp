@@ -159,6 +159,10 @@ export type ContratoFazenda = {
   aprovado_por_usuario_id?: number | null;
   data_fechamento?: string | null;
   modulos: ModuloDoContrato[];
+  ciclo_pagamento: CicloPagamento;
+  desconto_pct?: number;
+  preco_mensal?: number;
+  valor_total_ciclo?: number;
 };
 export type PlanoCatalogo = { nome: string; preco: number; modulos: ModuloComercial[] };
 export type PrecoModulo = { modulo: ModuloComercial; preco: number };
@@ -180,7 +184,8 @@ export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoF
   return res.json();
 }
 export async function definirContratoFazenda(
-  fazendaId: number, dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[] },
+  fazendaId: number,
+  dados: { plano: PlanoNome | null; modulos: { modulo: ModuloComercial; preco: number }[]; ciclo_pagamento?: CicloPagamento },
 ): Promise<ContratoFazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao definir contrato"); }
@@ -199,6 +204,16 @@ export async function suspenderContratoFazenda(fazendaId: number): Promise<Contr
 export async function fetchPlanosCatalogo(): Promise<Record<PlanoNome, PlanoCatalogo>> {
   const res = await authFetch(`${API}/fazendas/catalogo/planos`);
   if (!res.ok) throw new Error(`Catálogo de planos error: ${res.status}`);
+  return res.json();
+}
+// Cockpit do Painel CowData — ver app/painel-cowdata/.
+export type ResumoCowData = {
+  total_fazendas: number; mrr: number;
+  ativo: number; aguardando_aprovacao: number; suspenso: number; sem_contrato: number;
+};
+export async function fetchResumoCowData(): Promise<ResumoCowData> {
+  const res = await authFetch(`${API}/fazendas/catalogo/resumo-cowdata`);
+  if (!res.ok) throw new Error(`Resumo CowData error: ${res.status}`);
   return res.json();
 }
 export async function fetchPrecosModulo(): Promise<PrecoModulo[]> {
@@ -231,6 +246,61 @@ export async function excluirAnexoContrato(anexoId: number): Promise<void> {
 }
 export function urlAnexoContrato(anexoId: number): string {
   return `${API}/fazendas/contrato/anexos/${anexoId}`;
+}
+
+// Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
+// ZapSign ("Assinar contrato") — ver fazenda/rules/contrato_render.py e
+// fazenda/rules/zapsign.py no backend.
+export type CicloPagamento = "mensal" | "trimestral" | "semestral";
+export type AssinaturaZapSign = {
+  id: number; document_token: string; sign_url: string | null; status: string;
+  criado_em: string; assinado_em: string | null;
+} | null;
+
+export async function baixarModeloContrato(fazendaId: number, dados?: {
+  documento?: string; endereco?: string; representante_nome?: string; representante_cpf?: string;
+  cidade_foro?: string; estado_foro?: string;
+}): Promise<void> {
+  const params = new URLSearchParams(Object.entries(dados || {}).filter(([, v]) => v) as [string, string][]);
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/modelo${params.toString() ? `?${params}` : ""}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar o contrato"); }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `contrato-cowdata-fazenda-${fazendaId}.html`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+export async function assinarContratoZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/assinar-zapsign`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar assinatura no ZapSign"); }
+  return res.json();
+}
+export async function fetchStatusAssinaturaZapSign(fazendaId: number): Promise<AssinaturaZapSign> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}/contrato/assinatura-zapsign`);
+  if (!res.ok) throw new Error(`Status de assinatura error: ${res.status}`);
+  return res.json();
+}
+
+// Cobrança da assinatura via Asaas — ver fazenda/rules/asaas.py.
+export type CobrancaAsaasIn = { pagador_nome: string; pagador_documento: string; pagador_email?: string };
+export type CobrancaAsaas = {
+  id: number; tipo: "assinatura_mensal" | "pix_semestral" | "boleto"; valor: number;
+  status: string; criado_em: string; pago_em: string | null;
+};
+async function _postAsaas(path: string, dados: CobrancaAsaasIn): Promise<any> {
+  const res = await authFetch(`${API}/asaas/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar cobrança no Asaas"); }
+  return res.json();
+}
+export const criarAssinaturaAsaas = (fazendaId: number, dados: CobrancaAsaasIn) => _postAsaas(`${fazendaId}/assinatura`, dados);
+export const criarPixSemestralAsaas = (fazendaId: number, dados: CobrancaAsaasIn) => _postAsaas(`${fazendaId}/pix-semestral`, dados);
+export const criarBoletoAsaas = (fazendaId: number, dados: CobrancaAsaasIn) => _postAsaas(`${fazendaId}/boleto`, dados);
+export async function fetchCobrancasAsaas(fazendaId: number): Promise<CobrancaAsaas[]> {
+  const res = await authFetch(`${API}/asaas/${fazendaId}`);
+  if (!res.ok) throw new Error(`Cobranças error: ${res.status}`);
+  return res.json();
 }
 
 // Vínculo de usuário a uma fazenda — contratante (administra a fazenda) ou

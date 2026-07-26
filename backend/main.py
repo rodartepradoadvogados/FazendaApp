@@ -20,11 +20,13 @@ from fazenda.api.routers import (
     alimentacao,
     animais,
     aprovacoes,
+    asaas,
     assistente,
     auditoria,
     auth,
     baixas,
     cadastro,
+    cobranca,
     compra_animal,
     compra_semen,
     consultores,
@@ -56,9 +58,11 @@ from fazenda.api.routers import (
     reproducao,
     safra,
     sanidade,
+    cobranca,
     telegram,
     upload,
     venda_animal,
+    zapsign,
 )
 from fazenda.api.routers.telegram import registrar_webhook_telegram
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
@@ -353,6 +357,18 @@ app.include_router(auditoria.router, dependencies=_protegido + _contrato_ativo)
 # Telegram: webhook é público (o Telegram chama sem login; a segurança é o
 # segredo do cabeçalho + a whitelist de chats liberados).
 app.include_router(telegram.router)
+# ZapSign: webhook também público (assinatura eletrônica do contrato CowData
+# — ver fazenda/rules/zapsign.py) — segurança é o segredo na própria URL
+# (ZapSign não documenta cabeçalho de assinatura própria).
+app.include_router(zapsign.router)
+# Cobrança (boleto/PIX via BB, ver fazenda/rules/banco_brasil.py): rotas de
+# emissão já exigem exigir_dono internamente; o webhook de baixa é público
+# (mesmo princípio do ZapSign acima), por isso o router não leva _protegido.
+app.include_router(cobranca.router)
+# Asaas (integração ativa, ver fazenda/rules/asaas.py): mesmo princípio —
+# rotas de cobrança exigem exigir_dono internamente; webhook público,
+# validado pelo próprio token (ASAAS_WEBHOOK_TOKEN) + reconfirmação na API.
+app.include_router(asaas.router)
 # Aprovações: cada rota já exige admin (exigir_admin) internamente — a fila
 # de aprovação ainda não tem fazenda_id (gap conhecido), então não leva a
 # trava de contrato ainda (evitaria ficar inconsistente com o resto do módulo).

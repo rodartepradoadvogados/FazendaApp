@@ -29,6 +29,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
   const ehApp = path.startsWith("/app");
+  // Painel CowData (/painel-cowdata): administração da EMPRESA de software,
+  // deliberadamente separada da navegação da FAZENDA (ver fazenda/models/
+  // multitenant.py::EmpresaOperadora e a proposta de separação fazenda/
+  // empresa) — casca própria (PainelCowDataSidebar), nunca a Sidebar da
+  // fazenda, e restrita ao dono da plataforma.
+  const ehPainelCowData = path.startsWith("/painel-cowdata");
 
   useEffect(() => {
     if (path === "/login") { setEstado("deslogado"); return; }
@@ -42,6 +48,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
+    if (ehPainelCowData && !ehDono()) { router.replace("/"); return; }
     // "/historico" reúne Reprodução + Produção — basta ter qualquer uma das
     // duas (a página em si esconde a sub-aba sem permissão).
     if (path === "/historico" && !(podeModulo("reproducao") || podeModulo("producao"))) { router.replace("/"); return; }
@@ -49,7 +56,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
     setEstado("logado");
-  }, [path, router, ehApp]);
+  }, [path, router, ehApp, ehPainelCowData]);
 
   // Desloga sozinho após 15 min sem interação (mouse/teclado/toque/rolagem) —
   // segurança dos dados da fazenda e controle de acessos do proprietário.
@@ -84,6 +91,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
 
   // App móvel: o layout de /app cuida de cabeçalho e navegação inferior.
   if (ehApp) return <>{children}</>;
+
+  // Painel CowData: casca própria (PainelCowDataLayout), nunca a Sidebar da
+  // fazenda — ver comentário no topo deste componente.
+  if (ehPainelCowData) return <>{children}</>;
 
   return (
     <SubNavProvider>

@@ -23,6 +23,7 @@ import {
   Menu,
   X,
   Search,
+  Building2,
 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { checkHealth, getUsuario, getFazendaAtual, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
@@ -96,6 +97,19 @@ const links = [
   { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
   { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },
 ];
+
+// Itens de módulo que não vêm de `links` (montados à parte, mais abaixo) mas
+// que também registram sub-navegação — usado só para dar título à aba nova
+// aberta em duplo clique numa sub-aba (ver SubNavItem).
+const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
+  "/configuracoes": "Configurações",
+  "/portal": "Portal",
+  "/consultor": "Consultor",
+  "/usuarios": "Controle de Acesso",
+};
+function rotuloDaPagina(path: string): string {
+  return links.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
+}
 
 export function Sidebar() {
   const path = usePathname();
@@ -263,7 +277,8 @@ export function Sidebar() {
                 })}
               </div>
             ) : (
-              <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect} />
+              <SubNavTree nodes={subNav.tree} activeId={subNav.activeId} onSelect={subNav.onSelect}
+                raiz={subNav.tree} pathname={path} paginaLabel={rotuloDaPagina(path)} />
             )}
           </div>
         )}
@@ -271,6 +286,7 @@ export function Sidebar() {
           {(() => {
             const todos = [...visiveis,
               ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
+              ...(dono ? [{ href: "/painel-cowdata", label: "Painel CowData", icon: Building2, title: "Painel CowData — administração da empresa de software (assinaturas, financeiro, equipe), separado dos dados da fazenda", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),
@@ -341,6 +357,19 @@ function caminhoAte(nodes: SubNavNode[], alvoId: string): string[] | null {
     if (n.children) {
       const sub = caminhoAte(n.children, alvoId);
       if (sub) return [n.id, ...sub];
+    }
+  }
+  return null;
+}
+
+// Mesma travessia que caminhoAte, mas devolve os rótulos (não os ids) — usado
+// para nomear a aba nova aberta em duplo clique numa sub-aba.
+function caminhoLabels(nodes: SubNavNode[], alvoId: string): string[] | null {
+  for (const n of nodes) {
+    if (n.id === alvoId) return [n.label];
+    if (n.children) {
+      const sub = caminhoLabels(n.children, alvoId);
+      if (sub) return [n.label, ...sub];
     }
   }
   return null;

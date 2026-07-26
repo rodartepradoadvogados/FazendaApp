@@ -64,7 +64,7 @@ class ADescartarIn(BaseModel):
 
 @router.post("/a-descartar")
 def marcar_a_descartar(
-    dados: ADescartarIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+    dados: ADescartarIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Marca (ou desmarca) animais como "A descartar": seguem ATIVOS no rebanho
