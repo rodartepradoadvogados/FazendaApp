@@ -166,7 +166,7 @@ async def lifespan(app: FastAPI):
         seed_racas_grau_sangue(session)
         # Tipos de serviço (Cobertura/IA) e métodos (Monta Natural/IA em cio
         # natural/IATF) — vocabulário do lançamento de Serviço/Inseminação.
-        seed_tipos_metodos_servico(session)
+        seed_tipos_metodos_servico(session, fazenda_id=1)
         seed_semen_categorias(session)
         seed_estoque_semen_inicial(session)
         atualizar_estoque_semen_202607(session)

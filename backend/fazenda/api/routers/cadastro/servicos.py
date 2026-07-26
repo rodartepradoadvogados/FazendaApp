@@ -10,8 +10,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import MetodoServicoReprodutivo, SeedFlag, ServicoCadastro, TipoServicoReprodutivo
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 from ._comum import _crud_nome_ativo
 
@@ -66,7 +68,7 @@ router.put("/servicos/{item_id}")(_atualizar_servico)
 # pré-cadastrados; o usuário pode renomear os rótulos, desativar ou criar
 # métodos adicionais (informativos, sem lógica especial própria).
 # ---------------------------------------------------------------------------
-_listar_tipos_servico, _criar_tipo_servico, _atualizar_tipo_servico = _crud_nome_ativo(TipoServicoReprodutivo)
+_listar_tipos_servico, _criar_tipo_servico, _atualizar_tipo_servico = _crud_nome_ativo(TipoServicoReprodutivo, com_fazenda=True)
 router.get("/tipos-servico")(_listar_tipos_servico)
 router.post("/tipos-servico")(_criar_tipo_servico)
 router.put("/tipos-servico/{item_id}")(_atualizar_tipo_servico)
@@ -83,22 +85,40 @@ def _serializar_metodo(m: MetodoServicoReprodutivo, tipos: dict[int, str]) -> di
 
 
 @router.get("/metodos-servico")
-def listar_metodos_servico(session: Session = Depends(get_session)) -> list[dict]:
-    tipos = {t.id: t.nome for t in session.exec(select(TipoServicoReprodutivo)).all()}
-    metodos = session.exec(select(MetodoServicoReprodutivo).order_by(MetodoServicoReprodutivo.nome)).all()
+def listar_metodos_servico(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_tipos = select(TipoServicoReprodutivo)
+    query_metodos = select(MetodoServicoReprodutivo).order_by(MetodoServicoReprodutivo.nome)
+    if fazenda_id is not None:
+        query_tipos = query_tipos.where(TipoServicoReprodutivo.fazenda_id == fazenda_id)
+        query_metodos = query_metodos.where(MetodoServicoReprodutivo.fazenda_id == fazenda_id)
+    tipos = {t.id: t.nome for t in session.exec(query_tipos).all()}
+    metodos = session.exec(query_metodos).all()
     return [_serializar_metodo(m, tipos) for m in metodos]
 
 
 @router.post("/metodos-servico")
-def criar_metodo_servico(dados: MetodoServicoIn, session: Session = Depends(get_session)) -> dict:
+def criar_metodo_servico(
+    dados: MetodoServicoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if not session.get(TipoServicoReprodutivo, dados.tipo_servico_id):
+    tipo = session.get(TipoServicoReprodutivo, dados.tipo_servico_id)
+    if not tipo or (fazenda_id is not None and tipo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Tipo de serviço não encontrado")
-    if session.exec(select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)).first():
+    query_dup = select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(MetodoServicoReprodutivo.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um método com o nome '{nome}'")
-    metodo = MetodoServicoReprodutivo(nome=nome, tipo_servico_id=dados.tipo_servico_id, ativo=dados.ativo)
+    metodo = MetodoServicoReprodutivo(
+        nome=nome, tipo_servico_id=dados.tipo_servico_id, ativo=dados.ativo, fazenda_id=fazenda_id,
+    )
     session.add(metodo)
     session.commit()
     session.refresh(metodo)
@@ -107,14 +127,19 @@ def criar_metodo_servico(dados: MetodoServicoIn, session: Session = Depends(get_
 
 
 @router.put("/metodos-servico/{item_id}")
-def atualizar_metodo_servico(item_id: int, dados: MetodoServicoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_metodo_servico(
+    item_id: int, dados: MetodoServicoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     metodo = session.get(MetodoServicoReprodutivo, item_id)
-    if not metodo:
+    if not metodo or (fazenda_id is not None and metodo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Método não encontrado")
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if not session.get(TipoServicoReprodutivo, dados.tipo_servico_id):
+    tipo = session.get(TipoServicoReprodutivo, dados.tipo_servico_id)
+    if not tipo or (fazenda_id is not None and tipo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Tipo de serviço não encontrado")
     metodo.nome = nome
     metodo.tipo_servico_id = dados.tipo_servico_id
@@ -126,18 +151,26 @@ def atualizar_metodo_servico(item_id: int, dados: MetodoServicoIn, session: Sess
     return _serializar_metodo(metodo, tipos)
 
 
-def seed_tipos_metodos_servico(session: Session) -> None:
-    """Cadastra Cobertura/IA e os 3 métodos já suportados pelo sistema. Roda
-    uma vez (SeedFlag) — depois disso os rótulos ficam livres para o usuário
-    editar em Configurações > Cadastro."""
-    chave = "tipos_metodos_servico_v1"
+def seed_tipos_metodos_servico(session: Session, fazenda_id: int | None = None) -> None:
+    """Cadastra Cobertura/IA e os 3 métodos já suportados pelo sistema, para a
+    `fazenda_id` informada (None = execução legada/global, mantida por
+    compatibilidade com bancos antigos de fazenda única). Roda uma vez por
+    fazenda (SeedFlag com chave específica) — depois disso os rótulos ficam
+    livres para o usuário editar em Configurações > Cadastro. Chamada tanto no
+    startup (fazenda #1) quanto no provisionamento de cada fazenda nova (ver
+    fazendas.py::provisionar_fazenda_nova) — sem isso, uma fazenda nova nasce
+    sem nenhum tipo/método e o lançamento de Serviço/Inseminação fica vazio."""
+    chave = f"tipos_metodos_servico_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "tipos_metodos_servico_v1"
     if session.get(SeedFlag, chave):
         return
 
     def _tipo(nome: str) -> TipoServicoReprodutivo:
-        t = session.exec(select(TipoServicoReprodutivo).where(TipoServicoReprodutivo.nome == nome)).first()
+        query = select(TipoServicoReprodutivo).where(TipoServicoReprodutivo.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(TipoServicoReprodutivo.fazenda_id == fazenda_id)
+        t = session.exec(query).first()
         if not t:
-            t = TipoServicoReprodutivo(nome=nome)
+            t = TipoServicoReprodutivo(nome=nome, fazenda_id=fazenda_id)
             session.add(t)
             session.commit()
             session.refresh(t)
@@ -151,8 +184,13 @@ def seed_tipos_metodos_servico(session: Session) -> None:
         ("IA em cio natural", ia, "cio_natural"),
         ("IATF", ia, "iatf"),
     ]:
-        if not session.exec(select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)).first():
-            session.add(MetodoServicoReprodutivo(nome=nome, tipo_servico_id=tipo.id, codigo_interno=codigo))
+        query = select(MetodoServicoReprodutivo).where(MetodoServicoReprodutivo.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(MetodoServicoReprodutivo.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(MetodoServicoReprodutivo(
+                nome=nome, tipo_servico_id=tipo.id, codigo_interno=codigo, fazenda_id=fazenda_id,
+            ))
 
     session.add(SeedFlag(chave=chave))
     session.commit()
