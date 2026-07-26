@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Pessoa (Configurações > Cadastro) — funcionário, veterinário, zootecnista,
@@ -27,11 +27,16 @@ class TipoPessoa(SQLModel, table=True):
     """
 
     __tablename__ = "tipo_pessoa"
+    # nome era único globalmente — passa a ser único por fazenda (mesmo padrão
+    # de TipoServicoReprodutivo), senão a 2ª fazenda nunca conseguiria
+    # cadastrar um tipo com o mesmo nome já usado (ex.: "Empreiteiro").
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_tipo_pessoa_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class Pessoa(SQLModel, table=True):
@@ -144,6 +149,7 @@ class FolhaPagamento(SQLModel, table=True):
     # Centro de custo de TODAS as contas a pagar geradas por esta folha —
     # nasce em "Pecuária Leiteira" (perfil típico da folha), mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -185,6 +191,7 @@ class FeriasFuncionario(SQLModel, table=True):
     # Centro de custo da conta a pagar gerada — nasce em "Pecuária Leiteira",
     # mas é editável (mesmo padrão de FolhaPagamento).
     centro_custo: str = "Pecuária Leiteira"
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class DecimoTerceiro(SQLModel, table=True):
@@ -210,6 +217,7 @@ class DecimoTerceiro(SQLModel, table=True):
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     numero_lancamento_gerado: Optional[str] = None
     centro_custo: str = "Pecuária Leiteira"
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -232,6 +240,7 @@ class ValeFuncionario(SQLModel, table=True):
     numero_documento_pagamento: Optional[str] = None  # nº do documento do pagamento, p/ controle de extrato
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ValeParcela(SQLModel, table=True):
@@ -246,6 +255,7 @@ class ValeParcela(SQLModel, table=True):
     valor: float
     aplicada: bool = False  # já foi somada aos descontos de algum lançamento de folha?
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ValeAvulso(SQLModel, table=True):
@@ -267,6 +277,7 @@ class ValeAvulso(SQLModel, table=True):
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ValeAvulsoAbatimento(SQLModel, table=True):
@@ -310,6 +321,7 @@ class Empreitada(SQLModel, table=True):
     # Centro de custo de todas as contas a pagar geradas por esta empreitada
     # (parcelas ou etapas) — nasce em "Pecuária Leiteira", mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class EmpreitadaParcela(SQLModel, table=True):
@@ -324,6 +336,7 @@ class EmpreitadaParcela(SQLModel, table=True):
     valor: float
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class EmpreitadaEtapa(SQLModel, table=True):
@@ -342,6 +355,7 @@ class EmpreitadaEtapa(SQLModel, table=True):
     data_conclusao: Optional[date] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -368,6 +382,7 @@ class Contrato(SQLModel, table=True):
     # Centro de custo de todas as contas a pagar geradas por este contrato —
     # nasce em "Pecuária Leiteira", mas é editável.
     centro_custo: str = "Pecuária Leiteira"
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ContratoParcela(SQLModel, table=True):
@@ -382,6 +397,7 @@ class ContratoParcela(SQLModel, table=True):
     valor: float
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -427,6 +443,7 @@ class Diaria(SQLModel, table=True):
     frequencia_auditoria: Optional[str] = None  # semanal | intervalo_dias | mensal
     dia_semana_auditoria: Optional[int] = None  # 0=segunda ... 6=domingo (frequencia == semanal)
     intervalo_dias_auditoria: Optional[int] = None  # frequencia == intervalo_dias
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class DiariaPagamento(SQLModel, table=True):
@@ -441,6 +458,7 @@ class DiariaPagamento(SQLModel, table=True):
     observacao: Optional[str] = None
     numero_lancamento_gerado: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class DiariaAuditoria(SQLModel, table=True):
@@ -461,17 +479,22 @@ class DiariaAuditoria(SQLModel, table=True):
     confirmado_em: Optional[datetime] = None
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class ParametroDiariaPadrao(SQLModel, table=True):
-    """Configuração-padrão (linha única, id=1 — mesmo padrão de
-    `AlimentacaoEstado`) da auditoria periódica de diárias, definida em
+    """Configuração-padrão da auditoria periódica de diárias, definida em
     Configurações > Parâmetros > Folha de pagamento/RH. Copiada para os campos
     de mesmo nome de `Diaria` no momento do cadastro (ver `criar_diaria` em
     `routers/cadastro.py`) — cada diária pode depois editar a própria
-    cadência sem afetar esta configuração global nem as demais diárias."""
+    cadência sem afetar esta configuração global nem as demais diárias.
+
+    Era uma linha única (id=1, mesmo padrão de `AlimentacaoEstado`) — passa a
+    ser uma linha por fazenda (lookup por `fazenda_id`, não mais por id fixo),
+    já que cada fazenda tem sua própria cadência de auditoria padrão."""
 
     __tablename__ = "parametro_diaria_padrao"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_parametro_diaria_padrao_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     auditar_periodicamente: bool = False
@@ -479,3 +502,4 @@ class ParametroDiariaPadrao(SQLModel, table=True):
     dia_semana_auditoria: int = 0  # 0=segunda ... 6=domingo
     intervalo_dias_auditoria: int = 7
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

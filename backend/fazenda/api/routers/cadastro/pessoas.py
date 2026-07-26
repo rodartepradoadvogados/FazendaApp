@@ -14,7 +14,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Pessoa, TipoPessoa
+from fazenda.models import Pessoa, SeedFlag, TipoPessoa
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter()
 
@@ -51,41 +52,62 @@ def seed_pessoas(session: Session) -> None:
 NOME_PESSOA_ROBO_MILKNEWS = "Robô MilkNews"
 
 
-def seed_pessoa_robo_milknews(session: Session) -> None:
+def seed_pessoa_robo_milknews(session: Session, fazenda_id: int | None = None) -> None:
     """Garante a existência de uma Pessoa "Robô MilkNews", representando a
     automação de Telegram/MilkNews no cadastro — permite vincular um usuário
     de sistema a essa identidade, como qualquer outra pessoa (get-or-create;
     roda sempre, ao contrário de seed_pessoas, que só semeia tabela vazia)."""
-    seed_tipos_pessoa(session)
-    if session.exec(select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)).first():
+    seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    query_pessoa = select(Pessoa).where(Pessoa.nome == NOME_PESSOA_ROBO_MILKNEWS)
+    if fazenda_id is not None:
+        query_pessoa = query_pessoa.where(Pessoa.fazenda_id == fazenda_id)
+    if session.exec(query_pessoa).first():
         return
-    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Robô")).first():
-        session.add(TipoPessoa(nome="Robô"))
+    query_tipo = select(TipoPessoa).where(TipoPessoa.nome == "Robô")
+    if fazenda_id is not None:
+        query_tipo = query_tipo.where(TipoPessoa.fazenda_id == fazenda_id)
+    if not session.exec(query_tipo).first():
+        session.add(TipoPessoa(nome="Robô", fazenda_id=fazenda_id))
         session.commit()
     session.add(Pessoa(
-        nome=NOME_PESSOA_ROBO_MILKNEWS, tipo="Robô",
+        nome=NOME_PESSOA_ROBO_MILKNEWS, tipo="Robô", fazenda_id=fazenda_id,
         observacoes="Identidade da automação de Telegram/MilkNews — não recebe folha de pagamento.",
     ))
     session.commit()
 
 
-def seed_tipos_pessoa(session: Session) -> None:
-    """Cria os tipos de pessoa padrão se a tabela ainda estiver vazia
-    (idempotente) — nunca sobrescreve tipos adicionados depois pelo usuário."""
-    if session.exec(select(TipoPessoa)).first():
+def seed_tipos_pessoa(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria os tipos de pessoa padrão para a `fazenda_id` informada (None =
+    execução legada/global, mantida por compatibilidade com bancos antigos de
+    fazenda única) — nunca sobrescreve tipos adicionados depois pelo usuário.
+    Roda uma vez por fazenda (SeedFlag com chave específica, mesmo padrão de
+    seed_tipos_metodos_servico) — nome globalmente vazio deixou de ser um
+    critério válido desde que TipoPessoa passou a ter fazenda_id (a 2ª
+    fazenda nunca teria a tabela "vazia" de verdade)."""
+    chave = f"tipos_pessoa_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "tipos_pessoa_v1"
+    if session.get(SeedFlag, chave):
         return
     for nome in SEED_TIPOS_PESSOA:
-        session.add(TipoPessoa(nome=nome))
+        query = select(TipoPessoa).where(TipoPessoa.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(TipoPessoa(nome=nome, fazenda_id=fazenda_id))
+    session.add(SeedFlag(chave=chave))
     session.commit()
 
 
-def seed_tipo_geral(session: Session) -> None:
-    """Garante a existência do tipo "Geral" — usado para liberar acesso a
-    Portal > Comunicação > Delegar tarefa (#515) a pessoas sem um papel
-    técnico específico. Get-or-create (roda sempre, como seed_pessoa_robo_milknews),
-    ao contrário de seed_tipos_pessoa, que só semeia tabela vazia."""
-    if not session.exec(select(TipoPessoa).where(TipoPessoa.nome == "Geral")).first():
-        session.add(TipoPessoa(nome="Geral"))
+def seed_tipo_geral(session: Session, fazenda_id: int | None = None) -> None:
+    """Garante a existência do tipo "Geral" para a `fazenda_id` informada —
+    usado para liberar acesso a Portal > Comunicação > Delegar tarefa (#515) a
+    pessoas sem um papel técnico específico. Get-or-create (roda sempre, como
+    seed_pessoa_robo_milknews), ao contrário de seed_tipos_pessoa, que só
+    semeia uma vez por fazenda."""
+    query = select(TipoPessoa).where(TipoPessoa.nome == "Geral")
+    if fazenda_id is not None:
+        query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+    if not session.exec(query).first():
+        session.add(TipoPessoa(nome="Geral", fazenda_id=fazenda_id))
         session.commit()
 
 
@@ -174,15 +196,19 @@ def _serializar_pessoa(p: Pessoa) -> dict:
     return dados
 
 
-def _validar_tipos(session: Session, tipos: list[str]) -> str:
+def _validar_tipos(session: Session, tipos: list[str], fazenda_id: int | None = None) -> str:
     """Valida e serializa a lista de tipos de uma pessoa como CSV (mesmo
     padrão de Usuario.permissoes) — permite marcar mais de um tipo (ex.:
     Funcionário + Inseminador). Os tipos válidos vêm da tabela TipoPessoa
     (cadastrável via botão "+" no Cadastro de Pessoas), não mais de uma
-    lista fixa. Autossemeia se a tabela ainda estiver vazia (ex.: banco de
-    teste isolado que não passou pelo seed do lifespan)."""
-    seed_tipos_pessoa(session)
-    validos = {t.nome for t in session.exec(select(TipoPessoa).where(TipoPessoa.ativo == True)).all()}  # noqa: E712
+    lista fixa, escopados pela fazenda atual. Autossemeia se a fazenda ainda
+    não tiver nenhum tipo (ex.: banco de teste isolado que não passou pelo
+    seed do lifespan)."""
+    seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    query = select(TipoPessoa).where(TipoPessoa.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+    validos = {t.nome for t in session.exec(query).all()}
     if not tipos or any(t not in validos for t in tipos):
         raise HTTPException(status_code=400, detail="Tipo inválido")
     return ",".join(dict.fromkeys(tipos))  # remove duplicatas mantendo a ordem
@@ -194,19 +220,32 @@ class TipoPessoaIn(BaseModel):
 
 
 @router.get("/pessoas/tipos")
-def listar_tipos_pessoa(session: Session = Depends(get_session)) -> list[dict]:
-    seed_tipos_pessoa(session)
-    return [t.model_dump() for t in session.exec(select(TipoPessoa).order_by(TipoPessoa.id)).all()]
+def listar_tipos_pessoa(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    query = select(TipoPessoa)
+    if fazenda_id is not None:
+        query = query.where(TipoPessoa.fazenda_id == fazenda_id)
+    return [t.model_dump() for t in session.exec(query.order_by(TipoPessoa.id)).all()]
 
 
 @router.post("/pessoas/tipos")
-def criar_tipo_pessoa(dados: TipoPessoaIn, session: Session = Depends(get_session)) -> dict:
+def criar_tipo_pessoa(
+    dados: TipoPessoaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(TipoPessoa).where(TipoPessoa.nome == nome)).first():
+    query_dup = select(TipoPessoa).where(TipoPessoa.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(TipoPessoa.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail="Tipo já cadastrado")
-    obj = TipoPessoa(nome=nome, ativo=dados.ativo)
+    obj = TipoPessoa(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(obj)
     session.commit()
     session.refresh(obj)
@@ -214,15 +253,21 @@ def criar_tipo_pessoa(dados: TipoPessoaIn, session: Session = Depends(get_sessio
 
 
 @router.put("/pessoas/tipos/{tipo_id}")
-def atualizar_tipo_pessoa(tipo_id: int, dados: TipoPessoaIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_tipo_pessoa(
+    tipo_id: int, dados: TipoPessoaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     obj = session.get(TipoPessoa, tipo_id)
-    if not obj:
+    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Tipo não encontrado")
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    duplicado = session.exec(select(TipoPessoa).where(TipoPessoa.nome == nome, TipoPessoa.id != tipo_id)).first()
-    if duplicado:
+    query_dup = select(TipoPessoa).where(TipoPessoa.nome == nome, TipoPessoa.id != tipo_id)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(TipoPessoa.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail="Tipo já cadastrado")
     obj.nome = nome
     obj.ativo = dados.ativo
@@ -246,7 +291,7 @@ def listar_pessoas(
 def criar_pessoa(
     dados: PessoaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    tipo_csv = _validar_tipos(session, dados.tipos)
+    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id_seguro(fazenda_id))
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
     telefones = _normalizar_lista_contato(dados.telefones)
@@ -261,11 +306,15 @@ def criar_pessoa(
 
 
 @router.put("/pessoas/{pessoa_id}")
-def atualizar_pessoa(pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session)) -> dict:
-    tipo_csv = _validar_tipos(session, dados.tipos)
+def atualizar_pessoa(
+    pessoa_id: int, dados: PessoaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     p = session.get(Pessoa, pessoa_id)
-    if not p:
+    if not p or (fazenda_id is not None and p.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
+    tipo_csv = _validar_tipos(session, dados.tipos, fazenda_id=fazenda_id)
     for campo, valor in dados.model_dump(exclude={"tipos", "telefones", "emails"}).items():
         setattr(p, campo, valor)
     p.tipo = tipo_csv

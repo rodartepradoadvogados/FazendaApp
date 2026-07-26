@@ -30,7 +30,9 @@ from .rh_folha import _competencia_seguinte, listar_folha_pagamento
 router = APIRouter()
 
 @router.get("/folha-pagamento-unificada")
-def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) -> list[dict]:
+def listar_folha_pagamento_unificada(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """
     Visão consolidada de TODOS os lançamentos de folha — funcionário, empreita,
     contrato e diária — num único ledger ordenável/filtrável por vencimento,
@@ -38,10 +40,11 @@ def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) ->
     `origem_id` apontam para o registro de origem só para permitir excluir
     lançamentos ainda pendentes; a edição continua nas telas específicas.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     linhas: list[dict] = []
 
-    for r in listar_folha_pagamento(session):
+    for r in listar_folha_pagamento(session, fazenda_id=fazenda_id):
         linhas.append({
             "tipo": "funcionario", "origem_id": r["id"], "origem_subtipo": "folha",
             "pessoa_id": r["pessoa_id"], "pessoa_nome": r["pessoa_nome"],
@@ -53,11 +56,16 @@ def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) ->
             "pode_excluir": r["status"] == "pendente",
         })
 
-    empreitadas = {e.id: e for e in session.exec(select(Empreitada)).all()}
-    parcelas_empreita = session.exec(select(EmpreitadaParcela)).all()
-    etapas_empreita = session.exec(
-        select(EmpreitadaEtapa).where(EmpreitadaEtapa.concluida == True)  # noqa: E712
-    ).all()
+    query_empreitadas = select(Empreitada)
+    query_parcelas_empreita = select(EmpreitadaParcela)
+    query_etapas_empreita = select(EmpreitadaEtapa).where(EmpreitadaEtapa.concluida == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_empreitadas = query_empreitadas.where(Empreitada.fazenda_id == fazenda_id)
+        query_parcelas_empreita = query_parcelas_empreita.where(EmpreitadaParcela.fazenda_id == fazenda_id)
+        query_etapas_empreita = query_etapas_empreita.where(EmpreitadaEtapa.fazenda_id == fazenda_id)
+    empreitadas = {e.id: e for e in session.exec(query_empreitadas).all()}
+    parcelas_empreita = session.exec(query_parcelas_empreita).all()
+    etapas_empreita = session.exec(query_etapas_empreita).all()
     numeros_empreita = [p.numero_lancamento_gerado for p in parcelas_empreita if p.numero_lancamento_gerado] + [
         et.numero_lancamento_gerado for et in etapas_empreita if et.numero_lancamento_gerado
     ]
@@ -98,8 +106,13 @@ def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) ->
             "pode_excluir": False,
         })
 
-    contratos = {c.id: c for c in session.exec(select(Contrato)).all()}
-    parcelas_contrato = session.exec(select(ContratoParcela)).all()
+    query_contratos = select(Contrato)
+    query_parcelas_contrato = select(ContratoParcela)
+    if fazenda_id is not None:
+        query_contratos = query_contratos.where(Contrato.fazenda_id == fazenda_id)
+        query_parcelas_contrato = query_parcelas_contrato.where(ContratoParcela.fazenda_id == fazenda_id)
+    contratos = {c.id: c for c in session.exec(query_contratos).all()}
+    parcelas_contrato = session.exec(query_parcelas_contrato).all()
     numeros_contrato = [p.numero_lancamento_gerado for p in parcelas_contrato if p.numero_lancamento_gerado]
     contas_contrato = {
         c.numero_lancamento: c
@@ -122,8 +135,13 @@ def listar_folha_pagamento_unificada(session: Session = Depends(get_session)) ->
             "pode_excluir": not pago,
         })
 
-    diarias = {d.id: d for d in session.exec(select(Diaria)).all()}
-    for pg in session.exec(select(DiariaPagamento)).all():
+    query_diarias = select(Diaria)
+    query_pagamentos_diaria = select(DiariaPagamento)
+    if fazenda_id is not None:
+        query_diarias = query_diarias.where(Diaria.fazenda_id == fazenda_id)
+        query_pagamentos_diaria = query_pagamentos_diaria.where(DiariaPagamento.fazenda_id == fazenda_id)
+    diarias = {d.id: d for d in session.exec(query_diarias).all()}
+    for pg in session.exec(query_pagamentos_diaria).all():
         d = diarias.get(pg.diaria_id)
         if not d:
             continue
@@ -224,9 +242,15 @@ def _serializar_empreitada(session: Session, e: Empreitada) -> dict:
 
 
 @router.get("/empreitadas")
-def listar_empreitadas(session: Session = Depends(get_session)) -> list[dict]:
+def listar_empreitadas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    empreitadas = session.exec(select(Empreitada).order_by(Empreitada.criado_em.desc())).all()
+    query = select(Empreitada)
+    if fazenda_id is not None:
+        query = query.where(Empreitada.fazenda_id == fazenda_id)
+    empreitadas = session.exec(query.order_by(Empreitada.criado_em.desc())).all()
     return [{**_serializar_empreitada(session, e), "pessoa_nome": pessoas.get(e.pessoa_id, "—")} for e in empreitadas]
 
 
@@ -237,7 +261,7 @@ def criar_empreitada(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.tipo_pagamento not in TIPOS_PAGAMENTO_EMPREITADA:
         raise HTTPException(status_code=400, detail="Tipo de pagamento inválido")
@@ -249,7 +273,7 @@ def criar_empreitada(
     empreitada = Empreitada(
         pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
         tipo_pagamento=dados.tipo_pagamento, observacao=dados.observacao, usuario_id=user.id,
-        centro_custo=dados.centro_custo,
+        centro_custo=dados.centro_custo, fazenda_id=fazenda_id,
     )
     session.add(empreitada)
     session.commit()
@@ -260,7 +284,7 @@ def criar_empreitada(
             numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
             session.add(EmpreitadaParcela(
                 empreitada_id=empreitada.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
-                numero_lancamento_gerado=numero_lancamento,
+                numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
             ))
             session.add(ContaGerencial(
                 numero_lancamento=numero_lancamento,
@@ -277,7 +301,9 @@ def criar_empreitada(
             ))
     else:
         for i, etapa in enumerate(dados.etapas):
-            session.add(EmpreitadaEtapa(empreitada_id=empreitada.id, nome=etapa.nome, valor=etapa.valor, ordem=i))
+            session.add(EmpreitadaEtapa(
+                empreitada_id=empreitada.id, nome=etapa.nome, valor=etapa.valor, ordem=i, fazenda_id=fazenda_id,
+            ))
     session.commit()
     return _serializar_empreitada(session, empreitada)
 
@@ -295,7 +321,7 @@ def concluir_etapa_empreitada(
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     etapa = session.get(EmpreitadaEtapa, etapa_id)
-    if not etapa or etapa.empreitada_id != empreitada_id:
+    if not etapa or etapa.empreitada_id != empreitada_id or (fazenda_id is not None and etapa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Etapa não encontrada")
     if etapa.concluida:
         raise HTTPException(status_code=400, detail="Etapa já concluída")
@@ -338,9 +364,13 @@ def concluir_etapa_empreitada(
 
 
 @router.delete("/empreitadas/parcelas/{parcela_id}")
-def excluir_parcela_empreitada(parcela_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_parcela_empreitada(
+    parcela_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(EmpreitadaParcela, parcela_id)
-    if not parcela:
+    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -392,9 +422,13 @@ def _redistribuir_parcelas_pendentes(session: Session, pendentes: list) -> None:
 
 
 @router.put("/empreitadas/parcelas/{parcela_id}")
-def atualizar_parcela_empreitada(parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_parcela_empreitada(
+    parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(EmpreitadaParcela, parcela_id)
-    if not parcela:
+    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de empreitada não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
@@ -410,12 +444,16 @@ def atualizar_parcela_empreitada(parcela_id: int, dados: ParcelaEditIn, session:
 
 
 @router.post("/empreitadas/{empreitada_id}/parcelas/redistribuir")
-def redistribuir_parcelas_empreitada(empreitada_id: int, session: Session = Depends(get_session)) -> dict:
+def redistribuir_parcelas_empreitada(
+    empreitada_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Redivide igualmente o valor total ainda pendente entre as parcelas
     pendentes da empreitada (ex.: após um vale abater desproporcionalmente
     uma única parcela, redistribui o saldo entre as próximas)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     empreitada = session.get(Empreitada, empreitada_id)
-    if not empreitada:
+    if not empreitada or (fazenda_id is not None and empreitada.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Empreitada não encontrada")
     parcelas = session.exec(
         select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == empreitada_id).order_by(EmpreitadaParcela.data_vencimento)
@@ -472,9 +510,15 @@ def _serializar_contrato(session: Session, c: Contrato) -> dict:
 
 
 @router.get("/contratos")
-def listar_contratos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_contratos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    contratos = session.exec(select(Contrato).order_by(Contrato.criado_em.desc())).all()
+    query = select(Contrato)
+    if fazenda_id is not None:
+        query = query.where(Contrato.fazenda_id == fazenda_id)
+    contratos = session.exec(query.order_by(Contrato.criado_em.desc())).all()
     return [{**_serializar_contrato(session, c), "pessoa_nome": pessoas.get(c.pessoa_id, "—")} for c in contratos]
 
 
@@ -485,7 +529,7 @@ def criar_contrato(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.forma_pagamento is not None and dados.forma_pagamento not in FORMAS_PAGAMENTO_CONTRATO:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
@@ -495,7 +539,7 @@ def criar_contrato(
     contrato = Contrato(
         pessoa_id=dados.pessoa_id, descricao=dados.descricao, valor_total=dados.valor_total,
         forma_pagamento=dados.forma_pagamento, observacao=dados.observacao, usuario_id=user.id,
-        centro_custo=dados.centro_custo,
+        centro_custo=dados.centro_custo, fazenda_id=fazenda_id,
     )
     session.add(contrato)
     session.commit()
@@ -506,7 +550,7 @@ def criar_contrato(
             numero_lancamento = _proximo_numero_lancamento(session, parcela.data_vencimento.year)
             session.add(ContratoParcela(
                 contrato_id=contrato.id, data_vencimento=parcela.data_vencimento, valor=parcela.valor,
-                numero_lancamento_gerado=numero_lancamento,
+                numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
             ))
             session.add(ContaGerencial(
                 numero_lancamento=numero_lancamento,
@@ -547,9 +591,13 @@ def criar_contrato(
 
 
 @router.put("/contratos/{contrato_id}/encerrar")
-def encerrar_contrato(contrato_id: int, session: Session = Depends(get_session)) -> dict:
+def encerrar_contrato(
+    contrato_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     contrato = session.get(Contrato, contrato_id)
-    if not contrato:
+    if not contrato or (fazenda_id is not None and contrato.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
     contrato.status = "encerrado"
     session.add(contrato)
@@ -563,9 +611,13 @@ def encerrar_contrato(contrato_id: int, session: Session = Depends(get_session))
 
 
 @router.delete("/contratos/parcelas/{parcela_id}")
-def excluir_parcela_contrato(parcela_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_parcela_contrato(
+    parcela_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(ContratoParcela, parcela_id)
-    if not parcela:
+    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if parcela.numero_lancamento_gerado and _numeros_pagos(session, [parcela.numero_lancamento_gerado]):
         raise HTTPException(status_code=400, detail="Parcela já paga não pode ser excluída aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -581,9 +633,13 @@ def excluir_parcela_contrato(parcela_id: int, session: Session = Depends(get_ses
 
 
 @router.put("/contratos/parcelas/{parcela_id}")
-def atualizar_parcela_contrato(parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_parcela_contrato(
+    parcela_id: int, dados: ParcelaEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     parcela = session.get(ContratoParcela, parcela_id)
-    if not parcela:
+    if not parcela or (fazenda_id is not None and parcela.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Parcela de contrato não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor da parcela deve ser positivo")
@@ -599,9 +655,13 @@ def atualizar_parcela_contrato(parcela_id: int, dados: ParcelaEditIn, session: S
 
 
 @router.post("/contratos/{contrato_id}/parcelas/redistribuir")
-def redistribuir_parcelas_contrato(contrato_id: int, session: Session = Depends(get_session)) -> dict:
+def redistribuir_parcelas_contrato(
+    contrato_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     contrato = session.get(Contrato, contrato_id)
-    if not contrato:
+    if not contrato or (fazenda_id is not None and contrato.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Contrato não encontrado")
     parcelas = session.exec(
         select(ContratoParcela).where(ContratoParcela.contrato_id == contrato_id).order_by(ContratoParcela.data_vencimento)
@@ -693,16 +753,29 @@ def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
 
 
 @router.get("/diarias")
-def listar_diarias(session: Session = Depends(get_session)) -> list[dict]:
+def listar_diarias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    diarias = session.exec(select(Diaria).order_by(Diaria.criado_em.desc())).all()
+    query = select(Diaria)
+    if fazenda_id is not None:
+        query = query.where(Diaria.fazenda_id == fazenda_id)
+    diarias = session.exec(query.order_by(Diaria.criado_em.desc())).all()
     return [_resumo_diaria(session, d, pessoas.get(d.pessoa_id, "—")) for d in diarias]
 
 
-def _parametro_diaria_padrao(session: Session) -> ParametroDiariaPadrao:
-    padrao = session.get(ParametroDiariaPadrao, 1)
+def _parametro_diaria_padrao(session: Session, fazenda_id: int | None = None) -> ParametroDiariaPadrao:
+    """Configuração-padrão da fazenda informada — get-or-create por
+    `fazenda_id` (era um singleton id=1 global; agora uma linha por
+    fazenda, ver fazenda/models/pessoal.py::ParametroDiariaPadrao)."""
+    query = select(ParametroDiariaPadrao)
+    query = query.where(ParametroDiariaPadrao.fazenda_id == fazenda_id) if fazenda_id is not None else query.where(
+        ParametroDiariaPadrao.fazenda_id.is_(None)
+    )
+    padrao = session.exec(query).first()
     if not padrao:
-        padrao = ParametroDiariaPadrao(id=1)
+        padrao = ParametroDiariaPadrao(fazenda_id=fazenda_id)
         session.add(padrao)
         session.commit()
         session.refresh(padrao)
@@ -710,8 +783,10 @@ def _parametro_diaria_padrao(session: Session) -> ParametroDiariaPadrao:
 
 
 @router.get("/diarias/parametro-padrao")
-def obter_parametro_diaria_padrao(session: Session = Depends(get_session)) -> dict:
-    return _parametro_diaria_padrao(session).model_dump()
+def obter_parametro_diaria_padrao(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    return _parametro_diaria_padrao(session, fazenda_id_seguro(fazenda_id)).model_dump()
 
 
 class ParametroDiariaPadraoIn(BaseModel):
@@ -723,11 +798,12 @@ class ParametroDiariaPadraoIn(BaseModel):
 
 @router.put("/diarias/parametro-padrao")
 def salvar_parametro_diaria_padrao(
-    dados: ParametroDiariaPadraoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)
+    dados: ParametroDiariaPadraoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     if dados.frequencia_auditoria not in ("semanal", "intervalo_dias", "mensal"):
         raise HTTPException(status_code=400, detail="Frequência inválida")
-    padrao = _parametro_diaria_padrao(session)
+    padrao = _parametro_diaria_padrao(session, fazenda_id_seguro(fazenda_id))
     padrao.auditar_periodicamente = dados.auditar_periodicamente
     padrao.frequencia_auditoria = dados.frequencia_auditoria
     padrao.dia_semana_auditoria = dados.dia_semana_auditoria
@@ -740,16 +816,20 @@ def salvar_parametro_diaria_padrao(
 
 
 @router.post("/diarias")
-def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_diaria(
+    dados: DiariaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.valor_diaria <= 0:
         raise HTTPException(status_code=400, detail="Valor da diária deve ser positivo")
     # Campos de auditoria não informados herdam o padrão configurado em
     # Configurações > Parâmetros — cada diária pode depois editar a própria
     # cadência sem afetar as demais.
-    padrao = _parametro_diaria_padrao(session)
+    padrao = _parametro_diaria_padrao(session, fazenda_id)
     auditar = dados.auditar_periodicamente if dados.auditar_periodicamente is not None else padrao.auditar_periodicamente
     frequencia = dados.frequencia_auditoria or padrao.frequencia_auditoria
     dia_semana = dados.dia_semana_auditoria if dados.dia_semana_auditoria is not None else padrao.dia_semana_auditoria
@@ -759,6 +839,7 @@ def criar_diaria(dados: DiariaIn, session: Session = Depends(get_session), user:
         observacao=dados.observacao, usuario_id=user.id, centro_custo=dados.centro_custo,
         conta_dia_a_dia=dados.conta_dia_a_dia, auditar_periodicamente=auditar,
         frequencia_auditoria=frequencia, dia_semana_auditoria=dia_semana, intervalo_dias_auditoria=intervalo,
+        fazenda_id=fazenda_id,
     )
     session.add(diaria)
     session.commit()
@@ -772,10 +853,12 @@ class DiariaAuditoriaResponderIn(BaseModel):
 
 @router.put("/diarias/auditorias/{auditoria_id}")
 def responder_auditoria_diaria(
-    auditoria_id: int, dados: DiariaAuditoriaResponderIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)
+    auditoria_id: int, dados: DiariaAuditoriaResponderIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     auditoria = session.get(DiariaAuditoria, auditoria_id)
-    if not auditoria:
+    if not auditoria or (fazenda_id is not None and auditoria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Auditoria não encontrada")
     dias_no_periodo = (auditoria.periodo_fim - auditoria.periodo_inicio).days + 1
     if not (0 <= dados.dias_trabalhados <= dias_no_periodo):
@@ -797,7 +880,7 @@ def registrar_pagamento_diaria(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     diaria = session.get(Diaria, diaria_id)
-    if not diaria:
+    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Diária não encontrada")
     if dados.valor <= 0:
         raise HTTPException(status_code=400, detail="Valor do pagamento deve ser positivo")
@@ -805,7 +888,7 @@ def registrar_pagamento_diaria(
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_pagamento.year)
     session.add(DiariaPagamento(
         diaria_id=diaria_id, data_pagamento=dados.data_pagamento, valor=dados.valor,
-        observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento,
+        observacao=dados.observacao, numero_lancamento_gerado=numero_lancamento, fazenda_id=fazenda_id,
     ))
     # Pagamento de diária já nasce quitado — reflete direto em Contas Pagas/relatórios.
     session.add(ContaGerencial(
@@ -956,19 +1039,44 @@ def _reverter_vale_avulso(session: Session, vale_avulso_id: int) -> None:
 
 
 @router.get("/vale-avulso")
-def listar_vales_avulsos_endpoint(origem_tipo: str, origem_id: int, session: Session = Depends(get_session)) -> list[dict]:
+def listar_vales_avulsos_endpoint(
+    origem_tipo: str, origem_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     if origem_tipo not in ORIGENS_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Tipo de origem inválido")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None:
+        _origem_vale_avulso(session, origem_tipo, origem_id, fazenda_id)
     return _listar_vales_avulsos(session, origem_tipo, origem_id)
 
 
+def _origem_vale_avulso(session: Session, origem_tipo: str, origem_id: int, fazenda_id: int | None):
+    """Busca a origem (Empreitada/Contrato/Diária) de um vale avulso já
+    verificando que pertence à `fazenda_id` informada — 404 se não existir ou
+    for de outra fazenda."""
+    if origem_tipo == "empreitada":
+        origem = session.get(Empreitada, origem_id)
+    elif origem_tipo == "contrato":
+        origem = session.get(Contrato, origem_id)
+    else:
+        origem = session.get(Diaria, origem_id)
+    if not origem or (fazenda_id is not None and origem.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail=f"{origem_tipo.capitalize()} não encontrado(a)")
+    return origem
+
+
 @router.post("/vale-avulso")
-def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_vale_avulso(
+    dados: ValeAvulsoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Lança um vale (adiantamento) para Empreitada/Contrato/Diária — análogo ao
     Vale de funcionário, permitindo controlar o que já foi adiantado a
     empreiteiros/contratados/diaristas antes do pagamento final.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Tipo de origem inválido")
     if dados.valor <= 0:
@@ -976,19 +1084,12 @@ def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_sessio
     if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
 
-    if dados.origem_tipo == "empreitada":
-        origem = session.get(Empreitada, dados.origem_id)
-    elif dados.origem_tipo == "contrato":
-        origem = session.get(Contrato, dados.origem_id)
-    else:
-        origem = session.get(Diaria, dados.origem_id)
-    if not origem:
-        raise HTTPException(status_code=404, detail=f"{dados.origem_tipo.capitalize()} não encontrado(a)")
+    origem = _origem_vale_avulso(session, dados.origem_tipo, dados.origem_id, fazenda_id)
 
     vale = ValeAvulso(
         origem_tipo=dados.origem_tipo, origem_id=dados.origem_id, pessoa_id=origem.pessoa_id,
         valor=dados.valor, forma_pagamento=dados.forma_pagamento, data_pagamento=dados.data_pagamento,
-        observacao=dados.observacao, usuario_id=user.id,
+        observacao=dados.observacao, usuario_id=user.id, fazenda_id=fazenda_id,
     )
     session.add(vale)
     session.commit()
@@ -1008,10 +1109,16 @@ def criar_vale_avulso(dados: ValeAvulsoIn, session: Session = Depends(get_sessio
 
 
 @router.get("/vale-avulso/todos")
-def listar_todos_vales_avulsos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_todos_vales_avulsos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Relatório unificado de vales avulsos (Empreitada/Contrato/Diária), para
     aparecer junto do Relatório de vales e descontos (vale de funcionário)."""
-    vales = session.exec(select(ValeAvulso).order_by(ValeAvulso.data_pagamento.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ValeAvulso)
+    if fazenda_id is not None:
+        query = query.where(ValeAvulso.fazenda_id == fazenda_id)
+    vales = session.exec(query.order_by(ValeAvulso.data_pagamento.desc())).all()
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
     empreitadas = {e.id: e.descricao for e in session.exec(select(Empreitada)).all()}
     contratos = {c.id: c.descricao for c in session.exec(select(Contrato)).all()}
@@ -1030,9 +1137,13 @@ def listar_todos_vales_avulsos(session: Session = Depends(get_session)) -> list[
 
 
 @router.put("/vale-avulso/{vale_id}")
-def atualizar_vale_avulso(vale_id: int, dados: ValeAvulsoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_vale_avulso(
+    vale_id: int, dados: ValeAvulsoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeAvulso, vale_id)
-    if not vale:
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     if dados.origem_tipo not in ORIGENS_VALE_AVULSO:
         raise HTTPException(status_code=400, detail="Tipo de origem inválido")
@@ -1060,9 +1171,13 @@ def atualizar_vale_avulso(vale_id: int, dados: ValeAvulsoIn, session: Session = 
 
 
 @router.delete("/vale-avulso/{vale_id}")
-def excluir_vale_avulso(vale_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_vale_avulso(
+    vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeAvulso, vale_id)
-    if not vale:
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     _reverter_vale_avulso(session, vale_id)
     session.delete(vale)
