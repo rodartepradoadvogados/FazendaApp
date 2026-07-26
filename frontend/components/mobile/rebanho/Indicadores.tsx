@@ -1,11 +1,13 @@
 "use client";
-// Sub-tela: Rebanho > Indicadores — painel de indicadores do rebanho (só
-// leitura). Cada card abre uma lista de animais por trás do número, só com
-// os campos pertinentes ao indicador (nunca Raça, nunca Nome ao lado de
-// Número).
+// Tela raiz de Rebanho — painel único com todos os quadros: Animais, Lotes e
+// os 10 indicadores (só leitura). Animais/Lotes abrem a tela cheia
+// correspondente (via callback do pai); os demais quadros abrem uma lista de
+// animais por trás do número, só com os campos pertinentes ao indicador
+// (nunca Raça, nunca Nome ao lado de Número).
 import { useState } from "react";
-import { ChevronRight } from "lucide-react";
-import { MobVoltar } from "@/components/mobile/ui";
+import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk } from "lucide-react";
+import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
+import { CowIcon } from "@/components/CowIcon";
 import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, formatDate } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
@@ -86,7 +88,7 @@ function LinhaAnimal({ campos, onVerAnimal }: { campos: React.ReactNode; onVerAn
   );
 }
 
-export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
+export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirAnimais: () => void; onAbrirLotes: () => void }) {
   const { dados, doCache, carregando } = useCarregar<IndicadoresResp>("menu_rebanho_dash", fetchIndicadores);
   const animaisReq = useCarregar<Animal[]>("menu_rebanho_dash_animais", () => fetchAnimais() as Promise<Animal[]>);
   const secagemReq = useCarregar<Record<string, ItemSecagem[]>>("menu_rebanho_dash_secagem", fetchRelatoriosManejo);
@@ -244,20 +246,28 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
   const rep = dados?.reproducao || {};
   const pev = dados?.reproducao_categorias?.todas?.pev;
   const prod = dados?.producao || {};
+  // Mesma chave de agrupamento usada em Lotes.tsx (grupo_primario, "(sem lote)"
+  // quando vazio) — sem endpoint dedicado de contagem de lotes no backend.
+  const totalLotes = new Set(animais.map((a) => a.grupo_primario || "(sem lote)")).size;
 
-  type Cartao = { chave: string; titulo: string; valor: string; sufixo?: string; onClick: () => void; combo?: { valor: string; rotulo: string }[] };
+  type Cartao = {
+    chave: string; titulo: string; valor: string; onClick: () => void; icone: React.ReactNode;
+    combo?: { valor: string; rotulo: string }[];
+  };
   const cartoes: Cartao[] = [
-    { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes") },
-    { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas") },
-    { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev") },
-    { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias") },
-    { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas") },
-    { chave: "atrasadas", titulo: "Atrasadas", valor: val((animais.filter((a) => (a.sit_rep || "").trim() === "Vaz. atr.")).length), onClick: () => setDrill("atrasadas") },
-    { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(rep.partos_previstos?.em_30_dias), onClick: () => setDrill("partoPrevisto") },
-    { chave: "iep", titulo: "IEP médio", valor: rep.iep_dias != null ? `${val(rep.iep_dias)} d` : "—", onClick: () => setDrill("iep") },
-    { chave: "secagens", titulo: "Secagens previstas", valor: val(secagemReq.dados?.secagem?.length ?? null), onClick: () => setDrill("secagens") },
+    { chave: "animais", titulo: "Animais", valor: val(animais.length || null), onClick: onAbrirAnimais, icone: <CowIcon size={20} color="var(--mob-dourado-2)" /> },
+    { chave: "lotes", titulo: "Lotes", valor: val(totalLotes || null), onClick: onAbrirLotes, icone: <Fence size={20} /> },
+    { chave: "gestantes", titulo: "Gestantes", valor: val(rep.prenhes), onClick: () => setDrill("gestantes"), icone: <Baby size={20} /> },
+    { chave: "inseminadas", titulo: "Inseminadas", valor: val(rep.inseminadas), onClick: () => setDrill("inseminadas"), icone: <Syringe size={20} /> },
+    { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev"), icone: <CalendarClock size={20} /> },
+    { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
+    { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
+    { chave: "atrasadas", titulo: "Atrasadas", valor: val((animais.filter((a) => (a.sit_rep || "").trim() === "Vaz. atr.")).length), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} /> },
+    { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(rep.partos_previstos?.em_30_dias), onClick: () => setDrill("partoPrevisto"), icone: <CalendarDays size={20} /> },
+    { chave: "iep", titulo: "IEP médio", valor: rep.iep_dias != null ? `${val(rep.iep_dias)} d` : "—", onClick: () => setDrill("iep"), icone: <Repeat size={20} /> },
+    { chave: "secagens", titulo: "Secagens previstas", valor: val(secagemReq.dados?.secagem?.length ?? null), onClick: () => setDrill("secagens"), icone: <Droplet size={20} /> },
     {
-      chave: "producao", titulo: "DEL médio · Produção média", valor: "", onClick: () => setDrill("producao"),
+      chave: "producao", titulo: "DEL médio · Produção média", valor: "", onClick: () => setDrill("producao"), icone: <Milk size={20} />,
       combo: [
         { valor: prod.del_medio != null ? `${val(prod.del_medio)} d` : "—", rotulo: "DEL médio" },
         { valor: prod.producao_media_kg != null ? `${val(prod.producao_media_kg)} L` : "—", rotulo: "Produção média" },
@@ -267,7 +277,7 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
 
   return (
     <div>
-      <MobVoltar titulo="Indicadores" onVoltar={onVoltar} />
+      <MobTitulo>Rebanho</MobTitulo>
       <AvisoCopia chave="menu_rebanho_dash" mostrar={doCache} />
 
       {carregando && !dados ? (
@@ -278,20 +288,23 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem" }}>
           {cartoes.map((c) => (
             <button key={c.chave} type="button" onClick={c.onClick}
-              className="mob-card" style={{ padding: "1rem 0.9rem", textAlign: "center", cursor: "pointer", border: "1px solid var(--mob-border)", gridColumn: c.combo ? "1 / -1" : undefined }}>
+              className="mob-card" style={{ padding: "0.9rem 0.85rem", textAlign: "center", cursor: "pointer", border: "1px solid var(--mob-border)" }}>
+              <div style={{ color: "var(--mob-dourado-2)", display: "flex", justifyContent: "center", marginBottom: "0.35rem" }}>{c.icone}</div>
               {c.combo ? (
-                <div style={{ display: "flex", justifyContent: "space-around" }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: "0.2rem" }}>
                   {c.combo.map((x) => (
-                    <div key={x.rotulo}>
-                      <div style={{ fontSize: "1.5rem", fontWeight: 800, lineHeight: 1.1, color: "var(--mob-text)" }}>{x.valor}</div>
-                      <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.25rem", fontWeight: 600 }}>{x.rotulo}</div>
+                    <div key={x.rotulo} style={{ display: "flex", alignItems: "baseline", justifyContent: "center", gap: "0.3rem" }}>
+                      <span style={{ fontSize: "1.05rem", fontWeight: 800, color: "var(--mob-text)" }}>{x.valor}</span>
+                      <span style={{ fontSize: "0.66rem", color: "var(--mob-muted)", fontWeight: 600 }}>{x.rotulo}</span>
                     </div>
                   ))}
                 </div>
               ) : (
-                <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: "var(--mob-text)" }}>{c.valor}</div>
+                <>
+                  <div style={{ fontSize: "1.7rem", fontWeight: 800, lineHeight: 1.1, color: "var(--mob-text)" }}>{c.valor}</div>
+                  <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
+                </>
               )}
-              <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)", marginTop: "0.35rem", fontWeight: 600 }}>{c.titulo}</div>
               <div style={{ fontSize: "0.68rem", color: "var(--mob-dourado-2)", marginTop: "0.3rem", fontWeight: 700, display: "flex", alignItems: "center", justifyContent: "center", gap: "0.15rem" }}>
                 ver lista <ChevronRight size={12} />
               </div>

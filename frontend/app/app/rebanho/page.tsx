@@ -1,18 +1,17 @@
 "use client";
-// Tela REBANHO do app de campo: duas sub-abas — Animais (ficha do animal,
-// consulta) e Lotes (Composição / Indicadores).
+// Tela REBANHO do app de campo: painel único com todos os quadros (Animais,
+// Lotes e os 10 indicadores) — sem seleção intermediária. Tocar em Animais ou
+// Lotes abre a tela cheia correspondente; os demais quadros abrem o
+// drill-down dentro do próprio Indicadores (ver esse arquivo).
 // Movimentar e Baixar ficam na tela LANÇAR.
 import { useEffect, useState } from "react";
-import { Fence, BarChart3 } from "lucide-react";
-import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
-import { GradeAcoes } from "@/components/mobile/lancar/comum";
-import { CowIcon } from "@/components/CowIcon";
+import { MobVoltar } from "@/components/mobile/ui";
 import Ficha from "@/components/mobile/rebanho/Ficha";
 import Lotes from "@/components/mobile/rebanho/Lotes";
 import Indicadores from "@/components/mobile/rebanho/Indicadores";
 
-type Aba = "animais" | "lotes" | "indicadores";
-const TITULOS: Record<Aba, string> = { animais: "Animais", lotes: "Lotes", indicadores: "Indicadores" };
+type Aba = "animais" | "lotes";
+const TITULOS: Record<Aba, string> = { animais: "Animais", lotes: "Lotes" };
 
 export default function Pagina() {
   const [aba, setAba] = useState<Aba | null>(null);
@@ -32,23 +31,7 @@ export default function Pagina() {
   }, []);
 
   if (!aba) {
-    return (
-      <div>
-        <MobTitulo>Rebanho</MobTitulo>
-        <GradeAcoes
-          opcoes={[
-            { id: "animais", label: "Animais", icone: <CowIcon size={28} />, cor: "var(--mob-vinho)" },
-            { id: "lotes", label: "Lotes", icone: <Fence size={28} />, cor: "var(--mob-azul)" },
-            { id: "indicadores", label: "Indicadores", icone: <BarChart3 size={28} />, cor: "var(--mob-dourado-2)" },
-          ]}
-          onEscolher={(id) => setAba(id as Aba)}
-        />
-      </div>
-    );
-  }
-
-  if (aba === "indicadores") {
-    return <Indicadores onVoltar={() => setAba(null)} />;
+    return <Indicadores onAbrirAnimais={() => setAba("animais")} onAbrirLotes={() => setAba("lotes")} />;
   }
 
   return (
