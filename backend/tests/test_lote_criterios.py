@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, PesagemCorporal, Sanidade, Servico
+from fazenda.models import Animal, PesagemCorporal, Sanidade, Secagem, Servico
 
 
 @pytest.fixture
@@ -90,6 +90,10 @@ class TestPreviewCriterios(object):
             s.add(Servico(numero_matriz="3", data_servico=hoje - timedelta(days=100), diagnostico="POSITIVO"))
             # aplicação de sanidade recente para o animal 1 (em tratamento)
             s.add(Sanidade(numero_matriz="1", produto="Antibiótico X", data_aplicacao=hoje - timedelta(days=3)))
+            # secagem real para o animal 4 — situação produtiva agora é AO VIVO
+            # (a partir do Secagem/Parto mais recente), não do texto congelado
+            # de categoria_completa (ver fazenda.rules.lote_criterios).
+            s.add(Secagem(numero_matriz="4", data_secagem=hoje - timedelta(days=20), motivo="rotina"))
             s.commit()
 
     def test_filtra_por_status_lactacao(self, client):

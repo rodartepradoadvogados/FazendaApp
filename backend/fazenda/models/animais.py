@@ -116,6 +116,12 @@ class Lote(SQLModel, table=True):
     # ---- Critérios de seleção de animais (cumulativos/E lógico) — usados na
     # prévia de "quantos animais atendem" e, na sequência, nas sugestões
     # automáticas de movimentação entre lotes. Cada campo None = não filtra.
+    # `status_lactacao` (rótulo na tela: "Situação produtiva") e `del_min`/
+    # `del_max` (rótulo: "Dias pós-parto") são comparados AO VIVO — calculados
+    # a partir do Secagem/Parto mais recente do animal (mesma lógica de
+    # fazenda.api.routers.recria._contexto_categoria), não do texto congelado
+    # de Animal.categoria_completa/del_dias (que só atualiza no próximo
+    # GERAL.csv) — ver fazenda.rules.lote_criterios.
     status_lactacao: Optional[str] = None  # "lactacao" | "seca"
     categorias: Optional[str] = None  # "vaca,novilha,bezerra" (lista separada por vírgula)
     pre_parto: Optional[bool] = None
@@ -128,6 +134,22 @@ class Lote(SQLModel, table=True):
     idade_dias_max: Optional[int] = None
     novilhas_inseminadas: Optional[bool] = None
     novilhas_gestantes: Optional[bool] = None
+    # Situação reprodutiva ("vazia"|"inseminada"|"prenha") — mesmos 3 valores e
+    # mesma derivação de Animal.sit_rep que CategoriaManejo.situacao_reprodutiva
+    # (ver fazenda.api.routers.recria._situacao_reprodutiva_3).
+    situacao_reprodutiva: Optional[str] = None
+    dias_gestacao_min: Optional[int] = None
+    dias_gestacao_max: Optional[int] = None
+    dias_desde_servico_min: Optional[int] = None
+    dias_desde_servico_max: Optional[int] = None
+    # Vínculo com uma ou mais categorias de manejo cadastradas em
+    # Configurações > Cadastro > Categorias (CategoriaManejo.id, lista
+    # separada por vírgula — mesmo padrão simples de `categorias` acima).
+    # Quando preenchido, só entra no critério do lote o animal cuja
+    # classificação atual (classificar_categoria) bater com o NOME de uma
+    # dessas categorias — refinamento adicional aos critérios diretos acima,
+    # não uma substituição deles (ambos valem em E lógico).
+    categoria_manejo_ids: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------

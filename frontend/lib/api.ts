@@ -1382,8 +1382,11 @@ export async function atualizarParametro(chave: string, valor: number | string |
 }
 
 // ── Lotes (cadastro + parâmetros) ──
-export async function fetchLotes() {
-  const res = await authFetch(`${API}/lotes/`, { cache: "no-store" });
+// `incluirInativos`: só a tela de cadastro (Configurações) precisa ver lotes
+// inativos — seletores de destino/movimentação usam o padrão (só ativos).
+export async function fetchLotes(opts?: { incluirInativos?: boolean }) {
+  const qs = opts?.incluirInativos ? "?incluir_inativos=true" : "";
+  const res = await authFetch(`${API}/lotes/${qs}`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Lotes error: ${res.status}`);
   return res.json();
 }

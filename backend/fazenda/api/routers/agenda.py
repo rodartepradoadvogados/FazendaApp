@@ -696,8 +696,8 @@ def calcular_agenda(
     ) or parametro_movimentacao.modo != "dia_fixo_semana"
     if mostra_hoje:
         lotes_mov = session.exec(select(Lote)).all()
-        animais_mov, servicos_mov, sanidades_mov, peso_mov = coletar_dados_criterios(session)
-        for s in sugerir_movimentacoes(lotes_mov, animais_mov, data, peso_mov, servicos_mov, sanidades_mov):
+        dados_criterios_mov = coletar_dados_criterios(session)
+        for s in sugerir_movimentacoes(lotes_mov, dados_criterios_mov["animais"], data, dados_criterios_mov):
             chave = f"sugestao_movimentacao_{s['numero_matriz']}_{s['lote_atual'] or 'sem_lote'}"
             if chave in realizados:
                 continue

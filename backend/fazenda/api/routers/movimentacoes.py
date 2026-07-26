@@ -123,9 +123,9 @@ def sugestoes_movimentacao(session: Session = Depends(get_session)) -> dict:
     """
     hoje = date.today()
     lotes = session.exec(select(Lote)).all()
-    animais, servicos_por_animal, sanidades_por_animal, peso_por_animal = coletar_dados_criterios(session)
+    dados_criterios = coletar_dados_criterios(session)
 
-    sugestoes = sugerir_movimentacoes(lotes, animais, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+    sugestoes = sugerir_movimentacoes(lotes, dados_criterios["animais"], hoje, dados_criterios)
     return {
         "sugestoes": sugestoes,
         "total": len(sugestoes),

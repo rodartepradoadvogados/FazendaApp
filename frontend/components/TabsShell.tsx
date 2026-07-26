@@ -73,12 +73,38 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   const temAbasExtras = abas.length > 0;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100vh" }}>
+    // Conteúdo sempre ocupa a tela inteira, do topo — a faixa de abas (e o
+    // aviso) flutuam por cima como overlay (position: fixed), começando em
+    // left-56 (mesma largura da Sidebar, w-56) para nunca cobrir o
+    // logotipo/menu: a Sidebar (nativa ou dentro de cada iframe — cada aba
+    // renderiza sua própria página completa) continua começando em y=0,
+    // intocada; só a área de conteúdo à direita dela fica coberta pela faixa.
+    <div style={{ height: "100vh", position: "relative" }}>
+      <div style={{ height: "100%" }}>
+        <div style={{ display: ativaId === "nativa" ? "block" : "none", height: "100%" }}>
+          {children}
+        </div>
+        {abas.map((aba) => (
+          <iframe
+            key={aba.id}
+            src={aba.url}
+            title={aba.titulo}
+            style={{ display: ativaId === aba.id ? "block" : "none", width: "100%", height: "100%", border: "none" }}
+          />
+        ))}
+      </div>
+
       {temAbasExtras && (
+        // Só no desktop (md+) — no mobile a Sidebar fica escondida atrás do
+        // menu hambúrguer e já existe uma barra fixa própria no topo (ver
+        // Sidebar.tsx); duplo clique também não é um gesto natural no touch.
         <div
+          className="hidden md:flex left-0 md:left-56"
           style={{
-            display: "flex", alignItems: "stretch", flex: "none", height: "2.2rem",
+            position: "fixed", top: 0, right: 0, zIndex: 65,
+            alignItems: "stretch", height: "2.2rem",
             background: "var(--surface-2)", borderBottom: "1px solid var(--border)", overflowX: "auto",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.15)",
           }}
         >
           <button
@@ -96,9 +122,15 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
           {abas.map((aba) => (
             <div
               key={aba.id}
+              // Contorno na cor da paleta escolhida (var(--dourado) — muda com
+              // vinho/verde/azul) em toda aba aberta por duplo clique, pra
+              // diferenciar de cara da aba Principal e não confundir quando
+              // há várias abertas.
               style={{
                 display: "flex", alignItems: "center", gap: "0.35rem", padding: "0 0.5rem 0 0.9rem",
-                borderRight: "1px solid var(--border)", cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
+                margin: "0.25rem 0.3rem", borderRadius: "6px",
+                border: "1.5px solid var(--dourado)",
+                cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
                 background: ativaId === aba.id ? "var(--surface)" : "transparent",
                 color: ativaId === aba.id ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap",
               }}
@@ -125,9 +157,11 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
       {aviso && (
         <div
           role="alert"
+          className="hidden md:flex left-0 md:left-56"
           style={{
-            flex: "none", padding: "0.5rem 0.9rem", background: "var(--amber-bg, #F7EEDA)", color: "var(--amber, #B9831F)",
-            fontSize: "0.78rem", fontWeight: 600, display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem",
+            position: "fixed", right: 0, top: temAbasExtras ? "2.2rem" : 0, zIndex: 64,
+            padding: "0.5rem 0.9rem", background: "var(--amber-bg, #F7EEDA)", color: "var(--amber, #B9831F)",
+            fontSize: "0.78rem", fontWeight: 600, alignItems: "center", justifyContent: "space-between", gap: "0.6rem",
           }}
         >
           <span>{aviso}</span>
@@ -136,25 +170,6 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
           </button>
         </div>
       )}
-
-      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        {/* A aba nativa já rola por dentro (AuthShell > main tem md:overflow-y-auto),
-            então não duplicamos overflow aqui — só quando há abas extras a altura
-            fica levemente menor que 100vh (a faixa de abas toma ~2.2rem); páginas
-            com md:h-screen (100vh) fixo podem sobrar ~2.2rem pra rolar — ajuste fino
-            de CSS pendente de teste visual real (sem node_modules nesta máquina). */}
-        <div style={{ display: ativaId === "nativa" ? "block" : "none", height: "100%" }}>
-          {children}
-        </div>
-        {abas.map((aba) => (
-          <iframe
-            key={aba.id}
-            src={aba.url}
-            title={aba.titulo}
-            style={{ display: ativaId === aba.id ? "block" : "none", width: "100%", height: "100%", border: "none" }}
-          />
-        ))}
-      </div>
     </div>
   );
 }

@@ -8,12 +8,12 @@ from __future__ import annotations
 
 from datetime import date, datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, PesagemCorporal, Sanidade, Servico
+from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.lote_criterios import animal_atende_criterios
 
 router = APIRouter(prefix="/lotes", tags=["lotes"])
@@ -64,17 +64,24 @@ class LoteIn(BaseModel):
     producao_max: float | None = None
     # Critérios de seleção (cumulativos) — ver fazenda.rules.lote_criterios.
     status_lactacao: str | None = None
+    situacao_reprodutiva: str | None = None
     categorias: str | None = None
     pre_parto: bool | None = None
     peso_min: float | None = None
     peso_max: float | None = None
     dias_para_parto_min: int | None = None
     dias_para_parto_max: int | None = None
+    dias_gestacao_min: int | None = None
+    dias_gestacao_max: int | None = None
+    dias_desde_servico_min: int | None = None
+    dias_desde_servico_max: int | None = None
     em_tratamento: bool | None = None
     idade_dias_min: int | None = None
     idade_dias_max: int | None = None
     novilhas_inseminadas: bool | None = None
     novilhas_gestantes: bool | None = None
+    categoria_manejo_ids: str | None = None
+    ativo: bool = True
 
 
 def _validar_faixas(dados: LoteIn) -> None:
@@ -84,6 +91,8 @@ def _validar_faixas(dados: LoteIn) -> None:
         (dados.peso_min, dados.peso_max, "Peso"),
         (dados.dias_para_parto_min, dados.dias_para_parto_max, "Dias para o parto"),
         (dados.idade_dias_min, dados.idade_dias_max, "Idade em dias"),
+        (dados.dias_gestacao_min, dados.dias_gestacao_max, "Dias de gestação"),
+        (dados.dias_desde_servico_min, dados.dias_desde_servico_max, "Dias desde o último serviço"),
     ]
     for minimo, maximo, nome in pares:
         if minimo is not None and maximo is not None and minimo > maximo:
@@ -128,22 +137,35 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.producao_min = dados.producao_min
     lote.producao_max = dados.producao_max
     lote.status_lactacao = dados.status_lactacao
+    lote.situacao_reprodutiva = dados.situacao_reprodutiva
     lote.categorias = dados.categorias
     lote.pre_parto = dados.pre_parto
     lote.peso_min = dados.peso_min
     lote.peso_max = dados.peso_max
     lote.dias_para_parto_min = dados.dias_para_parto_min
     lote.dias_para_parto_max = dados.dias_para_parto_max
+    lote.dias_gestacao_min = dados.dias_gestacao_min
+    lote.dias_gestacao_max = dados.dias_gestacao_max
+    lote.dias_desde_servico_min = dados.dias_desde_servico_min
+    lote.dias_desde_servico_max = dados.dias_desde_servico_max
     lote.em_tratamento = dados.em_tratamento
     lote.idade_dias_min = dados.idade_dias_min
     lote.idade_dias_max = dados.idade_dias_max
     lote.novilhas_inseminadas = dados.novilhas_inseminadas
     lote.novilhas_gestantes = dados.novilhas_gestantes
+    lote.categoria_manejo_ids = dados.categoria_manejo_ids
+    lote.ativo = dados.ativo
 
 
 @router.get("/")
-def listar_lotes(session: Session = Depends(get_session)) -> list[dict]:
-    lotes = session.exec(select(Lote).order_by(Lote.codigo)).all()
+def listar_lotes(
+    incluir_inativos: bool = Query(False, description="True mostra também lotes inativos (só o cadastro precisa disso; seletores de destino não)."),
+    session: Session = Depends(get_session),
+) -> list[dict]:
+    query = select(Lote).order_by(Lote.codigo)
+    if not incluir_inativos:
+        query = query.where(Lote.ativo == True)  # noqa: E712
+    lotes = session.exec(query).all()
     animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
     contagem: dict[str, int] = {}
     for a in animais:
@@ -196,6 +218,22 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
         if existente and existente.id != lote.id:
             raise HTTPException(status_code=400, detail=f"Já existe um lote com o código {codigo_novo}")
 
+    # Rede de segurança para inativar: o front já orienta a transferir os
+    # animais primeiro (janela suspensa), mas se algum ficou pra trás por
+    # qualquer motivo, bloqueia aqui em vez de deixá-los "órfãos" — um lote
+    # inativo some dos seletores de destino/movimentação.
+    if lote.ativo and not dados.ativo:
+        animais_no_lote = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        qtd = sum(
+            1 for a in animais_no_lote
+            if not a.eh_semen and a.sexo != "M" and _mesmo_codigo(_codigo_do_grupo(a.grupo_primario), lote.codigo)
+        )
+        if qtd:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Ainda há {qtd} animal(is) no lote {_rotulo(lote.codigo, lote.nome)} — transfira-os antes de inativar.",
+            )
+
     codigo_antigo = lote.codigo
     nome_antigo = lote.nome
 
@@ -224,16 +262,24 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     return lote.model_dump()
 
 
-def coletar_dados_criterios(session: Session) -> tuple[list[dict], dict, dict, dict]:
-    """Reúne os dados usados pelos critérios de lote (prévia e sugestão de movimentação)."""
+def coletar_dados_criterios(session: Session) -> dict:
+    """Reúne os dados usados pelos critérios de lote (prévia e sugestão de
+    movimentação) — dict (não tupla posicional: cresceu demais pra isso) que
+    `fazenda.rules.lote_criterios.animal_atende_criterios`/`sugerir_movimentacoes`
+    recebem inteiro. `*_obj_por_animal` traz os objetos SQLModel (não dicts) —
+    exigidos por `_contexto_categoria` (fazenda.api.routers.recria), reaproveitada
+    para calcular situação produtiva/dias pós-parto/gestação AO VIVO."""
     animais = [
         a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
         if not a.eh_semen and a.sexo != "M"
     ]
 
+    servicos_obj = session.exec(select(Servico)).all()
     servicos_por_animal: dict[str, list[dict]] = {}
-    for s in session.exec(select(Servico)).all():
+    servicos_obj_por_animal: dict[str, list] = {}
+    for s in servicos_obj:
         servicos_por_animal.setdefault(s.numero_matriz, []).append(s.model_dump())
+        servicos_obj_por_animal.setdefault(s.numero_matriz, []).append(s)
 
     sanidades_por_animal: dict[str, list[dict]] = {}
     for s in session.exec(select(Sanidade)).all():
@@ -247,7 +293,26 @@ def coletar_dados_criterios(session: Session) -> tuple[list[dict], dict, dict, d
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
-    return animais, servicos_por_animal, sanidades_por_animal, peso_por_animal
+    partos_obj_por_animal: dict[str, list] = {}
+    for p in session.exec(select(Parto)).all():
+        partos_obj_por_animal.setdefault(p.numero_matriz, []).append(p)
+
+    secagens_obj_por_animal: dict[str, list] = {}
+    for s in session.exec(select(Secagem)).all():
+        secagens_obj_por_animal.setdefault(s.numero_matriz, []).append(s)
+
+    categorias_ativas = list(session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all())  # noqa: E712
+
+    return {
+        "animais": animais,
+        "servicos_por_animal": servicos_por_animal,
+        "sanidades_por_animal": sanidades_por_animal,
+        "peso_por_animal": peso_por_animal,
+        "servicos_obj_por_animal": servicos_obj_por_animal,
+        "partos_obj_por_animal": partos_obj_por_animal,
+        "secagens_obj_por_animal": secagens_obj_por_animal,
+        "categorias_ativas": categorias_ativas,
+    }
 
 
 @router.post("/preview")
@@ -261,10 +326,10 @@ def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) ->
     _aplicar_campos(lote_temp, dados)
 
     hoje = date.today()
-    animais, servicos_por_animal, sanidades_por_animal, peso_por_animal = coletar_dados_criterios(session)
+    dados_criterios = coletar_dados_criterios(session)
 
     atendem = [
-        a["numero"] for a in animais
-        if animal_atende_criterios(lote_temp, a, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal)
+        a["numero"] for a in dados_criterios["animais"]
+        if animal_atende_criterios(lote_temp, a, hoje, dados_criterios)
     ]
     return {"total": len(atendem), "animais": sorted(atendem)}
