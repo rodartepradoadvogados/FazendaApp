@@ -137,7 +137,7 @@ async def lifespan(app: FastAPI):
         seed_admin(session)
         seed_email_dono_backfill(session)
         seed_email_dono_correcao_202607c(session)
-        seed_motivos_movimentacao(session)
+        seed_motivos_movimentacao(session, fazenda_id=1)
         seed_parametros_financeiros(session)
         seed_tipos_documento_formas_pagamento(session)
         normalizar_plano_contas(session)
@@ -164,16 +164,16 @@ async def lifespan(app: FastAPI):
         # Calendário sanitário padrão (vacinas/exames sazonais e por fase
         # fisiológica) — idempotente, só cria/compatibiliza o que falta.
         configurar_calendario_sanitario_padrao(session)
-        seed_motivos_baixa(session)
-        seed_motivos_venda(session)
+        seed_motivos_baixa(session, fazenda_id=1)
+        seed_motivos_venda(session, fazenda_id=1)
         seed_servicos(session)
-        seed_racas_grau_sangue(session)
+        seed_racas_grau_sangue(session, fazenda_id=1)
         # Tipos de serviço (Cobertura/IA) e métodos (Monta Natural/IA em cio
         # natural/IATF) — vocabulário do lançamento de Serviço/Inseminação.
         seed_tipos_metodos_servico(session, fazenda_id=1)
-        seed_semen_categorias(session)
-        seed_estoque_semen_inicial(session)
-        atualizar_estoque_semen_202607(session)
+        seed_semen_categorias(session, fazenda_id=1)
+        seed_estoque_semen_inicial(session, fazenda_id=1)
+        atualizar_estoque_semen_202607(session, fazenda_id=1)
         # Protocolo de indução de lactação (18 e 28 dias) — cronograma por
         # princípio ativo, editável depois em Configurações > Cadastro.
         seed_protocolos_inducao_lactacao(session)

@@ -17,6 +17,7 @@ from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.lote_criterios import animal_atende_criterios
+from fazenda.auth import get_fazenda_atual_id
 
 router = APIRouter(prefix="/lotes", tags=["lotes"])
 
@@ -168,6 +169,7 @@ def listar_lotes(
     incluir_inativos: bool = Query(False, description="True mostra também lotes inativos (só o cadastro precisa disso; seletores de destino não)."),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(Lote).order_by(Lote.codigo)
@@ -177,6 +179,8 @@ def listar_lotes(
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     if not incluir_inativos:
         query = query.where(Lote.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
     lotes = session.exec(query).all()
     animais = session.exec(query_animal).all()
     contagem: dict[str, int] = {}
@@ -229,7 +233,7 @@ def atualizar_lote(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     lote = session.get(Lote, lote_id)
-    if not lote:
+    if not lote or (fazenda_id is not None and lote.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Lote não encontrado")
     _validar_flags_unicos(session, dados, lote_id=lote_id, fazenda_id=fazenda_id)
 
@@ -368,6 +372,7 @@ def preview_criterios(
     Prévia de quantos e quais animais atendem aos critérios informados (sem
     precisar salvar o lote) — cumulativos, em E lógico.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     lote_temp = Lote(codigo=dados.codigo or "?", nome=dados.nome or "?")
     _aplicar_campos(lote_temp, dados)

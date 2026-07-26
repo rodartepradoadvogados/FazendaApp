@@ -106,8 +106,7 @@ class Lote(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     codigo: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    nome: str
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    nome: str
     del_min: Optional[int] = None
     del_max: Optional[int] = None  # também usado no critério "até X dias após o parto"
     producao_min: Optional[float] = None  # também usado no critério "produção de X a Y L"
@@ -184,8 +183,7 @@ class MotivoBaixa(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -197,8 +195,7 @@ class MotivoVenda(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -210,8 +207,7 @@ class Raca(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -230,8 +226,7 @@ class GrauSangue(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    fracao_holandes: Optional[float] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    fracao_holandes: Optional[float] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -248,15 +243,14 @@ class MotivoMovimentacao(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
-    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
 # ---------------------------------------------------------------------------
 # Parâmetro de agendamento das sugestões de movimentação entre lotes
-# (Configurações > Parâmetros) — mesmo padrão de linha única (id=1) do
-# `ParametroDiariaPadrao`. Define quando uma sugestão (animal que atende a
+# (Configurações > Parâmetros) — uma linha por fazenda (mesmo padrão de
+# `ParametroDiariaPadrao`). Define quando uma sugestão (animal que atende a
 # outro lote, calculada em `sugerir_movimentacoes`) aparece na Agenda: no
 # próprio dia em que o parâmetro do lote passa a ser atendido, ou só no
 # próximo dia fixo da semana (ex.: toda sexta), agrupando as sugestões da
@@ -264,8 +258,10 @@ class MotivoMovimentacao(SQLModel, table=True):
 # ---------------------------------------------------------------------------
 class ParametroSugestaoMovimentacao(SQLModel, table=True):
     __tablename__ = "parametro_sugestao_movimentacao"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_parametro_sugestao_movimentacao_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     modo: str = "na_data_parametro"  # "na_data_parametro" | "dia_fixo_semana"
     dia_semana: int = 4  # 0=segunda ... 6=domingo (padrão: sexta)
     atualizado_em: datetime = Field(default_factory=datetime.utcnow)

@@ -16,9 +16,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import EstoqueSemen, SeedFlag, Servico, Touro
 from fazenda.parsers.utils import parse_date
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import minimos_semen_por_tipo
 from fazenda.rules.touros import calcular_prova_media
 
@@ -42,9 +44,11 @@ TIPOS_SEMEN = ["convencional", "sexado", "fazenda"]
 TOUROS_FAZENDA = ["Sevaverde", "Frederico"]
 
 
-def seed_semen_categorias(session: Session) -> None:
+def seed_semen_categorias(session: Session, fazenda_id: int | None = None) -> None:
     """Garante os touros da fazenda (Sevaverde, Frederico) como categoria
-    'fazenda' e classifica o Hagen como sexado. Idempotente (SeedFlag)."""
+    'fazenda' e classifica o Hagen como sexado. Idempotente (SeedFlag) —
+    dados históricos reais da fazenda #1, não vocabulário para replicar em
+    fazenda nova (ver provisionar_fazenda_nova)."""
     chave = "semen_categorias_v1"
     if session.get(SeedFlag, chave):
         return
@@ -55,7 +59,7 @@ def seed_semen_categorias(session: Session) -> None:
             atual.tipo = "fazenda"
             session.add(atual)
         else:
-            session.add(EstoqueSemen(touro_nome=nome, tipo="fazenda", doses=0))
+            session.add(EstoqueSemen(touro_nome=nome, tipo="fazenda", doses=0, fazenda_id=fazenda_id))
     hagen = existentes.get("hagen")
     if hagen:
         hagen.tipo = "sexado"
@@ -79,9 +83,10 @@ SEED_ESTOQUE_SEMEN = [
 ]
 
 
-def seed_estoque_semen_inicial(session: Session) -> None:
+def seed_estoque_semen_inicial(session: Session, fazenda_id: int | None = None) -> None:
     """Lança o estoque de sêmen da planilha (upsert por touro). Idempotente
-    (SeedFlag) — não sobrescreve edições posteriores do usuário."""
+    (SeedFlag) — não sobrescreve edições posteriores do usuário. Dados
+    históricos reais da fazenda #1, não vocabulário para fazenda nova."""
     chave = "estoque_semen_inicial_v1"
     if session.get(SeedFlag, chave):
         return
@@ -98,7 +103,7 @@ def seed_estoque_semen_inicial(session: Session) -> None:
         else:
             session.add(EstoqueSemen(
                 touro_nome=touro, codigo=touro, tipo=tipo, doses=doses,
-                valor_unitario=valor, local_armazenamento=local,
+                valor_unitario=valor, local_armazenamento=local, fazenda_id=fazenda_id,
             ))
     session.add(SeedFlag(chave=chave))
     session.commit()
@@ -135,9 +140,10 @@ SEED_ESTOQUE_SEMEN_202607 = [
 ]
 
 
-def atualizar_estoque_semen_202607(session: Session) -> None:
+def atualizar_estoque_semen_202607(session: Session, fazenda_id: int | None = None) -> None:
     """Aplica a contagem de estoque de sêmen do print enviado em jul/2026
-    (upsert por touro). Roda uma vez (SeedFlag)."""
+    (upsert por touro). Roda uma vez (SeedFlag). Dados históricos reais da
+    fazenda #1, não vocabulário para fazenda nova."""
     chave = "estoque_semen_202607_v1"
     if session.get(SeedFlag, chave):
         return
@@ -157,7 +163,7 @@ def atualizar_estoque_semen_202607(session: Session) -> None:
         elif nome_completo.strip().lower() not in existentes:
             session.add(EstoqueSemen(
                 touro_nome=nome_completo, codigo=codigo, naab=codigo, central=central,
-                tipo=tipo, doses=doses, local_armazenamento=local,
+                tipo=tipo, doses=doses, local_armazenamento=local, fazenda_id=fazenda_id,
             ))
     session.add(SeedFlag(chave=chave))
     session.commit()
@@ -177,19 +183,33 @@ class EstoqueSemenIn(BaseModel):
 
 
 @router.get("/estoque-semen")
-def listar_estoque_semen(session: Session = Depends(get_session)) -> list[dict]:
-    itens = session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all()
+def listar_estoque_semen(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    itens = session.exec(query).all()
     return [i.model_dump() for i in itens]
 
 
 @router.get("/estoque-semen/disponivel")
-def semen_disponivel(session: Session = Depends(get_session)) -> dict:
+def semen_disponivel(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Para a inseminação: touros por categoria (convencional/sexado/fazenda) e o
     status do estoque mínimo POR CATEGORIA. Convencional/sexado só entram na
     lista se tiverem dose em estoque; touros da fazenda (monta natural) sempre.
     """
-    itens = [i for i in session.exec(select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)).all() if i.ativo]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EstoqueSemen).order_by(EstoqueSemen.touro_nome)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+    itens = [i for i in session.exec(query).all() if i.ativo]
     totais = {"convencional": 0, "sexado": 0}
     for i in itens:
         if i.tipo in totais:
@@ -205,14 +225,18 @@ def semen_disponivel(session: Session = Depends(get_session)) -> dict:
 
 
 @router.post("/estoque-semen")
-def criar_estoque_semen(dados: EstoqueSemenIn, session: Session = Depends(get_session)) -> dict:
+def criar_estoque_semen(
+    dados: EstoqueSemenIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.touro_nome.strip():
         raise HTTPException(status_code=400, detail="Informe o nome do touro")
     if dados.tipo not in TIPOS_SEMEN:
         raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
     if dados.doses < 0:
         raise HTTPException(status_code=400, detail="Doses não pode ser negativo")
-    item = EstoqueSemen(**dados.model_dump())
+    item = EstoqueSemen(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(item)
     session.commit()
     session.refresh(item)
@@ -220,9 +244,13 @@ def criar_estoque_semen(dados: EstoqueSemenIn, session: Session = Depends(get_se
 
 
 @router.put("/estoque-semen/{item_id}")
-def atualizar_estoque_semen(item_id: int, dados: EstoqueSemenIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_estoque_semen(
+    item_id: int, dados: EstoqueSemenIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(EstoqueSemen, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     if dados.tipo not in TIPOS_SEMEN:
         raise HTTPException(status_code=400, detail=f"Tipo inválido (aceitos: {', '.join(TIPOS_SEMEN)})")
@@ -238,9 +266,13 @@ def atualizar_estoque_semen(item_id: int, dados: EstoqueSemenIn, session: Sessio
 
 
 @router.delete("/estoque-semen/{item_id}")
-def excluir_estoque_semen(item_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_estoque_semen(
+    item_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(EstoqueSemen, item_id)
-    if not item:
+    if not item or (fazenda_id is not None and item.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de sêmen não encontrado")
     session.delete(item)
     session.commit()

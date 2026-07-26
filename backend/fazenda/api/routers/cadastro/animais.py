@@ -140,12 +140,18 @@ SEED_MOTIVOS_BAIXA = [
 ]
 
 
-def seed_motivos_baixa(session: Session) -> None:
-    """Cria os motivos de baixa padrão se a tabela ainda estiver vazia (idempotente)."""
-    if session.exec(select(MotivoBaixa)).first():
+def seed_motivos_baixa(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria os motivos de baixa padrão uma única vez por fazenda (idempotente via SeedFlag)."""
+    chave = f"motivos_baixa_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "motivos_baixa_v1"
+    if session.get(SeedFlag, chave):
         return
     for nome in SEED_MOTIVOS_BAIXA:
-        session.add(MotivoBaixa(nome=nome))
+        query = select(MotivoBaixa).where(MotivoBaixa.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(MotivoBaixa.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(MotivoBaixa(nome=nome, fazenda_id=fazenda_id))
+    session.add(SeedFlag(chave=chave))
     session.commit()
 
 
@@ -161,12 +167,18 @@ SEED_MOTIVOS_VENDA = [
 ]
 
 
-def seed_motivos_venda(session: Session) -> None:
-    """Cria os motivos de venda padrão se a tabela ainda estiver vazia (idempotente)."""
-    if session.exec(select(MotivoVenda)).first():
+def seed_motivos_venda(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria os motivos de venda padrão uma única vez por fazenda (idempotente via SeedFlag)."""
+    chave = f"motivos_venda_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "motivos_venda_v1"
+    if session.get(SeedFlag, chave):
         return
     for nome in SEED_MOTIVOS_VENDA:
-        session.add(MotivoVenda(nome=nome))
+        query = select(MotivoVenda).where(MotivoVenda.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(MotivoVenda.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(MotivoVenda(nome=nome, fazenda_id=fazenda_id))
+    session.add(SeedFlag(chave=chave))
     session.commit()
 
 
@@ -192,16 +204,25 @@ SEED_GRAUS_SANGUE = [
 ]
 
 
-def seed_racas_grau_sangue(session: Session) -> None:
-    """Cria as raças e graus de sangue padrão se as tabelas ainda estiverem vazias (idempotente)."""
-    if not session.exec(select(Raca)).first():
-        for nome in SEED_RACAS:
-            session.add(Raca(nome=nome))
-        session.commit()
-    if not session.exec(select(GrauSangue)).first():
-        for nome, fracao in SEED_GRAUS_SANGUE:
-            session.add(GrauSangue(nome=nome, fracao_holandes=fracao))
-        session.commit()
+def seed_racas_grau_sangue(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria as raças e graus de sangue padrão uma única vez por fazenda (idempotente via SeedFlag)."""
+    chave = f"racas_grau_sangue_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "racas_grau_sangue_v1"
+    if session.get(SeedFlag, chave):
+        return
+    for nome in SEED_RACAS:
+        query = select(Raca).where(Raca.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(Raca.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(Raca(nome=nome, fazenda_id=fazenda_id))
+    for nome, fracao in SEED_GRAUS_SANGUE:
+        query = select(GrauSangue).where(GrauSangue.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(GrauSangue.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(GrauSangue(nome=nome, fracao_holandes=fracao, fazenda_id=fazenda_id))
+    session.add(SeedFlag(chave=chave))
+    session.commit()
 
 
 
@@ -260,9 +281,13 @@ def criar_grau_sangue(
 
 
 @router.put("/graus-sangue/{item_id}")
-def atualizar_grau_sangue(item_id: int, dados: GrauSangueIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_grau_sangue(
+    item_id: int, dados: GrauSangueIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     obj = session.get(GrauSangue, item_id)
-    if not obj:
+    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Grau de sangue não encontrado")
     nome = dados.nome.strip()
     if not nome:
