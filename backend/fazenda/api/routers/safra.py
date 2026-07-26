@@ -12,8 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Safra
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter(prefix="/safras", tags=["safras"])
 
@@ -43,17 +45,29 @@ def _validar(dados: SafraIn) -> None:
 
 
 @router.get("/")
-def listar_safras(session: Session = Depends(get_session)) -> list[dict]:
-    return [s.model_dump() for s in session.exec(select(Safra).order_by(Safra.data_inicio.desc())).all()]
+def listar_safras(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Safra)
+    if fazenda_id is not None:
+        query = query.where(Safra.fazenda_id == fazenda_id)
+    return [s.model_dump() for s in session.exec(query.order_by(Safra.data_inicio.desc())).all()]
 
 
 @router.post("/")
-def criar_safra(dados: SafraIn, session: Session = Depends(get_session)) -> dict:
+def criar_safra(
+    dados: SafraIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     _validar(dados)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
-    if session.exec(select(Safra).where(Safra.nome == nome)).first():
+    query_existente = select(Safra).where(Safra.nome == nome)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Safra.fazenda_id == fazenda_id)
+    if session.exec(query_existente).first():
         raise HTTPException(status_code=400, detail=f"Já existe uma safra com o nome {nome}")
-    safra = Safra(**{**dados.model_dump(), "nome": nome, "centro_custo": dados.centro_custo.strip()})
+    safra = Safra(**{**dados.model_dump(), "nome": nome, "centro_custo": dados.centro_custo.strip(), "fazenda_id": fazenda_id})
     session.add(safra)
     session.commit()
     session.refresh(safra)
@@ -61,14 +75,20 @@ def criar_safra(dados: SafraIn, session: Session = Depends(get_session)) -> dict
 
 
 @router.put("/{safra_id}")
-def atualizar_safra(safra_id: int, dados: SafraIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_safra(
+    safra_id: int, dados: SafraIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     _validar(dados)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     safra = session.get(Safra, safra_id)
     if not safra:
         raise HTTPException(status_code=404, detail="Safra não encontrada")
     nome = dados.nome.strip()
-    existente = session.exec(select(Safra).where(Safra.nome == nome)).first()
-    if existente and existente.id != safra.id:
+    query_existente = select(Safra).where(Safra.nome == nome, Safra.id != safra.id)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Safra.fazenda_id == fazenda_id)
+    existente = session.exec(query_existente).first()
+    if existente:
         raise HTTPException(status_code=400, detail=f"Já existe uma safra com o nome {nome}")
 
     safra.nome = nome

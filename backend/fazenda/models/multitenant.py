@@ -35,6 +35,27 @@ class Fazenda(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class EmpresaOperadora(SQLModel, table=True):
+    """A empresa de software que opera esta instalação — distinta de cada
+    `Fazenda` (cliente/tenant) e distinta da fazenda do próprio dono do
+    software, que é só mais uma linha em `Fazenda` como qualquer outra.
+
+    Nasce como um cadastro único (linha id=1), sem CNPJ preenchido — existe
+    para servir de âncora estável a quem vier depois (contrato/DPA de
+    operador, cabeçalho de e-mail, relatório), sem precisar reconstruir nada
+    quando a empresa for formalizada: só preencher `cnpj`. Ver a proposta de
+    separação fazenda/empresa (Parte 3.2) para o raciocínio completo."""
+
+    __tablename__ = "empresa_operadora"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    nome: str
+    cnpj: Optional[str] = None
+    endereco: Optional[str] = None
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class UsuarioFazenda(SQLModel, table=True):
     """Vínculo N:N entre Usuario e Fazenda. Um usuário com mais de um vínculo
     vê a tela de seleção de fazenda ao logar (ver POST /auth/login e

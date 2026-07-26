@@ -146,6 +146,7 @@ from .recria import (
 from .multitenant import (
     Fazenda,
     UsuarioFazenda,
+    EmpresaOperadora,
 )
 from .planos import (
     PrecoModulo,
@@ -181,6 +182,7 @@ from .sistema import (
 __all__ = [
     "Fazenda",
     "UsuarioFazenda",
+    "EmpresaOperadora",
     "PrecoModulo",
     "ContratoFazenda",
     "ContratoFazendaModulo",
