@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ---------------------------------------------------------------------------
 # Animal
@@ -102,9 +102,11 @@ class Lote(SQLModel, table=True):
     """
 
     __tablename__ = "lote"
+    __table_args__ = (UniqueConstraint("codigo", "fazenda_id", name="uq_lote_codigo_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    codigo: str = Field(index=True, unique=True)
+    codigo: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str
     del_min: Optional[int] = None
     del_max: Optional[int] = None  # também usado no critério "até X dias após o parto"
@@ -161,6 +163,7 @@ class MovimentoLote(SQLModel, table=True):
     __tablename__ = "movimento_lote"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: str = Field(index=True)
     lote_origem: Optional[str] = None
     lote_destino: str
@@ -177,9 +180,11 @@ class MotivoBaixa(SQLModel, table=True):
     """Causa específica de uma baixa de animal (Rebanho > Baixar animal), cadastrável em Configurações."""
 
     __tablename__ = "motivo_baixa"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_motivo_baixa_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -188,9 +193,11 @@ class MotivoVenda(SQLModel, table=True):
     """Motivo da venda de um animal (Lançamentos > Compra/Venda > Vender animal), cadastrável em Configurações."""
 
     __tablename__ = "motivo_venda"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_motivo_venda_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -199,9 +206,11 @@ class Raca(SQLModel, table=True):
     """Raça de animal (Girolando, Holandês, Gir...), cadastrável em Configurações — substitui o select fixo do cadastro de animal."""
 
     __tablename__ = "raca"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_raca_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -217,9 +226,11 @@ class GrauSangue(SQLModel, table=True):
     """
 
     __tablename__ = "grau_sangue_cadastro"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_grau_sangue_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     fracao_holandes: Optional[float] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -233,9 +244,11 @@ class MotivoMovimentacao(SQLModel, table=True):
     """Motivo cadastrável de movimentação entre lotes."""
 
     __tablename__ = "motivo_movimentacao"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_motivo_movimentacao_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -268,6 +281,7 @@ class BaixaAnimal(SQLModel, table=True):
     __tablename__ = "baixa_animal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_animal: str = Field(index=True)
     tipo_baixa: str  # morte | descarte_voluntario | descarte_involuntario
     motivo: str      # venda | abate | acidente | doenca | macho | outros
@@ -299,6 +313,7 @@ class CompraAnimal(SQLModel, table=True):
     __tablename__ = "compra_animal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_animal: str = Field(index=True)
     vendedor: str
     valor: float  # valor por animal já resolvido (ver tipo_valor)
@@ -324,6 +339,7 @@ class VendaAnimal(SQLModel, table=True):
     __tablename__ = "venda_animal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_animal: str = Field(index=True)
     comprador: str
     valor: float
@@ -357,6 +373,7 @@ class ComissaoCorretagem(SQLModel, table=True):
     __tablename__ = "comissao_corretagem"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     origem_tipo: str  # "venda_animal" | "compra_animal"
     numero_lancamento: str  # LC-... do lançamento de venda/compra ao qual esta comissão se refere
     corretor_nome: str

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import Usuario, get_current_user, tem_modulo
+from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, tem_modulo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Diaria,
@@ -29,7 +29,7 @@ from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoe
 from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
-from fazenda.rules.auditoria import usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo
 from fazenda.rules.patrimonio import status_manutencao
 
@@ -227,6 +227,7 @@ def calcular_agenda(
     dias: int = 10,
     session: Session = Depends(get_session),
     usuario: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Calcula a agenda preditiva para a data informada (padrão: hoje).
@@ -695,8 +696,12 @@ def calcular_agenda(
         parametro_movimentacao.modo == "dia_fixo_semana" and data.weekday() == parametro_movimentacao.dia_semana
     ) or parametro_movimentacao.modo != "dia_fixo_semana"
     if mostra_hoje:
-        lotes_mov = session.exec(select(Lote)).all()
-        dados_criterios_mov = coletar_dados_criterios(session)
+        fazenda_id_res = fazenda_id_seguro(fazenda_id)
+        query_lotes_mov = select(Lote)
+        if fazenda_id_res is not None:
+            query_lotes_mov = query_lotes_mov.where(Lote.fazenda_id == fazenda_id_res)
+        lotes_mov = session.exec(query_lotes_mov).all()
+        dados_criterios_mov = coletar_dados_criterios(session, fazenda_id_res)
         for s in sugerir_movimentacoes(lotes_mov, dados_criterios_mov["animais"], data, dados_criterios_mov):
             chave = f"sugestao_movimentacao_{s['numero_matriz']}_{s['lote_atual'] or 'sem_lote'}"
             if chave in realizados:

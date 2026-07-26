@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Raca
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 from ._comum import _crud_nome_ativo
 
@@ -81,7 +82,10 @@ def criar_animal(
     numero = dados.numero.strip()
     if not numero:
         raise HTTPException(status_code=400, detail="Número/brinco é obrigatório")
-    existente = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    query_existente = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Animal.fazenda_id == fazenda_id)
+    existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=400, detail=f"Já existe um animal com o número {numero}")
 
@@ -96,8 +100,14 @@ def criar_animal(
 
 
 @router.put("/animais/{numero}")
-def atualizar_ficha_animal(numero: str, dados: AnimalFichaIn, session: Session = Depends(get_session)) -> dict:
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+def atualizar_ficha_animal(
+    numero: str, dados: AnimalFichaIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
     for campo, valor in dados.model_dump(exclude={"numero"}).items():
@@ -195,18 +205,18 @@ def seed_racas_grau_sangue(session: Session) -> None:
 
 
 
-_listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa)
+_listar_motivos_baixa, _criar_motivo_baixa, _atualizar_motivo_baixa = _crud_nome_ativo(MotivoBaixa, com_fazenda=True)
 router.get("/motivos-baixa")(_listar_motivos_baixa)
 router.post("/motivos-baixa")(_criar_motivo_baixa)
 router.put("/motivos-baixa/{item_id}")(_atualizar_motivo_baixa)
 
-_listar_motivos_venda, _criar_motivo_venda, _atualizar_motivo_venda = _crud_nome_ativo(MotivoVenda)
+_listar_motivos_venda, _criar_motivo_venda, _atualizar_motivo_venda = _crud_nome_ativo(MotivoVenda, com_fazenda=True)
 router.get("/motivos-venda")(_listar_motivos_venda)
 router.post("/motivos-venda")(_criar_motivo_venda)
 router.put("/motivos-venda/{item_id}")(_atualizar_motivo_venda)
 
 
-_listar_racas, _criar_raca, _atualizar_raca = _crud_nome_ativo(Raca)
+_listar_racas, _criar_raca, _atualizar_raca = _crud_nome_ativo(Raca, com_fazenda=True)
 router.get("/racas")(_listar_racas)
 router.post("/racas")(_criar_raca)
 router.put("/racas/{item_id}")(_atualizar_raca)
@@ -219,18 +229,30 @@ class GrauSangueIn(BaseModel):
 
 
 @router.get("/graus-sangue")
-def listar_graus_sangue(session: Session = Depends(get_session)) -> list[dict]:
-    return [g.model_dump() for g in session.exec(select(GrauSangue).order_by(GrauSangue.id)).all()]
+def listar_graus_sangue(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(GrauSangue)
+    if fazenda_id is not None:
+        query = query.where(GrauSangue.fazenda_id == fazenda_id)
+    return [g.model_dump() for g in session.exec(query.order_by(GrauSangue.id)).all()]
 
 
 @router.post("/graus-sangue")
-def criar_grau_sangue(dados: GrauSangueIn, session: Session = Depends(get_session)) -> dict:
+def criar_grau_sangue(
+    dados: GrauSangueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(GrauSangue).where(GrauSangue.nome == nome)).first():
+    query_dup = select(GrauSangue).where(GrauSangue.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(GrauSangue.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe um grau de sangue com o nome '{nome}'")
-    obj = GrauSangue(nome=nome, fracao_holandes=dados.fracao_holandes, ativo=dados.ativo)
+    obj = GrauSangue(nome=nome, fracao_holandes=dados.fracao_holandes, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(obj)
     session.commit()
     session.refresh(obj)

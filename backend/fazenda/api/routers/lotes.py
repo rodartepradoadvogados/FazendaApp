@@ -12,8 +12,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.lote_criterios import animal_atende_criterios
 
 router = APIRouter(prefix="/lotes", tags=["lotes"])
@@ -110,12 +112,16 @@ def _validar_faixas(dados: LoteIn) -> None:
         )
 
 
-def _validar_flags_unicos(session: Session, dados: LoteIn, lote_id: int | None) -> None:
+def _validar_flags_unicos(session: Session, dados: LoteIn, lote_id: int | None, fazenda_id: int | None) -> None:
     """Só pode haver UM lote com pre_parto=True e UM com status_lactacao="seca"
     — várias regras (secagem, calendário sanitário) buscam "o" lote por essa
     flag com `.first()`; um segundo lote com a mesma flag faria a sugestão
-    virar silenciosamente para o lote errado, sem erro nenhum."""
-    outros = session.exec(select(Lote)).all()
+    virar silenciosamente para o lote errado, sem erro nenhum. Escopo por
+    fazenda: cada fazenda tem seu próprio "o lote pré-parto"/"o lote seco"."""
+    query = select(Lote)
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
+    outros = session.exec(query).all()
     for outro in outros:
         if outro.id == lote_id:
             continue
@@ -160,13 +166,19 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
 @router.get("/")
 def listar_lotes(
     incluir_inativos: bool = Query(False, description="True mostra também lotes inativos (só o cadastro precisa disso; seletores de destino não)."),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(Lote).order_by(Lote.codigo)
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     if not incluir_inativos:
         query = query.where(Lote.ativo == True)  # noqa: E712
     lotes = session.exec(query).all()
-    animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+    animais = session.exec(query_animal).all()
     contagem: dict[str, int] = {}
     for a in animais:
         if a.eh_semen or a.sexo == "M" or not a.grupo_primario:
@@ -186,17 +198,23 @@ def listar_lotes(
 
 
 @router.post("/")
-def criar_lote(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
+def criar_lote(
+    dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
-    _validar_flags_unicos(session, dados, lote_id=None)
+    _validar_flags_unicos(session, dados, lote_id=None, fazenda_id=fazenda_id)
     codigo = _normalizar_codigo(dados.codigo)
     if not codigo or not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Código e nome são obrigatórios")
-    existente = session.exec(select(Lote).where(Lote.codigo == codigo)).first()
+    query_existente = select(Lote).where(Lote.codigo == codigo)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Lote.fazenda_id == fazenda_id)
+    existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=400, detail=f"Já existe um lote com o código {codigo}")
 
-    lote = Lote(codigo=codigo, nome=dados.nome.strip())
+    lote = Lote(codigo=codigo, nome=dados.nome.strip(), fazenda_id=fazenda_id)
     _aplicar_campos(lote, dados)
     session.add(lote)
     session.commit()
@@ -205,16 +223,22 @@ def criar_lote(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
 
 
 @router.put("/{lote_id}")
-def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_lote(
+    lote_id: int, dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixas(dados)
     lote = session.get(Lote, lote_id)
     if not lote:
         raise HTTPException(status_code=404, detail="Lote não encontrado")
-    _validar_flags_unicos(session, dados, lote_id=lote_id)
+    _validar_flags_unicos(session, dados, lote_id=lote_id, fazenda_id=fazenda_id)
 
     codigo_novo = _normalizar_codigo(dados.codigo) if dados.codigo.strip() else lote.codigo
     if codigo_novo != lote.codigo:
-        existente = session.exec(select(Lote).where(Lote.codigo == codigo_novo)).first()
+        query_existente = select(Lote).where(Lote.codigo == codigo_novo)
+        if fazenda_id is not None:
+            query_existente = query_existente.where(Lote.fazenda_id == fazenda_id)
+        existente = session.exec(query_existente).first()
         if existente and existente.id != lote.id:
             raise HTTPException(status_code=400, detail=f"Já existe um lote com o código {codigo_novo}")
 
@@ -223,7 +247,10 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     # qualquer motivo, bloqueia aqui em vez de deixá-los "órfãos" — um lote
     # inativo some dos seletores de destino/movimentação.
     if lote.ativo and not dados.ativo:
-        animais_no_lote = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        query_animais_no_lote = select(Animal).where(Animal.ativo == True)  # noqa: E712
+        if fazenda_id is not None:
+            query_animais_no_lote = query_animais_no_lote.where(Animal.fazenda_id == fazenda_id)
+        animais_no_lote = session.exec(query_animais_no_lote).all()
         qtd = sum(
             1 for a in animais_no_lote
             if not a.eh_semen and a.sexo != "M" and _mesmo_codigo(_codigo_do_grupo(a.grupo_primario), lote.codigo)
@@ -250,7 +277,10 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     # ficado de uma edição anterior (cadastro e Rebanho > Fêmeas por grupo não
     # podem exibir um rótulo diferente do cadastro).
     rotulo_novo = _rotulo(lote.codigo, lote.nome)
-    animais = session.exec(select(Animal).where(Animal.grupo_primario != None)).all()  # noqa: E711
+    query_animais_reconciliar = select(Animal).where(Animal.grupo_primario != None)  # noqa: E711
+    if fazenda_id is not None:
+        query_animais_reconciliar = query_animais_reconciliar.where(Animal.fazenda_id == fazenda_id)
+    animais = session.exec(query_animais_reconciliar).all()
     for a in animais:
         cod_animal = _codigo_do_grupo(a.grupo_primario)
         if (_mesmo_codigo(cod_animal, codigo_antigo) or _mesmo_codigo(cod_animal, codigo_novo)) and a.grupo_primario != rotulo_novo:
@@ -262,19 +292,34 @@ def atualizar_lote(lote_id: int, dados: LoteIn, session: Session = Depends(get_s
     return lote.model_dump()
 
 
-def coletar_dados_criterios(session: Session) -> dict:
+def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> dict:
     """Reúne os dados usados pelos critérios de lote (prévia e sugestão de
     movimentação) — dict (não tupla posicional: cresceu demais pra isso) que
     `fazenda.rules.lote_criterios.animal_atende_criterios`/`sugerir_movimentacoes`
     recebem inteiro. `*_obj_por_animal` traz os objetos SQLModel (não dicts) —
     exigidos por `_contexto_categoria` (fazenda.api.routers.recria), reaproveitada
-    para calcular situação produtiva/dias pós-parto/gestação AO VIVO."""
+    para calcular situação produtiva/dias pós-parto/gestação AO VIVO.
+
+    `PesagemCorporal`/`Secagem` (Produção) e `CategoriaManejo` (Recria) ainda
+    não têm `fazenda_id` — ver proposta de separação fazenda/empresa, Parte
+    1.6; ficam sem filtro até esses domínios serem migrados."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servico = select(Servico)
+    query_sanidade = select(Sanidade)
+    query_parto = select(Parto)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+        query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
+
     animais = [
-        a.model_dump() for a in session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        a.model_dump() for a in session.exec(query_animal).all()
         if not a.eh_semen and a.sexo != "M"
     ]
 
-    servicos_obj = session.exec(select(Servico)).all()
+    servicos_obj = session.exec(query_servico).all()
     servicos_por_animal: dict[str, list[dict]] = {}
     servicos_obj_por_animal: dict[str, list] = {}
     for s in servicos_obj:
@@ -282,7 +327,7 @@ def coletar_dados_criterios(session: Session) -> dict:
         servicos_obj_por_animal.setdefault(s.numero_matriz, []).append(s)
 
     sanidades_por_animal: dict[str, list[dict]] = {}
-    for s in session.exec(select(Sanidade)).all():
+    for s in session.exec(query_sanidade).all():
         sanidades_por_animal.setdefault(s.numero_matriz, []).append(s.model_dump())
 
     peso_por_animal: dict[str, float] = {}
@@ -294,7 +339,7 @@ def coletar_dados_criterios(session: Session) -> dict:
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
     partos_obj_por_animal: dict[str, list] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(query_parto).all():
         partos_obj_por_animal.setdefault(p.numero_matriz, []).append(p)
 
     secagens_obj_por_animal: dict[str, list] = {}
@@ -316,7 +361,9 @@ def coletar_dados_criterios(session: Session) -> dict:
 
 
 @router.post("/preview")
-def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) -> dict:
+def preview_criterios(
+    dados: LoteIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """
     Prévia de quantos e quais animais atendem aos critérios informados (sem
     precisar salvar o lote) — cumulativos, em E lógico.
@@ -326,7 +373,7 @@ def preview_criterios(dados: LoteIn, session: Session = Depends(get_session)) ->
     _aplicar_campos(lote_temp, dados)
 
     hoje = date.today()
-    dados_criterios = coletar_dados_criterios(session)
+    dados_criterios = coletar_dados_criterios(session, fazenda_id)
 
     atendem = [
         a["numero"] for a in dados_criterios["animais"]

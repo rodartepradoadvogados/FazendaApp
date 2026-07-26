@@ -11,10 +11,10 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, ParametroSugestaoMovimentacao, Usuario
-from fazenda.rules.auditoria import mapa_usuarios, usuario_id_seguro
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
 router = APIRouter(prefix="/movimentacoes", tags=["movimentacoes"])
@@ -67,29 +67,45 @@ class MotivoIn(BaseModel):
 
 
 @router.get("/motivos")
-def listar_motivos(session: Session = Depends(get_session)) -> list[str]:
+def listar_motivos(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[str]:
     """Nomes dos motivos ativos, na ordem cadastrada — usado pelos selects do front."""
-    motivos = session.exec(
-        select(MotivoMovimentacao).where(MotivoMovimentacao.ativo == True).order_by(MotivoMovimentacao.id)  # noqa: E712
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(MotivoMovimentacao).where(MotivoMovimentacao.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(MotivoMovimentacao.fazenda_id == fazenda_id)
+    motivos = session.exec(query.order_by(MotivoMovimentacao.id)).all()
     return [m.nome for m in motivos]
 
 
 @router.get("/motivos/cadastro")
-def listar_motivos_cadastro(session: Session = Depends(get_session)) -> list[dict]:
+def listar_motivos_cadastro(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
     """Todos os motivos (inclusive inativos), para a tela de cadastro em Configurações."""
-    motivos = session.exec(select(MotivoMovimentacao).order_by(MotivoMovimentacao.id)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(MotivoMovimentacao)
+    if fazenda_id is not None:
+        query = query.where(MotivoMovimentacao.fazenda_id == fazenda_id)
+    motivos = session.exec(query.order_by(MotivoMovimentacao.id)).all()
     return [m.model_dump() for m in motivos]
 
 
 @router.post("/motivos")
-def criar_motivo(dados: MotivoIn, session: Session = Depends(get_session)) -> dict:
+def criar_motivo(
+    dados: MotivoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(MotivoMovimentacao).where(MotivoMovimentacao.nome == nome)).first():
+    query_existente = select(MotivoMovimentacao).where(MotivoMovimentacao.nome == nome)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(MotivoMovimentacao.fazenda_id == fazenda_id)
+    if session.exec(query_existente).first():
         raise HTTPException(status_code=409, detail="Já existe um motivo com esse nome")
-    motivo = MotivoMovimentacao(nome=nome, ativo=dados.ativo)
+    motivo = MotivoMovimentacao(nome=nome, ativo=dados.ativo, fazenda_id=fazenda_id)
     session.add(motivo)
     session.commit()
     session.refresh(motivo)
@@ -113,7 +129,9 @@ def atualizar_motivo(motivo_id: int, dados: MotivoIn, session: Session = Depends
 
 
 @router.get("/sugestoes")
-def sugestoes_movimentacao(session: Session = Depends(get_session)) -> dict:
+def sugestoes_movimentacao(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """
     Sugestão automática de movimentação entre lotes: usa os critérios já
     cadastrados em cada lote (Configurações > Cadastro > Lotes) — não pede
@@ -121,9 +139,13 @@ def sugestoes_movimentacao(session: Session = Depends(get_session)) -> dict:
     definido; um lote sem nenhum critério "atenderia" o rebanho inteiro, então
     fica de fora da comparação.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    lotes = session.exec(select(Lote)).all()
-    dados_criterios = coletar_dados_criterios(session)
+    query_lotes = select(Lote)
+    if fazenda_id is not None:
+        query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
+    lotes = session.exec(query_lotes).all()
+    dados_criterios = coletar_dados_criterios(session, fazenda_id)
 
     sugestoes = sugerir_movimentacoes(lotes, dados_criterios["animais"], hoje, dados_criterios)
     return {
@@ -178,9 +200,13 @@ def listar_movimentacoes(
     numero_matriz: str | None = Query(None),
     data_inicio: date | None = Query(None),
     data_fim: date | None = Query(None),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(MovimentoLote)
+    if fazenda_id is not None:
+        query = query.where(MovimentoLote.fazenda_id == fazenda_id)
     if numero_matriz:
         query = query.where(MovimentoLote.numero_matriz.contains(numero_matriz))
     if data_inicio:
@@ -196,11 +222,18 @@ def listar_movimentacoes(
 
 
 @router.post("/mover")
-def mover_animais(dados: MoverIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def mover_animais(
+    dados: MoverIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
-    destino = session.exec(select(Lote).where(Lote.codigo == dados.lote_destino_codigo)).first()
+    query_destino = select(Lote).where(Lote.codigo == dados.lote_destino_codigo)
+    if fazenda_id is not None:
+        query_destino = query_destino.where(Lote.fazenda_id == fazenda_id)
+    destino = session.exec(query_destino).first()
     if not destino:
         raise HTTPException(status_code=404, detail="Lote de destino não encontrado")
     rotulo_destino = _rotulo(destino.codigo, destino.nome)
@@ -208,7 +241,10 @@ def mover_animais(dados: MoverIn, session: Session = Depends(get_session), user:
     movidos = 0
     nao_encontrados = []
     for numero in dados.animais:
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        query_animal = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if not animal:
             nao_encontrados.append(numero)
             continue
@@ -230,6 +266,7 @@ def mover_animais(dados: MoverIn, session: Session = Depends(get_session), user:
             observacao=dados.observacao,
             responsavel=dados.responsavel,
             usuario_id=usuario_id_seguro(user),
+            fazenda_id=fazenda_id,
         ))
         movidos += 1
 

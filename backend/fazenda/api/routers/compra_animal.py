@@ -74,8 +74,14 @@ class CompraIn(BaseModel):
 
 
 @router.get("/")
-def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
-    compras = session.exec(select(CompraAnimal).order_by(CompraAnimal.data_compra.desc(), CompraAnimal.id.desc())).all()
+def listar_compras(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CompraAnimal)
+    if fazenda_id is not None:
+        query = query.where(CompraAnimal.fazenda_id == fazenda_id)
+    compras = session.exec(query.order_by(CompraAnimal.data_compra.desc(), CompraAnimal.id.desc())).all()
     registros = [c.model_dump() for c in compras]
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     for r in registros:
@@ -189,11 +195,14 @@ def registrar_compra(
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,
             gta=dados.gta, icms_incide=dados.icms_incide, icms_tipo=dados.icms_tipo, icms_valor=dados.icms_valor,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         ))
         # Vincula o valor da compra à ficha do animal (para o relatório de
         # payback quando ele produzir). Preenche data de entrada e vendedor.
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        query_animal = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if animal:
             animal.valor = valor_unitario
             if not animal.data_entrada:

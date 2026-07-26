@@ -298,10 +298,10 @@ def _tool_consultar_lote(session: Session, codigo: str, fazenda_id: int | None =
     }
 
 
-def _tool_consultar_agenda_hoje(session: Session, usuario: Usuario) -> dict:
+def _tool_consultar_agenda_hoje(session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
     from fazenda.api.routers.agenda import calcular_agenda
     hoje = date.today()
-    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario)
+    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario, fazenda_id=fazenda_id)
     eventos_hoje = [e for e in agenda["eventos"] if e["data"] == hoje.isoformat()]
     return {"data": hoje.isoformat(), "eventos": eventos_hoje, "total": len(eventos_hoje)}
 
@@ -374,7 +374,7 @@ def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None
 _EXECUTORES = {
     "consultar_indicadores": lambda session, usuario, entrada, fazenda_id: _tool_consultar_indicadores(session, fazenda_id),
     "buscar_animal": lambda session, usuario, entrada, fazenda_id: _tool_buscar_animal(session, entrada.get("numero", ""), fazenda_id),
-    "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario),
+    "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario, fazenda_id),
     "consultar_financeiro": lambda session, usuario, entrada, fazenda_id: _tool_consultar_financeiro(session, fazenda_id),
     "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session),
     "consultar_calendario_sanitario": lambda session, usuario, entrada, fazenda_id: _tool_consultar_calendario_sanitario(session, fazenda_id),
