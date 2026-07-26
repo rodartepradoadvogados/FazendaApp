@@ -1018,7 +1018,7 @@ def sugestao_lote_evento(dados: SugestaoLoteEventoIn, session: Session = Depends
     mesmo que a ficha ainda não tenha sido atualizada pelo próximo GERAL.csv.
     """
     lotes = [l for l in session.exec(select(Lote)).all() if lote_tem_criterio(l)]
-    _, servicos_por_animal, sanidades_por_animal, peso_por_animal = coletar_dados_criterios(session)
+    dados_criterios = coletar_dados_criterios(session)
 
     hoje = date.today()
     animal_dict = {
@@ -1031,8 +1031,27 @@ def sugestao_lote_evento(dados: SugestaoLoteEventoIn, session: Session = Depends
         "diagnostico": None,
         "ult_cl_kg": None,
     }
+    # `del_dias` chega pronto (0 no instante do parto) mas o Parto real ainda
+    # não foi salvo nesse ponto do fluxo — sem isso, a situação produtiva/dias
+    # pós-parto AO VIVO (ver lote_criterios._contexto_animal) não têm de onde
+    # vir, e o critério de DEL/situação produtiva do lote nunca bateria bem
+    # na hora exata do evento. Injeta um Parto sintético (só em memória, nunca
+    # persistido) com a data implícita em `del_dias` para este cálculo.
+    if dados.del_dias is not None:
+        from types import SimpleNamespace
+        data_parto_sintetica = hoje - timedelta(days=dados.del_dias)
+        dados_criterios = {
+            **dados_criterios,
+            "partos_obj_por_animal": {
+                **dados_criterios["partos_obj_por_animal"],
+                dados.numero_matriz: [
+                    *dados_criterios["partos_obj_por_animal"].get(dados.numero_matriz, []),
+                    SimpleNamespace(data_parto=data_parto_sintetica),
+                ],
+            },
+        }
     for lote in lotes:
-        if animal_atende_criterios(lote, animal_dict, hoje, peso_por_animal, servicos_por_animal, sanidades_por_animal):
+        if animal_atende_criterios(lote, animal_dict, hoje, dados_criterios):
             return {"lote_sugerido": {"codigo": lote.codigo, "nome": lote.nome, "rotulo": _rotulo_lote(lote.codigo, lote.nome)}}
     return {"lote_sugerido": None}
 
