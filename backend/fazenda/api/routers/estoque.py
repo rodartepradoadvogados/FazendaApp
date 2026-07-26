@@ -11,10 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, EstoqueSemen, Fornecedor, MovimentoEstoque, SeedFlag, Usuario
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 
 router = APIRouter(prefix="/estoque", tags=["estoque"])
 
@@ -126,12 +126,20 @@ MEDIDAS_EMBALAGEM = ["kg/saca", "litros/garrafa", "mililitros/frasco", "unidades
 
 
 @router.get("/")
-def listar_estoque(session: Session = Depends(get_session)) -> dict:
+def listar_estoque(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Todos os itens de estoque para o dashboard interativo (filtra no cliente)."""
-    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_fornecedor = select(Fornecedor)
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    fornecedores = {f.id: f.nome for f in session.exec(query_fornecedor).all()}
     itens = [
         {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
-        for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()
+        for e in session.exec(query_estoque.order_by(Estoque.nome)).all()
     ]
     return {"itens": itens, "total": len(itens)}
 
@@ -176,9 +184,15 @@ def _validar_embalagem(unidade_embalagem: str | None, medida_embalagem: str | No
 
 
 @router.post("/", status_code=201)
-def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)) -> dict:
+def criar_item_estoque(
+    dados: EstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Cadastra um item de estoque novo (não existe ainda um com esse nome)."""
-    existente = session.exec(select(Estoque).where(Estoque.nome == dados.nome)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_existente = select(Estoque).where(Estoque.nome == dados.nome)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Estoque.fazenda_id == fazenda_id)
+    existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe um item de estoque chamado "{dados.nome}"')
     _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
@@ -216,6 +230,7 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
         alimento_id=dados.alimento_id,
         estoque_semen_id=dados.estoque_semen_id or (t.id if (t := _casar_estoque_semen(dados.nome, session)) else None),
         tipo_semen=dados.tipo_semen,
+        fazenda_id=fazenda_id,
     )
     session.add(item)
     session.commit()
@@ -224,14 +239,20 @@ def criar_item_estoque(dados: EstoqueIn, session: Session = Depends(get_session)
 
 
 @router.put("/{item_id}")
-def atualizar_item_estoque(item_id: int, dados: EstoqueIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_item_estoque(
+    item_id: int, dados: EstoqueIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Edita o cadastro completo de um item de estoque já existente — mesmos
     campos do cadastro (POST /), usado pelo botão "editar" da tabela filtrada
     de Estoque (site)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     item = session.get(Estoque, item_id)
     if not item:
         raise HTTPException(status_code=404, detail="Item de estoque não encontrado")
-    existente = session.exec(select(Estoque).where(Estoque.nome == dados.nome, Estoque.id != item_id)).first()
+    query_existente = select(Estoque).where(Estoque.nome == dados.nome, Estoque.id != item_id)
+    if fazenda_id is not None:
+        query_existente = query_existente.where(Estoque.fazenda_id == fazenda_id)
+    existente = session.exec(query_existente).first()
     if existente:
         raise HTTPException(status_code=409, detail=f'Já existe outro item de estoque chamado "{dados.nome}"')
     _validar_embalagem(dados.unidade_embalagem, dados.medida_embalagem)
@@ -292,6 +313,7 @@ def _eh_medicamento(e: Estoque) -> bool:
 def listar_medicamentos(
     principio_ativo: str = "", classificacao: str = "", doenca: str = "",
     finalidade: str = "", incluir_sem_estoque: bool = False,
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
     """Medicamentos (itens de estoque) que cumprem um critério — usado ao
@@ -310,12 +332,22 @@ def listar_medicamentos(
     medicamentos ligados ao princípio/doença apareçam mesmo sem o campo texto."""
     from fazenda.models import Doenca, PrincipioAtivo
 
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
     algum_criterio = bool(principio_ativo or classificacao or doenca or finalidade)
+
+    query_pa = select(PrincipioAtivo)
+    query_doenca = select(Doenca)
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_pa = query_pa.where(PrincipioAtivo.fazenda_id == fazenda_id)
+        query_doenca = query_doenca.where(Doenca.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
 
     pa_ids: set[int] = set()
     if principio_ativo:
         alvo = principio_ativo.strip().lower()
-        for pa in session.exec(select(PrincipioAtivo)).all():
+        for pa in session.exec(query_pa).all():
             if (pa.nome or "").strip().lower() == alvo:
                 pa_ids.add(pa.id)
 
@@ -323,8 +355,8 @@ def listar_medicamentos(
     pa_ids_doenca: set[int] = set()
     if doenca:
         alvo_d = doenca.strip().lower()
-        doenca_ids = {d.id for d in session.exec(select(Doenca)).all() if (d.nome or "").strip().lower() == alvo_d}
-        for pa in session.exec(select(PrincipioAtivo)).all():
+        doenca_ids = {d.id for d in session.exec(query_doenca).all() if (d.nome or "").strip().lower() == alvo_d}
+        for pa in session.exec(query_pa).all():
             if pa.doenca_id in doenca_ids:
                 pa_ids_doenca.add(pa.id)
 
@@ -343,8 +375,8 @@ def listar_medicamentos(
     pa_ids_vacina: set[int] = set()
     pa_ids_vacina_pre_parto: set[int] = set()
     if finalidade in ("secagem", "vacina", "vacina_pre_parto"):
-        doencas_por_id = {d.id: (d.nome or "").strip().lower() for d in session.exec(select(Doenca)).all()}
-        for pa in session.exec(select(PrincipioAtivo)).all():
+        doencas_por_id = {d.id: (d.nome or "").strip().lower() for d in session.exec(query_doenca).all()}
+        for pa in session.exec(query_pa).all():
             cat = (getattr(pa, "categoria_software", "") or "").lower()
             if ("vaca seca" in cat) or ("intramamario" in _sem_acento(cat)):
                 pa_ids_secagem.add(pa.id)
@@ -353,7 +385,7 @@ def listar_medicamentos(
             if getattr(pa, "eh_biologico", False) and doencas_por_id.get(pa.doenca_id) in DOENCAS_VACINA_PRE_PARTO:
                 pa_ids_vacina_pre_parto.add(pa.id)
 
-    itens = session.exec(select(Estoque)).all()
+    itens = session.exec(query_estoque).all()
     saida = []
     for e in itens:
         if e.ativo is False:
@@ -393,9 +425,15 @@ def listar_medicamentos(
 
 
 @router.get("/movimentos")
-def listar_movimentos(session: Session = Depends(get_session)) -> dict:
+def listar_movimentos(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Histórico de entradas/saídas lançadas manualmente."""
-    movs = session.exec(select(MovimentoEstoque).order_by(MovimentoEstoque.data_movimento.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(MovimentoEstoque)
+    if fazenda_id is not None:
+        query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
+    movs = session.exec(query.order_by(MovimentoEstoque.data_movimento.desc())).all()
     nomes = mapa_usuarios(session, {m.usuario_id for m in movs})
     movimentos = [{**m.model_dump(), "usuario_nome": nomes.get(m.usuario_id)} for m in movs]
     return {"movimentos": movimentos, "total": len(movs)}
@@ -414,17 +452,23 @@ class MovimentoIn(BaseModel):
     pedido_item_id: int | None = None
 
 
-def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: int | None = None) -> Estoque:
+def _criar_movimento_estoque(
+    dados: MovimentoIn, session: Session, usuario_id: int | None = None, fazenda_id: int | None = None,
+) -> Estoque:
     """Lógica de fato de um lançamento de movimento (sem o commit ser feito
     pelo chamador direto) — usada pelo endpoint HTTP e pela importação de CSV
     (fazenda.api.routers.importar), que chama isto fora do ciclo de requisição
     e por isso não tem um usuário logado (usuario_id fica None nesse caso)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.movimento not in MOVIMENTOS_VALIDOS:
         raise HTTPException(status_code=400, detail="Tipo de movimento inválido")
     if dados.quantidade <= 0:
         raise HTTPException(status_code=400, detail="Quantidade deve ser maior que zero")
 
-    item = session.exec(select(Estoque).where(Estoque.nome == dados.nome)).first()
+    query_item = select(Estoque).where(Estoque.nome == dados.nome)
+    if fazenda_id is not None:
+        query_item = query_item.where(Estoque.fazenda_id == fazenda_id)
+    item = session.exec(query_item).first()
     if not item:
         raise HTTPException(status_code=404, detail=f'Item de estoque "{dados.nome}" não encontrado')
     if dados.movimento in MOVIMENTOS_SOMENTE_ESTOCAVEL and item.estocavel is False:
@@ -458,6 +502,7 @@ def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: i
         usuario_id=usuario_id,
         pedido_id=dados.pedido_id,
         pedido_item_id=dados.pedido_item_id,
+        fazenda_id=fazenda_id,
     ))
     session.commit()
     session.refresh(item)
@@ -470,6 +515,9 @@ def _criar_movimento_estoque(dados: MovimentoIn, session: Session, usuario_id: i
 
 
 @router.post("/movimentar")
-def movimentar_estoque(dados: MovimentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
-    item = _criar_movimento_estoque(dados, session, usuario_id=user.id)
+def movimentar_estoque(
+    dados: MovimentoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    item = _criar_movimento_estoque(dados, session, usuario_id=user.id, fazenda_id=fazenda_id)
     return item.model_dump()
