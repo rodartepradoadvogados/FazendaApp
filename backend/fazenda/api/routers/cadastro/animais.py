@@ -15,7 +15,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Raca
+from fazenda.models import Animal, GrauSangue, MotivoBaixa, MotivoVenda, Raca, SeedFlag
 from fazenda.rules.auditoria import fazenda_id_seguro
 
 from ._comum import _crud_nome_ativo

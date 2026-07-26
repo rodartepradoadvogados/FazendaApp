@@ -221,15 +221,15 @@ async def lifespan(app: FastAPI):
         # Compatibiliza cada item de estoque sem conta gerencial padrão com a
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.
-        sindicar_conta_gerencial_estoque(session, fazenda_id=1)
+        sindicar_conta_gerencial_estoque(session)
         # Vincula cada item de estoque genérico ao touro correspondente do
         # Estoque de Sêmen (por nome ou NAAB/código) — a partir daí, toda
         # entrada/saída deste item também atualiza as doses do touro.
-        sindicar_estoque_semen(session, fazenda_id=1)
+        sindicar_estoque_semen(session)
         # Corrige o histórico: cria/atualiza o item de Estoque espelhado de
         # cada touro do Estoque de Sêmen (compras antigas nunca criavam esse
         # item — só apareciam em Rebanho > Touros > Sêmen).
-        backfill_estoque_semen_generico(session, fazenda_id=1)
+        backfill_estoque_semen_generico(session)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
