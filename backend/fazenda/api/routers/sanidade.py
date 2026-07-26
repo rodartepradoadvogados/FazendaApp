@@ -689,7 +689,12 @@ def _banda_numerica(exame_def: ExameDefinicao | None, valor: float) -> str | Non
 
 
 @router.post("/calendario/cadastrar-preventivo")
-def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def cadastrar_preventivo(
+    dados: CadastrarPreventivoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
     if not ev:
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
@@ -748,6 +753,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             ),
             session,
             user,
+            fazenda_id,
         )
 
     # 3) Diagnóstico/resultado do exame (só evento categoria_preventiva ==
@@ -779,6 +785,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             marcar_a_descartar(
                 ADescartarIn(animais=dados.animais, descartar=True, observacao=f"Exame {ev.nome}: positivo"),
                 session=session,
+                fazenda_id=fazenda_id,
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
