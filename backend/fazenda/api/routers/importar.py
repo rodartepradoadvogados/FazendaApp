@@ -347,7 +347,11 @@ async def importar_financeiro(
 
 
 @router.post("/estoque_movimento")
-async def importar_estoque_movimento(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_estoque_movimento(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -367,7 +371,7 @@ async def importar_estoque_movimento(file: UploadFile, session: Session = Depend
                 data_movimento=data_movimento,
                 observacao=row.get("observacao", "").strip() or None,
             )
-            _criar_movimento_estoque(dados, session)
+            _criar_movimento_estoque(dados, session, fazenda_id=fazenda_id)
             criados += 1
         except HTTPException as exc:
             erros.append(f"Linha {i}: {exc.detail}")
@@ -376,7 +380,11 @@ async def importar_estoque_movimento(file: UploadFile, session: Session = Depend
 
 
 @router.post("/produtos_estoque")
-async def importar_produtos_estoque(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_produtos_estoque(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -390,16 +398,23 @@ async def importar_produtos_estoque(file: UploadFile, session: Session = Depends
         fornecedor_id = None
         fornecedor_nome = row.get("fornecedor_nome", "").strip()
         if fornecedor_nome:
-            fornecedor = session.exec(select(Fornecedor).where(Fornecedor.nome == fornecedor_nome)).first()
+            fornecedor_query = select(Fornecedor).where(Fornecedor.nome == fornecedor_nome)
+            if fazenda_id is not None:
+                fornecedor_query = fornecedor_query.where(Fornecedor.fazenda_id == fazenda_id)
+            fornecedor = session.exec(fornecedor_query).first()
             if not fornecedor:
                 erros.append(f"Linha {i}: fornecedor '{fornecedor_nome}' não encontrado — cadastre-o antes")
             else:
                 fornecedor_id = fornecedor.id
 
-        item = session.exec(select(Estoque).where(Estoque.nome == nome)).first()
+        item_query = select(Estoque).where(Estoque.nome == nome)
+        if fazenda_id is not None:
+            item_query = item_query.where(Estoque.fazenda_id == fazenda_id)
+        item = session.exec(item_query).first()
         if not item:
             item = Estoque(nome=nome, categoria=row.get("categoria", "").strip() or None,
-                            unidade=row.get("unidade", "").strip() or None, quantidade=0)
+                            unidade=row.get("unidade", "").strip() or None, quantidade=0,
+                            fazenda_id=fazenda_id)
             criados += 1
         else:
             atualizados += 1
@@ -421,7 +436,11 @@ async def importar_produtos_estoque(file: UploadFile, session: Session = Depends
 
 
 @router.post("/fornecedores")
-async def importar_fornecedores(file: UploadFile, session: Session = Depends(get_session)) -> dict:
+async def importar_fornecedores(
+    file: UploadFile, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados, atualizados = 0, 0
     erros: list[str] = []
@@ -433,9 +452,12 @@ async def importar_fornecedores(file: UploadFile, session: Session = Depends(get
             erros.append(f"Linha {i}: nome e tipo (fornecedor/fabricante/cliente) são obrigatórios")
             continue
 
-        f = session.exec(select(Fornecedor).where(Fornecedor.nome == nome)).first()
+        fornecedor_query = select(Fornecedor).where(Fornecedor.nome == nome)
+        if fazenda_id is not None:
+            fornecedor_query = fornecedor_query.where(Fornecedor.fazenda_id == fazenda_id)
+        f = session.exec(fornecedor_query).first()
         if not f:
-            f = Fornecedor(nome=nome, tipo=tipo)
+            f = Fornecedor(nome=nome, tipo=tipo, fazenda_id=fazenda_id)
             criados += 1
         else:
             f.tipo = tipo
@@ -996,41 +1018,58 @@ async def importar_touros_naab(
 
 
 @router.post("/backfill")
-def backfill_fornecedores_e_estoque(session: Session = Depends(get_session)) -> dict:
+def backfill_fornecedores_e_estoque(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Varre os dados já importados (financeiro, curva ABC, dieta, sanidade) e
     cadastra automaticamente os fornecedores e itens de estoque citados neles
     que ainda não existem — idempotente, seguro de rodar quantas vezes quiser.
     Não sobrescreve nada que já existe, só preenche o que falta.
     """
-    fornecedores_existentes = set(session.exec(select(Fornecedor.nome)).all())
-    nomes_conta = {
-        c.strip() for c in session.exec(select(ContaGerencial.fornecedor_cliente)).all() if c and c.strip()
-    }
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+
+    fornecedor_query = select(Fornecedor.nome)
+    conta_query = select(ContaGerencial.fornecedor_cliente)
+    if fazenda_id is not None:
+        fornecedor_query = fornecedor_query.where(Fornecedor.fazenda_id == fazenda_id)
+        conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
+    fornecedores_existentes = set(session.exec(fornecedor_query).all())
+    nomes_conta = {c.strip() for c in session.exec(conta_query).all() if c and c.strip()}
     fornecedores_criados = []
     for nome in sorted(nomes_conta - fornecedores_existentes):
-        f = Fornecedor(nome=nome, tipo="fornecedor")
+        f = Fornecedor(nome=nome, tipo="fornecedor", fazenda_id=fazenda_id)
         session.add(f)
         fornecedores_criados.append(nome)
 
-    estoque_existente = set(session.exec(select(Estoque.nome)).all())
+    estoque_query = select(Estoque.nome)
+    curva_query = select(CurvaABC.produto)
+    lancamento_query = select(LancamentoItem.produto)
+    sanidade_query = select(Sanidade.produto)
+    if fazenda_id is not None:
+        estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
+        curva_query = curva_query.where(CurvaABC.fazenda_id == fazenda_id)
+        lancamento_query = lancamento_query.where(LancamentoItem.fazenda_id == fazenda_id)
+        sanidade_query = sanidade_query.where(Sanidade.fazenda_id == fazenda_id)
+    estoque_existente = set(session.exec(estoque_query).all())
     candidatos_estoque: set[str] = set()
-    for produto in session.exec(select(CurvaABC.produto)).all():
+    for produto in session.exec(curva_query).all():
         if produto and produto.strip():
             candidatos_estoque.add(produto.strip())
-    for produto in session.exec(select(LancamentoItem.produto)).all():
+    for produto in session.exec(lancamento_query).all():
         if produto and produto.strip():
             candidatos_estoque.add(produto.strip())
     for ingrediente in session.exec(select(Dieta.ingrediente)).all():
         if ingrediente and ingrediente.strip():
             candidatos_estoque.add(ingrediente.strip())
-    for produto in session.exec(select(Sanidade.produto)).all():
+    for produto in session.exec(sanidade_query).all():
         if produto and produto.strip():
             candidatos_estoque.add(produto.strip())
 
     estoque_criados = []
     for nome in sorted(candidatos_estoque - estoque_existente):
-        session.add(Estoque(nome=nome, quantidade=0))
+        session.add(Estoque(nome=nome, quantidade=0, fazenda_id=fazenda_id))
         estoque_criados.append(nome)
 
     session.commit()

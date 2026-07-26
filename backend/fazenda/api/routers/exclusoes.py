@@ -167,7 +167,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "controle":
-        rows = session.exec(select(ControleLeiteiro)).all()
+        query = select(ControleLeiteiro)
+        if fazenda_id is not None:
+            query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -475,7 +478,7 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
 
     if tipo == "controle":
         c = session.get(ControleLeiteiro, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         return [f"Controle leiteiro de {c.numero_matriz} em {_br(c.data_controle)}"], [c]
 

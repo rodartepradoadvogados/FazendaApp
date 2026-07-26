@@ -134,9 +134,13 @@ def criar_protocolo_sanitario(
 
 
 @router.put("/protocolos-sanitarios/{protocolo_id}")
-def atualizar_protocolo_sanitario(protocolo_id: int, dados: ProtocoloSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_protocolo_sanitario(
+    protocolo_id: int, dados: ProtocoloSanitarioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     protocolo = session.get(ProtocoloSanitario, protocolo_id)
-    if not protocolo:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -462,9 +466,13 @@ def criar_protocolo_inducao(
 
 
 @router.put("/protocolos-inducao-lactacao/{protocolo_id}")
-def atualizar_protocolo_inducao(protocolo_id: int, dados: ProtocoloInducaoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_protocolo_inducao(
+    protocolo_id: int, dados: ProtocoloInducaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     protocolo = session.get(ProtocoloInducaoLactacao, protocolo_id)
-    if not protocolo:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not protocolo or (fazenda_id is not None and protocolo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Protocolo não encontrado")
     nome = dados.nome.strip()
     if not nome:

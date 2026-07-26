@@ -271,8 +271,14 @@ class AgendamentoPesagemIn(BaseModel):
 
 
 @router.get("/agendamentos-pesagem")
-def listar_agendamentos_pesagem(session: Session = Depends(get_session)) -> list[dict]:
-    return [a.model_dump() for a in session.exec(select(AgendamentoPesagem).order_by(AgendamentoPesagem.nome)).all()]
+def listar_agendamentos_pesagem(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(AgendamentoPesagem).order_by(AgendamentoPesagem.nome)
+    if fazenda_id is not None:
+        query = query.where(AgendamentoPesagem.fazenda_id == fazenda_id)
+    return [a.model_dump() for a in session.exec(query).all()]
 
 
 def _valida_pesagem(dados: AgendamentoPesagemIn) -> None:
@@ -287,9 +293,12 @@ def _valida_pesagem(dados: AgendamentoPesagemIn) -> None:
 
 
 @router.post("/agendamentos-pesagem", status_code=201)
-def criar_agendamento_pesagem(dados: AgendamentoPesagemIn, session: Session = Depends(get_session)) -> dict:
+def criar_agendamento_pesagem(
+    dados: AgendamentoPesagemIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _valida_pesagem(dados)
-    obj = AgendamentoPesagem(**{**dados.model_dump(), "nome": dados.nome.strip()})
+    obj = AgendamentoPesagem(**{**dados.model_dump(), "nome": dados.nome.strip()}, fazenda_id=fazenda_id)
     session.add(obj)
     session.commit()
     session.refresh(obj)
@@ -297,9 +306,13 @@ def criar_agendamento_pesagem(dados: AgendamentoPesagemIn, session: Session = De
 
 
 @router.put("/agendamentos-pesagem/{item_id}")
-def atualizar_agendamento_pesagem(item_id: int, dados: AgendamentoPesagemIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_agendamento_pesagem(
+    item_id: int, dados: AgendamentoPesagemIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     obj = session.get(AgendamentoPesagem, item_id)
-    if not obj:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Agendamento não encontrado")
     _valida_pesagem(dados)
     for k, v in {**dados.model_dump(), "nome": dados.nome.strip()}.items():
@@ -311,9 +324,12 @@ def atualizar_agendamento_pesagem(item_id: int, dados: AgendamentoPesagemIn, ses
 
 
 @router.delete("/agendamentos-pesagem/{item_id}")
-def excluir_agendamento_pesagem(item_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_agendamento_pesagem(
+    item_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     obj = session.get(AgendamentoPesagem, item_id)
-    if not obj:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Agendamento não encontrado")
     session.delete(obj)
     session.commit()
@@ -443,9 +459,13 @@ def criar_evento_sanitario(
 
 
 @router.put("/eventos-sanitarios/{item_id}")
-def atualizar_evento_sanitario(item_id: int, dados: EventoSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_evento_sanitario(
+    item_id: int, dados: EventoSanitarioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     ev = session.get(EventoSanitario, item_id)
-    if not ev:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not ev or (fazenda_id is not None and ev.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Evento sanitário não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -535,9 +555,13 @@ def criar_exame(
 
 
 @router.put("/exames/{item_id}")
-def atualizar_exame(item_id: int, dados: ExameDefinicaoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_exame(
+    item_id: int, dados: ExameDefinicaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     ex = session.get(ExameDefinicao, item_id)
-    if not ex:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not ex or (fazenda_id is not None and ex.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Exame não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -552,9 +576,12 @@ def atualizar_exame(item_id: int, dados: ExameDefinicaoIn, session: Session = De
 
 
 @router.delete("/exames/{item_id}")
-def excluir_exame(item_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_exame(
+    item_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     ex = session.get(ExameDefinicao, item_id)
-    if not ex:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not ex or (fazenda_id is not None and ex.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Exame não encontrado")
     session.delete(ex)
     session.commit()

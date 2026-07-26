@@ -188,7 +188,7 @@ async def lifespan(app: FastAPI):
         # estoque já existente (idempotente, sem perda de dados).
         bootstrap_farmacia(session)
         # Recria: metas, curva de peso-alvo e janelas de ponto crítico padrão.
-        seed_recria(session)
+        seed_recria(session, fazenda_id=1)
         # Catálogo NAAB completo (Alta Genetics) empacotado no repo — carrega
         # uma única vez, sem depender de upload manual do usuário.
         bootstrap_touros_naab(session)
@@ -200,7 +200,7 @@ async def lifespan(app: FastAPI):
         # Categorias de alimento (Volumoso/Concentrado/Mineral) + cadastro de
         # Alimento — vinculado automaticamente a itens de Estoque de mesmo
         # nome, quando existirem.
-        seed_alimentos(session)
+        seed_alimentos(session, fazenda_id=1)
         # News: 3 fontes nacionais + 2 internacionais de jornalismo sobre
         # pecuária leiteira — editável depois em Configurações > News (admin).
         seed_fontes_news(session)
@@ -221,15 +221,15 @@ async def lifespan(app: FastAPI):
         # Compatibiliza cada item de estoque sem conta gerencial padrão com a
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.
-        sindicar_conta_gerencial_estoque(session)
+        sindicar_conta_gerencial_estoque(session, fazenda_id=1)
         # Vincula cada item de estoque genérico ao touro correspondente do
         # Estoque de Sêmen (por nome ou NAAB/código) — a partir daí, toda
         # entrada/saída deste item também atualiza as doses do touro.
-        sindicar_estoque_semen(session)
+        sindicar_estoque_semen(session, fazenda_id=1)
         # Corrige o histórico: cria/atualiza o item de Estoque espelhado de
         # cada touro do Estoque de Sêmen (compras antigas nunca criavam esse
         # item — só apareciam em Rebanho > Touros > Sêmen).
-        backfill_estoque_semen_generico(session)
+        backfill_estoque_semen_generico(session, fazenda_id=1)
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
