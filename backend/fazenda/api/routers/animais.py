@@ -17,6 +17,7 @@ from fazenda.models import (
     Sanidade, Secagem, Servico, Touro, VendaAnimal,
 )
 from fazenda.ordenacao import chave_numero
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS
 
@@ -32,6 +33,7 @@ def listar_animais(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(Animal).where(Animal.ativo == ativo)
     # Piloto conservador de multi-fazenda: só filtra quando o token carrega
     # uma fazenda selecionada (ver get_fazenda_atual_id) — token sem "fid"
@@ -51,14 +53,19 @@ def listar_animais(
 
     # Datas reprodutivas por matriz: último serviço POSITIVO (concepção) e último
     # parto. Usadas no front para dias de gestação, dias para o parto e PEV.
+    query_servico = select(Servico)
+    query_parto = select(Parto)
+    if fazenda_id is not None:
+        query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
+        query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
     ult_pos: dict[str, object] = {}
-    for s in session.exec(select(Servico)).all():
+    for s in session.exec(query_servico).all():
         d = s.data_servico
         if d and (s.diagnostico or "").strip().upper() == "POSITIVO":
             if s.numero_matriz not in ult_pos or d > ult_pos[s.numero_matriz]:
                 ult_pos[s.numero_matriz] = d
     ult_parto: dict[str, object] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(query_parto).all():
         d = p.data_parto
         if d and (p.numero_matriz not in ult_parto or d > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = d
@@ -89,13 +96,21 @@ def estratificacao_rebanho(
 ) -> dict:
     """Composição do rebanho (fêmeas ativas) por faixa etária e, nas adultas,
     por situação (lactação / secas / pré-parto). Alimenta o gráfico do Rebanho."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
+    query_parto = select(Parto)
+    query_servico = select(Servico)
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
+        query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
     ult_parto: dict[str, date] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(query_parto).all():
         if p.data_parto and (p.numero_matriz not in ult_parto or p.data_parto > ult_parto[p.numero_matriz]):
             ult_parto[p.numero_matriz] = p.data_parto
     ult_pos: dict[str, date] = {}
-    for s in session.exec(select(Servico)).all():
+    for s in session.exec(query_servico).all():
         if s.data_servico and (s.diagnostico or "").strip().upper() == "POSITIVO":
             if s.numero_matriz not in ult_pos or s.data_servico > ult_pos[s.numero_matriz]:
                 ult_pos[s.numero_matriz] = s.data_servico
@@ -109,10 +124,7 @@ def estratificacao_rebanho(
     # janela suspensa de animais ao clicar numa fatia/card da composição.
     numeros: dict[str, list[str]] = {k: [] for k in estratos}
     total = 0
-    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
-    if fazenda_id is not None:
-        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
-    for a in session.exec(query_animais).all():
+    for a in session.exec(query_animal).all():
         if a.eh_semen or a.sexo == "M":
             continue
         total += 1
@@ -170,6 +182,7 @@ def estratificacao_rebanho(
 def buscar_animal(
     numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(Animal).where(Animal.numero == numero)
     if fazenda_id is not None:
         query = query.where(Animal.fazenda_id == fazenda_id)
@@ -188,18 +201,32 @@ def ficha_animal(
     para ele, reunidos em uma resposta — reprodução, parto, colostragem/IgG,
     produção, sanidade, movimentação de lote, compra/baixa e agenda. Serve
     tanto a tela de consulta quanto a exportação em PDF (por maior que fique).
+
+    Isolamento por fazenda: a busca do animal e as tabelas que já têm
+    `fazenda_id` (Servico, Parto, ColostragemBezerra, ProtocoloIatfAplicacao,
+    Sanidade, ProtocoloSanitarioLancamento, ExameResultado) são filtradas
+    abaixo. MovimentoLote, ControleLeiteiro, PesagemCorporal, QualidadeLeite,
+    Secagem, AgendaManual, BaixaAnimal, CompraAnimal, VendaAnimal e
+    OcorrenciaClinica AINDA NÃO têm a coluna — ficam sem filtro até os
+    domínios Lote/Produção/Recria/Sistema serem migrados (ver proposta de
+    separação fazenda/empresa, Parte 1.6) — não são um esquecimento, é uma
+    lacuna conhecida e documentada.
     """
-    query = select(Animal).where(Animal.numero == numero)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_animal = select(Animal).where(Animal.numero == numero)
     if fazenda_id is not None:
-        query = query.where(Animal.fazenda_id == fazenda_id)
-    animal = session.exec(query).first()
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query_animal).first()
     if not animal:
         raise HTTPException(status_code=404, detail=f"Animal {numero} não encontrado")
 
     def _dump(rows) -> list[dict]:
         return [r.model_dump() for r in rows]
 
-    partos = session.exec(select(Parto).where(Parto.numero_matriz == numero).order_by(Parto.data_parto)).all()
+    query_partos = select(Parto).where(Parto.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+    partos = session.exec(query_partos.order_by(Parto.data_parto)).all()
     # Ordem de parto = posição cronológica (1º, 2º, 3º…). Quando a fonte não
     # traz o número (ex.: animal com um único parto), deriva pela ordem da data
     # — o primeiro parto é sempre "1", não fica em branco/zero. Exibida como
@@ -212,7 +239,10 @@ def ficha_animal(
         ordem = d.get("ordem_parto") or (idx + 1)
         d["ordem_parto"] = f"{ordem} de {total_partos}"
         partos_dump.append(d)
-    servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero).order_by(Servico.data_servico)).all()
+    query_servicos = select(Servico).where(Servico.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+    servicos = session.exec(query_servicos.order_by(Servico.data_servico)).all()
     # Código NAAB do pai (touro/sêmen usado no serviço), buscado no catálogo de
     # sêmen pelo nome do reprodutor — anexado a cada serviço para exibir na ficha.
     estoque_semen_todos = session.exec(select(EstoqueSemen)).all()
@@ -275,13 +305,15 @@ def ficha_animal(
             "tpi": touro_pai.tpi if touro_pai else None,
             "nm_dolar": touro_pai.nm_dolar if touro_pai else None,
         }
-    parto_como_cria = session.exec(
-        select(Parto).where((Parto.numero_cria_1 == numero) | (Parto.numero_cria_2 == numero))
-    ).first()
+    query_parto_cria = select(Parto).where((Parto.numero_cria_1 == numero) | (Parto.numero_cria_2 == numero))
+    if fazenda_id is not None:
+        query_parto_cria = query_parto_cria.where(Parto.fazenda_id == fazenda_id)
+    parto_como_cria = session.exec(query_parto_cria).first()
     if pai is None and parto_como_cria and parto_como_cria.data_parto:
-        servicos_mae = session.exec(
-            select(Servico).where(Servico.numero_matriz == parto_como_cria.numero_matriz).order_by(Servico.data_servico)
-        ).all()
+        query_servicos_mae = select(Servico).where(Servico.numero_matriz == parto_como_cria.numero_matriz)
+        if fazenda_id is not None:
+            query_servicos_mae = query_servicos_mae.where(Servico.fazenda_id == fazenda_id)
+        servicos_mae = session.exec(query_servicos_mae.order_by(Servico.data_servico)).all()
         candidatos = [
             s for s in servicos_mae
             if s.data_servico and s.reprodutor and 260 <= (parto_como_cria.data_parto - s.data_servico).days <= 295
@@ -299,15 +331,20 @@ def ficha_animal(
                 "nm_dolar": touro_pai.nm_dolar if touro_pai else None,
             }
 
-    protocolos_iatf = session.exec(
-        select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == numero).order_by(ProtocoloIatfAplicacao.data_prevista)
-    ).all()
+    query_protocolos_iatf = select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_protocolos_iatf = query_protocolos_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    protocolos_iatf = session.exec(query_protocolos_iatf.order_by(ProtocoloIatfAplicacao.data_prevista)).all()
 
+    # MovimentoLote ainda não tem fazenda_id — ver nota no docstring da função.
     movimentos_lote = session.exec(
         select(MovimentoLote).where(MovimentoLote.numero_matriz == numero).order_by(MovimentoLote.data_movimento)
     ).all()
 
-    colostragem = session.exec(select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == numero)).first()
+    query_colostragem = select(ColostragemBezerra).where(ColostragemBezerra.numero_animal == numero)
+    if fazenda_id is not None:
+        query_colostragem = query_colostragem.where(ColostragemBezerra.fazenda_id == fazenda_id)
+    colostragem = session.exec(query_colostragem).first()
 
     controles_leiteiros = session.exec(
         select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero).order_by(ControleLeiteiro.data_controle)
@@ -321,14 +358,19 @@ def ficha_animal(
         select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero).order_by(QualidadeLeite.data_coleta)
     ).all()
 
-    aplicacoes_sanitarias = session.exec(
-        select(Sanidade).where(Sanidade.numero_matriz == numero).order_by(Sanidade.data_aplicacao)
-    ).all()
+    query_sanidade = select(Sanidade).where(Sanidade.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
+    aplicacoes_sanitarias = session.exec(query_sanidade.order_by(Sanidade.data_aplicacao)).all()
 
-    protocolos_nomes = {p.id: p.nome for p in session.exec(select(ProtocoloSanitario)).all()}
-    protocolos_sanitarios_rows = session.exec(
-        select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.numero_matriz == numero).order_by(ProtocoloSanitarioLancamento.data_inicio)
-    ).all()
+    query_protocolos_nomes = select(ProtocoloSanitario)
+    if fazenda_id is not None:
+        query_protocolos_nomes = query_protocolos_nomes.where(ProtocoloSanitario.fazenda_id == fazenda_id)
+    protocolos_nomes = {p.id: p.nome for p in session.exec(query_protocolos_nomes).all()}
+    query_protocolos_sanitarios = select(ProtocoloSanitarioLancamento).where(ProtocoloSanitarioLancamento.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_protocolos_sanitarios = query_protocolos_sanitarios.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    protocolos_sanitarios_rows = session.exec(query_protocolos_sanitarios.order_by(ProtocoloSanitarioLancamento.data_inicio)).all()
     protocolos_sanitarios = [
         {**p.model_dump(), "protocolo_nome": protocolos_nomes.get(p.protocolo_id, "—")} for p in protocolos_sanitarios_rows
     ]
@@ -354,10 +396,14 @@ def ficha_animal(
         select(OcorrenciaClinica).where(OcorrenciaClinica.numero_matriz == numero).order_by(OcorrenciaClinica.data_ocorrencia)
     ).all()
 
-    eventos_sanitarios_nomes = {e.id: e.nome for e in session.exec(select(EventoSanitario)).all()}
-    exames_resultados_rows = session.exec(
-        select(ExameResultado).where(ExameResultado.numero_matriz == numero).order_by(ExameResultado.data_exame)
-    ).all()
+    query_eventos_sanitarios = select(EventoSanitario)
+    if fazenda_id is not None:
+        query_eventos_sanitarios = query_eventos_sanitarios.where(EventoSanitario.fazenda_id == fazenda_id)
+    eventos_sanitarios_nomes = {e.id: e.nome for e in session.exec(query_eventos_sanitarios).all()}
+    query_exames = select(ExameResultado).where(ExameResultado.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_exames = query_exames.where(ExameResultado.fazenda_id == fazenda_id)
+    exames_resultados_rows = session.exec(query_exames.order_by(ExameResultado.data_exame)).all()
     exames_resultados = [
         {**e.model_dump(), "evento_sanitario_nome": eventos_sanitarios_nomes.get(e.evento_sanitario_id)}
         for e in exames_resultados_rows

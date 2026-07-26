@@ -26,6 +26,7 @@ from fazenda.models import (
     Animal, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto, PesagemCorporal,
     Servico, Usuario,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
 
 MODEL = "claude-sonnet-5"
@@ -190,33 +191,48 @@ def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
     return [t["spec"] for t in _TOOLS_DISPONIVEIS if tem_modulo(usuario, t["modulo"])]
 
 
-def _tool_consultar_indicadores(session: Session) -> dict:
-    todos = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None) -> dict:
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servico = select(Servico)
+    query_parto = select(Parto)
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
+        query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
+    todos = session.exec(query_animal).all()
     animais = [a.model_dump() for a in todos if not a.eh_semen and a.sexo != "M"]
-    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
-    partos = [p.model_dump() for p in session.exec(select(Parto)).all()]
+    servicos = [s.model_dump() for s in session.exec(query_servico).all()]
+    partos = [p.model_dump() for p in session.exec(query_parto).all()]
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
+    # PesagemCorporal (Recria) ainda não tem fazenda_id — ver proposta de
+    # separação fazenda/empresa, Parte 1.6; fica sem filtro por enquanto.
     for p in session.exec(select(PesagemCorporal)).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
             peso_por_animal[p.numero_matriz] = p.peso_kg
+    # Lote (Animais) também ainda não tem fazenda_id — mesma nota acima.
     lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
     return calcular_indicadores(animais, servicos, partos, data_ref=date.today(), peso_por_animal=peso_por_animal, lotes=lotes)
 
 
-def _tool_buscar_animal(session: Session, numero: str) -> dict:
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+def _tool_buscar_animal(session: Session, numero: str, fazenda_id: int | None = None) -> dict:
+    query = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
     if not animal:
         return {"erro": f"Animal {numero} não encontrado."}
     return animal.model_dump()
 
 
-def _tool_consultar_exames(session: Session, data: str | None, evento: str | None) -> dict:
+def _tool_consultar_exames(session: Session, data: str | None, evento: str | None, fazenda_id: int | None = None) -> dict:
     if not data and not evento:
         return {"erro": "Informe uma data (AAAA-MM-DD) e/ou o nome do exame/doença — sem nenhum filtro o resultado seria grande demais."}
     query = select(ExameResultado, EventoSanitario).join(EventoSanitario, ExameResultado.evento_sanitario_id == EventoSanitario.id)
+    if fazenda_id is not None:
+        query = query.where(ExameResultado.fazenda_id == fazenda_id)
     if data:
         try:
             data_alvo = date.fromisoformat(data)
@@ -241,9 +257,14 @@ def _codigo_grupo(grupo: str | None) -> str | None:
     return g[:2] if len(g) >= 2 and g[:2].isdigit() else None
 
 
-def _tool_listar_lotes(session: Session) -> dict:
+def _tool_listar_lotes(session: Session, fazenda_id: int | None = None) -> dict:
+    # Lote ainda não tem fazenda_id — só Animal é filtrado por enquanto (ver
+    # proposta de separação fazenda/empresa, Parte 1.6).
     lotes = session.exec(select(Lote).where(Lote.ativo == True)).all()  # noqa: E712
-    animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animais = session.exec(query_animal).all()
     contagem: dict[str, int] = {}
     for a in animais:
         if a.eh_semen:
@@ -254,10 +275,14 @@ def _tool_listar_lotes(session: Session) -> dict:
     return {"lotes": [{"codigo": l.codigo, "nome": l.nome, "total_animais": contagem.get(l.codigo, 0)} for l in lotes]}
 
 
-def _tool_consultar_lote(session: Session, codigo: str) -> dict:
+def _tool_consultar_lote(session: Session, codigo: str, fazenda_id: int | None = None) -> dict:
     codigo = (codigo or "").strip().zfill(2)[:2]
+    # Lote ainda não tem fazenda_id — ver nota em _tool_listar_lotes.
     lote = session.exec(select(Lote).where(Lote.codigo == codigo)).first()
-    animais = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+    query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+    animais = session.exec(query_animal).all()
     do_lote = [a for a in animais if not a.eh_semen and _codigo_grupo(a.grupo_primario) == codigo]
     if not lote and not do_lote:
         return {"erro": f"Lote {codigo} não encontrado."}
@@ -273,17 +298,20 @@ def _tool_consultar_lote(session: Session, codigo: str) -> dict:
     }
 
 
-def _tool_consultar_agenda_hoje(session: Session, usuario: Usuario) -> dict:
+def _tool_consultar_agenda_hoje(session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
     from fazenda.api.routers.agenda import calcular_agenda
     hoje = date.today()
-    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario)
+    agenda = calcular_agenda(data=hoje, dias=0, session=session, usuario=usuario, fazenda_id=fazenda_id)
     eventos_hoje = [e for e in agenda["eventos"] if e["data"] == hoje.isoformat()]
     return {"data": hoje.isoformat(), "eventos": eventos_hoje, "total": len(eventos_hoje)}
 
 
-def _tool_consultar_financeiro(session: Session) -> dict:
+def _tool_consultar_financeiro(session: Session, fazenda_id: int | None = None) -> dict:
     hoje = date.today()
-    contas = session.exec(select(ContaGerencial)).all()
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     abertas = [c for c in contas if (c.valor_pago or 0) < (c.valor_total or 0)]
     total_pagar = sum(c.valor_total or 0 for c in abertas if c.tipo == "despesa")
     total_receber = sum(c.valor_total or 0 for c in abertas if c.tipo == "receita")
@@ -297,6 +325,8 @@ def _tool_consultar_financeiro(session: Session) -> dict:
 
 
 def _tool_consultar_estoque(session: Session) -> dict:
+    # Estoque/Fornecedor ainda não têm fazenda_id — ver proposta de separação
+    # fazenda/empresa, Parte 1.6; sem filtro por enquanto.
     fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
     itens = [e.model_dump() for e in session.exec(select(Estoque)).all()]
     abaixo_minimo = [
@@ -307,12 +337,12 @@ def _tool_consultar_estoque(session: Session) -> dict:
     return {"total_itens": len(itens), "abaixo_do_minimo": abaixo_minimo, "qtd_abaixo_do_minimo": len(abaixo_minimo)}
 
 
-def _tool_consultar_calendario_sanitario(session: Session) -> dict:
+def _tool_consultar_calendario_sanitario(session: Session, fazenda_id: int | None = None) -> dict:
     from datetime import timedelta
     from fazenda.api.routers.sanidade import listar_calendario
     hoje = date.today()
     limite = hoje + timedelta(days=30)
-    itens = listar_calendario(session=session)
+    itens = listar_calendario(session=session, fazenda_id=fazenda_id)
     proximos = [
         {"evento": i.get("evento_sanitario_nome"), "categoria": i.get("categoria_preventiva"), "data_prevista": i.get("proxima_ocorrencia")}
         for i in itens
@@ -321,11 +351,16 @@ def _tool_consultar_calendario_sanitario(session: Session) -> dict:
     return {"ate": limite.isoformat(), "proximos": proximos, "total": len(proximos)}
 
 
-def _tool_consultar_analise_reprodutiva(session: Session) -> dict:
+def _tool_consultar_analise_reprodutiva(session: Session, fazenda_id: int | None = None) -> dict:
     from fazenda.models import ControleLeiteiro, Secagem
     from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
-    servicos = [s.model_dump() for s in session.exec(select(Servico)).all()]
+    query_servico = select(Servico)
+    if fazenda_id is not None:
+        query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
+    servicos = [s.model_dump() for s in session.exec(query_servico).all()]
     registros = analisar_servicos(servicos)
+    # Secagem/ControleLeiteiro (Produção) ainda não têm fazenda_id — ver
+    # proposta de separação fazenda/empresa, Parte 1.6; sem filtro por enquanto.
     secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
     controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
     agregado = agregar_mensal(registros, secagens, controles)
@@ -337,22 +372,22 @@ def _tool_consultar_analise_reprodutiva(session: Session) -> dict:
 
 
 _EXECUTORES = {
-    "consultar_indicadores": lambda session, usuario, entrada: _tool_consultar_indicadores(session),
-    "buscar_animal": lambda session, usuario, entrada: _tool_buscar_animal(session, entrada.get("numero", "")),
-    "consultar_agenda_hoje": lambda session, usuario, entrada: _tool_consultar_agenda_hoje(session, usuario),
-    "consultar_financeiro": lambda session, usuario, entrada: _tool_consultar_financeiro(session),
-    "consultar_estoque": lambda session, usuario, entrada: _tool_consultar_estoque(session),
-    "consultar_calendario_sanitario": lambda session, usuario, entrada: _tool_consultar_calendario_sanitario(session),
-    "consultar_analise_reprodutiva": lambda session, usuario, entrada: _tool_consultar_analise_reprodutiva(session),
-    "listar_lotes": lambda session, usuario, entrada: _tool_listar_lotes(session),
-    "consultar_lote": lambda session, usuario, entrada: _tool_consultar_lote(session, entrada.get("codigo", "")),
-    "consultar_exames": lambda session, usuario, entrada: _tool_consultar_exames(session, entrada.get("data"), entrada.get("evento")),
+    "consultar_indicadores": lambda session, usuario, entrada, fazenda_id: _tool_consultar_indicadores(session, fazenda_id),
+    "buscar_animal": lambda session, usuario, entrada, fazenda_id: _tool_buscar_animal(session, entrada.get("numero", ""), fazenda_id),
+    "consultar_agenda_hoje": lambda session, usuario, entrada, fazenda_id: _tool_consultar_agenda_hoje(session, usuario, fazenda_id),
+    "consultar_financeiro": lambda session, usuario, entrada, fazenda_id: _tool_consultar_financeiro(session, fazenda_id),
+    "consultar_estoque": lambda session, usuario, entrada, fazenda_id: _tool_consultar_estoque(session),
+    "consultar_calendario_sanitario": lambda session, usuario, entrada, fazenda_id: _tool_consultar_calendario_sanitario(session, fazenda_id),
+    "consultar_analise_reprodutiva": lambda session, usuario, entrada, fazenda_id: _tool_consultar_analise_reprodutiva(session, fazenda_id),
+    "listar_lotes": lambda session, usuario, entrada, fazenda_id: _tool_listar_lotes(session, fazenda_id),
+    "consultar_lote": lambda session, usuario, entrada, fazenda_id: _tool_consultar_lote(session, entrada.get("codigo", ""), fazenda_id),
+    "consultar_exames": lambda session, usuario, entrada, fazenda_id: _tool_consultar_exames(session, entrada.get("data"), entrada.get("evento"), fazenda_id),
 }
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
 
 
-def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario) -> dict:
+def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
     modulo = _MODULO_DA_TOOL.get(nome)
     if modulo is None:
         return {"erro": f"Ferramenta desconhecida: {nome}"}
@@ -360,16 +395,21 @@ def _executar_tool(nome: str, entrada: dict, session: Session, usuario: Usuario)
         # Segunda barreira (a primeira é nem oferecer a ferramenta à Claude) —
         # cobre o caso do modelo tentar chamar algo fora da lista oferecida.
         return {"erro": f"Usuário sem permissão para o módulo '{modulo}'."}
-    return _EXECUTORES[nome](session, usuario, entrada)
+    return _EXECUTORES[nome](session, usuario, entrada, fazenda_id)
 
 
-def responder(mensagem: str, historico: list[dict], session: Session, usuario: Usuario) -> dict:
+def responder(mensagem: str, historico: list[dict], session: Session, usuario: Usuario, fazenda_id: int | None = None) -> dict:
     """
     Manda a mensagem do usuário (mais o histórico da conversa) para o Claude,
     executa as ferramentas que ele pedir — só as que o usuário tem permissão
     de usar — e devolve a resposta final em texto, junto do histórico
     atualizado, para o front reenviar na próxima pergunta.
+
+    `fazenda_id` filtra as ferramentas que já suportam isolamento por
+    fazenda (ver notas nos `_tool_*` acima) — None (chamada direta fora do
+    ciclo de requisição, ou token legado) mantém o comportamento de sempre.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     client = _client()
     ferramentas = _ferramentas_do_usuario(usuario)
     mensagens: list[dict] = [*historico, {"role": "user", "content": mensagem}]
@@ -396,7 +436,7 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
         for bloco in resposta.content:
             if bloco.type != "tool_use":
                 continue
-            resultado = _executar_tool(bloco.name, bloco.input, session, usuario)
+            resultado = _executar_tool(bloco.name, bloco.input, session, usuario, fazenda_id)
             blocos_resultado.append({
                 "type": "tool_result",
                 "tool_use_id": bloco.id,

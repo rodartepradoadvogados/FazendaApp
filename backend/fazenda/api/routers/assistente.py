@@ -42,6 +42,6 @@ def perguntar(
     if not dados.mensagem.strip():
         raise HTTPException(status_code=400, detail="Mensagem vazia")
     try:
-        return responder(dados.mensagem.strip(), dados.historico, session, usuario)
+        return responder(dados.mensagem.strip(), dados.historico, session, usuario, fazenda_id)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))

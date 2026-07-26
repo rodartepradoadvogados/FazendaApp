@@ -14,8 +14,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import ContaGerencial, Safra
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.custo_safra import calcular_custo_safra
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -24,13 +26,18 @@ router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 @router.get("/custo-safra")
 def custo_por_safra(
     safra_id: int = Query(...),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     safra = session.get(Safra, safra_id)
     if not safra:
         raise HTTPException(status_code=404, detail="Safra não encontrada")
 
-    contas = session.exec(select(ContaGerencial)).all()
+    query_contas = select(ContaGerencial)
+    if fazenda_id is not None:
+        query_contas = query_contas.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query_contas).all()
     filtradas = [
         c for c in contas
         if c.tipo == "despesa" and c.centro_custo == safra.centro_custo

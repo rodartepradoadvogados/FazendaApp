@@ -14,14 +14,16 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 
 class Safra(SQLModel, table=True):
     __tablename__ = "safra"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_safra_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     # Nome do centro de custo (Financeiro) cujos lançamentos, no período
     # abaixo, formam o total apurado desta safra — ver CentroCusto/opções em
     # Configurações > Parâmetros financeiros. Padrão "Agricultura" (decisão do

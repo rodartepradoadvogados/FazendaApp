@@ -118,6 +118,7 @@ def criar_comissao(
         valor_comissao=round(valor_comissao, 2),
         forma=forma,
         numero_lancamento_comissao=numero_lancamento_comissao,
+        fazenda_id=fazenda_id,
     )
     session.add(comissao)
     return comissao

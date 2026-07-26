@@ -71,8 +71,14 @@ class VendaIn(BaseModel):
 
 
 @router.get("/")
-def listar_vendas(session: Session = Depends(get_session)) -> list[dict]:
-    vendas = session.exec(select(VendaAnimal).order_by(VendaAnimal.data_venda.desc(), VendaAnimal.id.desc())).all()
+def listar_vendas(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(VendaAnimal)
+    if fazenda_id is not None:
+        query = query.where(VendaAnimal.fazenda_id == fazenda_id)
+    vendas = session.exec(query.order_by(VendaAnimal.data_venda.desc(), VendaAnimal.id.desc())).all()
     registros = [v.model_dump() for v in vendas]
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     for r in registros:
@@ -188,13 +194,16 @@ def registrar_venda(
             categorias=categorias_txt, motivo_venda=dados.motivo_venda,
             numero_lancamento_gerado=numero_lancamento,
             gta=dados.gta, icms_incide=dados.icms_incide, icms_tipo=dados.icms_tipo, icms_valor=dados.icms_valor,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         ))
         # A venda tira o animal do rebanho ativo — mesmo efeito de Rebanho >
         # Baixar animal > motivo "venda" (Animal.ativo/data_baixa/motivo_baixa),
         # para que relatórios e listas de rebanho ativo fiquem consistentes
         # não importa por qual tela a venda foi lançada.
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        query_animal = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if animal:
             animal.ativo = False
             animal.data_baixa = dados.data_venda

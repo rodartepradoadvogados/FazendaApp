@@ -45,12 +45,14 @@ class BaixaIn(BaseModel):
 
 
 @router.get("/motivos")
-def listar_opcoes(session: Session = Depends(get_session)) -> dict:
-    motivos_doenca = [
-        m.nome for m in session.exec(
-            select(MotivoBaixa).where(MotivoBaixa.ativo == True).order_by(MotivoBaixa.nome)  # noqa: E712
-        ).all()
-    ]
+def listar_opcoes(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(MotivoBaixa).where(MotivoBaixa.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(MotivoBaixa.fazenda_id == fazenda_id)
+    motivos_doenca = [m.nome for m in session.exec(query.order_by(MotivoBaixa.nome)).all()]
     return {"tipos_baixa": TIPOS_BAIXA, "motivos": MOTIVOS, "motivos_doenca": motivos_doenca}
 
 
@@ -61,19 +63,25 @@ class ADescartarIn(BaseModel):
 
 
 @router.post("/a-descartar")
-def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_session)) -> dict:
+def marcar_a_descartar(
+    dados: ADescartarIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """
     Marca (ou desmarca) animais como "A descartar": seguem ATIVOS no rebanho
     — continuam na ordenha, sanidade e movimentação — mas saem de todas as
     ações reprodutivas (IATF, inseminação, candidatas). Não é baixa definitiva.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
     afetados = 0
     nao_encontrados: list[str] = []
     for numero in dados.animais:
         chave = (numero or "").strip()
-        animal = session.exec(select(Animal).where(Animal.numero == chave)).first()
+        query_animal = select(Animal).where(Animal.numero == chave)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if not animal:
             nao_encontrados.append(chave)
             continue
@@ -95,8 +103,14 @@ def marcar_a_descartar(dados: ADescartarIn, session: Session = Depends(get_sessi
 
 
 @router.get("/")
-def listar_baixas(session: Session = Depends(get_session)) -> list[dict]:
-    baixas = session.exec(select(BaixaAnimal).order_by(BaixaAnimal.data_baixa.desc(), BaixaAnimal.id.desc())).all()
+def listar_baixas(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(BaixaAnimal)
+    if fazenda_id is not None:
+        query = query.where(BaixaAnimal.fazenda_id == fazenda_id)
+    baixas = session.exec(query.order_by(BaixaAnimal.data_baixa.desc(), BaixaAnimal.id.desc())).all()
     registros = [b.model_dump() for b in baixas]
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     for r in registros:
@@ -134,7 +148,10 @@ def registrar_baixa(
     encontrados = []
     nao_encontrados = []
     for numero in dados.animais:
-        animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+        query_animal = select(Animal).where(Animal.numero == numero)
+        if fazenda_id is not None:
+            query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(query_animal).first()
         if not animal:
             nao_encontrados.append(numero)
             continue
@@ -194,7 +211,7 @@ def registrar_baixa(
             venda_recria=dados.venda_recria if dados.motivo == "venda" else False,
             numero_lancamento_gerado=numero_lancamento,
             data_baixa=dados.data_baixa, observacao=dados.observacao, responsavel=dados.responsavel,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         ))
 
         animal.ativo = False

@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from sqlmodel import Session, select
 
 from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_dados_criterios
-from fazenda.auth import exigir_admin, get_current_user
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
@@ -25,7 +25,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
 from fazenda.rules.alimentacao import calcular_consumo
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcular_bonificacao
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules.gestation import calcular_parto_provavel
@@ -1010,15 +1010,21 @@ class SugestaoLoteEventoIn(BaseModel):
 
 
 @router.post("/sugestao-lote-evento")
-def sugestao_lote_evento(dados: SugestaoLoteEventoIn, session: Session = Depends(get_session)) -> dict:
+def sugestao_lote_evento(
+    dados: SugestaoLoteEventoIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """
     Sugere um lote para um animal num evento de vida (nascimento ou parto),
     aplicando os critérios já cadastrados (Configurações > Cadastro > Lotes)
     ao estado REAL do animal nesse momento (idade 0 ao nascer, DEL 0 ao parir),
     mesmo que a ficha ainda não tenha sido atualizada pelo próximo GERAL.csv.
     """
-    lotes = [l for l in session.exec(select(Lote)).all() if lote_tem_criterio(l)]
-    dados_criterios = coletar_dados_criterios(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_lotes = select(Lote)
+    if fazenda_id is not None:
+        query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
+    lotes = [l for l in session.exec(query_lotes).all() if lote_tem_criterio(l)]
+    dados_criterios = coletar_dados_criterios(session, fazenda_id)
 
     hoje = date.today()
     animal_dict = {

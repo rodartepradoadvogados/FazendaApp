@@ -21,6 +21,7 @@ class Estoque(SQLModel, table=True):
     __tablename__ = "estoque"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     categoria: Optional[str] = None
     # Finalidade de uso do item — distinta de `categoria` (texto livre): um
     # enum fechado (ver rules.categorias.FINALIDADES_ESTOQUE) que decide se o
@@ -126,6 +127,7 @@ class Fornecedor(SQLModel, table=True):
     __tablename__ = "fornecedor"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     tipo: str  # "fornecedor" | "fabricante" | "cliente"
     categoria: Optional[str] = None  # ver CATEGORIAS_FORNECEDOR em fazenda.rules.categorias
@@ -146,6 +148,7 @@ class MovimentoEstoque(SQLModel, table=True):
     __tablename__ = "movimento_estoque"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome_item: str = Field(index=True)
     movimento: str  # "Aplicação" | "Saída de ajuste" | "Entrada de ajuste" | "Entrada de cortesia" | "Doação"
     quantidade: float
@@ -169,6 +172,7 @@ class EstoqueSemen(SQLModel, table=True):
     __tablename__ = "estoque_semen"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     touro_nome: str = Field(index=True)
     codigo: Optional[str] = None
     naab: Optional[str] = None  # código NAAB do touro (ex.: 7HO12345)
@@ -195,6 +199,7 @@ class CompraSemen(SQLModel, table=True):
     __tablename__ = "compra_semen"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     estoque_semen_id: int = Field(foreign_key="estoque_semen.id", index=True)
     touro_nome: str
     naab: Optional[str] = None

@@ -11,8 +11,10 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, Fornecedor, PlanoContaGerencial, SeedFlag
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.api.routers.estoque import _validar_embalagem
 
 router = APIRouter()
@@ -35,17 +37,26 @@ class FornecedorIn(BaseModel):
 
 
 @router.get("/fornecedores")
-def listar_fornecedores(session: Session = Depends(get_session)) -> list[dict]:
-    return [f.model_dump() for f in session.exec(select(Fornecedor).order_by(Fornecedor.nome)).all()]
+def listar_fornecedores(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Fornecedor)
+    if fazenda_id is not None:
+        query = query.where(Fornecedor.fazenda_id == fazenda_id)
+    return [f.model_dump() for f in session.exec(query.order_by(Fornecedor.nome)).all()]
 
 
 @router.post("/fornecedores")
-def criar_fornecedor(dados: FornecedorIn, session: Session = Depends(get_session)) -> dict:
+def criar_fornecedor(
+    dados: FornecedorIn, fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.tipo not in TIPOS_FORNECEDOR:
         raise HTTPException(status_code=400, detail="Tipo inválido")
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    f = Fornecedor(**dados.model_dump())
+    f = Fornecedor(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(f)
     session.commit()
     session.refresh(f)
@@ -138,11 +149,19 @@ class EstoqueMetaIn(BaseModel):
 
 
 @router.get("/estoque-itens")
-def listar_itens_estoque(session: Session = Depends(get_session)) -> list[dict]:
-    fornecedores = {f.id: f.nome for f in session.exec(select(Fornecedor)).all()}
+def listar_itens_estoque(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_fornecedor = select(Fornecedor)
+    query_estoque = select(Estoque)
+    if fazenda_id is not None:
+        query_fornecedor = query_fornecedor.where(Fornecedor.fazenda_id == fazenda_id)
+        query_estoque = query_estoque.where(Estoque.fazenda_id == fazenda_id)
+    fornecedores = {f.id: f.nome for f in session.exec(query_fornecedor).all()}
     return [
         {**e.model_dump(), "fornecedor_nome": fornecedores.get(e.fornecedor_id)}
-        for e in session.exec(select(Estoque).order_by(Estoque.nome)).all()
+        for e in session.exec(query_estoque.order_by(Estoque.nome)).all()
     ]
 
 
