@@ -24,6 +24,7 @@ from fazenda.models import (
 )
 from fazenda.models.planos import MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO
 from fazenda.api.routers.cadastro.servicos import seed_tipos_metodos_servico
+from fazenda.api.routers.cadastro.pessoas import seed_tipo_geral, seed_tipos_pessoa
 
 router = APIRouter(prefix="/fazendas", tags=["fazendas"])
 
@@ -59,6 +60,11 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
     # Natural/IA em cio natural/IATF) — sem isso a fazenda nasce sem nenhum
     # tipo/método e o lançamento de Serviço/Inseminação fica vazio.
     seed_tipos_metodos_servico(session, fazenda_id=fazenda_id)
+    # Tipos de pessoa padrão (Funcionário/Veterinário/.../Empreiteiro) + "Geral"
+    # — sem isso o Cadastro de Pessoas nasce sem nenhum tipo válido e toda
+    # tentativa de cadastrar uma pessoa falha com "Tipo inválido".
+    seed_tipos_pessoa(session, fazenda_id=fazenda_id)
+    seed_tipo_geral(session, fazenda_id=fazenda_id)
 
 
 def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token: int | None) -> None:

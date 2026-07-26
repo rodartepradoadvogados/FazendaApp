@@ -113,14 +113,18 @@ def _proporcional_admissao(pessoa: Pessoa, competencia: str) -> Optional[dict]:
 
 
 @router.get("/folha-pagamento/proporcional-admissao")
-def proporcional_admissao(pessoa_id: int, competencia: str, session: Session = Depends(get_session)) -> dict | None:
+def proporcional_admissao(
+    pessoa_id: int, competencia: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict | None:
     """
     Usado pelo lançamento de folha do funcionário para sugerir o valor
     proporcional quando a competência informada é o mês de admissão da
     pessoa — retorna None fora desse caso (folha integral normal).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     return _proporcional_admissao(pessoa, competencia)
 
@@ -166,7 +170,10 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
     todo mês. Mesmo padrão "lazy pull" da baixa automática de Alimentação.
     """
     competencia_atual = date.today().strftime("%Y-%m")
-    modelos = session.exec(select(FolhaPagamento).where(FolhaPagamento.recorrente == True)).all()  # noqa: E712
+    query = select(FolhaPagamento).where(FolhaPagamento.recorrente == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    modelos = session.exec(query).all()
     for modelo in modelos:
         pessoa = session.get(Pessoa, modelo.pessoa_id)
         if not pessoa:
@@ -192,6 +199,7 @@ def _gerar_folha_recorrente(session: Session, fazenda_id: int | None = None) -> 
                     observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
                     numero_lancamento_gerado=numero_lancamento,
                     centro_custo=modelo.centro_custo,
+                    fazenda_id=fazenda_id,
                 )
                 session.add(nova)
                 session.add(ContaGerencial(
@@ -256,7 +264,10 @@ def listar_folha_pagamento(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _gerar_folha_recorrente(session, fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
+    query = select(FolhaPagamento)
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    registros = session.exec(query.order_by(FolhaPagamento.competencia.desc())).all()
 
     # Self-heal: um vale lançado DEPOIS da folha (ainda não paga) não estava
     # sendo refletido. Recomputa o valor_vale a partir da SOMA das parcelas e,
@@ -286,7 +297,7 @@ def listar_folha_pagamento(
     if houve_mudanca:
         session.commit()
         # O commit expira os objetos já carregados; recarrega para o model_dump.
-        registros = session.exec(select(FolhaPagamento).order_by(FolhaPagamento.competencia.desc())).all()
+        registros = session.exec(query.order_by(FolhaPagamento.competencia.desc())).all()
 
     # Data de vencimento da folha (mês de pagamento) — vem da conta a pagar
     # gerada. Mapeia numero_lancamento_gerado → data_vencimento.
@@ -320,7 +331,7 @@ def criar_folha_pagamento(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
@@ -354,6 +365,7 @@ def criar_folha_pagamento(
         numero_lancamento_gerado=numero_lancamento,
         centro_custo=dados.centro_custo,
         usuario_id=user.id,
+        fazenda_id=fazenda_id,
     )
     session.add(registro)
     session.add(ContaGerencial(
@@ -377,13 +389,18 @@ def criar_folha_pagamento(
 
 
 @router.put("/folha-pagamento/{registro_id}")
-def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_folha_pagamento(
+    registro_id: int, dados: FolhaPagamentoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(FolhaPagamento, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser editado.")
-    if not session.get(Pessoa, dados.pessoa_id):
+    pessoa_nova = session.get(Pessoa, dados.pessoa_id)
+    if not pessoa_nova or (fazenda_id is not None and pessoa_nova.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.status not in ("pendente", "pago"):
         raise HTTPException(status_code=400, detail="Status inválido")
@@ -446,9 +463,13 @@ def atualizar_folha_pagamento(registro_id: int, dados: FolhaPagamentoIn, session
 
 
 @router.delete("/folha-pagamento/{registro_id}")
-def excluir_folha_pagamento(registro_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_folha_pagamento(
+    registro_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(FolhaPagamento, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de folha não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Lançamento de folha já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -490,15 +511,18 @@ class GerarGuiasFgtsDctfIn(BaseModel):
     centro_custo: str = "Pecuária Leiteira"
 
 
-def _lancamentos_folha_competencia(session: Session, competencia: str) -> list[FolhaPagamento]:
+def _lancamentos_folha_competencia(session: Session, competencia: str, fazenda_id: int | None = None) -> list[FolhaPagamento]:
     """TODOS os lançamentos de folha (de qualquer funcionário) de uma
     competência — usado para somar valor_fgts/valor_dctf; registros sem o
     campo preenchido simplesmente não contribuem (ver
     `_calcular_encargo_projetado`)."""
-    return session.exec(select(FolhaPagamento).where(FolhaPagamento.competencia == competencia)).all()
+    query = select(FolhaPagamento).where(FolhaPagamento.competencia == competencia)
+    if fazenda_id is not None:
+        query = query.where(FolhaPagamento.fazenda_id == fazenda_id)
+    return session.exec(query).all()
 
 
-def _guias_ja_geradas(session: Session, competencia: str) -> bool:
+def _guias_ja_geradas(session: Session, competencia: str, fazenda_id: int | None = None) -> bool:
     """
     Proteção simples contra geração duplicada: as guias já existem para essa
     competência se houver alguma ContaGerencial com tipo_documento "Guia FGTS"
@@ -508,23 +532,28 @@ def _guias_ja_geradas(session: Session, competencia: str) -> bool:
     """
     ano, mes = (int(x) for x in competencia.split("-"))
     primeiro_dia = date(ano, mes, 1)
-    existente = session.exec(
-        select(ContaGerencial).where(
-            ContaGerencial.tipo_documento.in_([TIPO_DOCUMENTO_GUIA_FGTS, TIPO_DOCUMENTO_GUIA_DCTF]),
-            ContaGerencial.data_competencia == primeiro_dia,
-        )
-    ).first()
+    query = select(ContaGerencial).where(
+        ContaGerencial.tipo_documento.in_([TIPO_DOCUMENTO_GUIA_FGTS, TIPO_DOCUMENTO_GUIA_DCTF]),
+        ContaGerencial.data_competencia == primeiro_dia,
+    )
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    existente = session.exec(query).first()
     return existente is not None
 
 
 @router.get("/folha-pagamento/guias-preview")
-def preview_guias_fgts_dctf(competencia: str, session: Session = Depends(get_session)) -> dict:
+def preview_guias_fgts_dctf(
+    competencia: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Pré-visualização da soma projetada de FGTS/DCTF de uma competência (todos
     os funcionários) — usada pelo frontend para MOSTRAR os valores antes do
     usuário confirmar a geração das guias (que ele ainda pode ajustar).
     """
-    registros = _lancamentos_folha_competencia(session, competencia)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registros = _lancamentos_folha_competencia(session, competencia, fazenda_id)
     valor_fgts = round(sum(r.valor_fgts or 0.0 for r in registros), 2)
     valor_dctf = round(sum(r.valor_dctf or 0.0 for r in registros), 2)
     ano_venc, mes_venc = (int(x) for x in _competencia_seguinte(competencia).split("-"))
@@ -534,7 +563,7 @@ def preview_guias_fgts_dctf(competencia: str, session: Session = Depends(get_ses
         "valor_fgts": valor_fgts,
         "valor_dctf": valor_dctf,
         "data_vencimento_sugerida": date(ano_venc, mes_venc, 20),
-        "ja_gerado": _guias_ja_geradas(session, competencia),
+        "ja_gerado": _guias_ja_geradas(session, competencia, fazenda_id),
     }
 
 
@@ -555,7 +584,7 @@ def gerar_guias_fgts_dctf(
     Pagar em vez de gerar de novo.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if _guias_ja_geradas(session, dados.competencia):
+    if _guias_ja_geradas(session, dados.competencia, fazenda_id):
         raise HTTPException(
             status_code=400,
             detail=(
@@ -563,7 +592,7 @@ def gerar_guias_fgts_dctf(
                 "Edite os lançamentos existentes em Contas a Pagar em vez de gerar novamente."
             ),
         )
-    registros = _lancamentos_folha_competencia(session, dados.competencia)
+    registros = _lancamentos_folha_competencia(session, dados.competencia, fazenda_id)
     if not registros:
         raise HTTPException(status_code=404, detail=f"Nenhum lançamento de folha encontrado para a competência {dados.competencia}")
 
@@ -660,9 +689,15 @@ def _validar_ferias(dados: FeriasIn) -> None:
 
 
 @router.get("/ferias")
-def listar_ferias(session: Session = Depends(get_session)) -> list[dict]:
+def listar_ferias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    registros = session.exec(select(FeriasFuncionario).order_by(FeriasFuncionario.data_inicio_gozo.desc())).all()
+    query = select(FeriasFuncionario)
+    if fazenda_id is not None:
+        query = query.where(FeriasFuncionario.fazenda_id == fazenda_id)
+    registros = session.exec(query.order_by(FeriasFuncionario.data_inicio_gozo.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
     return [
         {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
@@ -679,7 +714,7 @@ def criar_ferias(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
@@ -700,6 +735,7 @@ def criar_ferias(
         valor_total=calculo["valor_total"],
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+        fazenda_id=fazenda_id,
     )
     session.add(registro)
     session.add(ContaGerencial(
@@ -723,14 +759,18 @@ def criar_ferias(
 
 
 @router.put("/ferias/{registro_id}")
-def atualizar_ferias(registro_id: int, dados: FeriasIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_ferias(
+    registro_id: int, dados: FeriasIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(FeriasFuncionario, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Férias já pagas não podem ser editadas.")
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
@@ -778,9 +818,13 @@ def atualizar_ferias(registro_id: int, dados: FeriasIn, session: Session = Depen
 
 
 @router.delete("/ferias/{registro_id}")
-def excluir_ferias(registro_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_ferias(
+    registro_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(FeriasFuncionario, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de férias não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="Férias já pagas não podem ser excluídas aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -825,9 +869,15 @@ def _validar_decimo_terceiro(dados: DecimoTerceiroIn) -> None:
 
 
 @router.get("/decimo-terceiro")
-def listar_decimo_terceiro(session: Session = Depends(get_session)) -> list[dict]:
+def listar_decimo_terceiro(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    registros = session.exec(select(DecimoTerceiro).order_by(DecimoTerceiro.ano.desc())).all()
+    query = select(DecimoTerceiro)
+    if fazenda_id is not None:
+        query = query.where(DecimoTerceiro.fazenda_id == fazenda_id)
+    registros = session.exec(query.order_by(DecimoTerceiro.ano.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {r.usuario_id for r in registros})
     return [
         {**r.model_dump(), "pessoa_nome": pessoas.get(r.pessoa_id, "—"), "usuario_nome": nomes_usuarios.get(r.usuario_id)}
@@ -844,7 +894,7 @@ def criar_decimo_terceiro(
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
@@ -865,6 +915,7 @@ def criar_decimo_terceiro(
         valor_bruto=valor_bruto, valor_inss=valor_inss, valor_ir=valor_ir, valor_liquido=valor_liquido,
         data_pagamento=dados.data_pagamento, status=dados.status, observacao=dados.observacao,
         numero_lancamento_gerado=numero_lancamento, centro_custo=dados.centro_custo, usuario_id=user.id,
+        fazenda_id=fazenda_id,
     )
     session.add(registro)
     session.add(ContaGerencial(
@@ -888,14 +939,18 @@ def criar_decimo_terceiro(
 
 
 @router.put("/decimo-terceiro/{registro_id}")
-def atualizar_decimo_terceiro(registro_id: int, dados: DecimoTerceiroIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_decimo_terceiro(
+    registro_id: int, dados: DecimoTerceiroIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(DecimoTerceiro, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="13º salário já pago não pode ser editado.")
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
@@ -945,9 +1000,13 @@ def atualizar_decimo_terceiro(registro_id: int, dados: DecimoTerceiroIn, session
 
 
 @router.delete("/decimo-terceiro/{registro_id}")
-def excluir_decimo_terceiro(registro_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_decimo_terceiro(
+    registro_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     registro = session.get(DecimoTerceiro, registro_id)
-    if not registro:
+    if not registro or (fazenda_id is not None and registro.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Registro de 13º salário não encontrado")
     if registro.status == "pago":
         raise HTTPException(status_code=400, detail="13º salário já pago não pode ser excluído aqui — exclua em Lançamentos > Excluir lançamento.")
@@ -1003,9 +1062,9 @@ def _validar_rescisao(dados: RescisaoIn, pessoa: Pessoa) -> None:
         raise HTTPException(status_code=400, detail=f"Dias de férias vencidas deve estar entre 0 e {limite_ferias_vencidas}")
 
 
-def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session) -> tuple[Pessoa, dict]:
+def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session, fazenda_id: int | None = None) -> tuple[Pessoa, dict]:
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if not pessoa.salario_base:
         raise HTTPException(status_code=400, detail="Pessoa não tem salário base cadastrado")
@@ -1027,21 +1086,26 @@ def _calcular_rescisao_pessoa(dados: RescisaoIn, session: Session) -> tuple[Pess
 
 
 @router.post("/rescisao/calcular")
-def simular_rescisao(dados: RescisaoIn, session: Session = Depends(get_session)) -> dict:
+def simular_rescisao(
+    dados: RescisaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Só calcula e devolve o detalhamento das verbas — não gera lançamento
     financeiro nenhum (usado pela tela para o usuário conferir antes de
     lançar em `POST /cadastro/rescisao`)."""
-    pessoa, calculo = _calcular_rescisao_pessoa(dados, session)
+    pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id_seguro(fazenda_id))
     return {**calculo, "pessoa_id": pessoa.id, "pessoa_nome": pessoa.nome}
 
 
 @router.get("/rescisao")
-def listar_rescisoes(session: Session = Depends(get_session)) -> list[dict]:
-    contas = session.exec(
-        select(ContaGerencial)
-        .where(ContaGerencial.tipo_documento == "Rescisão")
-        .order_by(ContaGerencial.data_competencia.desc())
-    ).all()
+def listar_rescisoes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ContaGerencial).where(ContaGerencial.tipo_documento == "Rescisão")
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query.order_by(ContaGerencial.data_competencia.desc())).all()
     return [c.model_dump() for c in contas]
 
 
@@ -1053,7 +1117,7 @@ def criar_rescisao(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    pessoa, calculo = _calcular_rescisao_pessoa(dados, session)
+    pessoa, calculo = _calcular_rescisao_pessoa(dados, session, fazenda_id)
 
     numero_lancamento = _proximo_numero_lancamento(session, dados.data_desligamento.year)
     conta = ContaGerencial(
@@ -1156,9 +1220,15 @@ def _vale_competencia_paga(session: Session, pessoa_id: int, competencias: list[
 
 
 @router.get("/vales")
-def listar_vales(session: Session = Depends(get_session)) -> list[dict]:
+def listar_vales(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoas = {p.id: p.nome for p in session.exec(select(Pessoa)).all()}
-    vales = session.exec(select(ValeFuncionario).order_by(ValeFuncionario.data_pagamento.desc())).all()
+    query = select(ValeFuncionario)
+    if fazenda_id is not None:
+        query = query.where(ValeFuncionario.fazenda_id == fazenda_id)
+    vales = session.exec(query.order_by(ValeFuncionario.data_pagamento.desc())).all()
     nomes_usuarios = mapa_usuarios(session, {v.usuario_id for v in vales})
     saida = []
     for v in vales:
@@ -1172,9 +1242,13 @@ def listar_vales(session: Session = Depends(get_session)) -> list[dict]:
 
 
 @router.post("/vales")
-def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_vale(
+    dados: ValeIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
@@ -1218,12 +1292,15 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
         pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
         data_pagamento=dados.data_pagamento, parcelas=dados.parcelas, competencia_inicio=dados.competencia_inicio,
         observacao=dados.observacao, numero_documento_pagamento=dados.numero_documento_pagamento, usuario_id=user.id,
+        fazenda_id=fazenda_id,
     )
     session.add(vale)
     session.commit()
     session.refresh(vale)
     for competencia, valor in zip(competencias, valores_parcela):
-        session.add(ValeParcela(vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor))
+        session.add(ValeParcela(
+            vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor, fazenda_id=fazenda_id,
+        ))
     session.commit()
 
     # Efeito imediato: se já existir uma folha (não paga) para alguma das
@@ -1239,12 +1316,16 @@ def criar_vale(dados: ValeIn, session: Session = Depends(get_session), user: Usu
 
 
 @router.put("/vales/{vale_id}")
-def atualizar_vale(vale_id: int, dados: ValeIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_vale(
+    vale_id: int, dados: ValeIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeFuncionario, vale_id)
-    if not vale:
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     pessoa = session.get(Pessoa, dados.pessoa_id)
-    if not pessoa:
+    if not pessoa or (fazenda_id is not None and pessoa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Pessoa não encontrada")
     if dados.forma_pagamento not in FORMAS_PAGAMENTO_VALE:
         raise HTTPException(status_code=400, detail="Forma de pagamento inválida")
@@ -1311,7 +1392,9 @@ def atualizar_vale(vale_id: int, dados: ValeIn, session: Session = Depends(get_s
     session.commit()
 
     for competencia, valor in zip(competencias_novas, valores_parcela):
-        session.add(ValeParcela(vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor))
+        session.add(ValeParcela(
+            vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor, fazenda_id=fazenda_id,
+        ))
     session.commit()
 
     if dados.pessoa_id == pessoa_id_antigo:
@@ -1328,9 +1411,13 @@ def atualizar_vale(vale_id: int, dados: ValeIn, session: Session = Depends(get_s
 
 
 @router.delete("/vales/{vale_id}")
-def excluir_vale(vale_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_vale(
+    vale_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     vale = session.get(ValeFuncionario, vale_id)
-    if not vale:
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Vale não encontrado")
     pessoa_id = vale.pessoa_id
     parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()

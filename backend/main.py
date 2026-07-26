@@ -148,14 +148,14 @@ async def lifespan(app: FastAPI):
         deduplicar_partos(session)
         backfill_categoria_crias(session)
         backfill_numero_cria_partos(session)
-        seed_tipos_pessoa(session)
+        seed_tipos_pessoa(session, fazenda_id=1)
         # "Geral" libera Portal > Comunicação > Delegar tarefa (#515) a quem não
         # tem um papel técnico específico (Veterinário/Zootecnista) nem é admin.
-        seed_tipo_geral(session)
+        seed_tipo_geral(session, fazenda_id=1)
         seed_pessoas(session)
         # Identidade de cadastro para o robô de automação (Telegram/MilkNews) —
         # permite vincular um usuário de sistema a essa pessoa, como qualquer outra.
-        seed_pessoa_robo_milknews(session)
+        seed_pessoa_robo_milknews(session, fazenda_id=1)
         seed_cadastro_sanitario(session)
         # Calendário sanitário padrão (vacinas/exames sazonais e por fase
         # fisiológica) — idempotente, só cria/compatibiliza o que falta.
