@@ -167,7 +167,6 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
 @router.get("/")
 def listar_lotes(
     incluir_inativos: bool = Query(False, description="True mostra também lotes inativos (só o cadastro precisa disso; seletores de destino não)."),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:

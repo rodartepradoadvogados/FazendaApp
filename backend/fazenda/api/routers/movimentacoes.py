@@ -222,7 +222,6 @@ def listar_movimentacoes(
     numero_matriz: str | None = Query(None),
     data_inicio: date | None = Query(None),
     data_fim: date | None = Query(None),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
