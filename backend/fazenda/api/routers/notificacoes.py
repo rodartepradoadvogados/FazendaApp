@@ -43,6 +43,10 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
             "descricao": e["descricao"],
             "numero_animal": e["numero_animal"],
             "cor": e["cor"],
+            # nº do lançamento (ex.: conta a pagar) — quando presente, o sino
+            # leva direto pra ele em vez de só abrir a tela genérica do módulo
+            # (mesmo "ref" que a Agenda já usa no link "Ir para Financeiro").
+            "ref": e.get("ref"),
         })
 
     if user.papel == "admin":

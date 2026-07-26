@@ -5,7 +5,7 @@
 // método, diagnóstico), cada foco pré-filtrando/ajustando o que faz sentido.
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Filter, Pencil, Plus, Search, X } from "lucide-react";
-import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, ehAdmin } from "@/lib/api";
+import { fetchServicosAnalise, registrarPerdaPrenhez, atualizarServico, fetchInseminadores, ehAdmin } from "@/lib/api";
 import { TabBar, MultiFiltro, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { usePaginacao, Paginacao } from "@/components/Paginacao";
@@ -17,7 +17,7 @@ export type Serv = {
   ordem_parto: number | null; ordem_tentativa: number | null;
   tipo_servico: string; touro: string; metodo_ia?: string;
   tipo_semen?: string | null; inseminador?: string | null;
-  data: string | null; del_servico: number | null;
+  data: string | null; del_servico: number | null; data_d0?: string | null;
   diagnostico: string | null; diagnosticado: boolean; positivo: boolean; perda: boolean;
   data_perda: string | null; motivo_perda: string | null;
   usuario_nome?: string | null;
@@ -51,6 +51,12 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
 
   const carregar = () => fetchServicosAnalise().then((d) => setRegs(d.servicos)).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+
+  // Inseminadores cadastrados (Configurações > Cadastro > Pessoas, tipo
+  // Inseminador) — o campo Inseminador só pode apontar pra alguém cadastrado,
+  // não texto livre (evita nome digitado errado nunca batendo com ninguém).
+  const [inseminadores, setInseminadores] = useState<string[]>([]);
+  useEffect(() => { fetchInseminadores().then(setInseminadores).catch(() => {}); }, []);
 
   // Edição inline do serviço clicado — os campos mostrados variam conforme o
   // foco (Serviços/IAs editam data/tipo/touro/inseminador; Diagnósticos edita
@@ -110,6 +116,22 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
   }, [regs, foco]);
 
   const ciclos = useMemo(() => {
+    // Cada janela ancora no D0 real de um protocolo IATF já lançado (não mais
+    // numa grade de 21 dias contada a partir do serviço mais recente do
+    // filtro — isso misturava tipos de serviço/animais diferentes e não tinha
+    // nenhuma relação com o D0 verdadeiro de cada lote; ver GET
+    // /reproducao/servicos, campo data_d0). "Ciclo" = [D0, D0+20 dias].
+    const d0s = Array.from(new Set(base.map((s) => s.data_d0).filter(Boolean) as string[])).sort().reverse();
+    if (d0s.length) {
+      return d0s.map((d0, idx) => {
+        const iniC = new Date(d0 + "T00:00:00");
+        const fimC = new Date(iniC); fimC.setDate(fimC.getDate() + 20);
+        return { idx, ini: iniC, fim: fimC };
+      });
+    }
+    // Sem nenhum D0 de IATF resolvido no filtro atual (ex.: só monta natural)
+    // — mantém o comportamento anterior como fallback, uma grade de 21 dias
+    // contada a partir do serviço mais recente, melhor que nada aparecer.
     const datas = base.map((s) => s.data).filter(Boolean).sort() as string[];
     if (!datas.length) return [] as { idx: number; ini: Date; fim: Date }[];
     const anchor = new Date(datas[datas.length - 1] + "T00:00:00");
@@ -302,7 +324,15 @@ export default function HistoricoServicos({ foco, titulo, descricao }: { foco: F
                   <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Touro / sêmen</label>
                     <input style={selStyle} value={editVals.touro} onChange={(e) => setEditVals((v) => ({ ...v, touro: e.target.value }))} /></div>
                   <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Inseminador</label>
-                    <input style={selStyle} value={editVals.inseminador} onChange={(e) => setEditVals((v) => ({ ...v, inseminador: e.target.value }))} /></div>
+                    <select style={selStyle} value={editVals.inseminador} onChange={(e) => setEditVals((v) => ({ ...v, inseminador: e.target.value }))}>
+                      <option value="">—</option>
+                      {/* Valor já salvo que não bate com nenhum inseminador cadastrado hoje
+                          (ex.: pessoa desativada depois) — mantém visível pra não sumir sozinho. */}
+                      {editVals.inseminador && !inseminadores.includes(editVals.inseminador) && (
+                        <option value={editVals.inseminador}>{editVals.inseminador} (não cadastrado)</option>
+                      )}
+                      {inseminadores.map((nome) => <option key={nome} value={nome}>{nome}</option>)}
+                    </select></div>
                 </>
               )}
             </div>
