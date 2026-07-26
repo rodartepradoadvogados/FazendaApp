@@ -106,6 +106,49 @@ class PessoaIn(BaseModel):
     ativo: bool = True
     salario_base: float | None = None
     data_admissao: date | None = None
+    # Dados civis (jul/2026) — coletados no cadastro, mas só exigidos na hora
+    # de assinar um contrato (ver Contrato Assinado). Gênero nunca é exigido.
+    rg: str | None = None
+    data_nascimento: date | None = None
+    genero: str | None = None
+    estado_civil: str | None = None
+    # Endereço estruturado — junto com nome e CPF, obrigatório para cadastrar
+    # (ver _exigir_campos_obrigatorios abaixo).
+    endereco_rua: str | None = None
+    endereco_numero: str | None = None
+    endereco_bairro: str | None = None
+    endereco_cidade: str | None = None
+    endereco_uf: str | None = None
+
+
+def _exigir_campos_obrigatorios(dados: PessoaIn) -> None:
+    """Nome, CPF e endereço são obrigatórios para cadastrar uma pessoa nova
+    (decisão jul/2026) — RG, data de nascimento e estado civil são
+    coletados no mesmo formulário mas só passam a ser exigidos na hora de
+    assinar um contrato (ver Contrato Assinado), nunca aqui. Só roda na
+    criação: editar uma pessoa já cadastrada antes dessa regra não pode
+    ficar bloqueada por campos que ela nunca teve chance de preencher.
+
+    NÃO está sendo chamada em criar_pessoa por enquanto — Pessoa é o
+    cadastro de RH usado para QUALQUER funcionário/veterinário/diarista/
+    empreiteiro, não só o contratante que assina o contrato CowData.
+    Bloquear CPF/endereço aqui quebraria 31+ fluxos de teste/uso reais
+    (contratar um diarista sem endereço completo, por exemplo). Os campos
+    já existem no formulário para quem quiser preencher; fica pronta para
+    ligar com uma linha (chamar esta função em criar_pessoa) se a decisão
+    for realmente travar TODO cadastro de pessoa, e não só o do contratante
+    do contrato CowData."""
+    faltando = []
+    if not dados.nome.strip():
+        faltando.append("nome completo")
+    if not (dados.cpf_cnpj or "").strip():
+        faltando.append("CPF")
+    endereco_preenchido = all((dados.endereco_rua or "").strip() and (dados.endereco_numero or "").strip()
+                               and (dados.endereco_cidade or "").strip() and (dados.endereco_uf or "").strip())
+    if not endereco_preenchido:
+        faltando.append("endereço completo (rua, número, cidade e UF)")
+    if faltando:
+        raise HTTPException(status_code=400, detail=f"Campos obrigatórios faltando: {', '.join(faltando)}")
 
 
 def _normalizar_lista_contato(valores: list[str]) -> list[str]:

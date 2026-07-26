@@ -72,7 +72,7 @@ class TestAssinaturaConsultor:
     def test_solicitar_e_aprovar_plano(self, client):
         c, engine = client
         _como(1, "consultor1")
-        r = c.post("/consultor/solicitar", json={"plano": "consultor_basico"})
+        r = c.post("/consultor/solicitar", json={"plano": "consultor_standard"})
         assert r.status_code == 200, r.text
         assert r.json()["status"] == "aguardando_aprovacao"
 
@@ -104,11 +104,11 @@ class TestAssinaturaConsultor:
     def test_reduzir_plano_aumenta_pendencia(self, client):
         c, engine = client
         _como(1, "consultor1")
-        c.post("/consultor/solicitar", json={"plano": "consultor_avancado"})
+        c.post("/consultor/solicitar", json={"plano": "consultor_diamond"})
         _como_dono()
         c.post("/consultor/1/aprovar")
         _como(1, "consultor1")
-        r = c.post("/consultor/solicitar", json={"plano": "consultor_basico"})
+        r = c.post("/consultor/solicitar", json={"plano": "consultor_standard"})
         assert r.json()["status"] == "aguardando_aprovacao"
         assert r.json()["limite_fazendas"] == 3
 
@@ -117,7 +117,7 @@ class TestAssinaturaConsultor:
 def consultor_ativo(client):
     c, engine = client
     _como(1, "consultor1")
-    c.post("/consultor/solicitar", json={"plano": "consultor_basico"})
+    c.post("/consultor/solicitar", json={"plano": "consultor_standard"})
     _como_dono()
     c.post("/consultor/1/aprovar")
     _como(1, "consultor1")
@@ -133,7 +133,7 @@ class TestFazendasGerenciadas:
         assert len(r.json()) == 1
         assert r.json()[0]["nome"] == "Fazenda do Zé"
 
-    def test_limite_do_plano_basico_3_fazendas(self, consultor_ativo):
+    def test_limite_do_plano_standard_3_fazendas(self, consultor_ativo):
         c, engine = consultor_ativo
         for i in range(3):
             assert c.post("/consultor/fazendas", json={"nome": f"Fazenda {i}"}).status_code == 200
@@ -146,7 +146,7 @@ class TestFazendasGerenciadas:
         c.post("/consultor/fazendas", json={"nome": "Fazenda do consultor1"})
 
         with Session(engine) as s:
-            s.add(ContratoConsultor(usuario_id=2, plano="consultor_basico", limite_fazendas=3, status="ativo"))
+            s.add(ContratoConsultor(usuario_id=2, plano="consultor_standard", limite_fazendas=3, status="ativo"))
             s.commit()
         _como(2, "consultor2")
         r = c.get("/consultor/fazendas")
@@ -158,7 +158,7 @@ class TestFazendasGerenciadas:
         fid = r.json()["id"]
 
         with Session(engine) as s:
-            s.add(ContratoConsultor(usuario_id=2, plano="consultor_basico", limite_fazendas=3, status="ativo"))
+            s.add(ContratoConsultor(usuario_id=2, plano="consultor_standard", limite_fazendas=3, status="ativo"))
             s.commit()
         _como(2, "consultor2")
         assert c.delete(f"/consultor/fazendas/{fid}").status_code == 403

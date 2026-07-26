@@ -65,6 +65,25 @@ class Pessoa(SQLModel, table=True):
     # (dias trabalhados / dias do mês) no lançamento de Folha de Pagamento.
     data_admissao: Optional[date] = None
 
+    # Dados civis + endereço estruturado (decisão jul/2026) — coletados no
+    # cadastro de toda pessoa nova a partir de agora, para alimentar o
+    # Contrato Assinado (Configurações > Fazendas) sem precisar redigitar.
+    # Nome/CPF/endereço já eram (e continuam) obrigatórios para cadastrar
+    # (ver criar_pessoa em routers/cadastro/pessoas.py); os demais — RG, data
+    # de nascimento, estado civil — são coletados aqui mas só passam a ser
+    # exigidos na hora de assinar um contrato, nunca bloqueiam o cadastro.
+    # Gênero nunca é obrigatório, em cadastro nem em contrato. Colunas nascem
+    # nullable para não quebrar nenhuma Pessoa já cadastrada.
+    rg: Optional[str] = None
+    data_nascimento: Optional[date] = None
+    genero: Optional[str] = None  # texto livre; "" ou None = não informado
+    estado_civil: Optional[str] = None
+    endereco_rua: Optional[str] = None
+    endereco_numero: Optional[str] = None
+    endereco_bairro: Optional[str] = None
+    endereco_cidade: Optional[str] = None
+    endereco_uf: Optional[str] = None
+
 
 # ---------------------------------------------------------------------------
 # Folha de pagamento — lançamento e acompanhamento por pessoa/competência.

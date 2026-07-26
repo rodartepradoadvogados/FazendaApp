@@ -261,7 +261,7 @@ export async function desvincularUsuarioFazenda(fazendaId: number, usuarioId: nu
 // fazenda-tenant), fazendas gerenciadas por importação de planilha, e o modo
 // Simulação (cálculo puro, nunca persistido). Ver
 // backend/fazenda/models/consultores.py e fazenda/api/routers/consultores.py.
-export type PlanoConsultorNome = "consultor_basico" | "consultor_intermediario" | "consultor_avancado";
+export type PlanoConsultorNome = "consultor_standard" | "consultor_gold" | "consultor_diamond";
 export type PlanoConsultorCatalogo = { nome: string; preco: number; limite_fazendas: number };
 export type ContratoConsultor = {
   usuario_id: number;
@@ -857,6 +857,8 @@ export async function fetchPessoas() {
 type PessoaDados = {
   nome: string; tipos: string[]; telefones?: string[]; emails?: string[]; cpf_cnpj?: string; cep?: string;
   observacoes?: string; ativo?: boolean; salario_base?: number; data_admissao?: string;
+  rg?: string; data_nascimento?: string; genero?: string; estado_civil?: string;
+  endereco_rua?: string; endereco_numero?: string; endereco_bairro?: string; endereco_cidade?: string; endereco_uf?: string;
 };
 export async function criarPessoa(dados: PessoaDados) {
   const res = await authFetch(`${API}/cadastro/pessoas`, {

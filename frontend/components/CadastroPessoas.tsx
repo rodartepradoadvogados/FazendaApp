@@ -10,14 +10,27 @@ type Pessoa = {
   id: number; nome: string; tipos: string[]; telefones: string[]; emails: string[];
   cpf_cnpj: string | null; cep: string | null;
   observacoes: string | null; ativo: boolean; salario_base: number | null; data_admissao: string | null;
+  rg: string | null; data_nascimento: string | null; genero: string | null; estado_civil: string | null;
+  endereco_rua: string | null; endereco_numero: string | null; endereco_bairro: string | null;
+  endereco_cidade: string | null; endereco_uf: string | null;
 };
 type Form = {
   nome: string; tipos: string[]; telefones: string[]; emails: string[]; cpfCnpj: string; cep: string; observacoes: string; ativo: boolean;
   salarioBase: string; dataAdmissao: string;
+  rg: string; dataNascimento: string; genero: string; estadoCivil: string;
+  enderecoRua: string; enderecoNumero: string; enderecoBairro: string; enderecoCidade: string; enderecoUf: string;
 };
 const formVazio: Form = {
   nome: "", tipos: ["Funcionário"], telefones: [], emails: [], cpfCnpj: "", cep: "", observacoes: "", ativo: true, salarioBase: "", dataAdmissao: "",
+  rg: "", dataNascimento: "", genero: "", estadoCivil: "",
+  enderecoRua: "", enderecoNumero: "", enderecoBairro: "", enderecoCidade: "", enderecoUf: "",
 };
+
+// Obrigatórios para cadastrar (decisão jul/2026): nome, CPF e endereço
+// completo. RG/data de nascimento/estado civil são coletados aqui mas só
+// exigidos na hora de assinar um contrato — gênero nunca é obrigatório.
+const ESTADOS_CIVIS = ["Solteiro(a)", "Casado(a)", "Divorciado(a)", "Viúvo(a)", "União estável"];
+const UFS = ["AC", "AL", "AP", "AM", "BA", "CE", "DF", "ES", "GO", "MA", "MT", "MS", "MG", "PA", "PB", "PR", "PE", "PI", "RJ", "RN", "RS", "RO", "RR", "SC", "SP", "SE", "TO"];
 
 const inputStyle: React.CSSProperties = { width: "100%", background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.4rem 0.6rem", fontSize: "0.82rem" };
 const labelStyle: React.CSSProperties = { fontSize: "0.7rem", color: "var(--text-muted)" };
@@ -35,6 +48,9 @@ function paraPayload(f: Form) {
     cpf_cnpj: s(f.cpfCnpj), cep: s(f.cep), observacoes: s(f.observacoes),
     ativo: f.ativo, salario_base: f.salarioBase.trim() === "" ? undefined : parseFloat(f.salarioBase),
     data_admissao: s(f.dataAdmissao),
+    rg: s(f.rg), data_nascimento: s(f.dataNascimento), genero: s(f.genero), estado_civil: s(f.estadoCivil),
+    endereco_rua: s(f.enderecoRua), endereco_numero: s(f.enderecoNumero), endereco_bairro: s(f.enderecoBairro),
+    endereco_cidade: s(f.enderecoCidade), endereco_uf: s(f.enderecoUf),
   };
 }
 
@@ -59,6 +75,9 @@ export default function CadastroPessoas() {
       nome: p.nome, tipos: p.tipos.length ? p.tipos : ["Funcionário"], telefones: p.telefones ?? [], emails: p.emails ?? [],
       cpfCnpj: p.cpf_cnpj ?? "", cep: p.cep ?? "", observacoes: p.observacoes ?? "",
       ativo: p.ativo, salarioBase: p.salario_base != null ? String(p.salario_base) : "", dataAdmissao: p.data_admissao ?? "",
+      rg: p.rg ?? "", dataNascimento: p.data_nascimento ?? "", genero: p.genero ?? "", estadoCivil: p.estado_civil ?? "",
+      enderecoRua: p.endereco_rua ?? "", enderecoNumero: p.endereco_numero ?? "", enderecoBairro: p.endereco_bairro ?? "",
+      enderecoCidade: p.endereco_cidade ?? "", enderecoUf: p.endereco_uf ?? "",
     });
     setEditando(p.id); setMsg(null);
   };
@@ -67,6 +86,10 @@ export default function CadastroPessoas() {
   const salvar = async () => {
     if (!form.nome.trim()) { setMsg("Nome é obrigatório."); return; }
     if (!form.tipos.length) { setMsg("Selecione ao menos um tipo."); return; }
+    // CPF/endereço NÃO bloqueiam o cadastro — Pessoa é o cadastro de RH usado
+    // para qualquer funcionário/veterinário/diarista/empreiteiro, não só o
+    // contratante do contrato CowData. Os campos ficam disponíveis para quem
+    // quiser preencher (ver pessoas.py:_exigir_campos_obrigatorios).
     setSalvando(true); setMsg(null);
     try {
       const dados = paraPayload(form);
@@ -273,6 +296,35 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
         <ListaContatoInput label="Emails" valores={form.emails} onChange={(v) => setForm({ ...form, emails: v })} placeholder="nome@exemplo.com" />
         <div><label style={labelStyle}>CPF/CNPJ</label>
           <input style={inputStyle} value={form.cpfCnpj} onChange={(e) => setForm({ ...form, cpfCnpj: maskCpfCnpj(e.target.value) })} /></div>
+        <div><label style={labelStyle}>RG</label>
+          <input style={inputStyle} value={form.rg} onChange={(e) => setForm({ ...form, rg: e.target.value })} /></div>
+        <div><label style={labelStyle}>Data de nascimento</label>
+          <input type="date" style={inputStyle} value={form.dataNascimento} onChange={(e) => setForm({ ...form, dataNascimento: e.target.value })} /></div>
+        <div><label style={labelStyle}>Gênero</label>
+          <select style={inputStyle} value={form.genero} onChange={(e) => setForm({ ...form, genero: e.target.value })}>
+            <option value="">Prefere não informar</option>
+            <option value="Feminino">Feminino</option>
+            <option value="Masculino">Masculino</option>
+            <option value="Outro">Outro</option>
+          </select></div>
+        <div><label style={labelStyle}>Estado civil</label>
+          <select style={inputStyle} value={form.estadoCivil} onChange={(e) => setForm({ ...form, estadoCivil: e.target.value })}>
+            <option value="">—</option>
+            {ESTADOS_CIVIS.map((e) => <option key={e} value={e}>{e}</option>)}
+          </select></div>
+        <div style={{ gridColumn: "span 2" }}><label style={labelStyle}>Rua</label>
+          <input style={inputStyle} value={form.enderecoRua} onChange={(e) => setForm({ ...form, enderecoRua: e.target.value })} /></div>
+        <div><label style={labelStyle}>Número</label>
+          <input style={inputStyle} value={form.enderecoNumero} onChange={(e) => setForm({ ...form, enderecoNumero: e.target.value })} /></div>
+        <div><label style={labelStyle}>Bairro</label>
+          <input style={inputStyle} value={form.enderecoBairro} onChange={(e) => setForm({ ...form, enderecoBairro: e.target.value })} /></div>
+        <div><label style={labelStyle}>Cidade</label>
+          <input style={inputStyle} value={form.enderecoCidade} onChange={(e) => setForm({ ...form, enderecoCidade: e.target.value })} /></div>
+        <div><label style={labelStyle}>UF</label>
+          <select style={inputStyle} value={form.enderecoUf} onChange={(e) => setForm({ ...form, enderecoUf: e.target.value })}>
+            <option value="">—</option>
+            {UFS.map((uf) => <option key={uf} value={uf}>{uf}</option>)}
+          </select></div>
         <div><label style={labelStyle}>CEP</label>
           <input style={inputStyle} value={form.cep} onChange={(e) => setForm({ ...form, cep: maskCep(e.target.value) })} /></div>
         <div><label style={labelStyle}>Salário base (R$)</label>
@@ -285,6 +337,9 @@ function FormItem({ form, setForm, onSalvar, onCancelar, salvando, msg, tipos, o
         <div style={{ gridColumn: "1 / -1" }}><label style={labelStyle}>Observações</label>
           <textarea style={{ ...inputStyle, minHeight: "2.4rem" }} value={form.observacoes} onChange={(e) => setForm({ ...form, observacoes: e.target.value })} /></div>
       </div>
+      <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "-0.4rem", marginBottom: "0.6rem" }}>
+        CPF, RG, data de nascimento, estado civil e endereço não bloqueiam o cadastro — ficam disponíveis para preencher agora e valem para o contrato mais tarde.
+      </p>
       {msg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{msg}</p>}
       <div className="flex items-center gap-2">
         <button className="btn-primary" style={{ fontSize: "0.78rem", display: "flex", alignItems: "center", gap: "0.35rem" }} onClick={onSalvar} disabled={salvando}>

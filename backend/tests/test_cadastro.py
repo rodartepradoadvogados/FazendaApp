@@ -347,6 +347,34 @@ class TestPessoas:
         assert r.json()["telefones"] == ["(11) 99999-0004"]
         assert r.json()["emails"] == []
 
+    def test_cria_pessoa_com_dados_civis_e_endereco(self, client):
+        # Campos novos (jul/2026) são aditivos — nunca bloqueiam o cadastro
+        # (ver _exigir_campos_obrigatorios em routers/cadastro/pessoas.py).
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={
+            "nome": "Com Dados Civis", "tipos": ["Funcionário"],
+            "cpf_cnpj": "123.456.789-00", "rg": "MG-18.223.410", "data_nascimento": "1985-03-14",
+            "genero": "Feminino", "estado_civil": "Casado(a)",
+            "endereco_rua": "Rua das Palmeiras", "endereco_numero": "120", "endereco_bairro": "Centro",
+            "endereco_cidade": "Uberaba", "endereco_uf": "MG",
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["rg"] == "MG-18.223.410"
+        assert dados["data_nascimento"] == "1985-03-14"
+        assert dados["genero"] == "Feminino"
+        assert dados["estado_civil"] == "Casado(a)"
+        assert dados["endereco_rua"] == "Rua das Palmeiras"
+        assert dados["endereco_uf"] == "MG"
+
+    def test_cria_pessoa_sem_dados_civis_nao_e_bloqueada(self, client):
+        c, engine = client
+        r = c.post("/cadastro/pessoas", json={"nome": "Sem Dados Civis", "tipos": ["Diarista"]})
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["rg"] is None
+        assert dados["endereco_rua"] is None
+
     def test_email_legado_reflete_primeiro_da_lista_para_recibo(self, client):
         """A folha de pagamento resolve o e-mail do recibo lendo Pessoa.email
         diretamente (ver financeiro.destinatario_recibo) — precisa continuar
