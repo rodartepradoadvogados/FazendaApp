@@ -106,7 +106,8 @@ class Lote(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     codigo: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    nome: str
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    nome: str
     del_min: Optional[int] = None
     del_max: Optional[int] = None  # também usado no critério "até X dias após o parto"
     producao_min: Optional[float] = None  # também usado no critério "produção de X a Y L"
@@ -183,7 +184,8 @@ class MotivoBaixa(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -195,7 +197,8 @@ class MotivoVenda(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -207,7 +210,8 @@ class Raca(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
@@ -226,7 +230,8 @@ class GrauSangue(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    fracao_holandes: Optional[float] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    fracao_holandes: Optional[float] = None
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
@@ -243,7 +248,8 @@ class MotivoMovimentacao(SQLModel, table=True):
 
     id: Optional[int] = Field(default=None, primary_key=True)
     nome: str = Field(index=True)
-    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)    ativo: bool = True
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
