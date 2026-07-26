@@ -22,7 +22,10 @@ from datetime import date
 from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
-from fazenda.models import Animal, ContaGerencial, Estoque, Fornecedor, Lote, Parto, PesagemCorporal, Servico, Usuario
+from fazenda.models import (
+    Animal, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto, PesagemCorporal,
+    Servico, Usuario,
+)
 from fazenda.rules.indicadores import calcular_indicadores
 
 MODEL = "claude-sonnet-5"
@@ -124,6 +127,27 @@ _TOOLS_DISPONIVEIS = [
         },
     },
     {
+        "modulo": "sanidade",
+        "spec": {
+            "name": "consultar_exames",
+            "description": (
+                "Retorna resultados de exames sanitários já realizados (ex.: brucelose, tuberculose, "
+                "qualquer exame preventivo cadastrado) — número do animal, data, resultado (positivo/negativo) "
+                "e veterinário. Informe pelo menos a data (AAAA-MM-DD) ou o nome do exame/doença; sem nenhum "
+                "filtro, não busca (o volume seria grande demais). Diferente de consultar_calendario_sanitario, "
+                "que só mostra o que ainda vai vencer — esta ferramenta é para exames já feitos, no passado."
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "data": {"type": "string", "description": "Data do exame no formato AAAA-MM-DD. Opcional."},
+                    "evento": {"type": "string", "description": "Nome (ou parte do nome) do exame/doença, ex.: 'Brucelose'. Opcional."},
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
         "modulo": "rebanho",
         "spec": {
             "name": "listar_lotes",
@@ -187,6 +211,27 @@ def _tool_buscar_animal(session: Session, numero: str) -> dict:
     if not animal:
         return {"erro": f"Animal {numero} não encontrado."}
     return animal.model_dump()
+
+
+def _tool_consultar_exames(session: Session, data: str | None, evento: str | None) -> dict:
+    if not data and not evento:
+        return {"erro": "Informe uma data (AAAA-MM-DD) e/ou o nome do exame/doença — sem nenhum filtro o resultado seria grande demais."}
+    query = select(ExameResultado, EventoSanitario).join(EventoSanitario, ExameResultado.evento_sanitario_id == EventoSanitario.id)
+    if data:
+        try:
+            data_alvo = date.fromisoformat(data)
+        except ValueError:
+            return {"erro": f"Data inválida: '{data}'. Use o formato AAAA-MM-DD."}
+        query = query.where(ExameResultado.data_exame == data_alvo)
+    if evento:
+        query = query.where(EventoSanitario.nome.ilike(f"%{evento}%"))
+    linhas = session.exec(query).all()
+    exames = [
+        {"numero_animal": ex.numero_matriz, "evento": ev.nome, "data_exame": ex.data_exame.isoformat(),
+         "resultado": ex.resultado, "veterinario": ex.veterinario}
+        for ex, ev in linhas[:200]
+    ]
+    return {"total": len(exames), "exames": exames}
 
 
 def _codigo_grupo(grupo: str | None) -> str | None:
@@ -301,6 +346,7 @@ _EXECUTORES = {
     "consultar_analise_reprodutiva": lambda session, usuario, entrada: _tool_consultar_analise_reprodutiva(session),
     "listar_lotes": lambda session, usuario, entrada: _tool_listar_lotes(session),
     "consultar_lote": lambda session, usuario, entrada: _tool_consultar_lote(session, entrada.get("codigo", "")),
+    "consultar_exames": lambda session, usuario, entrada: _tool_consultar_exames(session, entrada.get("data"), entrada.get("evento")),
 }
 
 _MODULO_DA_TOOL = {t["spec"]["name"]: t["modulo"] for t in _TOOLS_DISPONIVEIS}
