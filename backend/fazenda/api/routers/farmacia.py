@@ -14,26 +14,33 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Estoque, MedicamentoComercial, MovimentoEstoque, PrincipioAtivo
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.farmacia import resumo_principios
 
 router = APIRouter(prefix="/farmacia", tags=["farmacia"])
 
 
 @router.get("/principios")
-def listar_principios(session: Session = Depends(get_session)) -> list[dict]:
+def listar_principios(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Visão gerencial completa: princípio → total unificado, apresentações,
     mínimo/alerta e a lista de itens de estoque (marcas/tamanhos)."""
-    return resumo_principios(session)
+    return resumo_principios(session, fazenda_id_seguro(fazenda_id))
 
 
 @router.get("/principios/{principio_id}")
-def detalhar_principio(principio_id: int, session: Session = Depends(get_session)) -> dict:
+def detalhar_principio(
+    principio_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pa = session.get(PrincipioAtivo, principio_id)
-    if not pa:
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
-    resumo = next((r for r in resumo_principios(session) if r["id"] == principio_id), None)
+    resumo = next((r for r in resumo_principios(session, fazenda_id) if r["id"] == principio_id), None)
     marcas = session.exec(
         select(MedicamentoComercial).where(MedicamentoComercial.principio_ativo_id == principio_id)
         .order_by(MedicamentoComercial.nome_comercial)
@@ -55,13 +62,19 @@ class PrincipioIn(BaseModel):
 
 
 @router.post("/principios", status_code=201)
-def criar_principio(dados: PrincipioIn, session: Session = Depends(get_session)) -> dict:
+def criar_principio(
+    dados: PrincipioIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome é obrigatório")
-    if session.exec(select(PrincipioAtivo).where(PrincipioAtivo.nome == nome)).first():
+    query_dup = select(PrincipioAtivo).where(PrincipioAtivo.nome == nome)
+    if fazenda_id is not None:
+        query_dup = query_dup.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    if session.exec(query_dup).first():
         raise HTTPException(status_code=409, detail=f"Já existe o princípio ativo '{nome}'")
-    pa = PrincipioAtivo(**{**dados.model_dump(), "nome": nome})
+    pa = PrincipioAtivo(**{**dados.model_dump(), "nome": nome, "fazenda_id": fazenda_id})
     session.add(pa)
     session.commit()
     session.refresh(pa)
@@ -69,9 +82,13 @@ def criar_principio(dados: PrincipioIn, session: Session = Depends(get_session))
 
 
 @router.put("/principios/{principio_id}")
-def atualizar_principio(principio_id: int, dados: PrincipioIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_principio(
+    principio_id: int, dados: PrincipioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pa = session.get(PrincipioAtivo, principio_id)
-    if not pa:
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Princípio ativo não encontrado")
     for k, v in dados.model_dump().items():
         setattr(pa, k, v)
@@ -89,11 +106,15 @@ class MarcaIn(BaseModel):
 
 
 @router.post("/medicamentos", status_code=201)
-def criar_marca(dados: MarcaIn, session: Session = Depends(get_session)) -> dict:
+def criar_marca(
+    dados: MarcaIn, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     nome = dados.nome_comercial.strip()
     if not nome:
         raise HTTPException(status_code=400, detail="Nome comercial é obrigatório")
-    if not session.get(PrincipioAtivo, dados.principio_ativo_id):
+    pa = session.get(PrincipioAtivo, dados.principio_ativo_id)
+    if not pa or (fazenda_id is not None and pa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=400, detail="Princípio ativo inexistente")
     existe = session.exec(
         select(MedicamentoComercial).where(
@@ -103,7 +124,7 @@ def criar_marca(dados: MarcaIn, session: Session = Depends(get_session)) -> dict
     ).first()
     if existe:
         raise HTTPException(status_code=409, detail=f"'{nome}' já está cadastrado neste princípio")
-    m = MedicamentoComercial(**{**dados.model_dump(), "nome_comercial": nome})
+    m = MedicamentoComercial(**{**dados.model_dump(), "nome_comercial": nome, "fazenda_id": fazenda_id})
     session.add(m)
     session.commit()
     session.refresh(m)
@@ -111,9 +132,13 @@ def criar_marca(dados: MarcaIn, session: Session = Depends(get_session)) -> dict
 
 
 @router.put("/medicamentos/{marca_id}")
-def atualizar_marca(marca_id: int, dados: MarcaIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_marca(
+    marca_id: int, dados: MarcaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     m = session.get(MedicamentoComercial, marca_id)
-    if not m:
+    if not m or (fazenda_id is not None and m.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Marca não encontrada")
     for k, v in dados.model_dump().items():
         setattr(m, k, v)
@@ -124,9 +149,12 @@ def atualizar_marca(marca_id: int, dados: MarcaIn, session: Session = Depends(ge
 
 
 @router.delete("/medicamentos/{marca_id}")
-def excluir_marca(marca_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_marca(
+    marca_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     m = session.get(MedicamentoComercial, marca_id)
-    if not m:
+    if not m or (fazenda_id is not None and m.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Marca não encontrada")
     session.delete(m)
     session.commit()

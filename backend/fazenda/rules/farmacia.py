@@ -281,12 +281,19 @@ def _apresentacoes_do_item(item: Estoque, pa: PrincipioAtivo) -> float | None:
     return 1.0 if saldo > 0 else 0.0
 
 
-def resumo_principios(session: Session) -> list[dict]:
+def resumo_principios(session: Session, fazenda_id: int | None = None) -> list[dict]:
     """Visão gerencial da farmácia: por princípio ativo, o total unificado na
     unidade-base, o total de apresentações (soma das frações de frasco), o
     status do mínimo e a lista de apresentações (itens de estoque) com saldo,
-    marca/laboratório e se precisam de estoque inicial."""
-    principios = session.exec(select(PrincipioAtivo).order_by(PrincipioAtivo.nome)).all()
+    marca/laboratório e se precisam de estoque inicial.
+
+    `fazenda_id` filtra os princípios ativos pela fazenda atual — os itens de
+    Estoque em si ainda não têm fazenda_id (migração pendente), então o saldo
+    agregado por princípio permanece global até essa etapa seguinte."""
+    query = select(PrincipioAtivo).order_by(PrincipioAtivo.nome)
+    if fazenda_id is not None:
+        query = query.where(PrincipioAtivo.fazenda_id == fazenda_id)
+    principios = session.exec(query).all()
     itens = session.exec(select(Estoque)).all()
     por_pa: dict[int, list[Estoque]] = {}
     for it in itens:

@@ -23,6 +23,7 @@ from fazenda.models import (
     Usuario, UsuarioFazenda,
 )
 from fazenda.models.planos import MODULO_REBANHO, MODULOS_COMERCIAIS, PLANOS_CATALOGO
+from fazenda.api.routers.cadastro.servicos import seed_tipos_metodos_servico
 
 router = APIRouter(prefix="/fazendas", tags=["fazendas"])
 
@@ -54,6 +55,10 @@ def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
         ContratoFazenda(fazenda_id=fazenda_id, status="aguardando_aprovacao"),
     ])
     session.commit()
+    # Vocabulário mínimo de Serviço/Inseminação (Cobertura/IA + Monta
+    # Natural/IA em cio natural/IATF) — sem isso a fazenda nasce sem nenhum
+    # tipo/método e o lançamento de Serviço/Inseminação fica vazio.
+    seed_tipos_metodos_servico(session, fazenda_id=fazenda_id)
 
 
 def _validar_escopo_contratante(user: Usuario, fazenda_id: int, fazenda_id_token: int | None) -> None:

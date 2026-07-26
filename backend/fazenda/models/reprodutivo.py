@@ -78,9 +78,13 @@ class TipoServicoReprodutivo(SQLModel, table=True):
     """Tipo de serviço reprodutivo cadastrado (ex.: Cobertura, IA)."""
 
     __tablename__ = "tipo_servico_reprodutivo"
+    # nome era único globalmente — passa a ser único por fazenda (mesmo
+    # padrão de CentroCusto/PrincipioAtivo), senão a 2ª fazenda nunca
+    # conseguiria cadastrar um tipo de serviço com o mesmo nome já usado.
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_tipo_servico_reprodutivo_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     ativo: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
@@ -90,9 +94,10 @@ class MetodoServicoReprodutivo(SQLModel, table=True):
     """Método de um tipo de serviço (ex.: Monta Natural, IA em cio natural, IATF)."""
 
     __tablename__ = "metodo_servico_reprodutivo"
+    __table_args__ = (UniqueConstraint("nome", "fazenda_id", name="uq_metodo_servico_reprodutivo_nome_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    nome: str = Field(index=True, unique=True)
+    nome: str = Field(index=True)
     tipo_servico_id: int = Field(foreign_key="tipo_servico_reprodutivo.id")
     codigo_interno: Optional[str] = None  # "monta_natural" | "cio_natural" | "iatf" | None (customizado)
     ativo: bool = True

@@ -84,7 +84,9 @@ def _codigo_lote(g: str | None) -> str | None:
 
 
 @router.get("/estratificacao")
-def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
+def estratificacao_rebanho(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Composição do rebanho (fêmeas ativas) por faixa etária e, nas adultas,
     por situação (lactação / secas / pré-parto). Alimenta o gráfico do Rebanho."""
     hoje = date.today()
@@ -107,7 +109,10 @@ def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
     # janela suspensa de animais ao clicar numa fatia/card da composição.
     numeros: dict[str, list[str]] = {k: [] for k in estratos}
     total = 0
-    for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    for a in session.exec(query_animais).all():
         if a.eh_semen or a.sexo == "M":
             continue
         total += 1
@@ -162,22 +167,32 @@ def estratificacao_rebanho(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/{numero}")
-def buscar_animal(numero: str, session: Session = Depends(get_session)) -> dict:
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+def buscar_animal(
+    numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    query = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
     if not animal:
         raise HTTPException(status_code=404, detail=f"Animal {numero} não encontrado")
     return animal.model_dump()
 
 
 @router.get("/{numero}/ficha")
-def ficha_animal(numero: str, session: Session = Depends(get_session)) -> dict:
+def ficha_animal(
+    numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Ficha única do animal: absolutamente todos os lançamentos já registrados
     para ele, reunidos em uma resposta — reprodução, parto, colostragem/IgG,
     produção, sanidade, movimentação de lote, compra/baixa e agenda. Serve
     tanto a tela de consulta quanto a exportação em PDF (por maior que fique).
     """
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    query = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
     if not animal:
         raise HTTPException(status_code=404, detail=f"Animal {numero} não encontrado")
 
