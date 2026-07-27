@@ -12,6 +12,7 @@ import {
   type AnexoContrato, type UsuarioVinculado, type ContratoConsultorAdmin, type CicloPagamento, type AssinaturaZapSign,
   type CobrancaAsaas, type CobrancaAsaasIn,
 } from "@/lib/api";
+import { maskCpf, maskCnpj, maskCep, maskCpfCnpj } from "@/lib/masks";
 
 const NOME_CICLO: Record<CicloPagamento, string> = {
   mensal: "Mensal (sem desconto)", trimestral: "Trimestral (5% off)",
@@ -80,7 +81,7 @@ export default function FazendasAdmin() {
   const [novaUf, setNovaUf] = useState("");
   const [criando, setCriando] = useState(false);
 
-  const [editForm, setEditForm] = useState({ nome: "", cidade: "", uf: "", documento: "", endereco: "", representante_nome: "", representante_cpf: "" });
+  const [editForm, setEditForm] = useState({ nome: "", cidade: "", uf: "", tipo_documento: "" as "" | "cpf" | "cnpj", documento: "", endereco: "", cep: "", representante_nome: "", representante_cpf: "" });
   const [salvandoDados, setSalvandoDados] = useState(false);
 
   const [usuarios, setUsuarios] = useState<UsuarioVinculado[] | null>(null);
@@ -142,7 +143,8 @@ export default function FazendasAdmin() {
     if (f) {
       setEditForm({
         nome: f.nome, cidade: f.cidade || "", uf: f.uf || "",
-        documento: f.documento || "", endereco: f.endereco || "",
+        tipo_documento: (f.tipo_documento as "" | "cpf" | "cnpj") || "", documento: f.documento || "",
+        endereco: f.endereco || "", cep: f.cep || "",
         representante_nome: f.representante_nome || "", representante_cpf: f.representante_cpf || "",
       });
       // Pré-preenche o pagador da cobrança com o representante/documento já
@@ -352,14 +354,36 @@ export default function FazendasAdmin() {
                   <input style={inp} value={editForm.uf} onChange={(e) => setEditForm((s) => ({ ...s, uf: e.target.value }))} />
                 </div>
               </div>
-              <label style={lbl}>CPF/CNPJ</label>
-              <input style={inp} value={editForm.documento} onChange={(e) => setEditForm((s) => ({ ...s, documento: e.target.value }))} />
+              <label style={lbl}>A fazenda é cadastrada como</label>
+              <div className="flex gap-2" style={{ marginBottom: "0.2rem" }}>
+                {(["cpf", "cnpj"] as const).map((t) => (
+                  <button
+                    key={t}
+                    type="button"
+                    onClick={() => setEditForm((s) => (s.tipo_documento === t ? s : { ...s, tipo_documento: t, documento: "" }))}
+                    className={editForm.tipo_documento === t ? "btn-primary" : "btn-secondary"}
+                    style={{ fontSize: "0.78rem", padding: "0.35rem 0.8rem", flex: 1 }}
+                  >
+                    {t.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+              <label style={lbl}>{editForm.tipo_documento === "cnpj" ? "CNPJ" : "CPF"}</label>
+              <input
+                style={inp}
+                placeholder={!editForm.tipo_documento ? "Escolha CPF ou CNPJ acima" : editForm.tipo_documento === "cnpj" ? "00.000.000/0000-00" : "000.000.000-00"}
+                disabled={!editForm.tipo_documento}
+                value={editForm.documento}
+                onChange={(e) => setEditForm((s) => ({ ...s, documento: (s.tipo_documento === "cnpj" ? maskCnpj : maskCpf)(e.target.value) }))}
+              />
+              <label style={lbl}>CEP</label>
+              <input style={inp} placeholder="00.000-000" value={editForm.cep} onChange={(e) => setEditForm((s) => ({ ...s, cep: maskCep(e.target.value) }))} />
               <label style={lbl}>Endereço completo</label>
               <input style={inp} value={editForm.endereco} onChange={(e) => setEditForm((s) => ({ ...s, endereco: e.target.value }))} />
               <label style={lbl}>Nome do representante</label>
               <input style={inp} value={editForm.representante_nome} onChange={(e) => setEditForm((s) => ({ ...s, representante_nome: e.target.value }))} />
               <label style={lbl}>CPF do representante</label>
-              <input style={inp} value={editForm.representante_cpf} onChange={(e) => setEditForm((s) => ({ ...s, representante_cpf: e.target.value }))} />
+              <input style={inp} placeholder="000.000.000-00" value={editForm.representante_cpf} onChange={(e) => setEditForm((s) => ({ ...s, representante_cpf: maskCpf(e.target.value) }))} />
               <button onClick={salvarDadosFazenda} disabled={salvandoDados} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", marginTop: "0.3rem" }}>
                 {salvandoDados ? "Salvando…" : "Salvar dados da fazenda"}
               </button>
@@ -497,7 +521,7 @@ export default function FazendasAdmin() {
               <input placeholder="Nome do pagador" style={{ ...inp, width: "auto", flex: "1 1 10rem" }}
                 value={pagador.pagador_nome} onChange={(e) => setPagador((s) => ({ ...s, pagador_nome: e.target.value }))} />
               <input placeholder="CPF/CNPJ" style={{ ...inp, width: "auto", flex: "1 1 8rem" }}
-                value={pagador.pagador_documento} onChange={(e) => setPagador((s) => ({ ...s, pagador_documento: e.target.value }))} />
+                value={pagador.pagador_documento} onChange={(e) => setPagador((s) => ({ ...s, pagador_documento: maskCpfCnpj(e.target.value) }))} />
               <input placeholder="E-mail (opcional)" style={{ ...inp, width: "auto", flex: "1 1 10rem" }}
                 value={pagador.pagador_email} onChange={(e) => setPagador((s) => ({ ...s, pagador_email: e.target.value }))} />
             </div>

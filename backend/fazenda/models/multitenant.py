@@ -37,8 +37,13 @@ class Fazenda(SQLModel, table=True):
     # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
     # (fazenda/rules/contrato_render.py) e pela cobrança (Asaas/ZapSign) como
     # padrão, sem precisar redigitar toda vez. Todos opcionais/aditivos.
-    documento: Optional[str] = None  # CPF ou CNPJ
+    # tipo_documento define ANTES qual máscara/formato vale pra `documento`
+    # ("cpf" ou "cnpj") — o cadastro pergunta um dos dois, não deixa livre
+    # (ver FazendasAdmin.tsx e lib/masks.ts::maskCpf/maskCnpj).
+    tipo_documento: Optional[str] = None  # "cpf" | "cnpj"
+    documento: Optional[str] = None
     endereco: Optional[str] = None
+    cep: Optional[str] = None
     representante_nome: Optional[str] = None
     representante_cpf: Optional[str] = None
 
