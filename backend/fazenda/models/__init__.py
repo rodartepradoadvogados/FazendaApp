@@ -163,6 +163,11 @@ from .cobranca import (
 from .cowdata_interno import (
     LancamentoCowData,
 )
+from .cofre_acesso import (
+    PedidoAcessoSuporte,
+    SessaoAcessoSuporte,
+    AuditoriaAcessoSuporte,
+)
 from .consultores import (
     ContratoConsultor,
     FazendaGerenciada,

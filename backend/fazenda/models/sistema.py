@@ -199,6 +199,12 @@ class Usuario(SQLModel, table=True):
     # em andamento; limpo assim que a senha é redefinida ou o token expira.
     reset_senha_token: Optional[str] = Field(default=None, index=True)
     reset_senha_expira: Optional[datetime] = None
+    # Próximo passo do Cofre de acesso (ver fazenda/models/cofre_acesso.py):
+    # nível de sigilo máximo que esta conta poderia alcançar em fazendas de
+    # terceiros. Aditivo e ainda dormente — nenhuma rota lê este campo hoje;
+    # existe só para já ter o dado quando esse controle mais fino entrar em
+    # vigor (ninguém, nem o dono, ganha mais visibilidade por causa dele).
+    nivel_sigilo_maximo: Optional[str] = None
 
 
 class LoginAcesso(SQLModel, table=True):

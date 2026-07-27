@@ -153,6 +153,7 @@ export type Fazenda = {
   id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean;
   tipo_documento?: "cpf" | "cnpj" | null; documento?: string | null; endereco?: string | null; cep?: string | null;
   representante_nome?: string | null; representante_cpf?: string | null;
+  exige_aprovacao_suporte?: boolean;
 };
 export type ModuloComercial =
   | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
@@ -188,7 +189,7 @@ export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: 
 export async function atualizarFazenda(fazendaId: number, dados: {
   nome?: string; cidade?: string; uf?: string;
   tipo_documento?: string; documento?: string; endereco?: string; cep?: string;
-  representante_nome?: string; representante_cpf?: string;
+  representante_nome?: string; representante_cpf?: string; exige_aprovacao_suporte?: boolean;
 }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fazenda"); }
@@ -345,6 +346,35 @@ export const fetchLivroCaixaCowData = (de: string, ate: string): Promise<Movimen
 export const fetchFluxoCaixaCowData = (de: string, ate: string): Promise<FluxoCaixaCowDataMes[]> =>
   _pcGet(`/financeiro/fluxo-caixa?de=${de}&ate=${ate}`);
 export const fetchDreCowData = (ano: number): Promise<DreCowData> => _pcGet(`/financeiro/dre?ano=${ano}`);
+
+// ── Cofre de acesso — pedido/sessão/auditoria de suporte por fazenda-cliente ──
+// Ver backend/fazenda/models/cofre_acesso.py e fazenda/api/routers/cofre_acesso.py.
+export type FazendaCofre = { id: number; nome: string; exige_aprovacao_suporte: boolean };
+export type PedidoAcessoSuporte = {
+  id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; solicitante_nome: string | null;
+  motivo: string; status: "aguardando_aprovacao" | "aprovado" | "negado";
+  aprovador_nome: string | null; pedido_em: string; decidido_em: string | null;
+};
+export type SessaoAcessoSuporte = {
+  id: number; fazenda_id: number; fazenda_nome: string; usuario_id: number; membro_nome: string | null;
+  motivo: string; iniciada_em: string; expira_em: string; encerrada_em: string | null;
+  ativa: boolean; segundos_restantes: number;
+};
+export type AuditoriaAcessoSuporte = {
+  id: number; quando: string; fazenda_id: number; fazenda_nome: string; usuario_id: number;
+  membro_nome: string | null; acao: "entrada" | "saida";
+};
+
+export const fetchMotivosAcessoSuporte = (): Promise<string[]> => _pcGet(`/cofre/motivos`);
+export const fetchFazendasCofre = (): Promise<FazendaCofre[]> => _pcGet(`/cofre/fazendas`);
+export const fetchSessoesAtivasCofre = (): Promise<SessaoAcessoSuporte[]> => _pcGet(`/cofre/sessoes-ativas`);
+export const fetchPedidosRecentesCofre = (): Promise<PedidoAcessoSuporte[]> => _pcGet(`/cofre/pedidos`);
+export const fetchAuditoriaRecenteCofre = (): Promise<AuditoriaAcessoSuporte[]> => _pcGet(`/cofre/auditoria`);
+export const solicitarAcessoCofre = (d: { fazenda_id: number; motivo: string }): Promise<PedidoAcessoSuporte> =>
+  _pcSend(`/cofre/pedidos`, "POST", d);
+export const aprovarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/aprovar`, "POST");
+export const negarPedidoCofre = (id: number): Promise<PedidoAcessoSuporte> => _pcSend(`/cofre/pedidos/${id}/negar`, "POST");
+export const encerrarSessaoCofre = (id: number): Promise<SessaoAcessoSuporte> => _pcSend(`/cofre/sessoes/${id}/encerrar`, "POST");
 
 // Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
 // ZapSign ("Assinar contrato") — ver fazenda/rules/contrato_render.py e

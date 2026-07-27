@@ -45,6 +45,7 @@ def _publico(f: Fazenda) -> dict:
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa,
         "tipo_documento": f.tipo_documento, "documento": f.documento, "endereco": f.endereco, "cep": f.cep,
         "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
+        "exige_aprovacao_suporte": f.exige_aprovacao_suporte,
     }
 
 
@@ -117,6 +118,7 @@ class FazendaEditarIn(BaseModel):
     cep: str | None = None
     representante_nome: str | None = None
     representante_cpf: str | None = None
+    exige_aprovacao_suporte: bool | None = None
 
 
 class VincularUsuarioIn(BaseModel):
@@ -209,6 +211,8 @@ def editar_fazenda(
         fazenda.representante_nome = dados.representante_nome.strip() or None
     if dados.representante_cpf is not None:
         fazenda.representante_cpf = dados.representante_cpf.strip() or None
+    if dados.exige_aprovacao_suporte is not None:
+        fazenda.exige_aprovacao_suporte = dados.exige_aprovacao_suporte
     session.add(fazenda)
     session.commit()
     session.refresh(fazenda)
