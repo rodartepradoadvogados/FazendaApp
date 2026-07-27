@@ -222,9 +222,12 @@ def estado_baixa(
 CATEGORIAS_ALIMENTO_PADRAO = ["Volumoso", "Concentrado", "Mineral"]
 
 
-def _seed_categorias_alimento(session: Session) -> None:
-    existentes = {c.nome for c in session.exec(select(CategoriaAlimento)).all()}
-    novas = [CategoriaAlimento(nome=nome) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
+def _seed_categorias_alimento(session: Session, fazenda_id: int | None = None) -> None:
+    query = select(CategoriaAlimento)
+    if fazenda_id is not None:
+        query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    existentes = {c.nome for c in session.exec(query).all()}
+    novas = [CategoriaAlimento(nome=nome, fazenda_id=fazenda_id) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
     if novas:
         session.add_all(novas)
         session.commit()
@@ -253,18 +256,27 @@ _ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str, str | None]] = [
 ]
 
 
-def seed_alimentos(session: Session) -> None:
+def seed_alimentos(session: Session, fazenda_id: int | None = None) -> None:
     """Idempotente — só cria o que ainda não existe (nunca sobrescreve edição
-    manual). Chamado no startup (ver `main.py`)."""
-    _seed_categorias_alimento(session)
-    categorias = {c.nome: c.id for c in session.exec(select(CategoriaAlimento)).all()}
-    existentes = {a.nome for a in session.exec(select(Alimento)).all()}
-    estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(select(Estoque)).all()}
+    manual). Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`:
+    a lista `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
+    produtos comerciais específicos já usados por essa fazenda."""
+    _seed_categorias_alimento(session, fazenda_id=fazenda_id)
+    categoria_query = select(CategoriaAlimento)
+    alimento_query = select(Alimento)
+    estoque_query = select(Estoque)
+    if fazenda_id is not None:
+        categoria_query = categoria_query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
+        estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
+    categorias = {c.nome: c.id for c in session.exec(categoria_query).all()}
+    existentes = {a.nome for a in session.exec(alimento_query).all()}
+    estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(estoque_query).all()}
     novos_com_vinculo = []
     for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA:
         if nome in existentes:
             continue
-        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome))
+        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id)
         novos_com_vinculo.append((alimento, nome_estoque or nome))
     if novos_com_vinculo:
         session.add_all([a for a, _ in novos_com_vinculo])
@@ -282,8 +294,8 @@ def seed_alimentos(session: Session) -> None:
 def listar_categorias_alimento(
     fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> list[dict]:
-    _seed_categorias_alimento(session)
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _seed_categorias_alimento(session, fazenda_id=fazenda_id)
     query = select(CategoriaAlimento)
     if fazenda_id is not None:
         query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
