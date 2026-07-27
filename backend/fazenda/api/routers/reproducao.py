@@ -781,7 +781,8 @@ class HormonioIatfIn(BaseModel):
 class ProtocoloIatfIn(BaseModel):
     animais: list[str]
     data_d0: date
-    protocolo: str = "Protocolo IATF"
+    # Vazio/ausente -> nome automático "IATF <D0> A <D11>" (ver _nome_auto_iatf).
+    protocolo: str | None = None
     # Medicamentos por dia (ex.: D0 = 1ml SincroCP + 2ml Estron). Opcional —
     # sem eles, o protocolo funciona como antes (sem baixa de estoque).
     hormonios: list[HormonioIatfIn] = []
@@ -803,8 +804,9 @@ def lancar_protocolo_iatf(
     if not dados.animais:
         raise HTTPException(status_code=400, detail="Selecione ao menos um animal")
 
+    nome_protocolo = (dados.protocolo or "").strip() or _nome_auto_iatf(dados.data_d0)
     lancamento = ProtocoloIatfLancamento(
-        nome_protocolo=dados.protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user),
+        nome_protocolo=nome_protocolo, data_d0=dados.data_d0, usuario_id=usuario_id_seguro(user),
         fazenda_id=fazenda_id,
     )
     session.add(lancamento)
@@ -911,7 +913,17 @@ def listar_protocolos_iatf_ativos(
         pendentes = [a for a in aps if not a.realizada]
         d11s = [a for a in aps if a.dia == 11]
 
-        if not pendentes:
+        # Concluído se todas as etapas já foram marcadas realizada OU se o
+        # próprio calendário já passou do D11 previsto — este segundo caso
+        # cobre o protocolo abandonado (ninguém marcou "realizada" em cada
+        # etapa, mas D0/D7/D9/D11 já ficaram todos no passado); sem isto, o
+        # card "IATF atual" da Agenda ficava mostrando para sempre "D0" de um
+        # protocolo que já devia ter virado "última IATF" há muito tempo. Só
+        # se aplica quando o D11 já está cadastrado — sem ele não há data
+        # prevista pra comparar (protocolo ainda em criação/incompleto).
+        data_d11_prevista = max((a.data_prevista for a in d11s), default=None)
+        concluido = not pendentes or (data_d11_prevista is not None and hoje > data_d11_prevista)
+        if concluido:
             if not d11s:
                 continue  # protocolo sem etapa D11 cadastrada — nada a projetar
             data_d11 = max((a.data_realizacao or a.data_prevista) for a in d11s)
@@ -936,11 +948,31 @@ def listar_protocolos_iatf_ativos(
             por_animal.setdefault(ap.numero_matriz, []).append(ap)
         animais_status = []
         for numero, aps_animal in sorted(por_animal.items(), key=lambda item: chave_numero(item[0])):
-            proxima = min((a for a in aps_animal if not a.realizada), key=lambda a: a.dia, default=None)
+            pendentes_animal = [a for a in aps_animal if not a.realizada]
+            if not pendentes_animal:
+                animais_status.append({"numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None})
+                continue
+            # Próxima etapa é sempre calculada pela DATA, não por qual etapa
+            # foi marcada "realizada" — do contrário, uma etapa nunca
+            # confirmada manualmente trava a exibição em "D0"/"D7" para
+            # sempre, mesmo com o calendário já bem à frente (ver #reformular
+            # relatório gerencial de IATF atual). Chega em D11 e fica lá até
+            # ultrapassar data_d11_prevista, quando o grupo inteiro entra no
+            # ramo "concluído" acima.
+            by_dia = {a.dia: a for a in aps_animal}
+            d0, d7, d9, d11 = by_dia.get(0), by_dia.get(7), by_dia.get(9), by_dia.get(11)
+            if d0 and hoje <= d0.data_prevista:
+                proxima = d0
+            elif d7 and hoje <= d7.data_prevista:
+                proxima = d7
+            elif d9 and hoje <= d9.data_prevista:
+                proxima = d9
+            else:
+                proxima = d11 or min(pendentes_animal, key=lambda a: a.dia)
             animais_status.append({
                 "numero_matriz": numero,
-                "etapa_atual": f"D{proxima.dia}" if proxima else "Concluído",
-                "data_etapa_atual": proxima.data_prevista.isoformat() if proxima else None,
+                "etapa_atual": f"D{proxima.dia}",
+                "data_etapa_atual": proxima.data_prevista.isoformat(),
             })
         ativos.append({
             "lancamento_id": lanc.id,
