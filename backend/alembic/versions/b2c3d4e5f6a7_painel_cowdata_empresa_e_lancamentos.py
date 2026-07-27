@@ -8,7 +8,7 @@ cliente, e uma tabela nova e isolada para o livro-caixa interno da CowData
 (Financeiro CowData — independente do Financeiro de qualquer fazenda).
 
 Revision ID: b2c3d4e5f6a7
-Revises: a3f9c1e2d4b6
+Revises: 4e6ea12a6656
 Create Date: 2026-07-27 00:00:00.000000
 
 """
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'b2c3d4e5f6a7'
-down_revision: Union[str, Sequence[str], None] = 'a3f9c1e2d4b6'
+down_revision: Union[str, Sequence[str], None] = '4e6ea12a6656'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
