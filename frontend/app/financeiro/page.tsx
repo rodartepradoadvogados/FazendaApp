@@ -21,6 +21,8 @@ import {
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
+import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
+import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -899,6 +901,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
+  const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -1008,6 +1011,7 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
 
   return (
     <div>
+      <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtros</span>
@@ -1050,9 +1054,11 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
       </div>
 
       {anexarAberto && (
-        <Modal title="Novo lançamento — leitura automática" onClose={() => setAnexarAberto(false)} width="1000px">
-          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
-        </Modal>
+        <ModalDivididoDocumento title="Novo lançamento — leitura automática" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
+          <FormFinanceiro tipo={tipoFiltro === "receita" ? "receita" : "despesa"} responsaveis={RESPONSAVEIS}
+            onArquivoParaLeitura={setArquivoPreview}
+            onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
+        </ModalDivididoDocumento>
       )}
 
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
@@ -1189,7 +1195,11 @@ export function PagamentoLoteView({ contasBancarias, onFeito }: { contasBancaria
               </div>
             </div>
           )}
-          {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+          {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
+              limpa a seleção no mesmo clique, então um sucesso mostrado aqui
+              dentro nunca chegaria a ser visto. Erro continua aqui, perto do
+              botão, contextual (não limpa nada, então fica visível). */}
+          {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
           <button className="btn-primary" title={modoLote === "linha" ? "Baixar cada nota com o seu próprio pagamento" : "Baixar todas as notas selecionadas com este pagamento único"} style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={darBaixaEmLote} disabled={salvando}>
             <Check size={14} /> {salvando ? "Salvando…" : `Dar baixa em ${selecionados.size} lançamento(s)`}
           </button>
@@ -1942,6 +1952,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const [anexarAberto, setAnexarAberto] = useState(false);
+  const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
   const carregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -2025,6 +2036,7 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
 
   return (
     <div>
+      <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       <div className="card mb-4">
         <div className="card-header mb-3 flex items-center justify-between">
           <span className="flex items-center gap-2"><Filter size={14} /> Filtrar notas em aberto</span>
@@ -2056,9 +2068,12 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
       </div>
 
       {anexarAberto && (
-        <Modal title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`} onClose={() => setAnexarAberto(false)} width="1000px">
-          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); }} />
-        </Modal>
+        <ModalDivididoDocumento title={`Novo lançamento — leitura automática (${tipo === "receita" ? "recebimento" : "pagamento"})`}
+          onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
+          <FormFinanceiro tipo={tipo} responsaveis={RESPONSAVEIS}
+            onArquivoParaLeitura={setArquivoPreview}
+            onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); }} />
+        </ModalDivididoDocumento>
       )}
 
       <div style={{ border: "1px solid var(--border)", borderRadius: "8px", overflow: "hidden", marginBottom: "1rem" }}>
@@ -2143,7 +2158,11 @@ export function PagamentoIndividualView({ tipo, contasBancarias, notaAlvoRef, on
               {diferenca < 0 ? `Desconto de ${formatBRL(Math.abs(diferenca))}` : `Acréscimo de ${formatBRL(diferenca)}`} em relação ao valor do lançamento.
             </p>
           )}
-          {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
+          {/* Sucesso vai pro aviso persistente no topo (AvisoSalvo) — este
+              painel inteiro some no mesmo clique que confirma (setNotaId(null)
+              zera notaSelecionada), então um sucesso mostrado aqui dentro
+              nunca chegaria a ser visto. */}
+          {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginTop: "0.6rem" }}>{msg.texto}</p>}
           <div className="flex items-center gap-3 mt-4">
             <button className="btn-primary" title="Registrar a baixa desta nota" onClick={confirmar} disabled={salvando}>
               <Check size={14} /> {confirmando ? "Confirmar mesmo com diferença" : salvando ? "Salvando…" : "Confirmar baixa"}

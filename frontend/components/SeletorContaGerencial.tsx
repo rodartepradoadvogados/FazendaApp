@@ -3,7 +3,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, ChevronRight, Search, Check } from "lucide-react";
 import {
-  ContaPlano, nivelDaConta, estiloNivel, ehFolha, prefixoDoTipo, filhosDiretos, normalizar,
+  ContaPlano, nivelDaConta, estiloNivel, ehFolha, prefixoDoTipo, filhosDiretos, normalizar, caminhoAncestrais,
 } from "@/lib/contaGerencial";
 
 /**
@@ -183,7 +183,14 @@ export function SeletorContaGerencial({
     );
   }
 
-  const rotulo = codigo ? `${codigo} — ${nome}` : nome || "";
+  // Nome + grupo/subgrupo (ex.: "Viagens / Administrativas / Despesa") — o
+  // código sozinho ("3.04.04") não deixa claro a qual grupo a conta pertence,
+  // e nomes parecidos existem em grupos diferentes (ex.: "Alimentação").
+  const ancestraisSelecionada = useMemo(
+    () => (codigo ? caminhoAncestrais(codigo, disponiveis) : []),
+    [codigo, disponiveis],
+  );
+  const rotulo = codigo ? `${codigo} — ${[nome, ...ancestraisSelecionada].join(" / ")}` : nome || "";
 
   const lista = aberto && pos && typeof document !== "undefined" ? createPortal(
     <div
@@ -207,12 +214,21 @@ export function SeletorContaGerencial({
         resultadosBusca.length ? (
           resultadosBusca.map((c) => {
             const selecionada = c.codigo === codigo;
+            const ancestrais = caminhoAncestrais(c.codigo, disponiveis);
             return (
               <button key={c.codigo} type="button" onClick={() => escolher(c)} className="row-clickable"
-                style={{ ...rowBase, background: selecionada ? "var(--pill-active-bg)" : undefined,
+                style={{ ...rowBase, alignItems: "flex-start", background: selecionada ? "var(--pill-active-bg)" : undefined,
                   color: selecionada ? "var(--pill-active-fg)" : "var(--text)" }}>
-                <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0 }}>{c.codigo}</span>
-                <span style={estiloNivel(nivelDaConta(c.codigo))}>{c.nome}</span>
+                <span style={{ color: "var(--text-muted)", fontSize: "0.72rem", flexShrink: 0, marginTop: "0.1rem" }}>{c.codigo}</span>
+                <span style={{ display: "flex", flexDirection: "column" }}>
+                  <span style={estiloNivel(nivelDaConta(c.codigo))}>{c.nome}</span>
+                  {/* Grupo/subgrupo — evita confundir contas de nome parecido em
+                      grupos diferentes (ex.: "Alimentação" administrativa vs.
+                      operacional vs. de funcionário), mesmo princípio do IdeAgri. */}
+                  {ancestrais.length > 0 && (
+                    <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", opacity: 0.85 }}>{ancestrais.join(" / ")}</span>
+                  )}
+                </span>
                 {selecionada && <Check size={13} style={{ marginLeft: "auto", flexShrink: 0 }} />}
               </button>
             );

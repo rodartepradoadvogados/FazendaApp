@@ -68,7 +68,17 @@ function dividirParcelas(valorTotal: number, qtd: number, primeiraData: string):
  * e/ou acréscimo sobre o total, parcelamento, conta bancária, documento e
  * importação de XML (reconhece múltiplos itens e as parcelas da NF-e).
  */
-export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void; onSalvo?: () => void }) {
+export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoParaLeitura }: {
+  tipo: "despesa" | "receita"; responsaveis: string[]; onSujo?: (sujo: boolean) => void;
+  // Recebe a mesma mensagem de sucesso mostrada dentro do formulário — o pai
+  // (contas a pagar/receber) reaproveita pra mostrar a confirmação no topo da
+  // tela depois que o modal fecha (ver AvisoSalvo em app/financeiro/page.tsx).
+  onSalvo?: (mensagem: string) => void;
+  // Avisa o pai assim que um PDF/JPEG/PNG é escolhido pra leitura automática —
+  // usado pelo ModalDivididoDocumento pra mostrar a prévia do documento ao
+  // lado do formulário (ver app/financeiro/page.tsx).
+  onArquivoParaLeitura?: (file: File) => void;
+}) {
   const [opcoes, setOpcoes] = useState<Opcoes>(OPCOES_VAZIAS);
   const [planoContas, setPlanoContas] = useState<ContaPlano[]>([]);
   const carregarPlano = () => fetchPlanoContas().then(setPlanoContas).catch(() => {});
@@ -458,11 +468,11 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       const dados = await lerDocumentoFinanceiro(file);
       aplicarExtracaoDocumento(dados);
       setXmlAberto(false);
-      // O PDF/JPEG/PNG que acabou de ser lido (a nota/recibo em si) também
-      // fica marcado para subir como anexo do lançamento — antes disso o
-      // arquivo era usado só para preencher os campos e depois descartado,
-      // então não sobrava nenhum documento anexado ao lançamento salvo.
-      setBoletoFiles((arr) => [...arr, file]);
+      // O documento usado pra leitura automática NÃO fica anexado ao
+      // lançamento por padrão (só os dados extraídos ficam) — a prévia mostra
+      // um aviso disso (ver ModalDivididoDocumento). Quem quiser guardar o
+      // arquivo mesmo assim usa o dropzone "documentos deste lançamento"
+      // abaixo (mesmo arquivo, arraste de novo — ou outro).
     } catch (e: any) {
       setErroXml(e.message || "Erro ao ler o documento");
     } finally {
@@ -472,6 +482,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
 
   function tratarArquivo(file: File) {
     if (file.type === "application/pdf" || file.type === "image/jpeg" || file.type === "image/png") {
+      onArquivoParaLeitura?.(file);
       lerDocumentoAnexado(file);
     } else {
       file.text().then(importarXml);
@@ -573,7 +584,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo }: { tipo: 
       }
       limpar();
       onSujo?.(false);
-      onSalvo?.();
+      onSalvo?.(`Lançamento ${r.numero_lancamento} salvo com sucesso.${avisoAnexo}`);
     } catch (e: any) {
       setErro(e.message || "Erro ao salvar lançamento");
     } finally {
