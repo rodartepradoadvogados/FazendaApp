@@ -83,7 +83,10 @@ export async function fetchAuditoriaAtividades(params: { usuario_id: number; dat
   if (!res.ok) throw new Error(`Auditoria atividades error: ${res.status}`);
   return res.json();
 }
-export async function criarUsuario(dados: { username: string; senha: string; pessoa_id: number; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean }) {
+export async function criarUsuario(dados: {
+  username: string; senha: string; papel: string; permissoes: string[]; email?: string; pode_publicar_materias_blog?: boolean;
+  pessoa_id?: number; nome?: string; // uma das duas: pessoa_id (fazenda) ou nome (conta sem fazenda, ex.: equipe CowData)
+}) {
   const res = await fetch(`${API}/auth/usuarios`, {
     method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
     body: JSON.stringify(dados),
@@ -146,7 +149,10 @@ export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
 
 // ── Planos comerciais e contrato por fazenda (Fase 2A, dono only) ──
 // Ver backend/fazenda/models/planos.py e fazenda/api/routers/fazendas.py.
-export type Fazenda = { id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean };
+export type Fazenda = {
+  id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean;
+  documento?: string | null; endereco?: string | null; representante_nome?: string | null; representante_cpf?: string | null;
+};
 export type ModuloComercial =
   | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
   | "planejamento" | "pedidos" | "estoque" | "alimentacao" | "agricultura" | "consultor";
@@ -176,6 +182,14 @@ export async function fetchFazendas(): Promise<Fazenda[]> {
 export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: string }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar fazenda"); }
+  return res.json();
+}
+export async function atualizarFazenda(fazendaId: number, dados: {
+  nome?: string; cidade?: string; uf?: string;
+  documento?: string; endereco?: string; representante_nome?: string; representante_cpf?: string;
+}): Promise<Fazenda> {
+  const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fazenda"); }
   return res.json();
 }
 export async function fetchContratoFazenda(fazendaId: number): Promise<ContratoFazenda> {

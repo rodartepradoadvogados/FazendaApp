@@ -45,7 +45,12 @@ class LoginIn(BaseModel):
 class NovoUsuario(BaseModel):
     username: str
     senha: str
-    pessoa_id: int
+    # Uma das duas: pessoa_id (funcionário/consultor da fazenda, já cadastrado
+    # em Configurações > Cadastro > Pessoas) ou nome (conta sem vínculo com
+    # nenhuma fazenda — ex.: equipe da própria CowData, criada em Painel
+    # CowData > Equipe — ver _validar_pessoa_ou_nome).
+    pessoa_id: int | None = None
+    nome: str | None = None
     papel: str = "operador"
     permissoes: list[str] = []
     email: str | None = None
@@ -83,9 +88,11 @@ def _publico(u: Usuario, session: Session | None = None) -> dict:
 
 
 def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario_id: int | None = None) -> Pessoa:
-    """Toda conta de login exige uma Pessoa já cadastrada (Configurações >
-    Cadastro > Pessoas) — nunca um nome livre — e cada pessoa só pode estar
-    vinculada a um único usuário por vez."""
+    """Login vinculado a uma Pessoa já cadastrada (Configurações > Cadastro >
+    Pessoas) — cada pessoa só pode estar vinculada a um único usuário por vez.
+    Ver _validar_pessoa_ou_nome: essa trava só vale para quem escolhe vincular
+    a uma pessoa da fazenda; uma conta sem fazenda (equipe CowData) usa nome
+    livre e não passa por aqui."""
     pessoa = session.get(Pessoa, pessoa_id)
     if not pessoa:
         raise HTTPException(status_code=404, detail="Pessoa não encontrada. Cadastre a pessoa antes de criar o login.")
@@ -93,6 +100,21 @@ def _validar_pessoa_do_usuario(session: Session, pessoa_id: int, ignorar_usuario
     if ja_vinculado and ja_vinculado.id != ignorar_usuario_id:
         raise HTTPException(status_code=400, detail=f"Esta pessoa já está vinculada ao usuário \"{ja_vinculado.username}\".")
     return pessoa
+
+
+def _validar_pessoa_ou_nome(session: Session, pessoa_id: int | None, nome: str | None, ignorar_usuario_id: int | None = None) -> tuple[int | None, str]:
+    """Resolve o par (pessoa_id, nome) de um NovoUsuario/EditarUsuario: com
+    pessoa_id, valida e usa o nome da Pessoa (trava antiga, inalterada); sem
+    pessoa_id, exige `nome` direto — caminho para contas sem vínculo com
+    nenhuma fazenda (ex.: equipe da CowData, ver fazenda/api/routers/auth.py
+    e app/painel-cowdata/equipe)."""
+    if pessoa_id is not None:
+        pessoa = _validar_pessoa_do_usuario(session, pessoa_id, ignorar_usuario_id)
+        return pessoa.id, pessoa.nome
+    nome_limpo = (nome or "").strip()
+    if not nome_limpo:
+        raise HTTPException(status_code=400, detail="Informe pessoa_id (funcionário da fazenda) ou nome (conta sem fazenda).")
+    return None, nome_limpo
 
 
 def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
@@ -272,9 +294,9 @@ def listar_modulos(_: Usuario = Depends(get_current_user)) -> list[str]:
 def criar_usuario(dados: NovoUsuario, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> dict:
     if session.exec(select(Usuario).where(Usuario.username == dados.username)).first():
         raise HTTPException(status_code=400, detail="Usuário já existe")
-    pessoa = _validar_pessoa_do_usuario(session, dados.pessoa_id)
+    pessoa_id, nome = _validar_pessoa_ou_nome(session, dados.pessoa_id, dados.nome)
     perms = "" if dados.papel == "admin" else ",".join(m for m in dados.permissoes if m in MODULOS)
-    novo = Usuario(username=dados.username, nome=pessoa.nome, pessoa_id=pessoa.id, senha_hash=hash_senha(dados.senha),
+    novo = Usuario(username=dados.username, nome=nome, pessoa_id=pessoa_id, senha_hash=hash_senha(dados.senha),
                    papel=dados.papel, permissoes=perms, email=(dados.email or "").strip() or None,
                    pode_publicar_materias_blog=dados.pode_publicar_materias_blog)
     session.add(novo)

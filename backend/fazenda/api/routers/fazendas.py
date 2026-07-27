@@ -38,7 +38,11 @@ TAMANHO_MAXIMO_ANEXO_CONTRATO = 15 * 1024 * 1024  # 15 MB
 
 
 def _publico(f: Fazenda) -> dict:
-    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa}
+    return {
+        "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa,
+        "documento": f.documento, "endereco": f.endereco,
+        "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
+    }
 
 
 def provisionar_fazenda_nova(session: Session, fazenda_id: int) -> None:
@@ -88,6 +92,16 @@ class FazendaIn(BaseModel):
     uf: str | None = None
 
 
+class FazendaEditarIn(BaseModel):
+    nome: str | None = None
+    cidade: str | None = None
+    uf: str | None = None
+    documento: str | None = None
+    endereco: str | None = None
+    representante_nome: str | None = None
+    representante_cpf: str | None = None
+
+
 class VincularUsuarioIn(BaseModel):
     usuario_id: int | None = None
     username: str | None = None  # alternativa a usuario_id — resolvido pelo backend
@@ -135,6 +149,40 @@ def criar_fazenda(dados: FazendaIn, _: Usuario = Depends(exigir_dono), session: 
     session.commit()
     session.refresh(fazenda)
     provisionar_fazenda_nova(session, fazenda.id)
+    return _publico(fazenda)
+
+
+@router.put("/{fazenda_id}")
+def editar_fazenda(
+    fazenda_id: int, dados: FazendaEditarIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
+) -> dict:
+    """Edita nome/cidade/uf e os dados jurídicos (documento, endereço,
+    representante) usados como padrão no contrato-modelo e na cobrança —
+    ver _publico/render_contrato. Todo campo é opcional: só atualiza o que
+    veio preenchido."""
+    fazenda = session.get(Fazenda, fazenda_id)
+    if not fazenda:
+        raise HTTPException(status_code=404, detail="Fazenda não encontrada")
+    if dados.nome is not None:
+        nome = dados.nome.strip()
+        if not nome:
+            raise HTTPException(status_code=400, detail="Nome da fazenda é obrigatório")
+        fazenda.nome = nome
+    if dados.cidade is not None:
+        fazenda.cidade = dados.cidade.strip() or None
+    if dados.uf is not None:
+        fazenda.uf = dados.uf.strip() or None
+    if dados.documento is not None:
+        fazenda.documento = dados.documento.strip() or None
+    if dados.endereco is not None:
+        fazenda.endereco = dados.endereco.strip() or None
+    if dados.representante_nome is not None:
+        fazenda.representante_nome = dados.representante_nome.strip() or None
+    if dados.representante_cpf is not None:
+        fazenda.representante_cpf = dados.representante_cpf.strip() or None
+    session.add(fazenda)
+    session.commit()
+    session.refresh(fazenda)
     return _publico(fazenda)
 
 
@@ -510,10 +558,10 @@ def baixar_modelo_contrato(
     cidade_foro: str | None = None, estado_foro: str | None = None,
     _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
 ) -> Response:
-    """Minuta do contrato pronta pra ler/imprimir/assinar à mão — os campos
-    de query (documento/endereço/representante/foro) são opcionais: sem eles
-    o modelo sai com "[PREENCHER]" nos campos que dependem de dado que a
-    Fazenda ainda não cadastra (CNPJ/CPF, endereço completo, representante)."""
+    """Minuta do contrato pronta pra ler/imprimir/assinar à mão — os campos de
+    query (documento/endereço/representante/foro) são opcionais e servem só
+    pra sobrescrever pontualmente; o padrão vem do cadastro da fazenda
+    (Fazendas > editar) — sem nenhum dos dois, o modelo sai com "[PREENCHER]"."""
     fazenda = session.get(Fazenda, fazenda_id)
     if not fazenda:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
@@ -521,7 +569,9 @@ def baixar_modelo_contrato(
     plano, modulos, preco_mensal, ciclo = _dados_para_minuta(session, fazenda)
     html = render_contrato(
         "html", fazenda, empresa, plano, modulos, preco_mensal, ciclo,
-        documento, endereco, representante_nome, representante_cpf, cidade_foro, estado_foro,
+        documento or fazenda.documento, endereco or fazenda.endereco,
+        representante_nome or fazenda.representante_nome, representante_cpf or fazenda.representante_cpf,
+        cidade_foro, estado_foro,
     )
     return Response(
         content=html, media_type="text/html",
@@ -543,7 +593,10 @@ def assinar_contrato_zapsign(
         raise HTTPException(status_code=400, detail="Seu usuário precisa de um e-mail cadastrado para assinar via ZapSign")
     empresa = session.exec(select(EmpresaOperadora)).first()
     plano, modulos, preco_mensal, ciclo = _dados_para_minuta(session, fazenda)
-    markdown = render_contrato("md", fazenda, empresa, plano, modulos, preco_mensal, ciclo)
+    markdown = render_contrato(
+        "md", fazenda, empresa, plano, modulos, preco_mensal, ciclo,
+        fazenda.documento, fazenda.endereco, fazenda.representante_nome, fazenda.representante_cpf,
+    )
     try:
         resposta = zapsign.criar_documento_para_assinatura(
             f"Contrato CowData — {fazenda.nome}", markdown, user.nome or user.username, user.email,

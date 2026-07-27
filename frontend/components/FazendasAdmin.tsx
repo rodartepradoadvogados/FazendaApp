@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, ShieldCheck, Users, UserPlus, Briefcase, Download, PenLine, QrCode, Receipt, Repeat } from "lucide-react";
 import {
-  fetchFazendas, criarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
+  fetchFazendas, criarFazenda, atualizarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
   urlAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
   fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
@@ -80,6 +80,9 @@ export default function FazendasAdmin() {
   const [novaUf, setNovaUf] = useState("");
   const [criando, setCriando] = useState(false);
 
+  const [editForm, setEditForm] = useState({ nome: "", cidade: "", uf: "", documento: "", endereco: "", representante_nome: "", representante_cpf: "" });
+  const [salvandoDados, setSalvandoDados] = useState(false);
+
   const [usuarios, setUsuarios] = useState<UsuarioVinculado[] | null>(null);
   const [novoUsername, setNovoUsername] = useState("");
   const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor">("funcionario");
@@ -135,6 +138,27 @@ export default function FazendasAdmin() {
     setErro(null);
     setMsg(null);
     carregarContrato(id);
+    const f = fazendas?.find((x) => x.id === id);
+    if (f) {
+      setEditForm({
+        nome: f.nome, cidade: f.cidade || "", uf: f.uf || "",
+        documento: f.documento || "", endereco: f.endereco || "",
+        representante_nome: f.representante_nome || "", representante_cpf: f.representante_cpf || "",
+      });
+      // Pré-preenche o pagador da cobrança com o representante/documento já
+      // salvos da fazenda — evita redigitar toda vez (ver "Complementar" abaixo).
+      setPagador({ pagador_nome: f.representante_nome || f.nome, pagador_documento: f.documento || "", pagador_email: "" });
+    }
+  }
+
+  async function salvarDadosFazenda() {
+    if (selecionada == null) return;
+    setSalvandoDados(true); setErro(null); setMsg(null);
+    try {
+      const atualizada = await atualizarFazenda(selecionada, editForm);
+      setFazendas((atuais) => atuais?.map((f) => (f.id === selecionada ? atualizada : f)) ?? null);
+      setMsg("Dados da fazenda atualizados.");
+    } catch (e: any) { setErro(e.message); } finally { setSalvandoDados(false); }
   }
 
   const temModuloConsultor = contrato?.modulos.some((m) => m.modulo === "consultor" && m.ativo) ?? false;
@@ -308,6 +332,40 @@ export default function FazendasAdmin() {
             </div>
           )}
         </div>
+
+        {selecionada != null && (
+          <div className="card" style={{ flex: "1 1 300px", minWidth: "280px" }}>
+            <div className="card-header mb-2">Dados da fazenda</div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.75rem", marginBottom: "0.6rem" }}>
+              Nome, endereço, CPF/CNPJ e representante — usados como padrão no contrato-modelo e na cobrança.
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              <label style={lbl}>Nome</label>
+              <input style={inp} value={editForm.nome} onChange={(e) => setEditForm((s) => ({ ...s, nome: e.target.value }))} />
+              <div className="flex gap-2">
+                <div style={{ flex: 1 }}>
+                  <label style={lbl}>Cidade</label>
+                  <input style={inp} value={editForm.cidade} onChange={(e) => setEditForm((s) => ({ ...s, cidade: e.target.value }))} />
+                </div>
+                <div style={{ width: "5rem" }}>
+                  <label style={lbl}>UF</label>
+                  <input style={inp} value={editForm.uf} onChange={(e) => setEditForm((s) => ({ ...s, uf: e.target.value }))} />
+                </div>
+              </div>
+              <label style={lbl}>CPF/CNPJ</label>
+              <input style={inp} value={editForm.documento} onChange={(e) => setEditForm((s) => ({ ...s, documento: e.target.value }))} />
+              <label style={lbl}>Endereço completo</label>
+              <input style={inp} value={editForm.endereco} onChange={(e) => setEditForm((s) => ({ ...s, endereco: e.target.value }))} />
+              <label style={lbl}>Nome do representante</label>
+              <input style={inp} value={editForm.representante_nome} onChange={(e) => setEditForm((s) => ({ ...s, representante_nome: e.target.value }))} />
+              <label style={lbl}>CPF do representante</label>
+              <input style={inp} value={editForm.representante_cpf} onChange={(e) => setEditForm((s) => ({ ...s, representante_cpf: e.target.value }))} />
+              <button onClick={salvarDadosFazenda} disabled={salvandoDados} className="btn-primary" style={{ fontSize: "0.8rem", padding: "0.4rem 0.8rem", marginTop: "0.3rem" }}>
+                {salvandoDados ? "Salvando…" : "Salvar dados da fazenda"}
+              </button>
+            </div>
+          </div>
+        )}
 
         {selecionada != null && contrato && (
           <div className="card" style={{ flex: "1 1 420px", minWidth: "360px" }}>
