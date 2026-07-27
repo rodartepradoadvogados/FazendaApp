@@ -1,6 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, Building2 } from "lucide-react";
+import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink } from "lucide-react";
 import { podeModulo, ehAdmin, ehDono } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
@@ -10,12 +10,11 @@ import { ABAS_CENTRAL_SEMEN, type AbaCentralSemen } from "@/components/CentralSe
 import ImportarDados from "@/components/ImportarDados";
 import ParametrosFinanceiros from "@/components/ParametrosFinanceiros";
 import NewsAdmin from "@/components/NewsAdmin";
-import FazendasAdmin from "@/components/FazendasAdmin";
 import { AprovacoesView } from "@/components/AprovacoesView";
 import { AparenciaSelector } from "@/components/AparenciaSelector";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 
-type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "fazendas" | "aprovacoes" | "aparencia";
+type Aba = "cadastro" | "parametros" | "upload" | "importar" | "news" | "aprovacoes" | "aparencia";
 type AbaParametros = "gerais" | "financeiro";
 // Sub-abas de "Parâmetros" — "financeiro" só entra se o módulo financeiro estiver liberado (checado no useMemo abaixo).
 const ABAS_PARAMETROS: [AbaParametros, string, any][] = [
@@ -43,7 +42,6 @@ export default function ConfiguracoesPage() {
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
     if (ehDono()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
-    if (ehDono()) abas.push({ id: "fazendas", label: "Fazendas", icon: Building2, title: "Planos, contratos e anexos das fazendas clientes" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });
@@ -108,6 +106,23 @@ export default function ConfiguracoesPage() {
       <div className="mb-2">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Settings size={22} style={{ color: "var(--dourado)" }} /> Configurações</h1>
       </div>
+      {ehDono() && (
+        <a href="/painel-cowdata" target="_blank" rel="noopener noreferrer"
+          className="mb-4 flex items-center justify-between"
+          style={{
+            border: "1px solid var(--dourado)", borderRadius: "10px", padding: "0.9rem 1.1rem", textDecoration: "none",
+            background: "color-mix(in srgb, var(--dourado) 8%, transparent)",
+          }}>
+          <div>
+            <div className="flex items-center gap-2" style={{ color: "var(--dourado)", fontWeight: 700, fontSize: "0.92rem" }}>
+              <ExternalLink size={16} /> Painel Mestre CowData
+            </div>
+            <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.15rem" }}>
+              Administração da própria CowData — fazendas-clientes, assinaturas, financeiro e equipe. Abre em uma nova guia.
+            </p>
+          </div>
+        </a>
+      )}
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "aparencia" && <div className="px-6"><AparenciaSelector variant="site" /></div>}
         {aba === "cadastro" && (
@@ -122,7 +137,6 @@ export default function ConfiguracoesPage() {
         {aba === "upload" && <UploadPage />}
         {aba === "importar" && <ImportarDados />}
         {aba === "news" && <NewsAdmin />}
-        {aba === "fazendas" && <div className="px-6"><FazendasAdmin /></div>}
         {aba === "aprovacoes" && <div className="px-6"><AprovacoesView /></div>}
       </div>
     </div>
