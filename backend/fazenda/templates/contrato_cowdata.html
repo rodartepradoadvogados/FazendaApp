@@ -4,26 +4,98 @@
 <meta charset="utf-8">
 <title>Contrato de Licença de Uso e Suporte — CowData</title>
 <style>
-  @page { size: A4; margin: 2.2cm 2cm; }
-  body { font-family: Georgia, "Times New Roman", serif; font-size: 11.5pt; line-height: 1.5; color: #1a1a1a; max-width: 780px; margin: 0 auto; padding: 2rem 1rem; }
-  h1 { font-size: 15pt; text-align: center; margin-bottom: 0.2rem; }
-  h2 { font-size: 12.5pt; margin-top: 1.6rem; margin-bottom: 0.4rem; border-bottom: 1px solid #999; padding-bottom: 0.15rem; }
-  .subtitulo { text-align: center; font-size: 9.5pt; color: #555; margin-bottom: 1.6rem; }
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sora:wght@400;600;700;800&display=swap');
+
+  :root {
+    --wine: #3A0F1A;
+    --gold: #E0A63C;
+    --deepgold: #B9831F;
+    --cream: #F3E7D3;
+    --graphite: #150B10;
+  }
+
+  @page { size: A4; margin: 0; }
+
+  body {
+    font-family: "Inter", "Segoe UI", Arial, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: var(--graphite);
+    margin: 0;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .faixa-topo { height: 2px; width: 100%; display: flex; }
+  .faixa-topo .wine { width: 66.66%; background: var(--wine); }
+  .faixa-topo .gold { width: 33.34%; background: var(--gold); }
+
+  .cabecalho {
+    padding: 1.6cm 2cm 0.8cm 2cm;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .logo-lockup { display: flex; align-items: center; gap: 0.5rem; }
+  .logo-tile {
+    background: var(--graphite); border-radius: 8px; width: 34px; height: 34px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+  }
+  .wordmark { font-family: "Sora", sans-serif; font-weight: 700; font-size: 1.3rem; letter-spacing: -0.01em; }
+  .wordmark .cow { color: var(--graphite); }
+  .wordmark .data { color: var(--gold); }
+  .subtitulo-marca { text-align: right; font-size: 8pt; color: #9ca3af; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; }
+
+  .corpo { padding: 0 2cm; max-width: 780px; margin: 0 auto; }
+
+  h1 { font-family: "Sora", sans-serif; font-size: 14.5pt; text-align: center; margin: 1.4rem 0 0.2rem; color: var(--wine); }
+  h2 { font-family: "Sora", sans-serif; font-size: 12pt; margin-top: 1.6rem; margin-bottom: 0.4rem; color: var(--wine); border-bottom: 1px solid var(--gold); padding-bottom: 0.2rem; }
+  .subtitulo { text-align: center; font-size: 9.5pt; color: #6b7280; margin-bottom: 1.6rem; }
   .qualificacao { margin: 0.6rem 0; text-align: justify; }
   .clausula { text-align: justify; margin: 0.5rem 0; }
   .clausula b { font-weight: 700; }
-  .nota { background: #fff6df; border-left: 3px solid #b8860b; padding: 0.4rem 0.7rem; margin: 0.5rem 0; font-size: 10pt; font-style: italic; }
+  .nota { background: var(--cream); border-left: 3px solid var(--deepgold); padding: 0.4rem 0.7rem; margin: 0.5rem 0; font-size: 9.5pt; font-style: italic; color: #5a4222; }
   .preencher { background: #ffe9e9; padding: 0 0.2rem; }
-  table.planos { width: 100%; border-collapse: collapse; margin: 0.6rem 0; font-size: 10.5pt; }
-  table.planos th, table.planos td { border: 1px solid #bbb; padding: 0.3rem 0.5rem; text-align: left; }
-  table.planos th { background: #f0f0f0; }
+  table.planos { width: 100%; border-collapse: collapse; margin: 0.6rem 0; font-size: 10pt; }
+  table.planos th, table.planos td { border: 1px solid #e5e7eb; padding: 0.35rem 0.55rem; text-align: left; }
+  table.planos th { background: var(--cream); color: var(--wine); font-family: "Sora", sans-serif; font-weight: 600; }
   .assinaturas { margin-top: 3rem; display: flex; justify-content: space-between; gap: 2rem; }
   .assinatura-bloco { flex: 1; text-align: center; }
-  .linha-assinatura { border-top: 1px solid #333; margin-top: 3rem; padding-top: 0.3rem; }
+  .linha-assinatura { border-top: 1px solid var(--graphite); margin-top: 3rem; padding-top: 0.3rem; }
+
+  .rodape {
+    margin-top: 2.5rem;
+    padding: 0.9rem 2cm 1.4cm 2cm;
+    border-top: 1px solid #e5e7eb;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 8pt;
+    color: #9ca3af;
+  }
+  .rodape .contato { color: var(--wine); font-weight: 600; }
+
   @media print { .nota { display: none; } }
 </style>
 </head>
 <body>
+
+<div class="faixa-topo"><div class="wine"></div><div class="gold"></div></div>
+
+<header class="cabecalho">
+  <div class="logo-lockup">
+    <div class="logo-tile">
+      <svg viewBox="0 0 100 100" width="19" height="19">
+        <path d="M 15 75 Q 35 30, 50 30 T 85 75" fill="none" stroke="#E0A63C" stroke-width="8" stroke-linecap="round"/>
+        <circle cx="50" cy="30" r="5" fill="#F3E7D3"/>
+      </svg>
+    </div>
+    <div class="wordmark"><span class="cow">Cow</span><span class="data">Data</span></div>
+  </div>
+  <div class="subtitulo-marca">Gestão de Pecuária Leiteira</div>
+</header>
+
+<div class="corpo">
 
 <h1>CONTRATO DE LICENÇA DE USO DE SOFTWARE, HOSPEDAGEM E SUPORTE TÉCNICO — SISTEMA COWDATA</h1>
 <p class="subtitulo">Instrumento particular de prestação de serviços de tecnologia para gestão de fazenda leiteira</p>
@@ -123,6 +195,13 @@ têm entre si justo e contratado o presente instrumento, que se rege pelas cláu
     <div class="linha-assinatura">{{ fazenda_nome }} — CONTRATANTE</div>
   </div>
 </div>
+
+</div>
+
+<footer class="rodape">
+  <div><span class="contato">contato@cowdata.com.br</span> &nbsp;•&nbsp; www.cowdata.com.br</div>
+  <div>{{ empresa_endereco or "Endereço a definir - Brasil" }}</div>
+</footer>
 
 </body>
 </html>
