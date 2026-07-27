@@ -1,11 +1,39 @@
-// Exportação de relatórios/listas em Excel (.xlsx) e PDF — cabeçalho padronizado
-// com nome da fazenda, título do relatório, usuário logado e data de geração.
+// Exportação de relatórios/listas em Excel (.xlsx) e PDF — cabeçalho e tabelas
+// no padrão visual CowData (ver public/brand/cowdata-mark.svg e o mockup de
+// relatório aprovado), usado em todas as exportações do sistema.
 import { getUsuario } from "./api";
 
 const NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra";
-const COR_VINHO = "5E1A2E";
-const COR_VINHO_RGB: [number, number, number] = [94, 26, 46];
-const COR_DOURADO_RGB: [number, number, number] = [184, 134, 11];
+
+const COR_VINHO = "3A0F1A";
+const COR_VINHO_RGB: [number, number, number] = [58, 15, 26];
+const COR_DOURADO_RGB: [number, number, number] = [224, 166, 60];
+const COR_GRAFITE_RGB: [number, number, number] = [21, 11, 16];
+const COR_MUTED_RGB: [number, number, number] = [107, 114, 128];
+const COR_MUTED_CLARO_RGB: [number, number, number] = [156, 163, 175];
+const COR_LINHA_RGB: [number, number, number] = [229, 231, 235];
+
+// Cores por categoria de seção (mesma paleta do mockup "Ficha do Animal") —
+// aplicadas ao pontinho ao lado do título de cada seção de um relatório em
+// várias partes, para diferenciar visualmente o grupo a que ela pertence.
+const CATEGORIAS: Record<string, [number, number, number]> = {
+  repro: [139, 127, 240],
+  saude: [78, 122, 90],
+  alimentacao: [224, 166, 60],
+  manejo: [91, 143, 176],
+  financeiro: [122, 34, 51],
+  estoque: [201, 138, 42],
+};
+
+function corSecao(titulo: string): [number, number, number] {
+  const t = titulo.toLowerCase();
+  if (/reprod|servi[çc]o|iatf|insemin|cio|parto|cobertura/.test(t)) return CATEGORIAS.repro;
+  if (/sanit|sa[úu]de|vacina|exame|doen[çc]a|trat/.test(t)) return CATEGORIAS.saude;
+  if (/aliment|dieta|trato/.test(t)) return CATEGORIAS.alimentacao;
+  if (/financ|pagamento|receb|conta a |folha/.test(t)) return CATEGORIAS.financeiro;
+  if (/estoque|insumo|compra/.test(t)) return CATEGORIAS.estoque;
+  return CATEGORIAS.manejo;
+}
 
 export type ColunaExport = { header: string; key: string; width?: number };
 
@@ -28,6 +56,81 @@ function baixarBlob(blob: Blob, nomeArquivo: string) {
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+// Marca CowData rasterizada (public/brand/cowdata-mark.svg), carregada uma
+// única vez por sessão e reutilizada no cabeçalho de todo PDF exportado.
+let logoDataUrlPromise: Promise<string | null> | null = null;
+async function carregarLogo(): Promise<string | null> {
+  if (!logoDataUrlPromise) {
+    logoDataUrlPromise = fetch("/brand/cowdata-mark-tile.png")
+      .then((r) => r.blob())
+      .then(
+        (blob) =>
+          new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(blob);
+          }),
+      )
+      .catch(() => null);
+  }
+  return logoDataUrlPromise;
+}
+
+/** Cabeçalho padrão de PDF: fazenda (eyebrow) + título + subtítulo à
+ * esquerda; marca CowData + autor/data à direita; linha de base sutil. */
+function desenharCabecalhoPDF(
+  doc: import("jspdf").jsPDF,
+  opts: { titulo: string; subtitulo?: string; usuario?: string; dataStr: string; logo: string | null },
+) {
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const left = 14;
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(7.5);
+  doc.setTextColor(...COR_MUTED_CLARO_RGB);
+  doc.text(NOME_FAZENDA.toUpperCase(), left, 12, { charSpace: 0.6 });
+
+  doc.setFont("helvetica", "bold");
+  doc.setFontSize(15);
+  doc.setTextColor(...COR_VINHO_RGB);
+  doc.text(opts.titulo, left, 19.5);
+
+  if (opts.subtitulo) {
+    doc.setFont("helvetica", "normal");
+    doc.setFontSize(8.5);
+    doc.setTextColor(...COR_MUTED_RGB);
+    doc.text(opts.subtitulo, left, 24.5);
+  }
+
+  const right = pageWidth - 14;
+  if (opts.logo) {
+    const tile = 8;
+    doc.addImage(opts.logo, "PNG", right - tile, 6, tile, tile);
+  }
+  doc.setFont("helvetica", "normal");
+  doc.setFontSize(7);
+  doc.setTextColor(...COR_MUTED_CLARO_RGB);
+  doc.text(`Gerado por ${opts.usuario || "—"}`, right, 18, { align: "right" });
+  doc.text(opts.dataStr, right, 21.5, { align: "right" });
+
+  doc.setDrawColor(...COR_LINHA_RGB);
+  doc.setLineWidth(0.3);
+  doc.line(left, 27.5, pageWidth - 14, 27.5);
+}
+
+/** Estilo de tabela padrão: cabeçalho maiúsculo cinza sem preenchimento,
+ * linhas separadas só por um traço inferior claro — sem blocos de cor. */
+const ESTILO_TABELA = {
+  theme: "plain" as const,
+  styles: { fontSize: 8, cellPadding: 2.2, textColor: [55, 65, 81] as [number, number, number], lineColor: COR_LINHA_RGB, lineWidth: { bottom: 0.15, top: 0, left: 0, right: 0 } },
+  headStyles: { textColor: COR_MUTED_RGB, fontStyle: "bold" as const, fontSize: 7, lineColor: COR_MUTED_CLARO_RGB, lineWidth: { bottom: 0.3, top: 0, left: 0, right: 0 } },
+};
+
+function colunasMaiusculas(colunas: ColunaExport[]): ColunaExport[] {
+  return colunas.map((c) => ({ ...c, header: c.header.toUpperCase() }));
 }
 
 export async function exportarExcel(
@@ -91,36 +194,19 @@ export async function exportarPDF(
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
+  const logo = await carregarLogo();
   const doc = new jsPDF({ orientation: colunas.length > 6 ? "landscape" : "portrait" });
   const dataStr = new Date().toLocaleDateString("pt-BR");
-  const pageWidth = doc.internal.pageSize.getWidth();
 
-  const desenharCabecalho = () => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...COR_VINHO_RGB);
-    doc.text(NOME_FAZENDA.toUpperCase(), pageWidth / 2, 12, { align: "center" });
-    doc.setFontSize(11);
-    doc.setTextColor(30, 30, 30);
-    doc.text(titulo, pageWidth / 2, 19, { align: "center" });
-    doc.setFont("helvetica", "italic");
-    doc.setFontSize(8);
-    doc.setTextColor(120, 120, 120);
-    doc.text(`Gerado por ${usuario?.nome || "—"} em ${dataStr}`, pageWidth / 2, 24, { align: "center" });
-    doc.setDrawColor(...COR_DOURADO_RGB);
-    doc.setLineWidth(0.5);
-    doc.line(14, 26.5, pageWidth - 14, 26.5);
-  };
+  const cabecalho = () => desenharCabecalhoPDF(doc, { titulo, usuario: usuario?.nome, dataStr, logo });
 
   autoTable(doc, {
-    head: [colunas.map((c) => c.header)],
+    ...ESTILO_TABELA,
+    head: [colunasMaiusculas(colunas).map((c) => c.header)],
     body: linhas.map((linha) => colunas.map((c) => formatarValor(linha[c.key]))),
-    startY: 30,
-    margin: { top: 30 },
-    styles: { fontSize: 8, cellPadding: 2 },
-    headStyles: { fillColor: COR_VINHO_RGB, textColor: 255 },
-    alternateRowStyles: { fillColor: [245, 240, 235] },
-    didDrawPage: desenharCabecalho,
+    startY: 31,
+    margin: { top: 31 },
+    didDrawPage: cabecalho,
   });
 
   doc.save(`${nomeArquivoBase}_${dataHoje()}.pdf`);
@@ -207,7 +293,9 @@ export async function exportarMultiExcel(
  * única do animal. Pode gerar quantas páginas forem necessárias: cada seção
  * só entra se tiver alguma linha, e o cabeçalho da fazenda é redesenhado em
  * toda página nova (seja por quebra automática de uma tabela grande, seja
- * por falta de espaço para o título da próxima seção).
+ * por falta de espaço para o título da próxima seção). Cada título de seção
+ * leva um pontinho colorido por categoria (reprodução/sanidade/alimentação/
+ * financeiro/estoque/manejo), no mesmo padrão do relatório-modelo aprovado.
  */
 export async function exportarFichaPDF(
   titulo: string,
@@ -218,64 +306,47 @@ export async function exportarFichaPDF(
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
+  const logo = await carregarLogo();
   const doc = new jsPDF({ orientation: "portrait" });
   const dataStr = new Date().toLocaleDateString("pt-BR");
-  const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
 
-  const desenharCabecalho = () => {
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(14);
-    doc.setTextColor(...COR_VINHO_RGB);
-    doc.text(NOME_FAZENDA.toUpperCase(), pageWidth / 2, 12, { align: "center" });
-    doc.setFontSize(11);
-    doc.setTextColor(30, 30, 30);
-    doc.text(titulo, pageWidth / 2, 19, { align: "center" });
-    doc.setFontSize(9);
-    doc.setTextColor(80, 80, 80);
-    doc.text(subtitulo, pageWidth / 2, 24, { align: "center" });
-    doc.setFont("helvetica", "italic");
-    doc.setFontSize(8);
-    doc.setTextColor(120, 120, 120);
-    doc.text(`Gerado por ${usuario?.nome || "—"} em ${dataStr}`, pageWidth / 2, 29, { align: "center" });
-    doc.setDrawColor(...COR_DOURADO_RGB);
-    doc.setLineWidth(0.5);
-    doc.line(14, 31.5, pageWidth - 14, 31.5);
-  };
+  const cabecalho = () => desenharCabecalhoPDF(doc, { titulo, subtitulo, usuario: usuario?.nome, dataStr, logo });
 
-  let cursorY = 35;
+  let cursorY = 32;
   let alguma = false;
   for (const secao of secoes) {
     if (!secao.linhas.length) continue;
     alguma = true;
     if (cursorY > pageHeight - 40) {
       doc.addPage();
-      desenharCabecalho();
-      cursorY = 35;
+      cabecalho();
+      cursorY = 32;
     }
+    const [r, g, b] = corSecao(secao.titulo);
+    doc.setFillColor(r, g, b);
+    doc.circle(15.3, cursorY - 1.3, 0.9, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
-    doc.setTextColor(...COR_VINHO_RGB);
-    doc.text(secao.titulo, 14, cursorY);
+    doc.setTextColor(...COR_GRAFITE_RGB);
+    doc.text(secao.titulo, 18, cursorY);
     cursorY += 4;
 
     autoTable(doc, {
-      head: [secao.colunas.map((c) => c.header)],
+      ...ESTILO_TABELA,
+      head: [colunasMaiusculas(secao.colunas).map((c) => c.header)],
       body: secao.linhas.map((linha) => secao.colunas.map((c) => formatarValor(linha[c.key]))),
       startY: cursorY,
-      margin: { top: 35 },
-      styles: { fontSize: 7.5, cellPadding: 1.5 },
-      headStyles: { fillColor: COR_VINHO_RGB, textColor: 255, fontSize: 7.5 },
-      alternateRowStyles: { fillColor: [245, 240, 235] },
-      didDrawPage: desenharCabecalho,
+      margin: { top: 32 },
+      didDrawPage: cabecalho,
     });
     cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 8;
   }
 
   if (!alguma) {
-    desenharCabecalho();
+    cabecalho();
     doc.setFontSize(10);
-    doc.setTextColor(120, 120, 120);
+    doc.setTextColor(...COR_MUTED_RGB);
     doc.text("Nenhum lançamento encontrado para este animal.", 14, 40);
   }
 
@@ -309,20 +380,11 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
   const { default: jsPDF } = await import("jspdf");
   const { default: autoTable } = await import("jspdf-autotable");
   const usuario = getUsuario();
+  const logo = await carregarLogo();
   const doc = new jsPDF({ orientation: "portrait" });
-  const pageWidth = doc.internal.pageSize.getWidth();
   const dataStr = new Date().toLocaleDateString("pt-BR");
 
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(14);
-  doc.setTextColor(...COR_VINHO_RGB);
-  doc.text(NOME_FAZENDA.toUpperCase(), pageWidth / 2, 14, { align: "center" });
-  doc.setFontSize(12);
-  doc.setTextColor(30, 30, 30);
-  doc.text("RECIBO", pageWidth / 2, 22, { align: "center" });
-  doc.setDrawColor(...COR_DOURADO_RGB);
-  doc.setLineWidth(0.5);
-  doc.line(14, 26, pageWidth - 14, 26);
+  desenharCabecalhoPDF(doc, { titulo: "Recibo", usuario: usuario?.nome, dataStr, logo });
 
   const rotuloContraparte = lanc.tipo === "receita" ? "Recebemos de" : "Pagamos a";
   const linhas: [string, string][] = [
@@ -338,13 +400,15 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
     ["Centro de custo", lanc.centro_custo || "—"],
   ];
 
-  let cursorY = 34;
+  let cursorY = 35;
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   for (const [rotulo, valor] of linhas) {
     doc.setFont("helvetica", "bold");
+    doc.setTextColor(...COR_GRAFITE_RGB);
     doc.text(`${rotulo}:`, 14, cursorY);
     doc.setFont("helvetica", "normal");
+    doc.setTextColor(55, 65, 81);
     doc.text(valor, 62, cursorY);
     cursorY += 6;
   }
@@ -352,13 +416,17 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
 
   const itens = (lanc.itens || []).filter((i) => i.produto);
   if (itens.length) {
+    const [r, g, b] = corSecao("estoque");
+    doc.setFillColor(r, g, b);
+    doc.circle(15.3, cursorY - 1.3, 0.9, "F");
     doc.setFont("helvetica", "bold");
     doc.setFontSize(10.5);
-    doc.setTextColor(...COR_VINHO_RGB);
-    doc.text("Itens", 14, cursorY);
+    doc.setTextColor(...COR_GRAFITE_RGB);
+    doc.text("Itens", 18, cursorY);
     cursorY += 4;
     autoTable(doc, {
-      head: [["Produto/Serviço", "Qtd.", "Valor unit.", "Valor total"]],
+      ...ESTILO_TABELA,
+      head: [["PRODUTO/SERVIÇO", "QTD.", "VALOR UNIT.", "VALOR TOTAL"]],
       body: itens.map((i) => [
         i.produto,
         i.quantidade != null ? String(i.quantidade) : "—",
@@ -366,16 +434,13 @@ export async function gerarReciboPDF(lanc: LancamentoRecibo) {
         i.valor_total != null ? i.valor_total.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }) : "—",
       ]),
       startY: cursorY,
-      styles: { fontSize: 8.5, cellPadding: 1.8 },
-      headStyles: { fillColor: COR_VINHO_RGB, textColor: 255, fontSize: 8.5 },
-      alternateRowStyles: { fillColor: [245, 240, 235] },
     });
     cursorY = (doc as unknown as { lastAutoTable: { finalY: number } }).lastAutoTable.finalY + 10;
   }
 
   doc.setFont("helvetica", "italic");
   doc.setFontSize(8);
-  doc.setTextColor(120, 120, 120);
+  doc.setTextColor(...COR_MUTED_RGB);
   doc.text(`Recibo gerado por ${usuario?.nome || "—"} em ${dataStr}`, 14, cursorY + 10);
 
   return doc;
