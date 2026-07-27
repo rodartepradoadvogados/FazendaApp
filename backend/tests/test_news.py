@@ -205,7 +205,7 @@ class TestListagemNoticias:
         r = c.get("/news/")
         assert r.status_code == 200, r.text
         dados = r.json()
-        assert dados["janela_dias"] == 3
+        assert dados["janela_dias"] == 7
         assert len(dados["fontes"]) == 1
         fonte = dados["fontes"][0]
         assert fonte["fonte"]["erro"] is None
