@@ -43,7 +43,7 @@ TAMANHO_MAXIMO_ANEXO_CONTRATO = 15 * 1024 * 1024  # 15 MB
 def _publico(f: Fazenda) -> dict:
     return {
         "id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "ativa": f.ativa,
-        "documento": f.documento, "endereco": f.endereco,
+        "tipo_documento": f.tipo_documento, "documento": f.documento, "endereco": f.endereco, "cep": f.cep,
         "representante_nome": f.representante_nome, "representante_cpf": f.representante_cpf,
     }
 
@@ -111,8 +111,10 @@ class FazendaEditarIn(BaseModel):
     nome: str | None = None
     cidade: str | None = None
     uf: str | None = None
+    tipo_documento: str | None = None  # "cpf" | "cnpj" — obrigatório junto com `documento`
     documento: str | None = None
     endereco: str | None = None
+    cep: str | None = None
     representante_nome: str | None = None
     representante_cpf: str | None = None
 
@@ -171,10 +173,11 @@ def criar_fazenda(dados: FazendaIn, _: Usuario = Depends(exigir_dono), session: 
 def editar_fazenda(
     fazenda_id: int, dados: FazendaEditarIn, _: Usuario = Depends(exigir_dono), session: Session = Depends(get_session),
 ) -> dict:
-    """Edita nome/cidade/uf e os dados jurídicos (documento, endereço,
-    representante) usados como padrão no contrato-modelo e na cobrança —
-    ver _publico/render_contrato. Todo campo é opcional: só atualiza o que
-    veio preenchido."""
+    """Edita nome/cidade/uf e os dados jurídicos (tipo_documento+documento,
+    endereço, cep, representante) usados como padrão no contrato-modelo e na
+    cobrança — ver _publico/render_contrato. Todo campo é opcional: só
+    atualiza o que veio preenchido. `documento` exige `tipo_documento`
+    definido antes (ou no mesmo PUT) — sem isso, 400."""
     fazenda = session.get(Fazenda, fazenda_id)
     if not fazenda:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
@@ -187,10 +190,18 @@ def editar_fazenda(
         fazenda.cidade = dados.cidade.strip() or None
     if dados.uf is not None:
         fazenda.uf = dados.uf.strip() or None
+    if dados.tipo_documento is not None:
+        if dados.tipo_documento not in ("cpf", "cnpj", ""):
+            raise HTTPException(status_code=400, detail="tipo_documento deve ser \"cpf\" ou \"cnpj\"")
+        fazenda.tipo_documento = dados.tipo_documento or None
     if dados.documento is not None:
+        if dados.documento.strip() and not fazenda.tipo_documento:
+            raise HTTPException(status_code=400, detail="Escolha se o documento é CPF ou CNPJ antes de preencher o número")
         fazenda.documento = dados.documento.strip() or None
     if dados.endereco is not None:
         fazenda.endereco = dados.endereco.strip() or None
+    if dados.cep is not None:
+        fazenda.cep = dados.cep.strip() or None
     if dados.representante_nome is not None:
         fazenda.representante_nome = dados.representante_nome.strip() or None
     if dados.representante_cpf is not None:

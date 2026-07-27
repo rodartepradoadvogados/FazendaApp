@@ -151,7 +151,8 @@ export async function fetchMinhasFazendas(): Promise<FazendaAtual[]> {
 // Ver backend/fazenda/models/planos.py e fazenda/api/routers/fazendas.py.
 export type Fazenda = {
   id: number; nome: string; cidade?: string | null; uf?: string | null; ativa: boolean;
-  documento?: string | null; endereco?: string | null; representante_nome?: string | null; representante_cpf?: string | null;
+  tipo_documento?: "cpf" | "cnpj" | null; documento?: string | null; endereco?: string | null; cep?: string | null;
+  representante_nome?: string | null; representante_cpf?: string | null;
 };
 export type ModuloComercial =
   | "rebanho" | "reprodutivo" | "produtivo" | "sanitario" | "financeiro"
@@ -186,7 +187,8 @@ export async function criarFazenda(dados: { nome: string; cidade?: string; uf?: 
 }
 export async function atualizarFazenda(fazendaId: number, dados: {
   nome?: string; cidade?: string; uf?: string;
-  documento?: string; endereco?: string; representante_nome?: string; representante_cpf?: string;
+  tipo_documento?: string; documento?: string; endereco?: string; cep?: string;
+  representante_nome?: string; representante_cpf?: string;
 }): Promise<Fazenda> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados) });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar fazenda"); }
