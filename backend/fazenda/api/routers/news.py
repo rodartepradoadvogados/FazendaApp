@@ -52,7 +52,7 @@ RESUMO_MAX = 800
 
 router = APIRouter(prefix="/news", tags=["news"])
 
-JANELA_PADRAO_DIAS = 3
+JANELA_PADRAO_DIAS = 7  # "última semana" — ver_tudo=false filtra para essa janela
 INTERVALO_MIN_BUSCA_HORAS = 1  # não rebusca a mesma fonte mais de 1x por hora
 
 

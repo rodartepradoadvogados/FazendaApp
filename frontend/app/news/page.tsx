@@ -36,7 +36,7 @@ export default function NewsPage() {
   const [materias, setMaterias] = useState<NoticiaNews[] | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(true);
-  const [verTudo, setVerTudo] = useState(false);
+  const [verTudo, setVerTudo] = useState(true);
   const [expandida, setExpandida] = useState<number | null>(null);
 
   const carregar = useCallback((tudo: boolean) => {
@@ -74,9 +74,9 @@ export default function NewsPage() {
             {carregando ? <Loader2 size={14} style={{ animation: "spin 1s linear infinite" }} /> : <RefreshCw size={14} />}
             Atualizar
           </button>
-          <button className={verTudo ? "btn-primary" : "btn-ghost"} style={{ fontSize: "0.78rem" }}
+          <button className={verTudo ? "btn-ghost" : "btn-primary"} style={{ fontSize: "0.78rem" }}
             onClick={() => setVerTudo((v) => !v)}>
-            {verTudo ? "Ver só últimos dias" : "Ver tudo"}
+            {verTudo ? "Ver última semana" : "Ver tudo"}
           </button>
         </div>
       </div>
