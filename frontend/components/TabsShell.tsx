@@ -73,14 +73,15 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   const temAbasExtras = abas.length > 0;
 
   return (
-    // Conteúdo sempre ocupa a tela inteira, do topo — a faixa de abas (e o
-    // aviso) flutuam por cima como overlay (position: fixed), começando em
-    // left-56 (mesma largura da Sidebar, w-56) para nunca cobrir o
-    // logotipo/menu: a Sidebar (nativa ou dentro de cada iframe — cada aba
-    // renderiza sua própria página completa) continua começando em y=0,
-    // intocada; só a área de conteúdo à direita dela fica coberta pela faixa.
-    <div style={{ height: "100vh", position: "relative" }}>
-      <div style={{ height: "100%" }}>
+    // A faixa de abas continua fixed (começando em left-56, mesma largura da
+    // Sidebar, w-56, pra nunca cobrir o logotipo/menu — a Sidebar segue
+    // intocada em y=0), mas agora o conteúdo NUNCA fica embaixo dela: o
+    // espaçador abaixo reserva a mesma altura da faixa (2.2rem) só quando ela
+    // aparece, empurrando o conteúdo pra baixo em vez de deixar a faixa
+    // sobrepor o topo da página (título, "Configurações", "News" etc.).
+    <div style={{ height: "100vh", position: "relative", display: "flex", flexDirection: "column" }}>
+      {temAbasExtras && <div className="hidden md:block" style={{ height: "2.2rem", flexShrink: 0 }} aria-hidden="true" />}
+      <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
         <div style={{ display: ativaId === "nativa" ? "block" : "none", height: "100%" }}>
           {children}
         </div>

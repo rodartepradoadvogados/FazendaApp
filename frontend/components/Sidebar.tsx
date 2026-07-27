@@ -393,14 +393,14 @@ const normalizarBusca = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}
 
 // Árvore de sub-navegação genérica (N níveis) — usada pela Sidebar no lugar
 // da lista de módulos quando a página atual registra uma (piloto: Lançamentos).
-function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
-  nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void; depth?: number;
+function SubNavTree({ nodes, activeId, onSelect, raiz, pathname, paginaLabel, depth = 0 }: {
+  nodes: SubNavNode[]; activeId: string; onSelect: (id: string) => void;
+  raiz: SubNavNode[]; pathname: string; paginaLabel: string; depth?: number;
 }) {
   const caminho = new Set(caminhoAte(nodes, activeId) ?? []);
   return (
     <div className="space-y-1" style={depth ? { paddingLeft: `${depth * 1.1}rem`, marginTop: "0.2rem" } : undefined}>
       {nodes.map((n) => {
-        const Icon = n.icon;
         const temFilhos = !!n.children?.length;
         const ativo = temFilhos ? caminho.has(n.id) : n.id === activeId;
         // Item raiz atualmente aberto/ativo — destaca com uma moldura para
@@ -415,24 +415,49 @@ function SubNavTree({ nodes, activeId, onSelect, depth = 0 }: {
               border: "1.5px solid var(--sidebar-subnav-outline)", borderRadius: "10px",
               padding: "0.3rem", background: "var(--sidebar-subnav-outline-bg)",
             } : undefined}>
-            <button onClick={() => onSelect(temFilhos ? (ativo ? activeId : primeiraFolha(n)) : n.id)}
-              style={{
-                width: "100%", display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
-                padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
-                border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
-                background: ativo ? "var(--sidebar-active-bg)" : "transparent",
-                color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
-                fontSize: "10px", fontWeight: ativo ? 700 : 500,
-              }}>
-              <Icon size={depth ? 13 : 16} /> {n.label}
-            </button>
+            <SubNavItem node={n} depth={depth} ativo={ativo} temFilhos={temFilhos} activeId={activeId}
+              onSelect={onSelect} raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} />
             {temFilhos && ativo && (
-              <SubNavTree nodes={n.children!} activeId={activeId} onSelect={onSelect} depth={depth + 1} />
+              <SubNavTree nodes={n.children!} activeId={activeId} onSelect={onSelect}
+                raiz={raiz} pathname={pathname} paginaLabel={paginaLabel} depth={depth + 1} />
             )}
           </div>
         );
       })}
     </div>
+  );
+}
+
+// Um item da sub-navegação: clique simples troca de sub-aba dentro da página
+// atual (como sempre); duplo clique abre a mesma sub-aba numa aba nova (ver
+// TabsShell/abrirNovaAba), já direto no lugar certo via "?sub=" na URL.
+function SubNavItem({ node, depth, ativo, temFilhos, activeId, onSelect, raiz, pathname, paginaLabel }: {
+  node: SubNavNode; depth: number; ativo: boolean; temFilhos: boolean; activeId: string; onSelect: (id: string) => void;
+  raiz: SubNavNode[]; pathname: string; paginaLabel: string;
+}) {
+  const Icon = node.icon;
+  const aoClicar = useCliqueOuDuploClique(
+    () => onSelect(temFilhos ? (ativo ? activeId : primeiraFolha(node)) : node.id),
+    () => {
+      const folhaAlvo = temFilhos ? primeiraFolha(node) : node.id;
+      const labels = caminhoLabels(raiz, folhaAlvo) ?? [node.label];
+      const params = new URLSearchParams();
+      params.set("sub", folhaAlvo);
+      abrirNovaAba(`${pathname}?${params.toString()}`, [paginaLabel, ...labels].join(" › "));
+    },
+  );
+  return (
+    <button onClick={aoClicar}
+      style={{
+        width: "100%", display: "flex", alignItems: "center", gap: depth ? "0.5rem" : "0.6rem",
+        padding: depth ? "0.4rem 0.6rem" : "0.55rem 0.7rem", borderRadius: "8px", cursor: "pointer", textAlign: "left",
+        border: "1px solid " + (ativo ? "var(--sidebar-active-border)" : "transparent"),
+        background: ativo ? "var(--sidebar-active-bg)" : "transparent",
+        color: ativo ? "var(--sidebar-active-fg)" : "var(--sidebar-subnav-muted, var(--sidebar-muted))",
+        fontSize: "10px", fontWeight: ativo ? 700 : 500,
+      }}>
+      <Icon size={depth ? 13 : 16} /> {node.label}
+    </button>
   );
 }
 

@@ -34,6 +34,14 @@ class Fazenda(SQLModel, table=True):
     ativa: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
+    # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
+    # (fazenda/rules/contrato_render.py) e pela cobrança (Asaas/ZapSign) como
+    # padrão, sem precisar redigitar toda vez. Todos opcionais/aditivos.
+    documento: Optional[str] = None  # CPF ou CNPJ
+    endereco: Optional[str] = None
+    representante_nome: Optional[str] = None
+    representante_cpf: Optional[str] = None
+
 
 class EmpresaOperadora(SQLModel, table=True):
     """A empresa de software que opera esta instalação — distinta de cada

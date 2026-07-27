@@ -1,7 +1,10 @@
 """
-Testes de POST/PUT /auth/usuarios — toda conta de login exige uma Pessoa já
-cadastrada (nunca nome livre) e cada pessoa só pode estar vinculada a um
-único usuário por vez (ver fazenda.api.routers.auth._validar_pessoa_do_usuario).
+Testes de POST/PUT /auth/usuarios — uma conta de login pode vincular a uma
+Pessoa já cadastrada na fazenda (cada pessoa só pode estar vinculada a um
+único usuário por vez) OU, sem nenhum vínculo com fazenda nenhuma, usar
+`nome` livre — caminho pra equipe da própria CowData, sem misturar com o
+cadastro de pessoas da fazenda (ver
+fazenda.api.routers.auth._validar_pessoa_ou_nome).
 """
 from __future__ import annotations
 
@@ -75,6 +78,33 @@ def test_criar_usuario_deriva_nome_da_pessoa(client):
     assert dados["nome"] == "João Silva"
     assert dados["pessoa_id"] == pid
     assert dados["pessoa_nome"] == "João Silva"
+
+
+def test_criar_usuario_sem_fazenda_usa_nome_livre(client):
+    """Equipe CowData — conta sem pessoa_id, sem vínculo com nenhuma fazenda."""
+    c, engine = client
+    token = _login(c)
+    r = c.post(
+        "/auth/usuarios",
+        json={"username": "equipe_cowdata", "senha": "123", "nome": "Fulano da CowData", "papel": "admin", "permissoes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200
+    dados = r.json()
+    assert dados["nome"] == "Fulano da CowData"
+    assert dados["pessoa_id"] is None
+    assert dados["pessoa_nome"] is None
+
+
+def test_criar_usuario_sem_pessoa_id_nem_nome_e_rejeitado(client):
+    c, engine = client
+    token = _login(c)
+    r = c.post(
+        "/auth/usuarios",
+        json={"username": "sememtudo", "senha": "123", "papel": "operador", "permissoes": []},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 400
 
 
 def test_criar_usuario_rejeita_pessoa_ja_vinculada(client):
