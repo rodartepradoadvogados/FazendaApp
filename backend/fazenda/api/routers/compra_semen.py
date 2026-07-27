@@ -85,8 +85,15 @@ class CompraSemenIn(BaseModel):
 
 
 @router.get("/")
-def listar_compras(session: Session = Depends(get_session)) -> list[dict]:
-    compras = session.exec(select(CompraSemen).order_by(CompraSemen.data_compra.desc(), CompraSemen.id.desc())).all()
+def listar_compras(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CompraSemen).order_by(CompraSemen.data_compra.desc(), CompraSemen.id.desc())
+    if fazenda_id is not None:
+        query = query.where(CompraSemen.fazenda_id == fazenda_id)
+    compras = session.exec(query).all()
     registros = [c.model_dump() for c in compras]
     nomes = mapa_usuarios(session, {r["usuario_id"] for r in registros})
     for r in registros:
@@ -128,7 +135,7 @@ def registrar_compra(
             if not item.estoque_semen_id:
                 raise HTTPException(status_code=400, detail="Selecione o touro em estoque")
             estoque = session.get(EstoqueSemen, item.estoque_semen_id)
-            if not estoque:
+            if not estoque or (fazenda_id is not None and estoque.fazenda_id != fazenda_id):
                 raise HTTPException(status_code=404, detail="Touro em estoque não encontrado")
         else:
             if not (item.naab or "").strip():
@@ -142,14 +149,15 @@ def registrar_compra(
             # estoque convencional e outra sexada; comprar um sêmen sexado de
             # um touro já em estoque como convencional não pode misturar as
             # doses na mesma linha (são produtos diferentes).
-            estoque = session.exec(
-                select(EstoqueSemen).where(EstoqueSemen.naab == item.naab, EstoqueSemen.tipo == item.tipo)
-            ).first()
+            estoque_query = select(EstoqueSemen).where(EstoqueSemen.naab == item.naab, EstoqueSemen.tipo == item.tipo)
+            if fazenda_id is not None:
+                estoque_query = estoque_query.where(EstoqueSemen.fazenda_id == fazenda_id)
+            estoque = session.exec(estoque_query).first()
             if not estoque:
                 estoque = EstoqueSemen(
                     touro_nome=item.touro_nome or touro_naab.nome or touro_naab.naab,
                     naab=touro_naab.naab, central=item.central or touro_naab.central,
-                    tipo=item.tipo, doses=0,
+                    tipo=item.tipo, doses=0, fazenda_id=fazenda_id,
                 )
                 session.add(estoque)
                 session.flush()
@@ -231,7 +239,7 @@ def registrar_compra(
             vendedor=dados.vendedor, data_compra=dados.data_compra,
             responsavel=dados.responsavel, observacao=dados.observacao,
             numero_lancamento_gerado=numero_lancamento,
-            usuario_id=usuario_id_seguro(user),
+            usuario_id=usuario_id_seguro(user), fazenda_id=fazenda_id,
         ))
         estoque_semen_ids.append(estoque.id)
 

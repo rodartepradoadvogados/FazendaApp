@@ -42,7 +42,7 @@ function SecBenchmark() {
     setLista((ls) => ls.map((b, k) => (k === i ? { ...b, [campo]: valor === "" ? null : Number(valor) } : b)));
   return (
     <div style={card}>
-      <div style={secTit}>Benchmark externo (Alta CRIA)</div>
+      <div style={secTit}>Benchmark</div>
       <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "-0.3rem" }}>Percentis do setor por indicador e o valor atual da fazenda. Já vem preenchido com a Alta CRIA 2026.</p>
       <div style={{ overflowX: "auto" }}>
         <table className="fazenda-table">

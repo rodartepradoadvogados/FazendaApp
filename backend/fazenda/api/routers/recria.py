@@ -19,14 +19,14 @@ from fastapi.responses import Response
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, BenchmarkRecria, CategoriaManejo, FaseRecria, JanelaPontoCritico, MetaRecria, OcorrenciaClinica,
     Parto, PesagemCorporal, PesoAlvoIdade, RegistroCocho, Secagem, Servico, Usuario,
 )
 from fazenda.parsers.utils import iter_planilha_rows, normalizar_cabecalho, parse_date, parse_float, valor_por_apelido
-from fazenda.rules.auditoria import mapa_usuarios
+from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.coorte import (
     FASES_PADRAO, curva_casos_por_idade, idade_em_dias, incidencia_por_fase, ponto_critico,
@@ -39,19 +39,25 @@ router = APIRouter(prefix="/recria", tags=["recria"])
 
 
 # --- Helpers ---------------------------------------------------------------
-def _nascimentos(session: Session) -> dict[str, date]:
+def _nascimentos(session: Session, fazenda_id: int | None = None) -> dict[str, date]:
     """numero -> data de nascimento (só animais com data)."""
+    query = select(Animal)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
     return {
         a.numero: a.data_nasc
-        for a in session.exec(select(Animal)).all()
+        for a in session.exec(query).all()
         if a.data_nasc and not a.eh_semen
     }
 
 
-def _idade_atual(session: Session, hoje: date) -> dict[str, int]:
+def _idade_atual(session: Session, hoje: date, fazenda_id: int | None = None) -> dict[str, int]:
     """numero -> idade em dias hoje (ou na data de baixa, se já saiu)."""
+    query = select(Animal)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
     out: dict[str, int] = {}
-    for a in session.exec(select(Animal)).all():
+    for a in session.exec(query).all():
         if not a.data_nasc or a.eh_semen:
             continue
         ref = a.data_baixa if (a.data_baixa and not a.ativo) else hoje
@@ -59,8 +65,11 @@ def _idade_atual(session: Session, hoje: date) -> dict[str, int]:
     return out
 
 
-def _fases(session: Session) -> list[dict]:
-    linhas = session.exec(select(FaseRecria).where(FaseRecria.ativo == True)).all()  # noqa: E712
+def _fases(session: Session, fazenda_id: int | None = None) -> list[dict]:
+    query = select(FaseRecria).where(FaseRecria.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(FaseRecria.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     if not linhas:
         return FASES_PADRAO
     return [{"nome": f.nome, "dia_min": f.dia_min, "dia_max": f.dia_max}
@@ -69,10 +78,16 @@ def _fases(session: Session) -> list[dict]:
 
 # --- Pilar Saúde -----------------------------------------------------------
 @router.get("/doencas")
-def listar_doencas_com_casos(session: Session = Depends(get_session)) -> list[dict]:
+def listar_doencas_com_casos(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Doenças que já têm ocorrências lançadas (para o seletor do Dossiê)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(OcorrenciaClinica)
+    if fazenda_id is not None:
+        query = query.where(OcorrenciaClinica.fazenda_id == fazenda_id)
     cont: dict[str, int] = {}
-    for o in session.exec(select(OcorrenciaClinica)).all():
+    for o in session.exec(query).all():
         cont[o.doenca] = cont.get(o.doenca, 0) + 1
     return [{"doenca": d, "casos": cont[d]} for d in sorted(cont)]
 
@@ -81,11 +96,16 @@ def listar_doencas_com_casos(session: Session = Depends(get_session)) -> list[di
 def curva_saude(
     doenca: str, ini: date | None = None, fim: date | None = None,
     limite_dias: int = 300, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Curva casos×idade (dias) + ponto crítico + incidência por fase."""
-    nasc = _nascimentos(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    nasc = _nascimentos(session, fazenda_id)
+    query = select(OcorrenciaClinica).where(OcorrenciaClinica.doenca == doenca)
+    if fazenda_id is not None:
+        query = query.where(OcorrenciaClinica.fazenda_id == fazenda_id)
     ocorrencias = [
-        o for o in session.exec(select(OcorrenciaClinica).where(OcorrenciaClinica.doenca == doenca)).all()
+        o for o in session.exec(query).all()
         if (not ini or o.data_ocorrencia >= ini) and (not fim or o.data_ocorrencia <= fim)
     ]
     pares = []  # (numero, idade_dias)
@@ -96,8 +116,8 @@ def curva_saude(
 
     curva = curva_casos_por_idade([p[1] for p in pares], limite_dias=limite_dias)
     pc = ponto_critico(curva)
-    fases = _fases(session)
-    incid = incidencia_por_fase(pares, _idade_atual(session, date.today()), fases)
+    fases = _fases(session, fazenda_id)
+    incid = incidencia_por_fase(pares, _idade_atual(session, date.today(), fazenda_id), fases)
     return {
         "doenca": doenca,
         "total_casos": len(pares),
@@ -109,12 +129,18 @@ def curva_saude(
 
 # --- Pilar Crescimento -----------------------------------------------------
 @router.get("/crescimento/peso-alvo")
-def crescimento_peso_alvo(session: Session = Depends(get_session)) -> dict:
+def crescimento_peso_alvo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Peso real médio por mês de idade × faixa de peso-alvo cadastrada."""
-    nasc = _nascimentos(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    nasc = _nascimentos(session, fazenda_id)
     # Peso real: média das pesagens agrupadas por mês de idade na data da pesagem.
+    pesagens_query = select(PesagemCorporal)
+    if fazenda_id is not None:
+        pesagens_query = pesagens_query.where(PesagemCorporal.fazenda_id == fazenda_id)
     por_mes: dict[int, list[float]] = {}
-    for p in session.exec(select(PesagemCorporal)).all():
+    for p in session.exec(pesagens_query).all():
         if not p.peso_kg or not p.data_pesagem:
             continue
         d = idade_em_dias(nasc.get(p.numero_matriz), p.data_pesagem)
@@ -123,7 +149,10 @@ def crescimento_peso_alvo(session: Session = Depends(get_session)) -> dict:
         mes = max(1, round(d / 30.44))
         por_mes.setdefault(mes, []).append(p.peso_kg)
 
-    alvo = {a.mes: (a.peso_min_kg, a.peso_max_kg) for a in session.exec(select(PesoAlvoIdade)).all()}
+    alvo_query = select(PesoAlvoIdade)
+    if fazenda_id is not None:
+        alvo_query = alvo_query.where(PesoAlvoIdade.fazenda_id == fazenda_id)
+    alvo = {a.mes: (a.peso_min_kg, a.peso_max_kg) for a in session.exec(alvo_query).all()}
     meses = sorted(set(por_mes) | set(alvo))
     linhas = []
     for m in meses:
@@ -142,15 +171,38 @@ def crescimento_peso_alvo(session: Session = Depends(get_session)) -> dict:
     return {"linhas": linhas}
 
 
+def _meta_recria(session: Session, fazenda_id: int | None) -> MetaRecria:
+    """Metas da fazenda informada — get-or-create por `fazenda_id` (era um
+    singleton id=1 global; agora uma linha por fazenda, mesmo padrão de
+    `ParametroDiariaPadrao`, ver fazenda/models/recria.py::MetaRecria)."""
+    query = select(MetaRecria)
+    query = query.where(MetaRecria.fazenda_id == fazenda_id) if fazenda_id is not None else query.where(
+        MetaRecria.fazenda_id.is_(None)
+    )
+    meta = session.exec(query).first()
+    if not meta:
+        meta = MetaRecria(fazenda_id=fazenda_id)
+        session.add(meta)
+        session.commit()
+        session.refresh(meta)
+    return meta
+
+
 # --- Pilar Reprodução ------------------------------------------------------
 @router.get("/reproducao/idade-parto")
-def reproducao_idade_parto(session: Session = Depends(get_session)) -> dict:
+def reproducao_idade_parto(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Relatório Wisconsin: estatística da idade ao 1º parto + distribuição +
     custo de recria excedente (usa a meta e o custo diário cadastrados)."""
-    nasc = _nascimentos(session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    nasc = _nascimentos(session, fazenda_id)
     # 1º parto de cada animal = parto de ordem 1, ou o mais antigo se não houver ordem.
+    partos_query = select(Parto)
+    if fazenda_id is not None:
+        partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
     primeiro: dict[str, date] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(partos_query).all():
         if not p.data_parto or not p.numero_matriz:
             continue
         num = p.numero_matriz
@@ -167,7 +219,7 @@ def reproducao_idade_parto(session: Session = Depends(get_session)) -> dict:
         if dn:
             idades.append((dparto - dn).days / DIAS_MES)
 
-    meta = session.get(MetaRecria, 1) or MetaRecria(id=1)
+    meta = _meta_recria(session, fazenda_id)
     return {
         "meta_idade_parto": meta.idade_parto_meses,
         "estatisticas": estatisticas_idade_parto(idades),
@@ -179,10 +231,15 @@ def reproducao_idade_parto(session: Session = Depends(get_session)) -> dict:
 @router.get("/reproducao/taxa-prenhez")
 def reproducao_taxa_prenhez(
     ini: date, fim: date, vwp_dias: int = 0, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Taxa de Prenhez em ciclos de 21 dias (Taxa de Serviço × Concepção)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    servicos_query = select(Servico)
+    if fazenda_id is not None:
+        servicos_query = servicos_query.where(Servico.fazenda_id == fazenda_id)
     servicos = []
-    for s in session.exec(select(Servico)).all():
+    for s in session.exec(servicos_query).all():
         if not s.data_servico:
             continue
         servicos.append({
@@ -204,7 +261,9 @@ def reproducao_taxa_prenhez(
 
 # --- Dossiê Zootécnico (montador do PDF) -----------------------------------
 @router.get("/dossie")
-def montar_dossie(session: Session = Depends(get_session)) -> dict:
+def montar_dossie(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """
     Reúne, num único pacote, tudo que compõe o Dossiê Zootécnico da recria —
     saúde (incidência por fase), crescimento (peso real × alvo), reprodução
@@ -212,30 +271,34 @@ def montar_dossie(session: Session = Depends(get_session)) -> dict:
     Devolve KPIs de capa e uma lista de seções (título + colunas + linhas) já no
     formato que o front usa para montar o PDF de várias páginas.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    nasc = _nascimentos(session)
+    nasc = _nascimentos(session, fazenda_id)
 
     # Crescimento: peso real × alvo por mês de idade (reusa a mesma lógica).
-    crescimento = crescimento_peso_alvo(session)["linhas"]
+    crescimento = crescimento_peso_alvo(session, fazenda_id)["linhas"]
 
     # Reprodução: idade ao 1º parto (Wisconsin) + custo excedente.
-    repro = reproducao_idade_parto(session)
+    repro = reproducao_idade_parto(session, fazenda_id)
     est = repro.get("estatisticas") or {}
     custo = repro.get("custo_excedente") or {}
 
     # Composição por categoria de manejo.
-    comp = composicao_categorias(session)["composicao"]
+    comp = composicao_categorias(session, fazenda_id)["composicao"]
 
     # Saúde: incidência por fase, somada sobre todas as doenças lançadas.
-    fases = _fases(session)
+    fases = _fases(session, fazenda_id)
+    ocorrencias_query = select(OcorrenciaClinica)
+    if fazenda_id is not None:
+        ocorrencias_query = ocorrencias_query.where(OcorrenciaClinica.fazenda_id == fazenda_id)
     casos_por_animal_idade = []
-    for o in session.exec(select(OcorrenciaClinica)).all():
+    for o in session.exec(ocorrencias_query).all():
         if not o.data_ocorrencia:
             continue
         d = idade_em_dias(nasc.get(o.numero_matriz), o.data_ocorrencia)
         if d is not None:
             casos_por_animal_idade.append((o.numero_matriz, d))
-    idade_atual = _idade_atual(session, hoje)
+    idade_atual = _idade_atual(session, hoje, fazenda_id)
     incidencia = incidencia_por_fase(casos_por_animal_idade, idade_atual, fases)
 
     secoes = [
@@ -415,29 +478,46 @@ def _contexto_categoria(
 
 
 @router.get("/categorias/composicao")
-def composicao_categorias(session: Session = Depends(get_session)) -> dict:
+def composicao_categorias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Conta os animais ativos em cada categoria de manejo (idade/peso/status/
     situação reprodutiva-produtiva/dias de gestação/serviço/parto provável)."""
-    categorias = session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all()  # noqa: E712
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    categorias_query = select(CategoriaManejo).where(CategoriaManejo.ativo == True)  # noqa: E712
+    pesagens_query = select(PesagemCorporal).order_by(PesagemCorporal.data_pesagem)
+    servicos_query = select(Servico)
+    partos_query = select(Parto)
+    secagens_query = select(Secagem)
+    animais_query = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        categorias_query = categorias_query.where(CategoriaManejo.fazenda_id == fazenda_id)
+        pesagens_query = pesagens_query.where(PesagemCorporal.fazenda_id == fazenda_id)
+        servicos_query = servicos_query.where(Servico.fazenda_id == fazenda_id)
+        partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
+        secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
+        animais_query = animais_query.where(Animal.fazenda_id == fazenda_id)
+
+    categorias = session.exec(categorias_query).all()
     ult_peso: dict[str, float] = {}
-    for p in session.exec(select(PesagemCorporal).order_by(PesagemCorporal.data_pesagem)).all():
+    for p in session.exec(pesagens_query).all():
         if p.peso_kg:
             ult_peso[p.numero_matriz] = p.peso_kg  # a última pesagem (ordenada asc) prevalece
     servicos_idx: dict[str, list[Servico]] = {}
-    for s in session.exec(select(Servico)).all():
+    for s in session.exec(servicos_query).all():
         if s.numero_matriz:
             servicos_idx.setdefault(s.numero_matriz, []).append(s)
     partos_idx: dict[str, list[Parto]] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(partos_query).all():
         if p.numero_matriz:
             partos_idx.setdefault(p.numero_matriz, []).append(p)
     secagens_idx: dict[str, list[Secagem]] = {}
-    for s in session.exec(select(Secagem)).all():
+    for s in session.exec(secagens_query).all():
         if s.numero_matriz:
             secagens_idx.setdefault(s.numero_matriz, []).append(s)
     hoje = date.today()
     cont: dict[str, int] = {}
-    for a in session.exec(select(Animal).where(Animal.ativo == True)).all():  # noqa: E712
+    for a in session.exec(animais_query).all():
         if a.eh_semen or a.sexo == "M":
             continue
         dias = (hoje - a.data_nasc).days if a.data_nasc else None
@@ -451,16 +531,25 @@ def composicao_categorias(session: Session = Depends(get_session)) -> dict:
 
 
 @router.get("/categorias/animal/{numero}")
-def categoria_sugerida_animal(numero: str, session: Session = Depends(get_session)) -> dict:
+def categoria_sugerida_animal(
+    numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Categoria de manejo sugerida para UM animal — usada para pré-preencher
     a categoria na ficha (Rebanho > editar), já que o animal segue os
     parâmetros cadastrados em Configurações > Cadastro > Categorias."""
-    animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    animal_query = select(Animal).where(Animal.numero == numero)
+    if fazenda_id is not None:
+        animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(animal_query).first()
     if not animal:
         raise HTTPException(status_code=404, detail="Animal não encontrado")
     if animal.eh_semen or animal.sexo == "M":
         return {"categoria": None}
-    categorias = session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all()  # noqa: E712
+    categorias_query = select(CategoriaManejo).where(CategoriaManejo.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        categorias_query = categorias_query.where(CategoriaManejo.fazenda_id == fazenda_id)
+    categorias = session.exec(categorias_query).all()
     hoje = date.today()
     dias = (hoje - animal.data_nasc).days if animal.data_nasc else None
     ult = session.exec(
@@ -496,16 +585,26 @@ class CategoriaManejoIn(BaseModel):
 
 
 @router.get("/categorias")
-def listar_categorias(session: Session = Depends(get_session)) -> list[dict]:
-    linhas = session.exec(select(CategoriaManejo).order_by(CategoriaManejo.ordem, CategoriaManejo.dia_min)).all()
+def listar_categorias(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(CategoriaManejo).order_by(CategoriaManejo.ordem, CategoriaManejo.dia_min)
+    if fazenda_id is not None:
+        query = query.where(CategoriaManejo.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     return [l.model_dump() for l in linhas]
 
 
 @router.post("/categorias", status_code=201)
-def criar_categoria(dados: CategoriaManejoIn, session: Session = Depends(get_session)) -> dict:
+def criar_categoria(
+    dados: CategoriaManejoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.nome.strip():
         raise HTTPException(status_code=400, detail="Informe o nome da categoria.")
-    c = CategoriaManejo(**dados.model_dump())
+    c = CategoriaManejo(**dados.model_dump(), fazenda_id=fazenda_id)
     c.nome = dados.nome.strip()
     session.add(c)
     session.commit()
@@ -514,9 +613,13 @@ def criar_categoria(dados: CategoriaManejoIn, session: Session = Depends(get_ses
 
 
 @router.put("/categorias/{categoria_id}")
-def atualizar_categoria(categoria_id: int, dados: CategoriaManejoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_categoria(
+    categoria_id: int, dados: CategoriaManejoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     c = session.get(CategoriaManejo, categoria_id)
-    if not c:
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Categoria não encontrada")
     for campo, valor in dados.model_dump().items():
         setattr(c, campo, valor)
@@ -528,9 +631,13 @@ def atualizar_categoria(categoria_id: int, dados: CategoriaManejoIn, session: Se
 
 
 @router.delete("/categorias/{categoria_id}")
-def excluir_categoria(categoria_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_categoria(
+    categoria_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     c = session.get(CategoriaManejo, categoria_id)
-    if c:
+    if c and (fazenda_id is None or c.fazenda_id == fazenda_id):
         session.delete(c)
         session.commit()
     return {"ok": True}
@@ -562,8 +669,13 @@ def _serializa_cocho(r: RegistroCocho) -> dict:
 @router.get("/cocho")
 def listar_cocho(
     lote: str = "", ini: date | None = None, fim: date | None = None, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    linhas = session.exec(select(RegistroCocho).order_by(RegistroCocho.data.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(RegistroCocho).order_by(RegistroCocho.data.desc())
+    if fazenda_id is not None:
+        query = query.where(RegistroCocho.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     nomes = mapa_usuarios(session, {r.usuario_id for r in linhas})
     saida = []
     for r in linhas:
@@ -579,12 +691,16 @@ def listar_cocho(
 
 
 @router.post("/cocho", status_code=201)
-def criar_cocho(dados: CochoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_cocho(
+    dados: CochoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.lote.strip():
         raise HTTPException(status_code=400, detail="Informe o lote.")
     if dados.kg_sobra > dados.kg_ofertado:
         raise HTTPException(status_code=400, detail="A sobra não pode ser maior que o ofertado.")
-    r = RegistroCocho(**dados.model_dump(), usuario_id=user.id)
+    r = RegistroCocho(**dados.model_dump(), usuario_id=user.id, fazenda_id=fazenda_id)
     r.lote = dados.lote.strip()
     session.add(r)
     session.commit()
@@ -624,7 +740,9 @@ def modelo_excel_cocho() -> Response:
 @router.post("/cocho/importar")
 async def importar_cocho_planilha(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -649,6 +767,7 @@ async def importar_cocho_planilha(
         r = RegistroCocho(
             data=data_linha, lote=lote, num_animais=int(num_animais) if num_animais else 1,
             kg_ofertado=kg_ofertado, kg_sobra=kg_sobra or 0.0, kg_formulado=kg_formulado, usuario_id=user.id,
+            fazenda_id=fazenda_id,
         )
         session.add(r)
         criados += 1
@@ -657,9 +776,13 @@ async def importar_cocho_planilha(
 
 
 @router.delete("/cocho/{cocho_id}")
-def excluir_cocho(cocho_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_cocho(
+    cocho_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     r = session.get(RegistroCocho, cocho_id)
-    if r:
+    if r and (fazenda_id is None or r.fazenda_id == fazenda_id):
         session.delete(r)
         session.commit()
     return {"ok": True}
@@ -676,8 +799,13 @@ class OcorrenciaIn(BaseModel):
 @router.get("/ocorrencias")
 def listar_ocorrencias(
     doenca: str = "", numero_matriz: str = "", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
-    q = session.exec(select(OcorrenciaClinica).order_by(OcorrenciaClinica.data_ocorrencia.desc())).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(OcorrenciaClinica).order_by(OcorrenciaClinica.data_ocorrencia.desc())
+    if fazenda_id is not None:
+        query = query.where(OcorrenciaClinica.fazenda_id == fazenda_id)
+    q = session.exec(query).all()
     nomes = mapa_usuarios(session, {o.usuario_id for o in q})
     saida = []
     for o in q:
@@ -690,13 +818,17 @@ def listar_ocorrencias(
 
 
 @router.post("/ocorrencias", status_code=201)
-def criar_ocorrencia(dados: OcorrenciaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def criar_ocorrencia(
+    dados: OcorrenciaIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if not dados.numero_matriz.strip() or not dados.doenca.strip():
         raise HTTPException(status_code=400, detail="Informe o animal e a doença.")
     o = OcorrenciaClinica(
         numero_matriz=dados.numero_matriz.strip(), doenca=dados.doenca.strip(),
         data_ocorrencia=dados.data_ocorrencia, observacao=(dados.observacao or None), origem="manual",
-        usuario_id=user.id,
+        usuario_id=user.id, fazenda_id=fazenda_id,
     )
     session.add(o)
     session.commit()
@@ -705,9 +837,13 @@ def criar_ocorrencia(dados: OcorrenciaIn, session: Session = Depends(get_session
 
 
 @router.delete("/ocorrencias/{ocorrencia_id}")
-def excluir_ocorrencia(ocorrencia_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_ocorrencia(
+    ocorrencia_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     o = session.get(OcorrenciaClinica, ocorrencia_id)
-    if not o:
+    if not o or (fazenda_id is not None and o.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Ocorrência não encontrada")
     session.delete(o)
     session.commit()
@@ -725,19 +861,18 @@ class MetaIn(BaseModel):
 
 
 @router.get("/metas")
-def obter_metas(session: Session = Depends(get_session)) -> dict:
-    m = session.get(MetaRecria, 1)
-    if not m:
-        m = MetaRecria(id=1)
-        session.add(m)
-        session.commit()
-        session.refresh(m)
-    return m.model_dump()
+def obter_metas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    return _meta_recria(session, fazenda_id_seguro(fazenda_id)).model_dump()
 
 
 @router.put("/metas")
-def salvar_metas(dados: MetaIn, session: Session = Depends(get_session)) -> dict:
-    m = session.get(MetaRecria, 1) or MetaRecria(id=1)
+def salvar_metas(
+    dados: MetaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    m = _meta_recria(session, fazenda_id_seguro(fazenda_id))
     for campo, valor in dados.model_dump().items():
         setattr(m, campo, valor)
     m.atualizado_em = datetime.utcnow()
@@ -755,22 +890,35 @@ class PesoAlvoIn(BaseModel):
 
 
 @router.get("/peso-alvo")
-def listar_peso_alvo(session: Session = Depends(get_session)) -> list[dict]:
-    linhas = session.exec(select(PesoAlvoIdade).order_by(PesoAlvoIdade.mes)).all()
+def listar_peso_alvo(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(PesoAlvoIdade).order_by(PesoAlvoIdade.mes)
+    if fazenda_id is not None:
+        query = query.where(PesoAlvoIdade.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     return [l.model_dump() for l in linhas]
 
 
 @router.post("/peso-alvo", status_code=201)
-def salvar_peso_alvo(dados: PesoAlvoIn, session: Session = Depends(get_session)) -> dict:
-    """Cria ou atualiza a faixa daquele mês (upsert por mês)."""
+def salvar_peso_alvo(
+    dados: PesoAlvoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Cria ou atualiza a faixa daquele mês (upsert por mês, escopado por fazenda)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.peso_min_kg > dados.peso_max_kg:
         raise HTTPException(status_code=400, detail="Peso mínimo não pode ser maior que o máximo.")
-    linha = session.exec(select(PesoAlvoIdade).where(PesoAlvoIdade.mes == dados.mes)).first()
+    query = select(PesoAlvoIdade).where(PesoAlvoIdade.mes == dados.mes)
+    if fazenda_id is not None:
+        query = query.where(PesoAlvoIdade.fazenda_id == fazenda_id)
+    linha = session.exec(query).first()
     if linha:
         linha.peso_min_kg = dados.peso_min_kg
         linha.peso_max_kg = dados.peso_max_kg
     else:
-        linha = PesoAlvoIdade(mes=dados.mes, peso_min_kg=dados.peso_min_kg, peso_max_kg=dados.peso_max_kg)
+        linha = PesoAlvoIdade(mes=dados.mes, peso_min_kg=dados.peso_min_kg, peso_max_kg=dados.peso_max_kg, fazenda_id=fazenda_id)
     session.add(linha)
     session.commit()
     session.refresh(linha)
@@ -778,8 +926,15 @@ def salvar_peso_alvo(dados: PesoAlvoIn, session: Session = Depends(get_session))
 
 
 @router.delete("/peso-alvo/{mes}")
-def excluir_peso_alvo(mes: int, session: Session = Depends(get_session)) -> dict:
-    linha = session.exec(select(PesoAlvoIdade).where(PesoAlvoIdade.mes == mes)).first()
+def excluir_peso_alvo(
+    mes: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(PesoAlvoIdade).where(PesoAlvoIdade.mes == mes)
+    if fazenda_id is not None:
+        query = query.where(PesoAlvoIdade.fazenda_id == fazenda_id)
+    linha = session.exec(query).first()
     if linha:
         session.delete(linha)
         session.commit()
@@ -796,16 +951,26 @@ class FaseIn(BaseModel):
 
 
 @router.get("/fases")
-def listar_fases(session: Session = Depends(get_session)) -> list[dict]:
-    linhas = session.exec(select(FaseRecria).order_by(FaseRecria.ordem, FaseRecria.dia_min)).all()
+def listar_fases(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(FaseRecria).order_by(FaseRecria.ordem, FaseRecria.dia_min)
+    if fazenda_id is not None:
+        query = query.where(FaseRecria.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     return [l.model_dump() for l in linhas]
 
 
 @router.post("/fases", status_code=201)
-def criar_fase(dados: FaseIn, session: Session = Depends(get_session)) -> dict:
+def criar_fase(
+    dados: FaseIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.dia_min > dados.dia_max:
         raise HTTPException(status_code=400, detail="Dia inicial não pode ser maior que o final.")
-    f = FaseRecria(**dados.model_dump())
+    f = FaseRecria(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(f)
     session.commit()
     session.refresh(f)
@@ -813,9 +978,13 @@ def criar_fase(dados: FaseIn, session: Session = Depends(get_session)) -> dict:
 
 
 @router.delete("/fases/{fase_id}")
-def excluir_fase(fase_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_fase(
+    fase_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     f = session.get(FaseRecria, fase_id)
-    if f:
+    if f and (fazenda_id is None or f.fazenda_id == fazenda_id):
         session.delete(f)
         session.commit()
     return {"ok": True}
@@ -831,16 +1000,26 @@ class JanelaIn(BaseModel):
 
 
 @router.get("/janelas")
-def listar_janelas(session: Session = Depends(get_session)) -> list[dict]:
-    linhas = session.exec(select(JanelaPontoCritico).order_by(JanelaPontoCritico.doenca)).all()
+def listar_janelas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(JanelaPontoCritico).order_by(JanelaPontoCritico.doenca)
+    if fazenda_id is not None:
+        query = query.where(JanelaPontoCritico.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     return [l.model_dump() for l in linhas]
 
 
 @router.post("/janelas", status_code=201)
-def criar_janela(dados: JanelaIn, session: Session = Depends(get_session)) -> dict:
+def criar_janela(
+    dados: JanelaIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.dia_min > dados.dia_max:
         raise HTTPException(status_code=400, detail="Dia inicial não pode ser maior que o final.")
-    j = JanelaPontoCritico(**dados.model_dump())
+    j = JanelaPontoCritico(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(j)
     session.commit()
     session.refresh(j)
@@ -848,9 +1027,13 @@ def criar_janela(dados: JanelaIn, session: Session = Depends(get_session)) -> di
 
 
 @router.delete("/janelas/{janela_id}")
-def excluir_janela(janela_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_janela(
+    janela_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     j = session.get(JanelaPontoCritico, janela_id)
-    if j:
+    if j and (fazenda_id is None or j.fazenda_id == fazenda_id):
         session.delete(j)
         session.commit()
     return {"ok": True}
@@ -888,21 +1071,34 @@ def _faixa_benchmark(b: BenchmarkRecria) -> str | None:
 
 
 @router.get("/benchmark")
-def listar_benchmark(session: Session = Depends(get_session)) -> list[dict]:
-    linhas = session.exec(select(BenchmarkRecria).order_by(BenchmarkRecria.ordem, BenchmarkRecria.indicador)).all()
+def listar_benchmark(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(BenchmarkRecria).order_by(BenchmarkRecria.ordem, BenchmarkRecria.indicador)
+    if fazenda_id is not None:
+        query = query.where(BenchmarkRecria.fazenda_id == fazenda_id)
+    linhas = session.exec(query).all()
     return [{**b.model_dump(), "faixa_fazenda": _faixa_benchmark(b)} for b in linhas]
 
 
 @router.post("/benchmark", status_code=201)
-def salvar_benchmark(dados: BenchmarkIn, session: Session = Depends(get_session)) -> dict:
-    """Upsert por indicador."""
-    b = session.exec(select(BenchmarkRecria).where(BenchmarkRecria.indicador == dados.indicador)).first()
+def salvar_benchmark(
+    dados: BenchmarkIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Upsert por indicador (escopado por fazenda)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(BenchmarkRecria).where(BenchmarkRecria.indicador == dados.indicador)
+    if fazenda_id is not None:
+        query = query.where(BenchmarkRecria.fazenda_id == fazenda_id)
+    b = session.exec(query).first()
     if b:
         for campo, valor in dados.model_dump().items():
             setattr(b, campo, valor)
         b.atualizado_em = datetime.utcnow()
     else:
-        b = BenchmarkRecria(**dados.model_dump())
+        b = BenchmarkRecria(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(b)
     session.commit()
     session.refresh(b)
@@ -910,9 +1106,13 @@ def salvar_benchmark(dados: BenchmarkIn, session: Session = Depends(get_session)
 
 
 @router.delete("/benchmark/{benchmark_id}")
-def excluir_benchmark(benchmark_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_benchmark(
+    benchmark_id: int, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     b = session.get(BenchmarkRecria, benchmark_id)
-    if b:
+    if b and (fazenda_id is None or b.fazenda_id == fazenda_id):
         session.delete(b)
         session.commit()
     return {"ok": True}
@@ -969,39 +1169,64 @@ _CATEGORIAS_NOVAS_PADRAO: list[dict] = [
 ]
 
 
-def seed_categorias_novas(session: Session) -> None:
-    """Acrescenta (por nome, idempotente) as categorias de manejo mais ricas
-    acima — roda mesmo em bancos que já têm as 4 categorias legadas
-    (Aleitamento/Recria 1/Recria 2/Recria apta) cadastradas."""
-    existentes = {c.nome for c in session.exec(select(CategoriaManejo)).all()}
+def seed_categorias_novas(session: Session, fazenda_id: int | None = None) -> None:
+    """Acrescenta (por nome, idempotente, escopado por fazenda) as categorias
+    de manejo mais ricas acima — roda mesmo em bancos que já têm as 4
+    categorias legadas (Aleitamento/Recria 1/Recria 2/Recria apta)
+    cadastradas."""
+    query = select(CategoriaManejo)
+    if fazenda_id is not None:
+        query = query.where(CategoriaManejo.fazenda_id == fazenda_id)
+    existentes = {c.nome for c in session.exec(query).all()}
     for dados in _CATEGORIAS_NOVAS_PADRAO:
         if dados["nome"] not in existentes:
-            session.add(CategoriaManejo(**dados))
+            session.add(CategoriaManejo(**dados, fazenda_id=fazenda_id))
     session.commit()
 
 
-def seed_recria(session: Session) -> None:
-    """Cria metas (linha única), curva de peso-alvo e janelas padrão se vazio."""
-    if not session.get(MetaRecria, 1):
-        session.add(MetaRecria(id=1))
-    if not session.exec(select(BenchmarkRecria)).first():
+def seed_recria(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria metas, curva de peso-alvo, janelas e benchmark padrão para a
+    fazenda informada, se ainda vazio (idempotente, escopado por fazenda —
+    ver nota em fazenda/models/recria.py::MetaRecria sobre o singleton por
+    fazenda). `fazenda_id=None` preserva o comportamento legado de instalação
+    única (pré-multi-tenant)."""
+    _meta_recria(session, fazenda_id)
+    benchmark_query = select(BenchmarkRecria)
+    peso_alvo_query = select(PesoAlvoIdade)
+    janela_query = select(JanelaPontoCritico)
+    categoria_query = select(CategoriaManejo)
+    if fazenda_id is not None:
+        benchmark_query = benchmark_query.where(BenchmarkRecria.fazenda_id == fazenda_id)
+        peso_alvo_query = peso_alvo_query.where(PesoAlvoIdade.fazenda_id == fazenda_id)
+        janela_query = janela_query.where(JanelaPontoCritico.fazenda_id == fazenda_id)
+        categoria_query = categoria_query.where(CategoriaManejo.fazenda_id == fazenda_id)
+
+    if not session.exec(benchmark_query).first():
         for i, (ind, un, maior, t5, t10, t25, t50, t75, faz) in enumerate(_BENCHMARK_PADRAO):
             session.add(BenchmarkRecria(
                 indicador=ind, unidade=un, melhor_e_maior=maior,
                 top5=t5, top10=t10, top25=t25, top50=t50, top75=t75, valor_fazenda=faz, ordem=i,
+                fazenda_id=fazenda_id,
             ))
-    if not session.exec(select(PesoAlvoIdade)).first():
+    if not session.exec(peso_alvo_query).first():
         for mes, mn, mx in _PESO_ALVO_PADRAO:
             # Garante mín<=máx (a Foto 7 tem casos de faixa estreita/invertida).
-            session.add(PesoAlvoIdade(mes=mes, peso_min_kg=float(min(mn, mx)), peso_max_kg=float(max(mn, mx))))
-    if not session.exec(select(JanelaPontoCritico)).first():
+            session.add(PesoAlvoIdade(
+                mes=mes, peso_min_kg=float(min(mn, mx)), peso_max_kg=float(max(mn, mx)), fazenda_id=fazenda_id,
+            ))
+    if not session.exec(janela_query).first():
         for doenca, dmin, dmax, ant in _JANELAS_PADRAO:
-            session.add(JanelaPontoCritico(doenca=doenca, dia_min=dmin, dia_max=dmax, dias_antecedencia=ant))
-    if not session.exec(select(CategoriaManejo)).first():
+            session.add(JanelaPontoCritico(
+                doenca=doenca, dia_min=dmin, dia_max=dmax, dias_antecedencia=ant, fazenda_id=fazenda_id,
+            ))
+    if not session.exec(categoria_query).first():
         # Parâmetros de categoria (idade em dias / peso em kg).
-        session.add(CategoriaManejo(nome="Aleitamento", dia_min=0, dia_max=90, peso_max_kg=100, ordem=0))
-        session.add(CategoriaManejo(nome="Recria 1", dia_min=91, dia_max=210, ordem=1))
-        session.add(CategoriaManejo(nome="Recria 2", dia_min=211, dia_max=390, ordem=2))
-        session.add(CategoriaManejo(nome="Recria apta", dia_min=391, dia_max=None, peso_min_kg=370, usa_status_reprodutivo=True, ordem=3))
+        session.add(CategoriaManejo(nome="Aleitamento", dia_min=0, dia_max=90, peso_max_kg=100, ordem=0, fazenda_id=fazenda_id))
+        session.add(CategoriaManejo(nome="Recria 1", dia_min=91, dia_max=210, ordem=1, fazenda_id=fazenda_id))
+        session.add(CategoriaManejo(nome="Recria 2", dia_min=211, dia_max=390, ordem=2, fazenda_id=fazenda_id))
+        session.add(CategoriaManejo(
+            nome="Recria apta", dia_min=391, dia_max=None, peso_min_kg=370, usa_status_reprodutivo=True, ordem=3,
+            fazenda_id=fazenda_id,
+        ))
     session.commit()
-    seed_categorias_novas(session)
+    seed_categorias_novas(session, fazenda_id)

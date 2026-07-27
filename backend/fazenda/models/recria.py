@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from typing import Optional
 
-from sqlmodel import Field, SQLModel
+from sqlmodel import Field, SQLModel, UniqueConstraint
 
 # ===========================================================================
 # MÓDULO RECRIA — Dossiê de Desempenho Zootécnico
@@ -25,6 +25,7 @@ class OcorrenciaClinica(SQLModel, table=True):
     __tablename__ = "ocorrencia_clinica"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: str = Field(index=True)
     doenca: str = Field(index=True)          # nome da doença (ex.: Diarreia, Pneumonia, TPB)
     data_ocorrencia: date = Field(index=True)
@@ -35,12 +36,19 @@ class OcorrenciaClinica(SQLModel, table=True):
 
 
 class MetaRecria(SQLModel, table=True):
-    """Metas gerenciais da recria (linha única, id=1). Espelha a aba
-    PARÂMETROS da planilha do consultor."""
+    """Metas gerenciais da recria. Espelha a aba PARÂMETROS da planilha do
+    consultor.
+
+    Era uma linha única (id=1, mesmo padrão de `AlimentacaoEstado`) — passa a
+    ser uma linha por fazenda (lookup por `fazenda_id`, não mais por id
+    fixo), mesmo padrão de `ParametroDiariaPadrao` (ver
+    fazenda/models/pessoal.py), já que cada fazenda tem suas próprias metas."""
 
     __tablename__ = "meta_recria"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_meta_recria_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     idade_parto_meses: float = 24.0
     idade_prenhez_meses: float = 14.5
     idade_1a_cobertura_meses: float = 13.5
@@ -54,9 +62,14 @@ class PesoAlvoIdade(SQLModel, table=True):
     """Curva de peso-alvo: faixa mín/máx de peso (kg) esperada por mês de vida."""
 
     __tablename__ = "peso_alvo_idade"
+    # mes era único globalmente — passa a ser único por fazenda (mesmo padrão
+    # de tipo_servico_reprodutivo), senão a 2ª fazenda nunca conseguiria
+    # cadastrar a faixa de um mês já usado pela 1ª.
+    __table_args__ = (UniqueConstraint("mes", "fazenda_id", name="uq_peso_alvo_idade_mes_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    mes: int = Field(index=True, unique=True)   # idade em meses (1..24)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    mes: int = Field(index=True)   # idade em meses (1..24)
     peso_min_kg: float
     peso_max_kg: float
     criado_em: datetime = Field(default_factory=datetime.utcnow)
@@ -69,6 +82,7 @@ class FaseRecria(SQLModel, table=True):
     __tablename__ = "fase_recria"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str
     dia_min: int = Field(index=True)
     dia_max: int
@@ -84,6 +98,7 @@ class JanelaPontoCritico(SQLModel, table=True):
     __tablename__ = "janela_ponto_critico"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     doenca: str = Field(index=True)
     dia_min: int
     dia_max: int
@@ -99,6 +114,7 @@ class BenchmarkRecria(SQLModel, table=True):
     __tablename__ = "benchmark_recria"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     indicador: str = Field(index=True)
     unidade: Optional[str] = None            # "%", "g/dia", etc.
     melhor_e_maior: bool = True              # True: quanto MAIOR melhor (GMD); False: quanto menor (mortalidade)
@@ -121,6 +137,7 @@ class RegistroCocho(SQLModel, table=True):
     __tablename__ = "registro_cocho"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     data: date = Field(index=True)
     lote: str = Field(index=True)
     num_animais: int = 1
@@ -140,6 +157,7 @@ class CategoriaManejo(SQLModel, table=True):
     __tablename__ = "categoria_manejo"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     nome: str = Field(index=True)
     dia_min: int = 0
     dia_max: Optional[int] = None          # None = sem limite superior

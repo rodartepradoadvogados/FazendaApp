@@ -72,16 +72,34 @@ class ControlesIn(BaseModel):
 
 
 @router.get("/")
-def obter_producao(session: Session = Depends(get_session)) -> dict:
+def obter_producao(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Série temporal, curva de lactação e ranking por vaca do controle leiteiro."""
-    controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles = [c.model_dump() for c in session.exec(query).all()]
     return calcular_producao(controles)
 
 
 @router.get("/controles")
-def listar_controles(session: Session = Depends(get_session)) -> dict:
+def listar_controles(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Registros de controle leiteiro achatados para o dashboard interativo."""
-    animais_cadastro = session.exec(select(Animal)).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    animais_query = select(Animal)
+    partos_query = select(Parto)
+    controles_query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        animais_query = animais_query.where(Animal.fazenda_id == fazenda_id)
+        partos_query = partos_query.where(Parto.fazenda_id == fazenda_id)
+        controles_query = controles_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    animais_cadastro = session.exec(animais_query).all()
     grupo_por_numero = {a.numero: a.grupo_primario for a in animais_cadastro}
     # Raça sempre a do cadastro do animal (nunca a copiada/congelada no controle
     # leiteiro, que pode estar desatualizada ou vir de texto livre de CSV antigo).
@@ -89,9 +107,9 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
     # Ordem de parto por animal derivada do nº de partos, para preencher os
     # controles cuja ordem veio vazia (o primeiro parto é sempre "1").
     partos_por_numero: dict[str, int] = {}
-    for p in session.exec(select(Parto)).all():
+    for p in session.exec(partos_query).all():
         partos_por_numero[p.numero_matriz] = partos_por_numero.get(p.numero_matriz, 0) + 1
-    controles = session.exec(select(ControleLeiteiro)).all()
+    controles = session.exec(controles_query).all()
     nomes = mapa_usuarios(session, {c.usuario_id for c in controles})
     registros = []
     for c in controles:
@@ -118,12 +136,14 @@ def listar_controles(session: Session = Depends(get_session)) -> dict:
 @router.post("/controles")
 def criar_controles(
     dados: ControlesIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Registra a pesagem do dia para uma ou várias vacas de uma vez (lançamento
     individual ou em lote — o front manda uma entrada por vaca do lote).
     """
     usuario_id = _usuario_id_seguro(user)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     criados = []
     for entrada in dados.entradas:
         if entrada.total_kg is not None:
@@ -137,8 +157,12 @@ def criar_controles(
             o3 = ordenhas[2] if len(ordenhas) > 2 else None
         else:
             continue
-        animal = session.exec(select(Animal).where(Animal.numero == entrada.numero_matriz)).first()
+        animal_query = select(Animal).where(Animal.numero == entrada.numero_matriz)
+        if fazenda_id is not None:
+            animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(animal_query).first()
         registro = ControleLeiteiro(
+            fazenda_id=fazenda_id,
             animal_id=animal.id if animal else None,
             numero_matriz=entrada.numero_matriz,
             raca=animal.raca if animal else None,
@@ -203,12 +227,15 @@ def modelo_excel_controle_leiteiro(modo: str = "animal") -> Response:
     return _xlsx_response(modelo["colunas"], modelo["exemplo"], "Controle leiteiro", nome)
 
 
-def _resolver_lote(session: Session, valor: str) -> Lote | None:
+def _resolver_lote(session: Session, valor: str, fazenda_id: int | None = None) -> Lote | None:
     valor = (valor or "").strip()
     if not valor:
         return None
     codigo_extraido = _codigo_do_grupo(valor) or valor
-    lotes = session.exec(select(Lote)).all()
+    query = select(Lote)
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
+    lotes = session.exec(query).all()
     for l in lotes:
         if _mesmo_codigo(l.codigo, codigo_extraido):
             return l
@@ -222,7 +249,9 @@ def _resolver_lote(session: Session, valor: str) -> Lote | None:
 @router.post("/controle-leiteiro/importar")
 async def importar_controle_leiteiro(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -270,12 +299,15 @@ async def importar_controle_leiteiro(
                 erros.append(f"Linha {i}: lote, data e ao menos uma ordenha (ou o total) são obrigatórios.")
                 continue
             ordenhas, total = resultado
-            lote = _resolver_lote(session, lote_valor)
+            lote = _resolver_lote(session, lote_valor, fazenda_id=fazenda_id)
             if not lote:
                 erros.append(f'Linha {i}: lote "{lote_valor}" não encontrado no cadastro.')
                 continue
             rotulo = f"{lote.codigo} - {lote.nome}"
-            animais_lote = session.exec(select(Animal).where(Animal.grupo_primario == rotulo)).all()
+            animais_lote_query = select(Animal).where(Animal.grupo_primario == rotulo)
+            if fazenda_id is not None:
+                animais_lote_query = animais_lote_query.where(Animal.fazenda_id == fazenda_id)
+            animais_lote = session.exec(animais_lote_query).all()
             if not animais_lote:
                 erros.append(f'Linha {i}: lote "{lote_valor}" não tem nenhum animal no momento — pesagem não distribuída.')
                 continue
@@ -291,7 +323,7 @@ async def importar_controle_leiteiro(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user)
+        resultado = criar_controles(ControlesIn(data_controle=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"criados": criados, "erros": erros, "modo": "animal" if tem_numero else "lote"}
 
@@ -335,15 +367,21 @@ def _fase_transicao(session: Session, animal: "Animal | None", data_pesagem: dat
 @router.post("/pesagens")
 def criar_pesagens(
     dados: PesagensIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Registra a pesagem corporal do dia para uma ou várias vacas de uma vez."""
     usuario_id = _usuario_id_seguro(user)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     criados = []
     for entrada in dados.entradas:
         if not entrada.peso_kg:
             continue
-        animal = session.exec(select(Animal).where(Animal.numero == entrada.numero_matriz)).first()
+        animal_query = select(Animal).where(Animal.numero == entrada.numero_matriz)
+        if fazenda_id is not None:
+            animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
+        animal = session.exec(animal_query).first()
         registro = PesagemCorporal(
+            fazenda_id=fazenda_id,
             numero_matriz=entrada.numero_matriz,
             data_pesagem=dados.data_pesagem,
             peso_kg=entrada.peso_kg,
@@ -366,13 +404,17 @@ def relatorio_pesagens(
     data_inicio: date | None = None,
     data_fim: date | None = None,
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Primeira/última pesagem, GMD (ganho médio diário — peso final vs inicial no
     período) e GPD (ganho de peso diário entre pesagens — média dos ganhos
     diários de cada intervalo consecutivo) por animal, lote ou todo o rebanho.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query = query.where(PesagemCorporal.fazenda_id == fazenda_id)
     if numero_matriz:
         query = query.where(PesagemCorporal.numero_matriz == numero_matriz)
     if data_inicio:
@@ -444,7 +486,9 @@ def modelo_excel_pesagem_corporal() -> Response:
 @router.post("/pesagens/importar")
 async def importar_pesagem_corporal_planilha(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     linhas = list(iter_planilha_rows(file.filename or "", content))
     if not linhas:
@@ -464,7 +508,7 @@ async def importar_pesagem_corporal_planilha(
 
     criados = 0
     for dia, entradas in por_data.items():
-        resultado = criar_pesagens(PesagensIn(data_pesagem=dia, entradas=entradas), session, user)
+        resultado = criar_pesagens(PesagensIn(data_pesagem=dia, entradas=entradas), session, user, fazenda_id=fazenda_id)
         criados += resultado["criados"]
     return {"criados": criados, "erros": erros}
 
@@ -484,10 +528,19 @@ class QualidadeLeiteIn(BaseModel):
 
 
 @router.get("/qualidade-leite")
-def listar_qualidade_leite(session: Session = Depends(get_session)) -> dict:
-    registros = session.exec(select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)).all()
+def listar_qualidade_leite(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registros_query = select(QualidadeLeite).order_by(QualidadeLeite.data_coleta)
+    faixas_query = select(FaixaBonificacaoQualidade)
+    if fazenda_id is not None:
+        registros_query = registros_query.where(QualidadeLeite.fazenda_id == fazenda_id)
+        faixas_query = faixas_query.where(FaixaBonificacaoQualidade.fazenda_id == fazenda_id)
+    registros = session.exec(registros_query).all()
     nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
-    faixas = session.exec(select(FaixaBonificacaoQualidade)).all()
+    faixas = session.exec(faixas_query).all()
     tem_faixas_bonificacao = any(f.ativo for f in faixas)
     linhas = []
     for r in registros:
@@ -526,19 +579,26 @@ def _validar_faixa_bonificacao(dados: FaixaBonificacaoQualidadeIn) -> None:
 
 
 @router.get("/faixas-bonificacao-qualidade")
-def listar_faixas_bonificacao_qualidade(session: Session = Depends(get_session)) -> dict:
-    faixas = session.exec(
-        select(FaixaBonificacaoQualidade).order_by(FaixaBonificacaoQualidade.indicador, FaixaBonificacaoQualidade.valor_min)
-    ).all()
+def listar_faixas_bonificacao_qualidade(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(FaixaBonificacaoQualidade).order_by(FaixaBonificacaoQualidade.indicador, FaixaBonificacaoQualidade.valor_min)
+    if fazenda_id is not None:
+        query = query.where(FaixaBonificacaoQualidade.fazenda_id == fazenda_id)
+    faixas = session.exec(query).all()
     return {"faixas": [f.model_dump() for f in faixas]}
 
 
 @router.post("/faixas-bonificacao-qualidade", status_code=201)
 def criar_faixa_bonificacao_qualidade(
     dados: FaixaBonificacaoQualidadeIn, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _validar_faixa_bonificacao(dados)
-    faixa = FaixaBonificacaoQualidade(**dados.model_dump())
+    faixa = FaixaBonificacaoQualidade(**dados.model_dump(), fazenda_id=fazenda_id)
     session.add(faixa)
     session.commit()
     session.refresh(faixa)
@@ -549,9 +609,11 @@ def criar_faixa_bonificacao_qualidade(
 def atualizar_faixa_bonificacao_qualidade(
     faixa_id: int, dados: FaixaBonificacaoQualidadeIn,
     session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     faixa = session.get(FaixaBonificacaoQualidade, faixa_id)
-    if not faixa:
+    if not faixa or (fazenda_id is not None and faixa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Faixa de bonificação não encontrada")
     _validar_faixa_bonificacao(dados)
     for campo, valor in dados.model_dump().items():
@@ -565,9 +627,11 @@ def atualizar_faixa_bonificacao_qualidade(
 @router.delete("/faixas-bonificacao-qualidade/{faixa_id}")
 def excluir_faixa_bonificacao_qualidade(
     faixa_id: int, session: Session = Depends(get_session), _: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     faixa = session.get(FaixaBonificacaoQualidade, faixa_id)
-    if not faixa:
+    if not faixa or (fazenda_id is not None and faixa.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Faixa de bonificação não encontrada")
     session.delete(faixa)
     session.commit()
@@ -577,8 +641,10 @@ def excluir_faixa_bonificacao_qualidade(
 @router.post("/qualidade-leite", status_code=201)
 def criar_qualidade_leite(
     dados: QualidadeLeiteIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    registro = QualidadeLeite(**dados.model_dump(), usuario_id=_usuario_id_seguro(user))
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    registro = QualidadeLeite(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -622,7 +688,9 @@ def modelo_excel_qualidade_leite() -> Response:
 @router.post("/qualidade-leite/importar")
 async def importar_qualidade_leite_planilha(
     file: UploadFile, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     content = await file.read()
     criados = 0
     erros: list[str] = []
@@ -644,7 +712,7 @@ async def importar_qualidade_leite_planilha(
             lactose_pct=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["lactose_pct"])),
             nul=parse_float(valor_por_apelido(row_norm, QUALIDADE_LEITE_APELIDOS["nul"])),
         )
-        criar_qualidade_leite(dados, session, user)
+        criar_qualidade_leite(dados, session, user, fazenda_id=fazenda_id)
         criados += 1
     return {"criados": criados, "erros": erros}
 
@@ -656,8 +724,15 @@ class EntregaLeiteMensalIn(BaseModel):
 
 
 @router.get("/entrega-leite")
-def listar_entrega_leite(session: Session = Depends(get_session)) -> dict:
-    registros = session.exec(select(EntregaLeiteMensal).order_by(EntregaLeiteMensal.competencia)).all()
+def listar_entrega_leite(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(EntregaLeiteMensal).order_by(EntregaLeiteMensal.competencia)
+    if fazenda_id is not None:
+        query = query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    registros = session.exec(query).all()
     nomes = mapa_usuarios(session, {r.usuario_id for r in registros})
     linhas = []
     for r in registros:
@@ -670,8 +745,13 @@ def listar_entrega_leite(session: Session = Depends(get_session)) -> dict:
 @router.post("/entrega-leite", status_code=201)
 def criar_entrega_leite(
     dados: EntregaLeiteMensalIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    existente = session.exec(select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    existente_query = select(EntregaLeiteMensal).where(EntregaLeiteMensal.competencia == dados.competencia)
+    if fazenda_id is not None:
+        existente_query = existente_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+    existente = session.exec(existente_query).first()
     if existente:
         existente.quantidade_litros = dados.quantidade_litros
         existente.observacao = dados.observacao
@@ -679,7 +759,7 @@ def criar_entrega_leite(
         session.commit()
         session.refresh(existente)
         return existente.model_dump()
-    registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user))
+    registro = EntregaLeiteMensal(**dados.model_dump(), usuario_id=_usuario_id_seguro(user), fazenda_id=fazenda_id)
     session.add(registro)
     session.commit()
     session.refresh(registro)
@@ -711,6 +791,7 @@ def _dias_por_mes_no_periodo(ini: date, fim: date) -> dict[tuple[int, int], int]
 @router.get("/relatorio-controle-entrega")
 def relatorio_controle_entrega(
     data_inicio: str = "", data_fim: str = "", session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """
     Controle × Entregue no PERÍODO filtrado, tudo em quilos de leite.
@@ -727,6 +808,7 @@ def relatorio_controle_entrega(
     - Desvio padrão %: coeficiente de variação da produção diária do controle no
       período (mede se a média projeta bem; tolerância de 5%).
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
     ini = _parse_iso(data_inicio) or hoje.replace(day=1)
     fim = _parse_iso(data_fim) or hoje
@@ -735,8 +817,11 @@ def relatorio_controle_entrega(
     dias_periodo = (fim - ini).days + 1
 
     # ── Controle: soma diária do rebanho, média diária, projeção e desvio ──
+    controle_query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        controle_query = controle_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
     kg_por_dia: dict[date, float] = {}
-    for c in session.exec(select(ControleLeiteiro)).all():
+    for c in session.exec(controle_query).all():
         if c.data_controle and ini <= c.data_controle <= fim and c.producao_kg is not None:
             kg_por_dia[c.data_controle] = kg_por_dia.get(c.data_controle, 0.0) + c.producao_kg
     totais_diarios = list(kg_por_dia.values())
@@ -750,9 +835,14 @@ def relatorio_controle_entrega(
         desvio_pct = None
 
     # ── Entrega e receita: projeção proporcional por mês ──
-    entregas = {e.competencia: e.quantidade_litros for e in session.exec(select(EntregaLeiteMensal)).all()}
+    entrega_query = select(EntregaLeiteMensal)
+    conta_query = select(ContaGerencial).where(ContaGerencial.tipo == "receita")
+    if fazenda_id is not None:
+        entrega_query = entrega_query.where(EntregaLeiteMensal.fazenda_id == fazenda_id)
+        conta_query = conta_query.where(ContaGerencial.fazenda_id == fazenda_id)
+    entregas = {e.competencia: e.quantidade_litros for e in session.exec(entrega_query).all()}
     receita_por_mes: dict[str, float] = {}
-    for c in session.exec(select(ContaGerencial).where(ContaGerencial.tipo == "receita")).all():
+    for c in session.exec(conta_query).all():
         if "italac" not in (c.fornecedor_cliente or "").lower():
             continue
         comp = _competencia(c.data_competencia)
@@ -822,14 +912,17 @@ def _rotulo_lote(codigo: str, nome: str) -> str:
     return f"{codigo} - {nome}"
 
 
-def _lote_das_secas(session: Session) -> dict | None:
+def _lote_das_secas(session: Session, fazenda_id: int | None = None) -> dict | None:
     """
     O lote de vacas secas é o único configurado com status_lactacao="seca" —
     não dá pra usar o motor geral de critérios aqui porque a categoria/status
     do animal na ficha só é atualizada no próximo upload do GERAL.csv, não na
     hora do lançamento manual de secagem.
     """
-    lote = session.exec(select(Lote).where(Lote.status_lactacao == "seca")).first()
+    query = select(Lote).where(Lote.status_lactacao == "seca")
+    if fazenda_id is not None:
+        query = query.where(Lote.fazenda_id == fazenda_id)
+    lote = session.exec(query).first()
     if not lote:
         return None
     return {"codigo": lote.codigo, "nome": lote.nome, "rotulo": _rotulo_lote(lote.codigo, lote.nome)}
@@ -912,13 +1005,16 @@ class SecagemIn(BaseModel):
 @router.post("/secagem")
 def registrar_secagem(
     dados: SecagemIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.motivo not in MOTIVOS_SECAGEM:
         raise HTTPException(status_code=400, detail=f"Motivo inválido (aceitos: {', '.join(MOTIVOS_SECAGEM)})")
     if dados.escore_condicao_corporal is not None and not (1 <= dados.escore_condicao_corporal <= 5):
         raise HTTPException(status_code=400, detail="Escore de condição corporal deve ser entre 1 e 5")
 
     session.add(Secagem(
+        fazenda_id=fazenda_id,
         numero_matriz=dados.numero_matriz,
         data_secagem=dados.data_secagem,
         motivo=dados.motivo,
@@ -933,7 +1029,10 @@ def registrar_secagem(
 
     avisos: list[str] = []
     for item in dados.produtos:
-        estoque_item = session.exec(select(Estoque).where(Estoque.nome == item.produto)).first()
+        estoque_item_query = select(Estoque).where(Estoque.nome == item.produto)
+        if fazenda_id is not None:
+            estoque_item_query = estoque_item_query.where(Estoque.fazenda_id == fazenda_id)
+        estoque_item = session.exec(estoque_item_query).first()
         compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
         if item.unidade not in compativeis:
             raise HTTPException(
@@ -942,12 +1041,14 @@ def registrar_secagem(
             )
         if not materializar:
             session.add(AplicacaoAgendada(
+                fazenda_id=fazenda_id,
                 numero_matriz=dados.numero_matriz, data=dados.data_secagem, produto=item.produto,
                 dose=item.quantidade, unidade=item.unidade, via=item.via, responsavel=dados.responsavel,
                 observacao="Secagem", aplicado=False,
             ))
             continue
         session.add(Sanidade(
+            fazenda_id=fazenda_id,
             numero_matriz=dados.numero_matriz,
             data_aplicacao=dados.data_secagem,
             produto=item.produto,
@@ -978,10 +1079,14 @@ def registrar_secagem(
     if dados.vacinas_pre_parto and dados.vacina_pre_parto_aplicada_agora:
         for vacina in dados.vacinas_pre_parto:
             session.add(Sanidade(
+                fazenda_id=fazenda_id,
                 numero_matriz=dados.numero_matriz, data_aplicacao=dados.data_secagem, produto=vacina,
                 dose=1, unidade="dose", responsavel=dados.responsavel, atividade="Vacina pré-parto",
             ))
-            estoque_item = session.exec(select(Estoque).where(Estoque.nome == vacina)).first()
+            estoque_item_query = select(Estoque).where(Estoque.nome == vacina)
+            if fazenda_id is not None:
+                estoque_item_query = estoque_item_query.where(Estoque.fazenda_id == fazenda_id)
+            estoque_item = session.exec(estoque_item_query).first()
             if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta("dose", estoque_item.unidade):
                 estoque_item.quantidade = (estoque_item.quantidade or 0) - 1
                 if estoque_item.estoque_minimo is not None:
@@ -993,13 +1098,14 @@ def registrar_secagem(
         data_vacina = dados.data_secagem + timedelta(days=1)
         for vacina in dados.vacinas_pre_parto:
             session.add(AplicacaoAgendada(
+                fazenda_id=fazenda_id,
                 numero_matriz=dados.numero_matriz, data=data_vacina, produto=vacina,
                 responsavel=dados.responsavel, observacao="Vacina pré-parto", aplicado=False,
             ))
         avisos.append(f"Vacina(s) pré-parto programada(s) na Agenda para {data_vacina.strftime('%d/%m/%Y')}.")
 
     session.commit()
-    return {"criado": True, "avisos": avisos, "programado": not materializar, "lote_sugerido": _lote_das_secas(session)}
+    return {"criado": True, "avisos": avisos, "programado": not materializar, "lote_sugerido": _lote_das_secas(session, fazenda_id=fazenda_id)}
 
 
 class SugestaoLoteEventoIn(BaseModel):

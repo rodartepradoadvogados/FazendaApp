@@ -246,11 +246,15 @@ class EditarAplicacaoIn(BaseModel):
 
 
 @router.put("/aplicacoes/{aplicacao_id}")
-def editar_aplicacao(aplicacao_id: int, dados: EditarAplicacaoIn, session: Session = Depends(get_session)) -> dict:
+def editar_aplicacao(
+    aplicacao_id: int, dados: EditarAplicacaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Corrige uma aplicação diretamente na lista (produto, dose, unidade, via,
     responsável, data, observação). Não mexe no estoque — é só ajuste do registro."""
     s = session.get(Sanidade, aplicacao_id)
-    if not s:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
 
     campos = dados.model_dump(exclude_unset=True)
@@ -274,11 +278,14 @@ def editar_aplicacao(aplicacao_id: int, dados: EditarAplicacaoIn, session: Sessi
 
 
 @router.delete("/aplicacoes/{aplicacao_id}")
-def excluir_aplicacao(aplicacao_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_aplicacao(
+    aplicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Exclui uma aplicação da lista de Sanidade. O estoque não é reposto
     automaticamente — se precisar, ajuste o estoque manualmente."""
     s = session.get(Sanidade, aplicacao_id)
-    if not s:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
     session.delete(s)
     session.commit()
@@ -529,9 +536,13 @@ def criar_calendario(
 
 
 @router.put("/calendario/{calendario_id}")
-def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_calendario(
+    calendario_id: int, dados: CalendarioSanitarioIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     c = session.get(CalendarioSanitario, calendario_id)
-    if not c:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     _validar_calendario(dados, session)
     for campo, valor in dados.model_dump(exclude={"realizado"}).items():
@@ -547,10 +558,13 @@ def atualizar_calendario(calendario_id: int, dados: CalendarioSanitarioIn, sessi
 
 
 @router.delete("/calendario/{calendario_id}")
-def excluir_calendario(calendario_id: int, session: Session = Depends(get_session)) -> dict:
+def excluir_calendario(
+    calendario_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Exclui uma regra do calendário sanitário (e suas ocorrências somem da Agenda)."""
     c = session.get(CalendarioSanitario, calendario_id)
-    if not c:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Regra do calendário sanitário não encontrada")
     session.delete(c)
     session.commit()
@@ -675,7 +689,12 @@ def _banda_numerica(exame_def: ExameDefinicao | None, valor: float) -> str | Non
 
 
 @router.post("/calendario/cadastrar-preventivo")
-def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def cadastrar_preventivo(
+    dados: CadastrarPreventivoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     ev = session.get(EventoSanitario, dados.evento_sanitario_id)
     if not ev:
         raise HTTPException(status_code=400, detail="Evento sanitário não encontrado")
@@ -734,6 +753,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             ),
             session,
             user,
+            fazenda_id,
         )
 
     # 3) Diagnóstico/resultado do exame (só evento categoria_preventiva ==
@@ -765,6 +785,7 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
             marcar_a_descartar(
                 ADescartarIn(animais=dados.animais, descartar=True, observacao=f"Exame {ev.nome}: positivo"),
                 session=session,
+                fazenda_id=fazenda_id,
             )
         resultado_exame = {"resultado": dados.resultado_exame, "banda": banda, "animais": len(dados.animais), "ids": exame_resultado_ids}
 
@@ -780,11 +801,15 @@ def cadastrar_preventivo(dados: CadastrarPreventivoIn, session: Session = Depend
 def listar_resultados_exame(
     evento_sanitario_id: int | None = None, resultado: str | None = None,
     data_de: date | None = None, data_ate: date | None = None, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """Relatório de resultados de exames (positivo/negativo/indefinido ou
     numérico) lançados via calendário sanitário preventivo — ver
     cadastrar_preventivo. Só leitura, para acompanhamento."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(ExameResultado).order_by(ExameResultado.data_exame.desc(), ExameResultado.id.desc())
+    if fazenda_id is not None:
+        query = query.where(ExameResultado.fazenda_id == fazenda_id)
     if evento_sanitario_id is not None:
         query = query.where(ExameResultado.evento_sanitario_id == evento_sanitario_id)
     if resultado is not None:

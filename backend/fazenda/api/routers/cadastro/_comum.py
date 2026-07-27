@@ -55,9 +55,16 @@ def _crud_nome_ativo(model, com_fazenda: bool = False):
         session.refresh(obj)
         return obj.model_dump()
 
-    def atualizar(item_id: int, dados: NomeAtivoIn, session: Session = Depends(get_session)) -> dict:
+    def atualizar(
+        item_id: int, dados: NomeAtivoIn, session: Session = Depends(get_session),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    ) -> dict:
         obj = session.get(model, item_id)
-        if not obj:
+        if com_fazenda:
+            fazenda_id = fazenda_id_seguro(fazenda_id)
+            if not obj or (fazenda_id is not None and obj.fazenda_id != fazenda_id):
+                raise HTTPException(status_code=404, detail="Registro não encontrado")
+        elif not obj:
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         nome = dados.nome.strip()
         if not nome:

@@ -83,23 +83,32 @@ def _estoque_por_alimento(session: Session, fazenda_id: int | None) -> tuple[dic
     return por_alimento, cadastrados
 
 
+def _obter_estado_alimentacao(session: Session, fazenda_id: int | None) -> AlimentacaoEstado | None:
+    query = select(AlimentacaoEstado)
+    if fazenda_id is not None:
+        query = query.where(AlimentacaoEstado.fazenda_id == fazenda_id)
+    else:
+        query = query.where(AlimentacaoEstado.fazenda_id.is_(None))  # type: ignore[union-attr]
+    return session.exec(query).first()
+
+
 def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     """
     Baixa automática de estoque por dias decorridos (opção A). Usa uma trava
-    otimista (compare-and-swap) na linha única de AlimentacaoEstado: só quem
-    conseguir avançar `ultima_data_deducao` de fato aplica a baixa — uma
+    otimista (compare-and-swap) na linha de AlimentacaoEstado da fazenda: só
+    quem conseguir avançar `ultima_data_deducao` de fato aplica a baixa — uma
     segunda requisição concorrente vê 0 linhas afetadas e não faz nada,
     evitando baixa duplicada quando dois usuários abrem a tela ao mesmo tempo.
     """
     hoje = date.today()
-    estado = session.get(AlimentacaoEstado, 1)
+    estado = _obter_estado_alimentacao(session, fazenda_id)
     if not estado:
-        # Primeiro acesso: cria a linha única de estado. Duas requisições
-        # concorrentes podem cair aqui ao mesmo tempo — a segunda perde a
-        # corrida na constraint de chave primária; trata como "já criada"
-        # e segue sem tentar deduzir nada agora (não há baseline anterior).
+        # Primeiro acesso desta fazenda: cria a linha de estado. Duas
+        # requisições concorrentes podem cair aqui ao mesmo tempo — a segunda
+        # perde a corrida na constraint única de fazenda_id; trata como "já
+        # criada" e segue sem tentar deduzir nada agora (não há baseline anterior).
         try:
-            session.add(AlimentacaoEstado(id=1, ultima_data_deducao=hoje))
+            session.add(AlimentacaoEstado(fazenda_id=fazenda_id, ultima_data_deducao=hoje))
             session.commit()
         except IntegrityError:
             session.rollback()
@@ -109,14 +118,21 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     if dias <= 0:
         return {"dias_deduzidos": 0, "ultima_data_deducao": estado.ultima_data_deducao.isoformat()}
 
+    if fazenda_id is not None:
+        condicao_fazenda = "fazenda_id = :fazenda_id"
+    else:
+        condicao_fazenda = "fazenda_id IS NULL"
     resultado = session.execute(
-        text("UPDATE alimentacao_estado SET ultima_data_deducao = :novo WHERE id = 1 AND ultima_data_deducao = :antigo"),
-        {"novo": hoje.isoformat(), "antigo": estado.ultima_data_deducao.isoformat()},
+        text(
+            f"UPDATE alimentacao_estado SET ultima_data_deducao = :novo "
+            f"WHERE id = :id AND {condicao_fazenda} AND ultima_data_deducao = :antigo"
+        ),
+        {"novo": hoje.isoformat(), "id": estado.id, "fazenda_id": fazenda_id, "antigo": estado.ultima_data_deducao.isoformat()},
     )
     session.commit()
     if resultado.rowcount == 0:
         # Outra requisição venceu a corrida e já processou essa janela de dias.
-        atualizado = session.get(AlimentacaoEstado, 1)
+        atualizado = _obter_estado_alimentacao(session, fazenda_id)
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
     dietas, animais = _dietas_e_animais(session, fazenda_id)
@@ -188,9 +204,12 @@ def necessidade_mensal(
 
 
 @router.get("/estado-baixa")
-def estado_baixa(session: Session = Depends(get_session)) -> dict:
+def estado_baixa(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Última data em que a baixa automática de estoque foi aplicada."""
-    estado = session.get(AlimentacaoEstado, 1)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    estado = _obter_estado_alimentacao(session, fazenda_id)
     return {"ultima_data_deducao": estado.ultima_data_deducao.isoformat() if estado and estado.ultima_data_deducao else None}
 
 
@@ -203,9 +222,12 @@ def estado_baixa(session: Session = Depends(get_session)) -> dict:
 CATEGORIAS_ALIMENTO_PADRAO = ["Volumoso", "Concentrado", "Mineral"]
 
 
-def _seed_categorias_alimento(session: Session) -> None:
-    existentes = {c.nome for c in session.exec(select(CategoriaAlimento)).all()}
-    novas = [CategoriaAlimento(nome=nome) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
+def _seed_categorias_alimento(session: Session, fazenda_id: int | None = None) -> None:
+    query = select(CategoriaAlimento)
+    if fazenda_id is not None:
+        query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+    existentes = {c.nome for c in session.exec(query).all()}
+    novas = [CategoriaAlimento(nome=nome, fazenda_id=fazenda_id) for nome in CATEGORIAS_ALIMENTO_PADRAO if nome not in existentes]
     if novas:
         session.add_all(novas)
         session.commit()
@@ -234,18 +256,27 @@ _ALIMENTOS_PADRAO_CATEGORIA: list[tuple[str, str, str | None]] = [
 ]
 
 
-def seed_alimentos(session: Session) -> None:
+def seed_alimentos(session: Session, fazenda_id: int | None = None) -> None:
     """Idempotente — só cria o que ainda não existe (nunca sobrescreve edição
-    manual). Chamado no startup (ver `main.py`)."""
-    _seed_categorias_alimento(session)
-    categorias = {c.nome: c.id for c in session.exec(select(CategoriaAlimento)).all()}
-    existentes = {a.nome for a in session.exec(select(Alimento)).all()}
-    estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(select(Estoque)).all()}
+    manual). Chamado no startup (ver `main.py`), sempre com `fazenda_id=1`:
+    a lista `_ALIMENTOS_PADRAO_CATEGORIA` é histórica/grandfathered — nomes de
+    produtos comerciais específicos já usados por essa fazenda."""
+    _seed_categorias_alimento(session, fazenda_id=fazenda_id)
+    categoria_query = select(CategoriaAlimento)
+    alimento_query = select(Alimento)
+    estoque_query = select(Estoque)
+    if fazenda_id is not None:
+        categoria_query = categoria_query.where(CategoriaAlimento.fazenda_id == fazenda_id)
+        alimento_query = alimento_query.where(Alimento.fazenda_id == fazenda_id)
+        estoque_query = estoque_query.where(Estoque.fazenda_id == fazenda_id)
+    categorias = {c.nome: c.id for c in session.exec(categoria_query).all()}
+    existentes = {a.nome for a in session.exec(alimento_query).all()}
+    estoque_por_nome = {e.nome.strip().lower(): e for e in session.exec(estoque_query).all()}
     novos_com_vinculo = []
     for nome, categoria_nome, nome_estoque in _ALIMENTOS_PADRAO_CATEGORIA:
         if nome in existentes:
             continue
-        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome))
+        alimento = Alimento(nome=nome, categoria_alimento_id=categorias.get(categoria_nome), fazenda_id=fazenda_id)
         novos_com_vinculo.append((alimento, nome_estoque or nome))
     if novos_com_vinculo:
         session.add_all([a for a, _ in novos_com_vinculo])
@@ -263,8 +294,8 @@ def seed_alimentos(session: Session) -> None:
 def listar_categorias_alimento(
     fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
 ) -> list[dict]:
-    _seed_categorias_alimento(session)
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    _seed_categorias_alimento(session, fazenda_id=fazenda_id)
     query = select(CategoriaAlimento)
     if fazenda_id is not None:
         query = query.where(CategoriaAlimento.fazenda_id == fazenda_id)

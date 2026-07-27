@@ -81,7 +81,7 @@ def atualizar_safra(
     _validar(dados)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     safra = session.get(Safra, safra_id)
-    if not safra:
+    if not safra or (fazenda_id is not None and safra.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Safra não encontrada")
     nome = dados.nome.strip()
     query_existente = select(Safra).where(Safra.nome == nome, Safra.id != safra.id)

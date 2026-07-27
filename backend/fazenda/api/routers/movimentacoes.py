@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, ParametroSugestaoMovimentacao, Usuario
+from fazenda.models import Animal, Lote, MotivoMovimentacao, MovimentoLote, ParametroSugestaoMovimentacao, SeedFlag, Usuario
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 
@@ -38,12 +38,18 @@ SEED_MOTIVOS = [
 ]
 
 
-def seed_motivos_movimentacao(session: Session) -> None:
-    """Cria os motivos padrão se a tabela ainda estiver vazia (idempotente)."""
-    if session.exec(select(MotivoMovimentacao)).first():
+def seed_motivos_movimentacao(session: Session, fazenda_id: int | None = None) -> None:
+    """Cria os motivos padrão uma única vez por fazenda (idempotente via SeedFlag)."""
+    chave = f"motivos_movimentacao_v1_fazenda_{fazenda_id}" if fazenda_id is not None else "motivos_movimentacao_v1"
+    if session.get(SeedFlag, chave):
         return
     for nome in SEED_MOTIVOS:
-        session.add(MotivoMovimentacao(nome=nome))
+        query = select(MotivoMovimentacao).where(MotivoMovimentacao.nome == nome)
+        if fazenda_id is not None:
+            query = query.where(MotivoMovimentacao.fazenda_id == fazenda_id)
+        if not session.exec(query).first():
+            session.add(MotivoMovimentacao(nome=nome, fazenda_id=fazenda_id))
+    session.add(SeedFlag(chave=chave))
     session.commit()
 
 
@@ -113,9 +119,15 @@ def criar_motivo(
 
 
 @router.put("/motivos/{motivo_id}")
-def atualizar_motivo(motivo_id: int, dados: MotivoIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_motivo(
+    motivo_id: int,
+    dados: MotivoIn,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     motivo = session.get(MotivoMovimentacao, motivo_id)
-    if not motivo:
+    if not motivo or (fazenda_id is not None and motivo.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Motivo não encontrado")
     nome = dados.nome.strip()
     if not nome:
@@ -155,12 +167,16 @@ def sugestoes_movimentacao(
     }
 
 
-def _parametro_sugestao_movimentacao(session: Session) -> ParametroSugestaoMovimentacao:
-    """Linha única (id=1, mesmo padrão de `ParametroDiariaPadrao`) com a
+def _parametro_sugestao_movimentacao(session: Session, fazenda_id: int | None = None) -> ParametroSugestaoMovimentacao:
+    """Uma linha por fazenda (mesmo padrão de `ParametroDiariaPadrao`) com a
     configuração de quando as sugestões de troca de lote aparecem na Agenda."""
-    parametro = session.get(ParametroSugestaoMovimentacao, 1)
+    query = select(ParametroSugestaoMovimentacao)
+    query = query.where(ParametroSugestaoMovimentacao.fazenda_id == fazenda_id) if fazenda_id is not None else query.where(
+        ParametroSugestaoMovimentacao.fazenda_id.is_(None)
+    )
+    parametro = session.exec(query).first()
     if not parametro:
-        parametro = ParametroSugestaoMovimentacao(id=1)
+        parametro = ParametroSugestaoMovimentacao(fazenda_id=fazenda_id)
         session.add(parametro)
         session.commit()
         session.refresh(parametro)
@@ -168,8 +184,11 @@ def _parametro_sugestao_movimentacao(session: Session) -> ParametroSugestaoMovim
 
 
 @router.get("/parametro-agendamento")
-def obter_parametro_agendamento(session: Session = Depends(get_session)) -> dict:
-    return _parametro_sugestao_movimentacao(session).model_dump()
+def obter_parametro_agendamento(
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    return _parametro_sugestao_movimentacao(session, fazenda_id=fazenda_id_seguro(fazenda_id)).model_dump()
 
 
 class ParametroAgendamentoIn(BaseModel):
@@ -179,13 +198,16 @@ class ParametroAgendamentoIn(BaseModel):
 
 @router.put("/parametro-agendamento")
 def salvar_parametro_agendamento(
-    dados: ParametroAgendamentoIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)
+    dados: ParametroAgendamentoIn,
+    session: Session = Depends(get_session),
+    user: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     if dados.modo not in ("na_data_parametro", "dia_fixo_semana"):
         raise HTTPException(status_code=400, detail="Modo inválido")
     if not 0 <= dados.dia_semana <= 6:
         raise HTTPException(status_code=400, detail="Dia da semana inválido")
-    parametro = _parametro_sugestao_movimentacao(session)
+    parametro = _parametro_sugestao_movimentacao(session, fazenda_id=fazenda_id_seguro(fazenda_id))
     parametro.modo = dados.modo
     parametro.dia_semana = dados.dia_semana
     parametro.atualizado_em = datetime.utcnow()
@@ -200,8 +222,8 @@ def listar_movimentacoes(
     numero_matriz: str | None = Query(None),
     data_inicio: date | None = Query(None),
     data_fim: date | None = Query(None),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query = select(MovimentoLote)

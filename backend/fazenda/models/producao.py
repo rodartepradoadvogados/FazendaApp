@@ -21,6 +21,7 @@ class ControleLeiteiro(SQLModel, table=True):
     __tablename__ = "controle_leiteiro"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
     numero_matriz: str = Field(index=True)
     raca: Optional[str] = None
@@ -47,6 +48,7 @@ class PesagemCorporal(SQLModel, table=True):
     __tablename__ = "pesagem_corporal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: str = Field(index=True)
     data_pesagem: date
     peso_kg: float
@@ -83,6 +85,7 @@ class AgendamentoPesagem(SQLModel, table=True):
     dia_semana: int = 1
     data_referencia: date  # 1ª pesagem (âncora da cadência)
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 class QualidadeLeite(SQLModel, table=True):
@@ -94,6 +97,7 @@ class QualidadeLeite(SQLModel, table=True):
     __tablename__ = "qualidade_leite"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: Optional[str] = Field(default=None, index=True)
     data_coleta: date
     ccs: Optional[float] = None  # células somáticas (mil/mL)
@@ -116,6 +120,7 @@ class EntregaLeiteMensal(SQLModel, table=True):
     __tablename__ = "entrega_leite_mensal"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     competencia: str = Field(index=True)  # "YYYY-MM"
     quantidade_litros: float
     observacao: Optional[str] = None
@@ -129,6 +134,7 @@ class Secagem(SQLModel, table=True):
     __tablename__ = "secagem"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     numero_matriz: str = Field(index=True)
     data_secagem: date
     motivo: str  # doente | baixa_producao | comportamento | mastite | casco | rotina | outros
@@ -148,6 +154,7 @@ class FaixaBonificacaoQualidade(SQLModel, table=True):
     __tablename__ = "faixa_bonificacao_qualidade"
 
     id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     indicador: str = Field(index=True)  # "ccs" | "cbt" | "gordura_pct" | "proteina_pct"
     valor_min: Optional[float] = None  # None = sem limite inferior
     valor_max: Optional[float] = None  # None = sem limite superior

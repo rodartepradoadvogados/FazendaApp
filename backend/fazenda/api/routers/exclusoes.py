@@ -14,8 +14,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.models import (
     AgendaManual,
     Animal,
@@ -120,7 +121,10 @@ def _dentro_periodo(data_ref, data_inicio: str, data_fim: str) -> bool:
     return True
 
 
-def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: Session) -> list[dict]:
+def _buscar_um(
+    tipo: str, termo: str, data_inicio: str, data_fim: str, session: Session,
+    fazenda_id: int | None = None,
+) -> list[dict]:
     """Lista candidatos a exclusão de um único tipo (sem o catch-all "todos_lancamentos"),
     filtrados por um termo de busca e, opcionalmente, por período. Cada item carrega um
     campo interno "_data" (para ordenação cronológica) que a rota pública remove antes
@@ -163,7 +167,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "controle":
-        rows = session.exec(select(ControleLeiteiro)).all()
+        query = select(ControleLeiteiro)
+        if fazenda_id is not None:
+            query = query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -254,7 +261,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return out[:200]
 
     if tipo == "compra_animal":
-        rows = session.exec(select(CompraAnimal)).all()
+        query = select(CompraAnimal)
+        if fazenda_id is not None:
+            query = query.where(CompraAnimal.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -270,7 +280,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "venda_animal":
-        rows = session.exec(select(VendaAnimal)).all()
+        query = select(VendaAnimal)
+        if fazenda_id is not None:
+            query = query.where(VendaAnimal.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": v.id,
@@ -286,7 +299,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "compra_semen":
-        rows = session.exec(select(CompraSemen)).all()
+        query = select(CompraSemen)
+        if fazenda_id is not None:
+            query = query.where(CompraSemen.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {
                 "id": c.id,
@@ -323,7 +339,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return sorted(out, key=lambda x: x["titulo"], reverse=True)[:200]
 
     if tipo == "lote":
-        rows = session.exec(select(Lote)).all()
+        query = select(Lote)
+        if fazenda_id is not None:
+            query = query.where(Lote.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [
             {"id": l.id, "titulo": f"{l.codigo} — {l.nome}", "subtitulo": l.status_lactacao or "—"}
             for l in rows if _contem(termo, l.codigo, l.nome)
@@ -339,7 +358,10 @@ def _buscar_um(tipo: str, termo: str, data_inicio: str, data_fim: str, session: 
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "motivo_movimentacao":
-        rows = session.exec(select(MotivoMovimentacao)).all()
+        query = select(MotivoMovimentacao)
+        if fazenda_id is not None:
+            query = query.where(MotivoMovimentacao.fazenda_id == fazenda_id)
+        rows = session.exec(query).all()
         out = [{"id": m.id, "titulo": m.nome, "subtitulo": "Ativo" if m.ativo else "Inativo"} for m in rows if _contem(termo, m.nome)]
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
@@ -395,21 +417,23 @@ def buscar(
     data_inicio: str = Query(""),
     data_fim: str = Query(""),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """Lista candidatos a exclusão. O tipo especial "todos_lancamentos" combina todos os
     tipos de lançamento com data (serviço, parto, controle, sanidade, protocolos, evento
     manual, financeiro) numa única lista em ordem decrescente — para achar um registro que
     não constou em nenhuma das opções específicas. Cada item carrega "tipo_real" para que
     a exclusão seja roteada ao tipo de origem de fato."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if tipo != "todos_lancamentos":
-        out = _buscar_um(tipo, termo, data_inicio, data_fim, session)
+        out = _buscar_um(tipo, termo, data_inicio, data_fim, session, fazenda_id=fazenda_id)
         for item in out:
             item.pop("_data", None)
         return out
 
     combinados: list[dict] = []
     for subtipo in SUBTIPOS_TODOS:
-        for item in _buscar_um(subtipo, termo, data_inicio, data_fim, session):
+        for item in _buscar_um(subtipo, termo, data_inicio, data_fim, session, fazenda_id=fazenda_id):
             item["tipo_real"] = subtipo
             combinados.append(item)
 
@@ -419,7 +443,7 @@ def buscar(
     return combinados[:300]
 
 
-def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
+def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None) -> tuple[list[str], list]:
     """Retorna (descrições do impacto, objetos que serão apagados)."""
     if tipo == "animal":
         animal = session.exec(select(Animal).where(Animal.numero == id_)).first()
@@ -454,7 +478,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "controle":
         c = session.get(ControleLeiteiro, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Registro não encontrado")
         return [f"Controle leiteiro de {c.numero_matriz} em {_br(c.data_controle)}"], [c]
 
@@ -563,7 +587,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "compra_animal":
         c = session.get(CompraAnimal, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Compra de animal não encontrada")
         impacto = [f"Compra do animal {c.numero_animal} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor or 0:,.2f})"]
         objetos: list = [c]
@@ -599,7 +623,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "venda_animal":
         v = session.get(VendaAnimal, int(id_))
-        if not v:
+        if not v or (fazenda_id is not None and v.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Venda de animal não encontrada")
         impacto = [f"Venda do animal {v.numero_animal} — {v.comprador} — {_br(v.data_venda)} (R$ {v.valor or 0:,.2f})"]
         objetos: list = [v]
@@ -635,7 +659,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "compra_semen":
         c = session.get(CompraSemen, int(id_))
-        if not c:
+        if not c or (fazenda_id is not None and c.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Compra de sêmen não encontrada")
         impacto = [f"Compra de {c.doses} dose(s) de sêmen — {c.touro_nome} — {c.vendedor} — {_br(c.data_compra)} (R$ {c.valor_unitario or 0:,.2f}/dose)"]
         objetos: list = [c]
@@ -669,7 +693,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "lote":
         lote = session.get(Lote, int(id_))
-        if not lote:
+        if not lote or (fazenda_id is not None and lote.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Lote não encontrado")
         rotulo = f"{lote.codigo} - {lote.nome}"
         n_animais = len(session.exec(select(Animal).where(Animal.grupo_primario == rotulo)).all())
@@ -693,7 +717,7 @@ def _alvos(tipo: str, id_: str, session: Session) -> tuple[list[str], list]:
 
     if tipo == "motivo_movimentacao":
         motivo = session.get(MotivoMovimentacao, int(id_))
-        if not motivo:
+        if not motivo or (fazenda_id is not None and motivo.fazenda_id != fazenda_id):
             raise HTTPException(status_code=404, detail="Motivo não encontrado")
         return [f"Motivo de movimentação {motivo.nome}"], [motivo]
 
@@ -790,8 +814,11 @@ class ExclusaoIn(BaseModel):
 
 
 @router.post("/impacto")
-def impacto(dados: ExclusaoIn, session: Session = Depends(get_session)) -> dict:
-    itens, _ = _alvos(dados.tipo, dados.id, session)
+def impacto(
+    dados: ExclusaoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    itens, _ = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id_seguro(fazenda_id))
     return {"impacto": itens}
 
 
@@ -800,9 +827,11 @@ def confirmar(
     dados: ExclusaoIn,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Admin exclui na hora. Operador só registra uma solicitação pendente."""
-    itens, alvos = _alvos(dados.tipo, dados.id, session)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    itens, alvos = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id)
 
     if user.papel == "admin":
         for obj in alvos:
@@ -836,12 +865,13 @@ def aprovar_pendente(
     sol_id: int,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     sol = session.get(SolicitacaoExclusao, sol_id)
     if not sol or sol.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
-    _, alvos = _alvos(sol.tipo, sol.id_alvo, session)
+    _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id_seguro(fazenda_id))
     for obj in alvos:
         session.delete(obj)
     sol.status = "aprovada"

@@ -24,6 +24,15 @@ from fazenda.models import CobrancaAsaas, ContratoFazenda, Fazenda
 
 @pytest.fixture
 def client(monkeypatch):
+    # `settings` é um singleton lido do ambiente na primeira vez que
+    # `fazenda.config` é importado — na suíte completa, outro arquivo de teste
+    # já pode ter importado o módulo antes do os.environ acima ser setado, e
+    # nesse caso o ASAAS_WEBHOOK_TOKEN daquele import (vazio) fica congelado.
+    # Força o valor esperado diretamente no singleton para não depender da
+    # ordem de import dos testes.
+    from fazenda.config import settings
+    monkeypatch.setattr(settings, "asaas_webhook_token", "segredo-teste")
+
     engine = create_engine(f"sqlite:///{tempfile.mktemp(suffix='.db')}", connect_args={"check_same_thread": False})
     SQLModel.metadata.create_all(engine)
     monkeypatch.setattr(database, "engine", engine)

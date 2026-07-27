@@ -17,8 +17,10 @@ from datetime import date
 from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, select
 
+from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import Animal, ContaGerencial, ControleLeiteiro
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.custo_producao import calcular_custo_por_lote, calcular_custo_por_vaca
 
 router = APIRouter(prefix="/financeiro", tags=["financeiro"])
@@ -26,8 +28,13 @@ router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 CENTRO_CUSTO_PADRAO = "Pecuária Leiteira"
 
 
-def _despesas_periodo(session: Session, data_inicio: date, data_fim: date, centro_custo: str | None) -> float:
-    contas = session.exec(select(ContaGerencial)).all()
+def _despesas_periodo(
+    session: Session, data_inicio: date, data_fim: date, centro_custo: str | None, fazenda_id: int | None = None,
+) -> float:
+    query = select(ContaGerencial)
+    if fazenda_id is not None:
+        query = query.where(ContaGerencial.fazenda_id == fazenda_id)
+    contas = session.exec(query).all()
     return round(sum(
         c.valor_total or 0 for c in contas
         if c.tipo == "despesa" and c.data_competencia and data_inicio <= c.data_competencia <= data_fim
@@ -35,18 +42,25 @@ def _despesas_periodo(session: Session, data_inicio: date, data_fim: date, centr
     ), 2)
 
 
-def _vacas_por_lote_no_periodo(session: Session, data_inicio: date, data_fim: date) -> dict[str, int]:
+def _vacas_por_lote_no_periodo(
+    session: Session, data_inicio: date, data_fim: date, fazenda_id: int | None = None,
+) -> dict[str, int]:
     """Vacas com ao menos um Controle leiteiro no período — identifica quem
     esteve efetivamente em lactação/produção, agrupadas pelo lote atual do
     animal (Animal.grupo_primario)."""
+    controle_query = select(ControleLeiteiro)
+    animal_query = select(Animal)
+    if fazenda_id is not None:
+        controle_query = controle_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+        animal_query = animal_query.where(Animal.fazenda_id == fazenda_id)
     numeros = {
-        c.numero_matriz for c in session.exec(select(ControleLeiteiro)).all()
+        c.numero_matriz for c in session.exec(controle_query).all()
         if c.data_controle and data_inicio <= c.data_controle <= data_fim
     }
     if not numeros:
         return {}
     vacas_por_lote: dict[str, int] = {}
-    for a in session.exec(select(Animal)).all():
+    for a in session.exec(animal_query).all():
         if a.numero in numeros:
             lote = a.grupo_primario or "Sem lote"
             vacas_por_lote[lote] = vacas_por_lote.get(lote, 0) + 1
@@ -59,9 +73,11 @@ def custo_por_vaca_e_lote(
     data_fim: date = Query(..., description="Data final (competência)"),
     centro_custo: str | None = Query(CENTRO_CUSTO_PADRAO),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    despesas_total = _despesas_periodo(session, data_inicio, data_fim, centro_custo)
-    vacas_por_lote = _vacas_por_lote_no_periodo(session, data_inicio, data_fim)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    despesas_total = _despesas_periodo(session, data_inicio, data_fim, centro_custo, fazenda_id=fazenda_id)
+    vacas_por_lote = _vacas_por_lote_no_periodo(session, data_inicio, data_fim, fazenda_id=fazenda_id)
     total_vacas = sum(vacas_por_lote.values())
 
     return {

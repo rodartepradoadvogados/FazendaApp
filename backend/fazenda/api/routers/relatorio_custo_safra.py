@@ -26,12 +26,12 @@ router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 @router.get("/custo-safra")
 def custo_por_safra(
     safra_id: int = Query(...),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     fazenda_id = fazenda_id_seguro(fazenda_id)
     safra = session.get(Safra, safra_id)
-    if not safra:
+    if not safra or (fazenda_id is not None and safra.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Safra não encontrada")
 
     query_contas = select(ContaGerencial)
