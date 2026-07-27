@@ -389,7 +389,7 @@ function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFix
     if (!dataD0) return erroValidacao("Informe a data do D0.");
     enviar(
       "/reproducao/protocolo-iatf",
-      { animais: matrizes, data_d0: dataD0, protocolo: "Protocolo IATF" },
+      { animais: matrizes, data_d0: dataD0 },
       `Protocolo IATF D0 — ${matrizes.length} vaca(s)`,
       () => setMatrizes([]),
       { ok: "Protocolo IATF (D0) lançado — as etapas entram na agenda." },

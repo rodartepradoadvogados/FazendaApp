@@ -27,6 +27,7 @@ from fazenda.api.routers import (
     baixas,
     cadastro,
     cobranca,
+    cofre_acesso,
     compra_animal,
     compra_semen,
     consultores,
@@ -287,6 +288,8 @@ app.include_router(fazendas.router)
 # Painel Mestre CowData: exigir_dono em cada endpoint (mesmo padrão de
 # fazendas.router) — nunca a trava de módulo contratado (é a própria CowData).
 app.include_router(painel_cowdata.router)
+# Cofre de acesso: mesmo padrão exigir_dono — ver fazenda/api/routers/cofre_acesso.py.
+app.include_router(cofre_acesso.router)
 # Consultor (Fase 2C): produto independente, escopado por USUÁRIO (não por
 # fazenda) — cada endpoint já tem sua própria trava interna (get_current_user
 # nos públicos, exigir_consultor_ativo/exigir_dono nos demais); não faz

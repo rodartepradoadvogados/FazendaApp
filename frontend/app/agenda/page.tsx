@@ -1488,7 +1488,7 @@ export default function AgendaPage() {
           {listaAtiva.has("iatfAtual") && (
             <div className="card mb-2" style={{ overflowX: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Nº Animal</th><th>Protocolo</th><th>D0</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                <thead><tr><th>Nº Animal</th><th>Protocolo</th><th>D0</th><th>Próxima etapa</th><th>Data da próxima etapa</th></tr></thead>
                 <tbody>
                   {animaisIatfAtual.map((a: any, i: number) => (
                     <tr key={i}>

@@ -53,6 +53,13 @@ class Fazenda(SQLModel, table=True):
     representante_nome: Optional[str] = None
     representante_cpf: Optional[str] = None
 
+    # Política de acesso de suporte da CowData aos dados desta fazenda (ver
+    # fazenda/api/routers/cofre_acesso.py). False (padrão): pedido de acesso
+    # já abre a sessão na hora. True: fica "aguardando_aprovacao" até o dono
+    # aprovar explicitamente — cada fazenda pode escolher isso no Cofre de
+    # acesso (Painel CowData → solicitar acesso a esta fazenda).
+    exige_aprovacao_suporte: bool = False
+
 
 class EmpresaOperadora(SQLModel, table=True):
     """A empresa de software que opera esta instalação — distinta de cada

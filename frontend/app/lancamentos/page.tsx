@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna,
+  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -39,6 +39,7 @@ const BstLancamentoView = dynamic(() => import("@/components/lancamentos/FormPro
 const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/FormProtocoloSanitario").then((m) => m.FormProtocoloSanitario), { ssr: false });
 const FormAlimentacaoDieta = dynamic(() => import("@/components/lancamentos/FormAlimentacaoDieta").then((m) => m.FormAlimentacaoDieta), { ssr: false });
 const FormEstoque = dynamic(() => import("@/components/lancamentos/FormEstoque").then((m) => m.FormEstoque), { ssr: false });
+const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/FormAjusteSaldoEstoque").then((m) => m.FormAjusteSaldoEstoque), { ssr: false });
 
 /**
  * Tela de Lançamentos — entrada de dados operacionais no sistema.
@@ -74,7 +75,14 @@ const TIPOS_GRUPOS = [
       { id: "baixar_animal", label: "Baixa", icon: Skull, desc: "Registrar saída do rebanho: venda, morte, descarte ou marcar 'A descartar'." },
     ],
   },
-  { id: "estoque", label: "Balanço de estoque", icon: Package, desc: "Entrada ou saída de item do estoque (balanço do saldo).", leaf: "estoque" },
+  {
+    id: "estoque", label: "Balanço de estoque", icon: Package,
+    desc: "Entrada ou saída de item do estoque (balanço do saldo).",
+    subs: [
+      { id: "estoque_entradas_saidas", label: "Entradas/saídas", icon: Package, desc: "Entrada ou saída de item do estoque, um movimento por vez." },
+      { id: "estoque_ajuste_saldo", label: "Ajuste de saldo atual", icon: Gauge, desc: "Corrigir o saldo para a quantidade real contada — o sistema calcula sozinho se é entrada ou saída." },
+    ],
+  },
   {
     id: "financeiro", label: "Financeiro", icon: Wallet,
     desc: "Lançamento de receita ou despesa.",
@@ -249,8 +257,10 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Exclusão apaga de verdade.</strong> Administradores excluem na hora; os demais usuários só solicitam, e a exclusão fica pendente de aprovação.</>
           ) : sel === "diagnostico" ? (
             <><strong style={{ color: "var(--text)" }}>Diagnóstico já grava de verdade.</strong> Um resultado marcado para retoque entra na agenda automaticamente.</>
-          ) : sel === "estoque" ? (
+          ) : sel === "estoque_entradas_saidas" ? (
             <><strong style={{ color: "var(--text)" }}>Estoque já grava de verdade.</strong> Entradas e saídas lançadas aqui atualizam a quantidade do item na hora.</>
+          ) : sel === "estoque_ajuste_saldo" ? (
+            <><strong style={{ color: "var(--text)" }}>Ajuste de saldo já grava de verdade.</strong> Informe a quantidade que você contou de verdade no estoque — o sistema compara com o saldo cadastrado e lança sozinho a entrada ou a saída da diferença.</>
           ) : sel === "alimentacao_dieta" ? (
             <><strong style={{ color: "var(--text)" }}>Dieta já grava de verdade.</strong> Só uma dieta fica ativa por lote; ao encerrar, você pode lançar a próxima na hora. A data prevista de encerramento entra na Agenda para análise.</>
           ) : sel === "sanidade_aplicacao" ? (
@@ -325,7 +335,8 @@ export default function LancamentosPage() {
           </>
         )}
         {sel === "financeiro_receita" && <FormFinanceiro tipo="receita" responsaveis={RESPONSAVEIS} onSujo={setSujo} />}
-        {sel === "estoque" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
+        {sel === "estoque_entradas_saidas" && <FormEstoque estoque={estoque} onIrParaFinanceiro={irParaFinanceiroAposEstoque} />}
+        {sel === "estoque_ajuste_saldo" && <FormAjusteSaldoEstoque estoque={estoque} />}
         {sel === "mover_animais" && <MovimentarAnimais />}
         {sel === "comprar_animal" && <CompraVendaAnimalForm modo="compra" animais={animais} />}
         {sel === "comprar_semen" && <CompraSemenForm />}

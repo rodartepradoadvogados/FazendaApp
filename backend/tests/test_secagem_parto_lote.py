@@ -287,9 +287,11 @@ class TestProtocoloIatf:
         assert r.status_code == 400
 
     def test_lista_protocolos_ativos_mostra_etapa_atual(self, client):
+        # D0 lançado hoje — "próxima etapa" ainda é D0 (o hormônio de hoje
+        # ainda não foi confirmado), não pula direto para D7.
         c, engine = client
         c.post("/reproducao/protocolo-iatf", json={
-            "animais": ["500"], "data_d0": "2026-07-08", "protocolo": "Protocolo padrão",
+            "animais": ["500"], "data_d0": date.today().isoformat(), "protocolo": "Protocolo padrão",
         })
         r = c.get("/reproducao/protocolo-iatf/ativos")
         assert r.status_code == 200
@@ -298,6 +300,37 @@ class TestProtocoloIatf:
         assert ativos[0]["nome_protocolo"] == "Protocolo padrão"
         assert ativos[0]["animais"][0]["numero_matriz"] == "500"
         assert ativos[0]["animais"][0]["etapa_atual"] == "D0"
+
+    def test_lista_protocolos_ativos_etapa_avanca_por_data(self, client):
+        # #reformular relatório gerencial de IATF atual: a "próxima etapa" é
+        # calculada pela data de hoje em relação ao calendário do protocolo,
+        # não por qual etapa foi manualmente marcada "realizada" — nenhuma
+        # das 4 aplicações é marcada aqui, só a passagem do tempo já avança
+        # D0 -> D7 -> D9 -> D11.
+        c, engine = client
+        d0 = date.today() - timedelta(days=8)  # D7 (dia+7) já ficou no passado
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        assert len(ativos) == 1
+        assert ativos[0]["concluido"] is False
+        assert ativos[0]["animais"][0]["etapa_atual"] == "D9"
+        assert ativos[0]["animais"][0]["data_etapa_atual"] == (d0 + timedelta(days=9)).isoformat()
+
+    def test_protocolo_com_d11_no_passado_e_sem_baixa_vira_concluido(self, client):
+        # #reformular relatório gerencial de IATF atual: um protocolo cujo
+        # D11 já passou, mas ninguém marcou nenhuma etapa "realizada" (ex.:
+        # a inseminação foi feita mas o checkbox nunca confirmado), não pode
+        # ficar mostrando "D0" pra sempre no card IATF atual — some da lista
+        # ativa e migra para "concluido" (última IATF), como se tivesse sido
+        # baixado normalmente.
+        c, engine = client
+        d0 = date.today() - timedelta(days=30)
+        c.post("/reproducao/protocolo-iatf", json={"animais": ["500"], "data_d0": d0.isoformat()})
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        assert len(ativos) == 1
+        assert ativos[0]["concluido"] is True
+        assert ativos[0]["animais"][0]["etapa_atual"] == "Concluído"
+        assert ativos[0]["data_d11"] == (d0 + timedelta(days=11)).isoformat()
 
     def test_protocolo_concluido_mostra_proxima_visita_e_candidatas(self, client):
         # #369: ao concluir tudo (D11 com baixa), o protocolo não some da
