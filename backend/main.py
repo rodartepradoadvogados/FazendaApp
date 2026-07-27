@@ -41,6 +41,7 @@ from fazenda.api.routers import (
     movimentacoes,
     news,
     notificacoes,
+    painel_cowdata,
     parametros,
     pedidos,
     planejamento,
@@ -85,6 +86,7 @@ from fazenda.api.routers.alimentacao import seed_alimentos
 from fazenda.api.routers.news import (
     desligar_fontes_rss_e_apagar_noticias_202607, publicar_lotes_milknews, seed_fontes_news, seed_nota_capa_202607,
 )
+from fazenda.api.routers.painel_cowdata import seed_cowdata_empresa
 from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
@@ -222,6 +224,9 @@ async def lifespan(app: FastAPI):
         # conta correspondente (a partir da finalidade) — só preenche o que
         # está vazio, nunca sobrescreve um vínculo já feito manualmente.
         sindicar_conta_gerencial_estoque(session)
+        # Painel Mestre CowData: fazenda "lógica" que ancora Equipe/Financeiro
+        # da própria CowData (nunca uma fazenda-cliente — ver Fazenda.eh_empresa_cowdata).
+        seed_cowdata_empresa(session)
         # Vincula cada item de estoque genérico ao touro correspondente do
         # Estoque de Sêmen (por nome ou NAAB/código) — a partir daí, toda
         # entrada/saída deste item também atualiza as doses do touro.
@@ -279,6 +284,9 @@ app.include_router(auth.router)
 # Fazendas: gerencia os próprios contratos/planos — não leva a trava de
 # módulo contratado (seria circular).
 app.include_router(fazendas.router)
+# Painel Mestre CowData: exigir_dono em cada endpoint (mesmo padrão de
+# fazendas.router) — nunca a trava de módulo contratado (é a própria CowData).
+app.include_router(painel_cowdata.router)
 # Consultor (Fase 2C): produto independente, escopado por USUÁRIO (não por
 # fazenda) — cada endpoint já tem sua própria trava interna (get_current_user
 # nos públicos, exigir_consultor_ativo/exigir_dono nos demais); não faz

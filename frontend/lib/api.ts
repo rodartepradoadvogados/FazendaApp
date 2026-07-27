@@ -264,6 +264,88 @@ export function urlAnexoContrato(anexoId: number): string {
   return `${API}/fazendas/contrato/anexos/${anexoId}`;
 }
 
+// ── Painel Mestre CowData: Equipe própria (Sócio/Comercial/T.I./Financeiro/
+// Marketing/Suporte) e Financeiro CowData (livro-caixa independente) ──
+// Ver backend/fazenda/api/routers/painel_cowdata.py.
+export type PessoaCowData = {
+  id: number; nome: string; cargo: string;
+  telefones: string[]; emails: string[];
+  cpf_cnpj?: string | null; cep?: string | null;
+  salario_base?: number | null; data_admissao?: string | null;
+  observacoes?: string | null; ativo: boolean;
+};
+export type PessoaCowDataIn = {
+  nome: string; cargo: string; telefones?: string[]; emails?: string[];
+  cpf_cnpj?: string | null; cep?: string | null;
+  salario_base?: number | null; data_admissao?: string | null;
+  observacoes?: string | null; ativo?: boolean;
+};
+export type FolhaCowData = {
+  id: number; pessoa_id: number; competencia: string; valor_bruto: number; descontos: number;
+  valor_liquido: number; status: "pendente" | "pago"; data_pagamento?: string | null; observacao?: string | null;
+};
+export type FolhaCowDataIn = {
+  competencia: string; valor_bruto: number; descontos?: number; valor_liquido: number;
+  status?: "pendente" | "pago"; data_pagamento?: string | null; observacao?: string | null;
+};
+export type LancamentoCowData = {
+  id: number; tipo: "receita" | "despesa"; categoria: string; descricao: string;
+  contraparte?: string | null; valor: number; data: string; origem: "manual";
+};
+export type LancamentoCowDataIn = {
+  tipo: "receita" | "despesa"; categoria: string; descricao: string; contraparte?: string | null; valor: number; data: string;
+};
+export type ResumoFinanceiroCowData = { receita: number; despesa: number; resultado: number };
+export type MovimentoCowData = { data: string; tipo: "receita" | "despesa"; categoria: string; descricao: string; valor: number; saldo_acumulado: number };
+export type FluxoCaixaCowDataMes = { competencia: string; entradas: number; saidas: number; saldo_mes: number; saldo_acumulado: number };
+export type DreCowData = { ano: number; receita_total: number; despesas_por_categoria: Record<string, number>; despesa_total: number; resultado: number };
+
+async function _pcGet(path: string) {
+  const res = await authFetch(`${API}/painel-cowdata${path}`);
+  if (!res.ok) throw new Error(`Painel CowData ${path}: ${res.status}`);
+  return res.json();
+}
+async function _pcSend(path: string, method: string, body?: any) {
+  const res = await authFetch(`${API}/painel-cowdata${path}`, {
+    method, headers: { "Content-Type": "application/json" }, ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || `Erro (${res.status})`); }
+  return res.json();
+}
+
+export const fetchCargosCowData = (): Promise<string[]> => _pcGet(`/equipe/cargos`);
+export const fetchEquipeCowData = (): Promise<PessoaCowData[]> => _pcGet(`/equipe/pessoas`);
+export const criarMembroEquipeCowData = (d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas`, "POST", d);
+export const editarMembroEquipeCowData = (id: number, d: PessoaCowDataIn): Promise<PessoaCowData> => _pcSend(`/equipe/pessoas/${id}`, "PUT", d);
+export const excluirMembroEquipeCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/equipe/pessoas/${id}`, "DELETE");
+
+export const fetchFolhaMembroCowData = (pessoaId: number): Promise<FolhaCowData[]> => _pcGet(`/equipe/pessoas/${pessoaId}/folha`);
+export const lancarFolhaMembroCowData = (pessoaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> =>
+  _pcSend(`/equipe/pessoas/${pessoaId}/folha`, "POST", d);
+export const editarFolhaCowData = (folhaId: number, d: FolhaCowDataIn): Promise<FolhaCowData> => _pcSend(`/equipe/folha/${folhaId}`, "PUT", d);
+export const excluirFolhaCowData = (folhaId: number): Promise<{ ok: boolean }> => _pcSend(`/equipe/folha/${folhaId}`, "DELETE");
+
+export const fetchCategoriasFinanceiroCowData = (): Promise<{ receita: string[]; despesa: string[] }> => _pcGet(`/financeiro/categorias`);
+export const fetchLancamentosCowData = (de?: string, ate?: string): Promise<LancamentoCowData[]> => {
+  const qs = new URLSearchParams();
+  if (de) qs.set("de", de);
+  if (ate) qs.set("ate", ate);
+  const query = qs.toString();
+  return _pcGet(`/financeiro/lancamentos${query ? `?${query}` : ""}`);
+};
+export const criarLancamentoCowData = (d: LancamentoCowDataIn): Promise<LancamentoCowData> => _pcSend(`/financeiro/lancamentos`, "POST", d);
+export const editarLancamentoCowData = (id: number, d: LancamentoCowDataIn): Promise<LancamentoCowData> =>
+  _pcSend(`/financeiro/lancamentos/${id}`, "PUT", d);
+export const excluirLancamentoCowData = (id: number): Promise<{ ok: boolean }> => _pcSend(`/financeiro/lancamentos/${id}`, "DELETE");
+
+export const fetchResumoFinanceiroCowData = (de: string, ate: string): Promise<ResumoFinanceiroCowData> =>
+  _pcGet(`/financeiro/resumo?de=${de}&ate=${ate}`);
+export const fetchLivroCaixaCowData = (de: string, ate: string): Promise<MovimentoCowData[]> =>
+  _pcGet(`/financeiro/livro-caixa?de=${de}&ate=${ate}`);
+export const fetchFluxoCaixaCowData = (de: string, ate: string): Promise<FluxoCaixaCowDataMes[]> =>
+  _pcGet(`/financeiro/fluxo-caixa?de=${de}&ate=${ate}`);
+export const fetchDreCowData = (ano: number): Promise<DreCowData> => _pcGet(`/financeiro/dre?ano=${ano}`);
+
 // Contrato-modelo CowData ("Baixar contrato") e assinatura eletrônica via
 // ZapSign ("Assinar contrato") — ver fazenda/rules/contrato_render.py e
 // fazenda/rules/zapsign.py no backend.

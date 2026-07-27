@@ -144,7 +144,10 @@ def _tem_modulo_consultor_ativo(session: Session, fazenda_id: int) -> bool:
 
 @router.get("/")
 def listar_fazendas(_: Usuario = Depends(exigir_dono), session: Session = Depends(get_session)) -> list[dict]:
-    return [_publico(f) for f in session.exec(select(Fazenda)).all()]
+    # Exclui a fazenda "lógica" da própria CowData (ver Fazenda.eh_empresa_cowdata)
+    # — ela nunca é uma fazenda-cliente e não deve aparecer aqui.
+    fazendas = session.exec(select(Fazenda).where(Fazenda.eh_empresa_cowdata == False)).all()  # noqa: E712
+    return [_publico(f) for f in fazendas]
 
 
 @router.get("/minhas")
@@ -447,7 +450,9 @@ def resumo_cowdata(_: Usuario = Depends(exigir_dono), session: Session = Depends
     """Números agregados pra o Cockpit do Painel CowData (ver frontend
     app/painel-cowdata/) — MRR real (soma do preço mensal só dos contratos
     "ativo"), nunca um valor fixo/mockado."""
-    fazendas = session.exec(select(Fazenda)).all()
+    # Exclui a fazenda "lógica" da própria CowData (ver Fazenda.eh_empresa_cowdata)
+    # do MRR/contagem — ela nunca é uma fazenda-cliente.
+    fazendas = session.exec(select(Fazenda).where(Fazenda.eh_empresa_cowdata == False)).all()  # noqa: E712
     contratos = {c.fazenda_id: c for c in session.exec(select(ContratoFazenda)).all()}
     modulos_por_fazenda: dict[int, list[ContratoFazendaModulo]] = {}
     for m in session.exec(select(ContratoFazendaModulo).where(ContratoFazendaModulo.ativo == True)).all():  # noqa: E712

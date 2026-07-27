@@ -160,6 +160,9 @@ from .cobranca import (
     CobrancaPix,
     CobrancaAsaas,
 )
+from .cowdata_interno import (
+    LancamentoCowData,
+)
 from .consultores import (
     ContratoConsultor,
     FazendaGerenciada,

@@ -33,6 +33,12 @@ class Fazenda(SQLModel, table=True):
     uf: Optional[str] = None
     ativa: bool = True
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # Marca a fazenda "lógica" que ancora Pessoa/FolhaPagamento da própria
+    # equipe CowData (ver fazenda/api/routers/painel_cowdata.py) — nunca uma
+    # fazenda-cliente de verdade. Sempre False para qualquer fazenda real;
+    # existe uma única linha com True (seed_cowdata_empresa). Toda listagem
+    # de fazendas-clientes (catálogo, MRR, FazendasAdmin) filtra por isto.
+    eh_empresa_cowdata: bool = False
 
     # Dados jurídicos da fazenda-cliente — usados pelo contrato-modelo
     # (fazenda/rules/contrato_render.py) e pela cobrança (Asaas/ZapSign) como
