@@ -83,23 +83,32 @@ def _estoque_por_alimento(session: Session, fazenda_id: int | None) -> tuple[dic
     return por_alimento, cadastrados
 
 
+def _obter_estado_alimentacao(session: Session, fazenda_id: int | None) -> AlimentacaoEstado | None:
+    query = select(AlimentacaoEstado)
+    if fazenda_id is not None:
+        query = query.where(AlimentacaoEstado.fazenda_id == fazenda_id)
+    else:
+        query = query.where(AlimentacaoEstado.fazenda_id.is_(None))  # type: ignore[union-attr]
+    return session.exec(query).first()
+
+
 def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     """
     Baixa automática de estoque por dias decorridos (opção A). Usa uma trava
-    otimista (compare-and-swap) na linha única de AlimentacaoEstado: só quem
-    conseguir avançar `ultima_data_deducao` de fato aplica a baixa — uma
+    otimista (compare-and-swap) na linha de AlimentacaoEstado da fazenda: só
+    quem conseguir avançar `ultima_data_deducao` de fato aplica a baixa — uma
     segunda requisição concorrente vê 0 linhas afetadas e não faz nada,
     evitando baixa duplicada quando dois usuários abrem a tela ao mesmo tempo.
     """
     hoje = date.today()
-    estado = session.get(AlimentacaoEstado, 1)
+    estado = _obter_estado_alimentacao(session, fazenda_id)
     if not estado:
-        # Primeiro acesso: cria a linha única de estado. Duas requisições
-        # concorrentes podem cair aqui ao mesmo tempo — a segunda perde a
-        # corrida na constraint de chave primária; trata como "já criada"
-        # e segue sem tentar deduzir nada agora (não há baseline anterior).
+        # Primeiro acesso desta fazenda: cria a linha de estado. Duas
+        # requisições concorrentes podem cair aqui ao mesmo tempo — a segunda
+        # perde a corrida na constraint única de fazenda_id; trata como "já
+        # criada" e segue sem tentar deduzir nada agora (não há baseline anterior).
         try:
-            session.add(AlimentacaoEstado(id=1, ultima_data_deducao=hoje))
+            session.add(AlimentacaoEstado(fazenda_id=fazenda_id, ultima_data_deducao=hoje))
             session.commit()
         except IntegrityError:
             session.rollback()
@@ -109,14 +118,21 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     if dias <= 0:
         return {"dias_deduzidos": 0, "ultima_data_deducao": estado.ultima_data_deducao.isoformat()}
 
+    if fazenda_id is not None:
+        condicao_fazenda = "fazenda_id = :fazenda_id"
+    else:
+        condicao_fazenda = "fazenda_id IS NULL"
     resultado = session.execute(
-        text("UPDATE alimentacao_estado SET ultima_data_deducao = :novo WHERE id = 1 AND ultima_data_deducao = :antigo"),
-        {"novo": hoje.isoformat(), "antigo": estado.ultima_data_deducao.isoformat()},
+        text(
+            f"UPDATE alimentacao_estado SET ultima_data_deducao = :novo "
+            f"WHERE id = :id AND {condicao_fazenda} AND ultima_data_deducao = :antigo"
+        ),
+        {"novo": hoje.isoformat(), "id": estado.id, "fazenda_id": fazenda_id, "antigo": estado.ultima_data_deducao.isoformat()},
     )
     session.commit()
     if resultado.rowcount == 0:
         # Outra requisição venceu a corrida e já processou essa janela de dias.
-        atualizado = session.get(AlimentacaoEstado, 1)
+        atualizado = _obter_estado_alimentacao(session, fazenda_id)
         return {"dias_deduzidos": 0, "ultima_data_deducao": atualizado.ultima_data_deducao.isoformat()}
 
     dietas, animais = _dietas_e_animais(session, fazenda_id)
@@ -188,9 +204,12 @@ def necessidade_mensal(
 
 
 @router.get("/estado-baixa")
-def estado_baixa(session: Session = Depends(get_session)) -> dict:
+def estado_baixa(
+    fazenda_id: int | None = Depends(get_fazenda_atual_id), session: Session = Depends(get_session),
+) -> dict:
     """Última data em que a baixa automática de estoque foi aplicada."""
-    estado = session.get(AlimentacaoEstado, 1)
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    estado = _obter_estado_alimentacao(session, fazenda_id)
     return {"ultima_data_deducao": estado.ultima_data_deducao.isoformat() if estado and estado.ultima_data_deducao else None}
 
 

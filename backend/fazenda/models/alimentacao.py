@@ -210,7 +210,7 @@ class DietaRegistroReal(SQLModel, table=True):
 
 
 # ---------------------------------------------------------------------------
-# Estado da baixa automática de estoque da Alimentação (linha única, id=1)
+# Estado da baixa automática de estoque da Alimentação (uma linha por fazenda)
 # ---------------------------------------------------------------------------
 class AlimentacaoEstado(SQLModel, table=True):
     """
@@ -220,9 +220,15 @@ class AlimentacaoEstado(SQLModel, table=True):
     que a tela de Alimentação é aberta. `ultima_data_deducao` funciona como
     trava otimista (compare-and-swap): duas requisições concorrentes nunca
     aplicam a mesma baixa duas vezes (ver fazenda/api/routers/alimentacao.py).
+
+    Era uma linha única (id=1) — passa a ser uma linha por fazenda (lookup
+    por `fazenda_id`, não mais por id fixo), já que cada fazenda tem seu
+    próprio ritmo de consumo e sua própria baixa automática independente.
     """
 
     __tablename__ = "alimentacao_estado"
+    __table_args__ = (UniqueConstraint("fazenda_id", name="uq_alimentacao_estado_fazenda"),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
     ultima_data_deducao: Optional[date] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
