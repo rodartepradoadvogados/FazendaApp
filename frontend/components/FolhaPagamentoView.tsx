@@ -9,8 +9,9 @@ import {
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
 } from "@/lib/api";
-import { Modal } from "@/components/Modal";
+import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
+import { AvisoSalvo } from "@/components/AvisoSalvo";
 import { TabBar, SecaoRecolhivel, Indicador } from "@/components/ui";
 import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -120,6 +121,7 @@ export default function FolhaPagamentoView() {
   const [pagoErro, setPagoErro] = useState<string | null>(null);
   const [dataPagamento, setDataPagamento] = useState(() => new Date().toISOString().slice(0, 10));
   const [anexarAberto, setAnexarAberto] = useState(false);
+  const [arquivoPreview, setArquivoPreview] = useState<File | null>(null);
 
   const [subaba, setSubaba] = useState<"funcionario" | "empreita" | "contrato" | "diarias" | "ferias_decimo">("funcionario");
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -586,10 +588,12 @@ export default function FolhaPagamentoView() {
       {subaba === "ferias_decimo" && <FeriasDecimoTerceiroView />}
 
       {subaba === "funcionario" && (error ? <div className="alert-critico"><span>Sem dados: {error}.</span></div> : <>
+      <AvisoSalvo texto={msg?.tipo === "sucesso" ? msg.texto : null} />
       {anexarAberto && (
-        <Modal title="Anexar comprovante — leitura automática (despesa)" onClose={() => setAnexarAberto(false)} width="1000px">
-          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onSalvo={() => { setAnexarAberto(false); carregar(); carregarUnificada(); }} />
-        </Modal>
+        <ModalDivididoDocumento title="Anexar comprovante — leitura automática (despesa)" onClose={() => { setAnexarAberto(false); setArquivoPreview(null); }} arquivo={arquivoPreview}>
+          <FormFinanceiro tipo="despesa" responsaveis={RESPONSAVEIS} onArquivoParaLeitura={setArquivoPreview}
+            onSalvo={(mensagem) => { setAnexarAberto(false); setArquivoPreview(null); setMsg({ tipo: "sucesso", texto: mensagem }); carregar(); carregarUnificada(); }} />
+        </ModalDivididoDocumento>
       )}
 
       {/* 1) Novo lançamento de folha */}
@@ -664,7 +668,8 @@ export default function FolhaPagamentoView() {
             A partir do próximo mês, o sistema gera automaticamente o lançamento de folha e a conta a pagar correspondente — não é preciso relançar manualmente.
           </p>
         )}
-        {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+        {/* Sucesso já aparece no topo (AvisoSalvo) — aqui só o erro, contextual. */}
+        {msg?.tipo === "erro" && <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
         <button className="btn-primary" title="Salvar o lançamento de folha" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={salvar} disabled={salvando}>
           <Check size={14} /> {salvando ? "Salvando…" : "Lançar"}
         </button>
@@ -1289,7 +1294,11 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
         <div><label style={labelStyleLote}>Observação</label>
           <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       </div>
-      {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+      {msg?.tipo === "erro" ? (
+        <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
+      ) : (
+        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para lançar outro vale." />
+      )}
       <button className="btn-primary" title="Lançar o vale" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={() => lancar(false)} disabled={salvando}>
         <Check size={14} /> {salvando ? "Salvando…" : "Lançar vale"}
       </button>
@@ -1388,7 +1397,11 @@ function GerarGuiasFgtsDctfSection() {
         </div>
       )}
 
-      {msg && <p style={{ color: msg.tipo === "erro" ? "var(--red)" : "var(--green-light)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>}
+      {msg?.tipo === "erro" ? (
+        <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
+      ) : (
+        <AvisoSalvo texto={msg?.texto ?? null} aviso2="Pronto para gerar guias de outra competência." />
+      )}
 
       {preview && !preview.ja_gerado && preview.quantidade_lancamentos > 0 && (
         <button className="btn-primary" title="Criar as duas contas a pagar (Guia FGTS e Guia DCTF)" style={{ display: "flex", alignItems: "center", gap: "0.4rem" }} onClick={confirmarGeracao} disabled={gerando}>

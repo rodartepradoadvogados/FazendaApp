@@ -64,3 +64,29 @@ export function filhosDiretos(pai: string, contas: ContaPlano[]): ContaPlano[] {
 export function normalizar(s: string): string {
   return s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
 }
+
+/**
+ * Nomes dos ANCESTRAIS de uma conta, do pai mais próximo até a raiz — ex.:
+ * "3.04.04" (Viagens) → ["Administrativas", "Despesa"]. Resolvido pelo
+ * prefixo do código contra a lista completa (não há parent_id no banco).
+ * Usado para o "caminho" (grupo/subgrupo) ao lado do nome da conta, pra não
+ * confundir contas de nome parecido em grupos diferentes (ex.: "Alimentação"
+ * administrativa vs. operacional vs. de funcionário).
+ */
+export function caminhoAncestrais(codigo: string, contas: ContaPlano[]): string[] {
+  const porCodigo = new Map(contas.map((c) => [c.codigo, c.nome]));
+  const partes = codigo.split(".");
+  const nomes: string[] = [];
+  for (let i = partes.length - 1; i >= 1; i--) {
+    const prefixo = partes.slice(0, i).join(".");
+    const nome = porCodigo.get(prefixo);
+    if (nome) nomes.push(nome);
+  }
+  return nomes;
+}
+
+/** "Nome / Grupo pai / Grupo avô" — o próprio nome da conta seguido dos
+ * ancestrais, mais próximo primeiro (mesmo formato usado no IdeAgri). */
+export function caminhoCompleto(conta: ContaPlano, contas: ContaPlano[]): string {
+  return [conta.nome, ...caminhoAncestrais(conta.codigo, contas)].join(" / ");
+}
