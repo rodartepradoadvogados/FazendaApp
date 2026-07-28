@@ -198,7 +198,7 @@ function AbaLancamentos({ de, ate, onMudou }: { de: string; ate: string; onMudou
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflow: "hidden" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
@@ -272,7 +272,7 @@ function AbaFluxoCaixa({ de, ate }: { de: string; ate: string }) {
   }, [de, ate]);
 
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflow: "hidden" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", padding: "1rem" }}>{erro}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
         <thead>
@@ -308,7 +308,7 @@ function AbaLivroCaixa({ de, ate }: { de: string; ate: string }) {
   useEffect(() => { fetchLivroCaixaCowData(de, ate).then(setLinhas).catch((e) => setErro(e.message)); }, [de, ate]);
 
   return (
-    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflow: "hidden" }}>
+    <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
       {erro && <p style={{ color: COR.vermelho, fontSize: "0.85rem", padding: "1rem" }}>{erro}</p>}
       <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
         <thead>
