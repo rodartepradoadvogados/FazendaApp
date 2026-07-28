@@ -42,6 +42,7 @@ import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
+import News from "@/components/mobile/menu/News";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -98,13 +99,23 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
 
   useEffect(() => { setMontado(true); }, []);
+
+  // Botão News do cabeçalho (app/layout.tsx) navega para /app/menu#news —
+  // como é a mesma rota, o Next não remonta a página, então escutamos o hash
+  // (no load e em hashchange) e abrimos a sub-tela por estado.
+  useEffect(() => {
+    const abrirSeHashNews = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
+    abrirSeHashNews();
+    window.addEventListener("hashchange", abrirSeHashNews);
+    return () => window.removeEventListener("hashchange", abrirSeHashNews);
+  }, []);
 
   async function enviarAgora() {
     setSincronizando(true);
@@ -124,6 +135,13 @@ export default function Pagina() {
   const grupos = montado
     ? GRUPOS.map((g) => ({ ...g, itens: g.itens.filter((i) => (i.soAdmin ? ehAdmin() : podeModulo(ROTA_MODULO[i.rota] || i.rota))) })).filter((g) => g.itens.length)
     : [];
+
+  if (secaoAberta === "news") {
+    return <News onVoltar={() => {
+      setSecaoAberta(null);
+      if (window.location.hash === "#news") history.replaceState(null, "", window.location.pathname + window.location.search);
+    }} />;
+  }
 
   if (secaoAberta === "estoque") {
     return <Estoque onVoltar={() => setSecaoAberta(null)} />;

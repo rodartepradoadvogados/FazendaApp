@@ -54,10 +54,12 @@ export function ehDono(): boolean {
 export function ehContador(): boolean {
   return getFazendaAtual()?.vinculo_contador === true;
 }
-// Administração de News/Blog (fontes, matérias, revisão) é restrita ao
-// proprietário da plataforma — ver backend/fazenda/auth.py::exigir_dono.
+// Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
+// o dono sempre pode; além dele, só quem o dono designar via o toggle
+// "Permitir publicação de matérias no blog" em Usuários (Usuario.pode_publicar_materias_blog).
+// Ver backend/fazenda/auth.py::exigir_pode_publicar.
 export function podePublicarMaterias(): boolean {
-  return ehDono();
+  return ehDono() || getUsuario()?.pode_publicar_materias_blog === true;
 }
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
@@ -1298,7 +1300,7 @@ export async function excluirVale(valeId: number) {
  * `confirmar: true` (e `valores_parcelas` se redistribuir_livre). */
 export async function atualizarParcelaVale(valeId: number, parcelaId: number, dados: {
   valor: number; acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
-  valores_parcelas?: Record<number, number>; confirmar?: boolean;
+  valores_parcelas?: Record<number, number>; confirmar?: boolean; confirmar_divergencia_total?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

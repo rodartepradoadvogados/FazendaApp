@@ -7,7 +7,7 @@ import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
 import { ThemeSwitcher } from "@/components/ThemeSwitcher";
 import { NewsButton } from "@/components/NewsButton";
-import { SubNavProvider } from "@/components/SubNavContext";
+import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 import AssistenteClaude from "@/components/AssistenteClaude";
 import { SectionBackground } from "@/components/SectionBackground";
 import { NewsShell } from "@/components/news/NewsShell";
@@ -110,20 +110,24 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   if (ehPainelContador) return <>{children}</>;
 
   return (
-    <SubNavProvider>
-      <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
-        <Sidebar />
-        <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
-          <ThemeSwitcher />
-        </div>
-        <NewsButton />
-        <NotificationBell />
-        <AssistenteClaude />
-        <main className="flex-1 md:overflow-y-auto app-main">
-          <SectionBackground />
-          <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
-        </main>
+    <div className="md:flex md:h-screen bg-fazenda-bg md:overflow-hidden">
+      <Sidebar />
+      <div style={{ position: "fixed", top: "1rem", right: "4.75rem", zIndex: 60 }}>
+        <ThemeSwitcher />
       </div>
-    </SubNavProvider>
+      {/* News fica sempre; Manual da Fazenda só na Capa (path === "/") — os
+          dois num único container fixed com gap (.site-top-actions, ver
+          globals.css) em vez de cada um calcular sua própria posição. */}
+      <div className="site-top-actions">
+        {path === "/" && <ManualFazendaButton />}
+        <NewsButton />
+      </div>
+      <NotificationBell />
+      <AssistenteClaude />
+      <main className="flex-1 md:overflow-y-auto app-main">
+        <SectionBackground />
+        <div style={{ position: "relative", zIndex: 1, minHeight: "100%" }}>{children}</div>
+      </main>
+    </div>
   );
 }

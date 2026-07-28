@@ -37,7 +37,7 @@ def client():
         papel = "admin"
         ativo = True
         username = "admin_teste"
-        email = EMAIL_DONO  # administração de News agora exige exigir_dono
+        email = EMAIL_DONO  # dono sempre passa em exigir_pode_publicar também
         pode_publicar_materias_blog = True
 
     main.app.dependency_overrides[database.get_session] = _get_session_override
@@ -475,6 +475,60 @@ class TestAprovarNoticiaManual:
         with Session(engine) as s:
             assert s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/2")).first() is None
             assert s.get(LancamentoPendente, pend_id).status == "rejeitado"
+
+    def test_admin_sem_permissao_nao_pode_decidir_pendente_de_noticia(self, client):
+        """Regressão: aprovar/editar/rejeitar um LancamentoPendente(tipo=
+        "noticia_manual") em /aprovacoes exige pode_publicar_materias_blog —
+        ser admin sozinho não basta, senão qualquer admin aprovaria matéria
+        do blog por essa rota genérica de aprovações."""
+        import main
+        from fazenda.auth import get_current_user
+
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Matéria protegida", "link": "https://milknews.example.com/3"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+
+        class _FakeAdminSemPermissao:
+            id = 3
+            papel = "admin"
+            ativo = True
+            username = "admin_sem_permissao"
+            email = "admin_comum@example.com"
+            pode_publicar_materias_blog = False
+
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeAdminSemPermissao()
+        assert c.post(f"/aprovacoes/{pend_id}/aprovar").status_code == 403
+        assert c.put(f"/aprovacoes/{pend_id}", json={"dados": {}}).status_code == 403
+        assert c.post(f"/aprovacoes/{pend_id}/rejeitar").status_code == 403
+
+    def test_publicador_designado_nao_dono_pode_aprovar_pendente_de_noticia(self, client):
+        """O dono pode designar outro usuário (pode_publicar_materias_blog=True,
+        sem precisar ser EMAIL_DONO) — esse usuário também consegue aprovar
+        pendente de notícia, não só o dono."""
+        import main
+        from fazenda.auth import get_current_user
+
+        c, engine = client
+        c.post("/news/manual", json={"itens": [
+            {"fonte_nome": "MilkNews Diário", "manchete": "Matéria do publicador designado", "link": "https://milknews.example.com/4"},
+        ]})
+        pend_id = c.get("/aprovacoes").json()[0]["id"]
+
+        class _FakePublicadorDesignado:
+            id = 4
+            papel = "admin"
+            ativo = True
+            username = "publicador_designado"
+            email = "publicador@example.com"  # não é EMAIL_DONO
+            pode_publicar_materias_blog = True
+
+        main.app.dependency_overrides[get_current_user] = lambda: _FakePublicadorDesignado()
+        r = c.post(f"/aprovacoes/{pend_id}/aprovar")
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.exec(select(NoticiaNews).where(NoticiaNews.link == "https://milknews.example.com/4")).first() is not None
 
     def test_fonte_manual_nunca_tenta_rss(self, client, monkeypatch):
         c, engine = client

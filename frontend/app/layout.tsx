@@ -3,6 +3,7 @@ import { Inter, Dancing_Script, Sora } from "next/font/google";
 import "./globals.css";
 import { AuthShell } from "@/components/AuthShell";
 import { TabsShell } from "@/components/TabsShell";
+import { SubNavProvider } from "@/components/SubNavContext";
 import { COR_TOPO } from "@/lib/themeColorTopo";
 
 const inter = Inter({ subsets: ["latin"] });
@@ -50,9 +51,11 @@ export default function RootLayout({
         />
       </head>
       <body className={`${inter.className} ${dancingScript.variable} ${sora.variable}`}>
-        <TabsShell>
-          <AuthShell>{children}</AuthShell>
-        </TabsShell>
+        <SubNavProvider>
+          <TabsShell>
+            <AuthShell>{children}</AuthShell>
+          </TabsShell>
+        </SubNavProvider>
       </body>
     </html>
   );

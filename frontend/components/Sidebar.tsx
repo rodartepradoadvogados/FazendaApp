@@ -107,7 +107,7 @@ const EXTRAS_TITULO_SIDEBAR: Record<string, string> = {
   "/consultor": "Consultor",
   "/usuarios": "Controle de Acesso",
 };
-function rotuloDaPagina(path: string): string {
+export function rotuloDaPagina(path: string): string {
   return links.find((l) => l.href === path)?.label ?? EXTRAS_TITULO_SIDEBAR[path] ?? path;
 }
 
@@ -364,7 +364,7 @@ function caminhoAte(nodes: SubNavNode[], alvoId: string): string[] | null {
 
 // Mesma travessia que caminhoAte, mas devolve os rótulos (não os ids) — usado
 // para nomear a aba nova aberta em duplo clique numa sub-aba.
-function caminhoLabels(nodes: SubNavNode[], alvoId: string): string[] | null {
+export function caminhoLabels(nodes: SubNavNode[], alvoId: string): string[] | null {
   for (const n of nodes) {
     if (n.id === alvoId) return [n.label];
     if (n.children) {

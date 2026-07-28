@@ -43,7 +43,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_dono, get_current_user, get_current_user_opcional
+from fazenda.auth import exigir_dono, exigir_pode_publicar, get_current_user, get_current_user_opcional
 from fazenda.database import get_session
 from fazenda.models import FonteNews, LancamentoPendente, NotaCapa, NoticiaNews, SeedFlag, Usuario
 from fazenda.rules.news_fetch import buscar_noticias_fonte, filtrar_relevantes
@@ -474,7 +474,7 @@ def _serializar_noticia(n: NoticiaNews) -> dict:
 
 @router.post("/materias")
 def criar_materia_blog(
-    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
+    dados: MateriaBlogIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
 ) -> dict:
     """Publica direto uma matéria escrita por nós em Configurações > News >
     Adicionar matéria ao blog — sem passar pela fila de aprovação (exige a
@@ -503,7 +503,7 @@ def criar_materia_blog(
 
 
 @router.delete("/materias/{noticia_id}")
-def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> dict:
+def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar)) -> dict:
     noticia = session.get(NoticiaNews, noticia_id)
     if not noticia:
         raise HTTPException(status_code=404, detail="Matéria não encontrada")
@@ -514,7 +514,7 @@ def excluir_materia_blog(noticia_id: int, session: Session = Depends(get_session
 
 @router.post("/materias/{noticia_id}/revisar-final")
 def revisar_publicacao_final(
-    noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
+    noticia_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
 ) -> dict:
     """Confirma a revisão de publicação definitiva de UMA matéria (aba própria
     em Configurações > News) — vale para qualquer matéria já publicada,
@@ -543,7 +543,7 @@ class MateriaBlogEditIn(BaseModel):
 
 
 @router.get("/materias")
-def listar_todas_materias(session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono)) -> list[dict]:
+def listar_todas_materias(session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar)) -> list[dict]:
     """Lista TODAS as matérias — publicadas e aguardando revisão — para a tela
     Configurações > News (abas "Matérias publicadas" e "Revisão de publicação
     definitiva"). Diferente de GET /, que só devolve matérias já revisadas
@@ -555,7 +555,7 @@ def listar_todas_materias(session: Session = Depends(get_session), user: Usuario
 
 @router.put("/materias/{noticia_id}")
 def atualizar_materia_blog(
-    noticia_id: int, dados: MateriaBlogEditIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
+    noticia_id: int, dados: MateriaBlogEditIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
 ) -> dict:
     """Edita manchete/corpo/fontes de uma matéria já publicada — usado no
     botão "Editar matéria" da aba Revisão de publicação definitiva, para
@@ -629,7 +629,7 @@ def obter_nota_capa(session: Session = Depends(get_session)) -> dict | None:
 
 @router.put("/nota-capa")
 def atualizar_nota_capa(
-    dados: NotaCapaIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_dono),
+    dados: NotaCapaIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_pode_publicar),
 ) -> dict:
     """Só o dono da plataforma edita a nota da Capa — desativa a nota ativa
     anterior (se houver) e cria uma nova, mantendo histórico."""

@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink } from "lucide-react";
-import { podeModulo, ehAdmin, ehDono } from "@/lib/api";
+import { podeModulo, ehAdmin, ehDono, podePublicarMaterias } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
 import UploadPage from "@/app/upload/page";
 import Cadastro, { ABAS_CADASTRO, type AbaCadastro } from "@/components/Cadastro";
@@ -41,7 +41,7 @@ export default function ConfiguracoesPage() {
     if (podeModulo("parametros")) abas.push({ id: "parametros", label: "Parâmetros", icon: SlidersHorizontal, title: "Parâmetros da fazenda e financeiros" });
     if (podeModulo("upload")) abas.push({ id: "upload", label: "Upload CSV", icon: Upload, title: "Upload dos CSV do Ideagri" });
     if (podeModulo("upload")) abas.push({ id: "importar", label: "Importar dados", icon: FileSpreadsheet, title: "Importação manual de dados históricos" });
-    if (ehDono()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Fontes do blog de notícias de pecuária leiteira" });
+    if (podePublicarMaterias()) abas.push({ id: "news", label: "News", icon: Newspaper, title: "Publicação e aprovação de matérias do blog de notícias de pecuária leiteira" });
     if (ehAdmin()) abas.push({ id: "aprovacoes", label: "Aprovações", icon: CheckCheck, title: "Aprovar lançamentos de campo enviados pelo Telegram" });
     // Sempre disponível — mesmo para quem não tem nenhum outro módulo liberado.
     abas.push({ id: "aparencia", label: "Aparência", icon: Palette, title: "Tema e paleta de cores — preferência pessoal" });

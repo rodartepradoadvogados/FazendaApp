@@ -9,7 +9,7 @@ import {
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
 } from "@/lib/api";
-import { ModalDivergenciaVale, ModalResultadoDivergenciaVale } from "@/components/ModalDivergenciaVale";
+import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
 import { ReciboModal } from "@/components/ReciboModal";
 import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
@@ -199,6 +199,12 @@ export default function FolhaPagamentoView() {
     vale: any; parcela: any; valorCalculado: number; valorInformado: number;
   } | null>(null);
   const [resultadoDivergencia, setResultadoDivergencia] = useState<{ valorPago: number; valorDesconto: number } | null>(null);
+  // Redistribuição livre: total (parcela editada + posteriores) diferente do
+  // valor pago no vale — confirma ANTES de salvar (diferente de
+  // resultadoDivergencia, que só avisa depois de já ter gravado).
+  const [divergenciaTotalParcela, setDivergenciaTotalParcela] = useState<{
+    vale: any; parcela: any; valoresItens: Record<number, number>; valorVale: number; valorLancado: number;
+  } | null>(null);
 
   // Vale avulso (Empreitada/Contrato/Diária) — mesma seção de relatório, tabela própria.
   const [valesAvulsos, setValesAvulsos] = useState<any[] | null>(null);
@@ -355,7 +361,7 @@ export default function FolhaPagamentoView() {
 
   async function salvarParcela(
     vale: any, parcela: any, acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre",
-    valoresItens?: Record<number, number>,
+    valoresItens?: Record<number, number>, confirmarDivergenciaTotal?: boolean,
   ) {
     const valor = parseFloat(editParcelaValor);
     if (isNaN(valor) || valor < 0) { setParcelaErro("Informe um valor válido."); return; }
@@ -364,15 +370,24 @@ export default function FolhaPagamentoView() {
     try {
       const resultado = await atualizarParcelaVale(vale.id, parcela.id, {
         valor, acao, valores_parcelas: valoresItens, confirmar: !!acao,
+        confirmar_divergencia_total: !!confirmarDivergenciaTotal,
       });
       setEditandoParcela(null);
       setDivergenciaParcela(null);
+      setDivergenciaTotalParcela(null);
       if (resultado.diverge_valor_pago) {
         setResultadoDivergencia({ valorPago: vale.valor_total, valorDesconto: resultado.soma_parcelas_atual });
       }
       carregarVales(); carregar(); carregarUnificada();
     } catch (e: any) {
-      if (e.status === 409 && e.detail?.diferenca !== undefined) {
+      // Duas divergências distintas, cada uma com seu próprio popup:
+      // 1) valor_vale/valor_lancado — total final (redistribuir_livre) ≠ valor pago no vale.
+      // 2) valor_calculado/valor_informado — o valor desta parcela ≠ o que estava calculado.
+      if (e.status === 409 && e.detail?.valor_vale !== undefined) {
+        setDivergenciaTotalParcela({
+          vale, parcela, valoresItens: valoresItens || {}, valorVale: e.detail.valor_vale, valorLancado: e.detail.valor_lancado,
+        });
+      } else if (e.status === 409 && e.detail?.diferenca !== undefined) {
         setDivergenciaParcela({
           vale, parcela, valorCalculado: e.detail.valor_calculado, valorInformado: e.detail.valor_informado,
         });
@@ -1378,11 +1393,25 @@ export default function FolhaPagamentoView() {
           valorCalculado={divergenciaParcela.valorCalculado}
           valorInformado={divergenciaParcela.valorInformado}
           itensPendentes={(divergenciaParcela.vale.parcelas_detalhe || [])
-            .filter((p: any) => p.id !== divergenciaParcela.parcela.id && !p.aplicada)
+            // Só as parcelas POSTERIORES à editada entram na redistribuição —
+            // nunca mexe em parcela anterior/já vencida (mesma regra do backend).
+            .filter((p: any) => p.id !== divergenciaParcela.parcela.id && !p.aplicada && p.competencia > divergenciaParcela.parcela.competencia)
             .map((p: any) => ({ id: p.id, label: mesCompLabel(p.competencia), valor: p.valor }))}
           salvando={parcelaSalvando}
           onCancelar={() => setDivergenciaParcela(null)}
           onConfirmar={(acao, valoresItens) => salvarParcela(divergenciaParcela.vale, divergenciaParcela.parcela, acao, valoresItens)}
+        />
+      )}
+      {divergenciaTotalParcela && (
+        <ModalConfirmarDivergenciaTotal
+          valorVale={divergenciaTotalParcela.valorVale}
+          valorLancado={divergenciaTotalParcela.valorLancado}
+          salvando={parcelaSalvando}
+          onCancelar={() => setDivergenciaTotalParcela(null)}
+          onConfirmar={() => salvarParcela(
+            divergenciaTotalParcela.vale, divergenciaTotalParcela.parcela, "redistribuir_livre",
+            divergenciaTotalParcela.valoresItens, true,
+          )}
         />
       )}
       {divergenciaValeAvulso && (

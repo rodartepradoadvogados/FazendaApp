@@ -163,3 +163,38 @@ export function ModalResultadoDivergenciaVale({
     </Modal>
   );
 }
+
+/** Popup de CONFIRMAÇÃO antes de salvar — mostrado quando, na redistribuição
+ * livre, o total informado pelo usuário (parcela editada + demais
+ * posteriores) fica diferente do valor efetivamente pago no vale, ANTES de
+ * gravar (diferente de ModalResultadoDivergenciaVale, que só informa depois
+ * de já ter salvo). Confirmando, lança a diferença como concessão gratuita
+ * (se o total ficou menor) ou como acréscimo (se ficou maior). */
+export function ModalConfirmarDivergenciaTotal({
+  valorVale, valorLancado, onCancelar, onConfirmar, salvando,
+}: { valorVale: number; valorLancado: number; onCancelar: () => void; onConfirmar: () => void; salvando?: boolean }) {
+  const diferenca = arred2(valorLancado - valorVale);
+  const tipo = diferenca < 0 ? "concessão gratuita" : "acréscimo";
+  return (
+    <Modal title="Valor total diferente do valor do vale" onClose={onCancelar} width="460px">
+      <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
+        <div className="flex items-start gap-2" style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.7rem 0.9rem" }}>
+          <AlertTriangle size={16} style={{ color: "var(--dourado)", flexShrink: 0, marginTop: "0.1rem" }} />
+          <div>
+            <p style={{ marginBottom: "0.3rem" }}>Com os valores lançados, o total das parcelas fica diferente do que foi efetivamente pago no vale.</p>
+            <p>Valor do vale: <b>{formatBRL(valorVale)}</b></p>
+            <p>Valor lançado: <b>{formatBRL(valorLancado)}</b></p>
+            <p>Diferença: <b style={{ color: diferenca >= 0 ? "var(--green-light)" : "var(--red)" }}>{formatBRL(diferenca)}</b> — será lançada como <b>{tipo}</b>.</p>
+          </div>
+        </div>
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>Confirma que deseja salvar assim mesmo?</p>
+        <div style={{ display: "flex", gap: "0.5rem" }}>
+          <button className="btn-primary" disabled={salvando} onClick={onConfirmar}>
+            <Check size={14} /> {salvando ? "Salvando…" : "Confirmar e salvar"}
+          </button>
+          <button className="btn-ghost" onClick={onCancelar}>Voltar</button>
+        </div>
+      </div>
+    </Modal>
+  );
+}

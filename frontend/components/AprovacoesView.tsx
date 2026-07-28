@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import { Check, X, RefreshCw, Inbox, Pencil, Plus, Trash2 } from "lucide-react";
 import {
-  fetchAprovacoes, aprovarLancamento, rejeitarLancamento, editarLancamentoPendente, ehAdmin,
+  fetchAprovacoes, aprovarLancamento, rejeitarLancamento, editarLancamentoPendente, ehAdmin, podePublicarMaterias,
   fetchFornecedores, fetchOpcoesFinanceiro, fetchPlanoContas, formatBRL, type LancamentoPendente,
 } from "@/lib/api";
 import { Modal } from "@/components/Modal";
@@ -250,6 +250,9 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
           const financeiro = ehFinanceiro(it);
           const fornecedorInvalidoAtual = campos(it).some(([k, v]) => ehCampoFornecedor(it, k) && fornecedorInvalido(it, valorCampo(v)));
           const fornecedorInvalidoEdicao = editando && camposEditaveis(it).some(([k]) => ehCampoFornecedor(it, k) && fornecedorInvalido(it, editVals[k] ?? ""));
+          // Matéria do blog (robô /milknews) exige a mesma permissão de News —
+          // ser admin aqui não basta, senão qualquer admin aprovaria matéria.
+          const semPermissaoNoticia = it.tipo === "noticia_manual" && !podePublicarMaterias();
           return (
           <div key={it.id} className="card">
             <div className="flex items-center justify-between" style={{ gap: "0.5rem", flexWrap: "wrap" }}>
@@ -456,13 +459,13 @@ export function AprovacoesView({ compacto = false }: { compacto?: boolean }) {
                 </>
               ) : (
                 <>
-                  <button className="btn-primary" disabled={ocupado === it.id || fornecedorInvalidoAtual} title={fornecedorInvalidoAtual ? "Corrija o fornecedor/cliente antes de aprovar" : "Aprovar e criar o registro de verdade"} onClick={() => decidir(it.id, "aprovar")} style={{ fontSize: "0.82rem" }}>
+                  <button className="btn-primary" disabled={ocupado === it.id || fornecedorInvalidoAtual || semPermissaoNoticia} title={semPermissaoNoticia ? "Sem permissão para publicar matérias no blog" : fornecedorInvalidoAtual ? "Corrija o fornecedor/cliente antes de aprovar" : "Aprovar e criar o registro de verdade"} onClick={() => decidir(it.id, "aprovar")} style={{ fontSize: "0.82rem" }}>
                     <Check size={14} /> {ocupado === it.id ? "…" : "Aprovar"}
                   </button>
-                  <button className="btn-ghost" disabled={ocupado === it.id} onClick={() => iniciarEdicao(it)} title="Corrigir os dados antes de aprovar" style={{ fontSize: "0.82rem" }}>
+                  <button className="btn-ghost" disabled={ocupado === it.id || semPermissaoNoticia} onClick={() => iniciarEdicao(it)} title={semPermissaoNoticia ? "Sem permissão para publicar matérias no blog" : "Corrigir os dados antes de aprovar"} style={{ fontSize: "0.82rem" }}>
                     <Pencil size={13} /> Editar
                   </button>
-                  <button className="btn-ghost" disabled={ocupado === it.id} onClick={() => decidir(it.id, "rejeitar")} title="Rejeitar (não cria nada)" style={{ fontSize: "0.82rem" }}>
+                  <button className="btn-ghost" disabled={ocupado === it.id || semPermissaoNoticia} onClick={() => decidir(it.id, "rejeitar")} title={semPermissaoNoticia ? "Sem permissão para publicar matérias no blog" : "Rejeitar (não cria nada)"} style={{ fontSize: "0.82rem" }}>
                     <X size={14} /> Rejeitar
                   </button>
                 </>

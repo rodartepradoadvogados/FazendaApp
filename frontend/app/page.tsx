@@ -9,7 +9,6 @@ import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAx
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
-import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -135,7 +134,8 @@ export default function Home() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <ManualFazendaButton />
+          {/* Botão Manual da Fazenda mudou para o topo fixo (junto do News) —
+              ver AuthShell.tsx — para nunca mais sobrepor outro botão fixo. */}
           <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
             <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
           </button>
