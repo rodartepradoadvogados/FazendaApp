@@ -224,6 +224,8 @@ _CAMPOS_CRITERIO = [
 
 
 def lote_tem_criterio(lote) -> bool:
+    if getattr(lote, "excluir_da_sugestao", False):
+        return False
     return any(getattr(lote, campo, None) for campo in _CAMPOS_CRITERIO)
 
 

@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Optional
 
 from sqlmodel import Field, SQLModel
-from sqlalchemy import BigInteger
+from sqlalchemy import BigInteger, Index
 
 class SeedFlag(SQLModel, table=True):
     """Marcador de migração/seed de dados executado uma única vez.
@@ -98,6 +98,7 @@ class LancamentoPendente(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     decidido_em: Optional[datetime] = None
     decidido_por: Optional[str] = None   # username de quem aprovou/rejeitou
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -124,6 +125,7 @@ class AgendaManual(SQLModel, table=True):
     link: Optional[str] = None  # rota interna de instruções/ação (ex.: "/configuracoes?aba=importar")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -133,10 +135,15 @@ class EventoRealizado(SQLModel, table=True):
     """Marca um evento da agenda (identificado por hash estável) como concluído."""
 
     __tablename__ = "evento_realizado"
+    # evento_id sozinho não é globalmente único entre fazendas (é um hash de
+    # campos como número do animal, que não é único entre fazendas diferentes
+    # — ver Fase 0) — o par (evento_id, fazenda_id) é a chave real.
+    __table_args__ = (Index("uq_evento_realizado_evento_fazenda", "evento_id", "fazenda_id", unique=True),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    evento_id: str = Field(index=True, unique=True)
+    evento_id: str = Field(index=True)
     marcado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +167,7 @@ class SolicitacaoExclusao(SQLModel, table=True):
     decidido_por: Optional[str] = None
     decidido_em: Optional[datetime] = None
     motivo_rejeicao: Optional[str] = None
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +389,11 @@ class PortalMensagem(SQLModel, table=True):
     # Quando tipo="tarefa", aponta para o evento correspondente na Agenda.
     agenda_manual_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+    # A qual fazenda este fio de comunicação pertence — Usuario pode estar
+    # vinculado a mais de uma fazenda (UsuarioFazenda), então isso não é
+    # redundante com remetente/destinatario: escopa o Portal pela fazenda
+    # atualmente selecionada, não por quem manda/recebe.
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
 # ---------------------------------------------------------------------------

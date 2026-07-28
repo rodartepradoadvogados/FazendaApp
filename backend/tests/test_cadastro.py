@@ -1445,10 +1445,13 @@ class TestValeAvulso:
         r = c.put(f"/cadastro/vale-avulso/{vale['id']}", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
             "forma_pagamento": "pix", "data_pagamento": "2026-07-25", "observacao": "corrigido",
+            # valor mudou (200 -> 500): endpoint pede confirmação explícita
+            # (409 sem isso) antes de reverter/reaplicar o abatimento.
+            "confirmar": True,
         })
         assert r.status_code == 200
-        assert r.json()["valor"] == 500.0
-        assert r.json()["forma_pagamento"] == "pix"
+        assert r.json()["vale"]["valor"] == 500.0
+        assert r.json()["vale"]["forma_pagamento"] == "pix"
 
         parcelas = c.get(f"/cadastro/empreitadas").json()
         empreitada_atualizada = next(e for e in parcelas if e["id"] == empreitada["id"])

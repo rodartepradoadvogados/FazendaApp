@@ -346,17 +346,20 @@ def ficha_animal(
         query_colostragem = query_colostragem.where(ColostragemBezerra.fazenda_id == fazenda_id)
     colostragem = session.exec(query_colostragem).first()
 
-    controles_leiteiros = session.exec(
-        select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero).order_by(ControleLeiteiro.data_controle)
-    ).all()
+    query_controles = select(ControleLeiteiro).where(ControleLeiteiro.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_controles = query_controles.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    controles_leiteiros = session.exec(query_controles.order_by(ControleLeiteiro.data_controle)).all()
 
-    pesagens_corporais = session.exec(
-        select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
-    ).all()
+    query_pesagens = select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_pesagens = query_pesagens.where(PesagemCorporal.fazenda_id == fazenda_id)
+    pesagens_corporais = session.exec(query_pesagens.order_by(PesagemCorporal.data_pesagem)).all()
 
-    qualidade_leite = session.exec(
-        select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero).order_by(QualidadeLeite.data_coleta)
-    ).all()
+    query_qualidade = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_qualidade = query_qualidade.where(QualidadeLeite.fazenda_id == fazenda_id)
+    qualidade_leite = session.exec(query_qualidade.order_by(QualidadeLeite.data_coleta)).all()
 
     query_sanidade = select(Sanidade).where(Sanidade.numero_matriz == numero)
     if fazenda_id is not None:
@@ -375,10 +378,16 @@ def ficha_animal(
         {**p.model_dump(), "protocolo_nome": protocolos_nomes.get(p.protocolo_id, "—")} for p in protocolos_sanitarios_rows
     ]
 
-    secagens = session.exec(select(Secagem).where(Secagem.numero_matriz == numero).order_by(Secagem.data_secagem)).all()
+    query_secagens = select(Secagem).where(Secagem.numero_matriz == numero)
+    if fazenda_id is not None:
+        query_secagens = query_secagens.where(Secagem.fazenda_id == fazenda_id)
+    secagens = session.exec(query_secagens.order_by(Secagem.data_secagem)).all()
 
+    query_agenda = select(AgendaManual)
+    if fazenda_id is not None:
+        query_agenda = query_agenda.where(AgendaManual.fazenda_id.in_((fazenda_id, None)))
     eventos_agenda = [
-        e for e in session.exec(select(AgendaManual).order_by(AgendaManual.data_evento)).all()
+        e for e in session.exec(query_agenda.order_by(AgendaManual.data_evento)).all()
         if e.numero_animal and numero in [n.strip() for n in e.numero_animal.split(",")]
     ]
 

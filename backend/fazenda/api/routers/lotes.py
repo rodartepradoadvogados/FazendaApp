@@ -84,6 +84,7 @@ class LoteIn(BaseModel):
     novilhas_inseminadas: bool | None = None
     novilhas_gestantes: bool | None = None
     categoria_manejo_ids: str | None = None
+    excluir_da_sugestao: bool = False
     ativo: bool = True
 
 
@@ -161,6 +162,7 @@ def _aplicar_campos(lote: Lote, dados: LoteIn) -> None:
     lote.novilhas_inseminadas = dados.novilhas_inseminadas
     lote.novilhas_gestantes = dados.novilhas_gestantes
     lote.categoria_manejo_ids = dados.categoria_manejo_ids
+    lote.excluir_da_sugestao = dados.excluir_da_sugestao
     lote.ativo = dados.ativo
 
 

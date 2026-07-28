@@ -23,7 +23,7 @@ type Lote = {
   dias_desde_servico_min: number | null; dias_desde_servico_max: number | null;
   em_tratamento: boolean | null; idade_dias_min: number | null; idade_dias_max: number | null;
   novilhas_inseminadas: boolean | null; novilhas_gestantes: boolean | null;
-  categoria_manejo_ids: string | null; ativo: boolean;
+  categoria_manejo_ids: string | null; excluir_da_sugestao: boolean; ativo: boolean;
 };
 
 type Form = {
@@ -36,6 +36,7 @@ type Form = {
   em_tratamento: boolean; idade_dias_min: string; idade_dias_max: string;
   novilhas_inseminadas: boolean; novilhas_gestantes: boolean;
   categoria_manejo_ids: number[];
+  excluir_da_sugestao: boolean;
 };
 
 const formVazio: Form = {
@@ -45,6 +46,7 @@ const formVazio: Form = {
   dias_gestacao_min: "", dias_gestacao_max: "", dias_desde_servico_min: "", dias_desde_servico_max: "",
   em_tratamento: false, idade_dias_min: "", idade_dias_max: "",
   novilhas_inseminadas: false, novilhas_gestantes: false, categoria_manejo_ids: [],
+  excluir_da_sugestao: false,
 };
 
 const inputStyle: React.CSSProperties = {
@@ -78,6 +80,7 @@ function paraPayload(form: Form, ativo: boolean = true) {
     novilhas_inseminadas: form.novilhas_inseminadas || null,
     novilhas_gestantes: form.novilhas_gestantes || null,
     categoria_manejo_ids: form.categoria_manejo_ids.length ? form.categoria_manejo_ids.join(",") : null,
+    excluir_da_sugestao: form.excluir_da_sugestao,
     ativo,
   };
 }
@@ -100,6 +103,7 @@ function payloadDoLote(l: Lote, overrides: Partial<ReturnType<typeof paraPayload
     idade_dias_min: l.idade_dias_min, idade_dias_max: l.idade_dias_max,
     novilhas_inseminadas: l.novilhas_inseminadas, novilhas_gestantes: l.novilhas_gestantes,
     categoria_manejo_ids: l.categoria_manejo_ids,
+    excluir_da_sugestao: l.excluir_da_sugestao,
     ativo: l.ativo,
     ...overrides,
   };
@@ -152,6 +156,7 @@ export default function CadastroLotes() {
       idade_dias_min: l.idade_dias_min?.toString() ?? "", idade_dias_max: l.idade_dias_max?.toString() ?? "",
       novilhas_inseminadas: !!l.novilhas_inseminadas, novilhas_gestantes: !!l.novilhas_gestantes,
       categoria_manejo_ids: l.categoria_manejo_ids ? l.categoria_manejo_ids.split(",").map(Number).filter((n) => !Number.isNaN(n)) : [],
+      excluir_da_sugestao: !!l.excluir_da_sugestao,
     });
     setEditando(l.id);
     setMsg(null);
@@ -464,6 +469,14 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
           <input type="checkbox" checked={form.novilhas_inseminadas} onChange={(e) => setForm({ ...form, novilhas_inseminadas: e.target.checked })} /> Novilhas inseminadas</label></div>
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.novilhas_gestantes} onChange={(e) => setForm({ ...form, novilhas_gestantes: e.target.checked })} /> Novilhas gestantes</label></div>
+      </div>
+
+      <div className="mb-3">
+        <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}
+          title="Mesmo que os critérios acima batam com algum animal, este lote nunca aparece nas sugestões automáticas de movimentação — útil para enfermaria, quarentena, venda etc., onde a troca de lote deve continuar sempre manual.">
+          <input type="checkbox" checked={form.excluir_da_sugestao} onChange={(e) => setForm({ ...form, excluir_da_sugestao: e.target.checked })} />
+          Não considerar este lote nas sugestões automáticas de movimentação
+        </label>
       </div>
 
       <div className="mb-3">

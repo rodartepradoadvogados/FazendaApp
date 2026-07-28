@@ -831,6 +831,7 @@ def registrar_parto(
             tipo_evento="Outro",
             observacao="Gerado automaticamente pelo lançamento de parto com retenção de placenta.",
             usuario_id=usuario_id_seguro(user),
+            fazenda_id=fazenda_id,
         ))
 
     # DEL reseta ao parir — o resto da ficha (categoria, produção etc.) só é

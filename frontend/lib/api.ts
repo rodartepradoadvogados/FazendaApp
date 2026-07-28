@@ -269,8 +269,19 @@ export async function excluirAnexoContrato(anexoId: number): Promise<void> {
   const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir anexo"); }
 }
-export function urlAnexoContrato(anexoId: number): string {
-  return `${API}/fazendas/contrato/anexos/${anexoId}`;
+// Antes era um <a href> direto pro endpoint — mas ele exige Bearer token
+// (backend/fazenda/api/routers/fazendas.py), então abrir a URL crua sem
+// autenticação sempre dava 401. Segue o mesmo padrão de baixarArquivoAutenticado
+// (definida mais abaixo neste arquivo).
+export async function baixarAnexoContrato(anexoId: number, nomeArquivoFallback: string): Promise<void> {
+  const res = await authFetch(`${API}/fazendas/contrato/anexos/${anexoId}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao baixar anexo"); }
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nomeArquivoFallback;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ── Painel Mestre CowData: Equipe própria (Sócio/Comercial/T.I./Financeiro/

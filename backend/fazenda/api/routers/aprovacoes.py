@@ -14,10 +14,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user
+from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import LancamentoPendente, Usuario
 from fazenda.rules import telegram_fluxos as fx
+from fazenda.rules.auditoria import fazenda_id_seguro
 
 router = APIRouter(prefix="/aprovacoes", tags=["aprovacoes"])
 
@@ -51,20 +52,28 @@ def _dto(p: LancamentoPendente) -> dict:
 
 @router.get("", dependencies=[Depends(exigir_admin)])
 @router.get("/", dependencies=[Depends(exigir_admin)])
-def listar_pendentes(session: Session = Depends(get_session)) -> list[dict]:
+def listar_pendentes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
     """Lançamentos aguardando aprovação, do mais novo para o mais antigo."""
-    pend = session.exec(
-        select(LancamentoPendente)
-        .where(LancamentoPendente.status == "pendente")
-        .order_by(LancamentoPendente.criado_em.desc())
-    ).all()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(LancamentoPendente).where(LancamentoPendente.status == "pendente")
+    if fazenda_id is not None:
+        query = query.where(LancamentoPendente.fazenda_id.in_((fazenda_id, None)))
+    pend = session.exec(query.order_by(LancamentoPendente.criado_em.desc())).all()
     return [_dto(p) for p in pend]
 
 
 @router.get("/contagem", dependencies=[Depends(exigir_admin)])
-def contar_pendentes(session: Session = Depends(get_session)) -> dict:
+def contar_pendentes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Quantidade de pendências (para o sininho de notificações)."""
-    total = len(session.exec(select(LancamentoPendente).where(LancamentoPendente.status == "pendente")).all())
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(LancamentoPendente).where(LancamentoPendente.status == "pendente")
+    if fazenda_id is not None:
+        query = query.where(LancamentoPendente.fazenda_id.in_((fazenda_id, None)))
+    total = len(session.exec(query).all())
     return {"pendentes": total}
 
 
@@ -72,13 +81,27 @@ class EditarPendenteIn(BaseModel):
     dados: dict
 
 
+def _verificar_posse(p: LancamentoPendente, fazenda_id: int | None) -> None:
+    """LancamentoPendente é criado pelo bot do Telegram, que ainda não sabe
+    associar o chat a uma fazenda (ponto cego fora do escopo deste retrofit)
+    — por isso trata fazenda_id=None como "legado", não bloqueia. Só bloqueia
+    quando o pendente JÁ tem uma fazenda gravada e é de outra."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None and p.fazenda_id not in (None, fazenda_id):
+        raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+
+
 @router.put("/{pendente_id}")
-def editar(pendente_id: int, entrada: EditarPendenteIn, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def editar(
+    pendente_id: int, entrada: EditarPendenteIn, session: Session = Depends(get_session),
+    user: Usuario = Depends(exigir_admin), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Corrige os dados de um lançamento pendente antes de aprovar (ex.: trocar
     uma unidade digitada errada). Só enquanto está pendente."""
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _verificar_posse(p, fazenda_id)
     _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
@@ -91,12 +114,16 @@ def editar(pendente_id: int, entrada: EditarPendenteIn, session: Session = Depen
 
 
 @router.post("/{pendente_id}/aprovar")
-def aprovar(pendente_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def aprovar(
+    pendente_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Aprova e MATERIALIZA o lançamento — cria o registro real. Se a criação
     falhar (ex.: animal inexistente), guarda o erro e mantém como pendente."""
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _verificar_posse(p, fazenda_id)
     _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
@@ -124,11 +151,15 @@ def aprovar(pendente_id: int, session: Session = Depends(get_session), user: Usu
 
 
 @router.post("/{pendente_id}/rejeitar")
-def rejeitar(pendente_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin)) -> dict:
+def rejeitar(
+    pendente_id: int, session: Session = Depends(get_session), user: Usuario = Depends(exigir_admin),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Rejeita o lançamento — não cria nada."""
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _verificar_posse(p, fazenda_id)
     _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
