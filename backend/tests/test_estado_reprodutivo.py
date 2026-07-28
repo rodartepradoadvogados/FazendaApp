@@ -268,6 +268,32 @@ class TestEndpointEstadosReprodutivos:
         assert por_numero["43"]["estado"] == INSEMINADA    # não atrasada
         assert por_numero["068"]["estado"] == EM_PROTOCOLO  # não apta
 
+    def test_ficha_conta_protocolo_iatf_como_um(self, client):
+        """Um protocolo (D0/D7/D9/D11) tem que aparecer como 1 IATF na ficha,
+        não como 4 — era o que inflava o histórico reprodutivo do animal."""
+        from fazenda.models import ProtocoloIatfLancamento
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="777", sexo="F", ativo=True))
+            s.add(ProtocoloIatfLancamento(
+                id=5, nome_protocolo="IATF 11 dias", responsavel="Dr. Ana", data_d0=date(2026, 7, 1),
+            ))
+            for dia, desc in ((0, "Implante"), (7, "Retirada"), (9, "Estradiol"), (11, "Inseminação (IATF)")):
+                s.add(ProtocoloIatfAplicacao(
+                    lancamento_id=5, numero_matriz="777", dia=dia, descricao=desc,
+                    data_prevista=date(2026, 7, 1 + dia), realizada=True,
+                ))
+            s.commit()
+
+        r = c.get("/animais/777/ficha")
+        assert r.status_code == 200, r.text
+        protocolos = r.json()["protocolos_iatf"]
+        assert len(protocolos) == 1
+        assert protocolos[0]["nome_protocolo"] == "IATF 11 dias"
+        assert protocolos[0]["etapas_total"] == 4
+        assert protocolos[0]["concluido"] is True
+        assert protocolos[0]["data_d0"] == "2026-07-01"
+
     def test_ordena_por_numero_do_brinco_crescente(self, client):
         """Toda listagem abre em ordem crescente de brinco (pedido do produtor)."""
         c, engine = client

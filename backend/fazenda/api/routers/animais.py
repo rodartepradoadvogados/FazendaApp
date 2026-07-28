@@ -192,6 +192,44 @@ def buscar_animal(
     return animal.model_dump()
 
 
+def _agrupar_protocolos_iatf(session: Session, aplicacoes: list) -> list[dict]:
+    """Uma linha por PROTOCOLO (lancamento_id), não por aplicação: as 4 linhas
+    D0/D7/D9/D11 são um único protocolo de IATF. Antes a ficha do animal
+    contava 4 IATFs onde houve 1, distorcendo o histórico reprodutivo."""
+    from fazenda.models import ProtocoloIatfLancamento
+
+    por_lancamento: dict[int, list] = {}
+    for ap in aplicacoes:
+        por_lancamento.setdefault(ap.lancamento_id, []).append(ap)
+
+    linhas: list[dict] = []
+    for lancamento_id, aps in por_lancamento.items():
+        aps = sorted(aps, key=lambda a: a.dia)
+        lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
+        d0 = next((a.data_prevista for a in aps if a.dia == 0), None)
+        d11 = next((a.data_prevista for a in aps if a.dia == 11), None)
+        linhas.append({
+            "lancamento_id": lancamento_id,
+            "nome_protocolo": lancamento.nome_protocolo if lancamento else "IATF",
+            "data_d0": d0.isoformat() if d0 else None,
+            "data_inseminacao": d11.isoformat() if d11 else None,
+            "responsavel": lancamento.responsavel if lancamento else None,
+            "concluido": all(a.realizada for a in aps),
+            "etapas_realizadas": sum(1 for a in aps if a.realizada),
+            "etapas_total": len(aps),
+            # Detalhe dia a dia continua disponível para quem quiser abrir.
+            "etapas": [
+                {"dia": a.dia, "descricao": a.descricao,
+                 "data_prevista": a.data_prevista.isoformat() if a.data_prevista else None,
+                 "realizada": a.realizada,
+                 "data_realizacao": a.data_realizacao.isoformat() if a.data_realizacao else None}
+                for a in aps
+            ],
+        })
+    linhas.sort(key=lambda p: p["data_d0"] or "")
+    return linhas
+
+
 @router.get("/{numero}/ficha")
 def ficha_animal(
     numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -331,10 +369,14 @@ def ficha_animal(
                 "nm_dolar": touro_pai.nm_dolar if touro_pai else None,
             }
 
+    # IATF na ficha: UM protocolo = UMA linha. Antes devolvia as aplicações
+    # cruas (D0/D7/D9/D11), então um único protocolo aparecia como 4 IATFs
+    # na ficha do animal — inflando o histórico reprodutivo.
     query_protocolos_iatf = select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == numero)
     if fazenda_id is not None:
         query_protocolos_iatf = query_protocolos_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
-    protocolos_iatf = session.exec(query_protocolos_iatf.order_by(ProtocoloIatfAplicacao.data_prevista)).all()
+    aplicacoes_iatf = session.exec(query_protocolos_iatf.order_by(ProtocoloIatfAplicacao.data_prevista)).all()
+    protocolos_iatf = _agrupar_protocolos_iatf(session, aplicacoes_iatf)
 
     # MovimentoLote ainda não tem fazenda_id — ver nota no docstring da função.
     movimentos_lote = session.exec(
@@ -492,7 +534,8 @@ def ficha_animal(
         "previsao_secagem": previsao_secagem,
         "partos": partos_dump,
         "servicos": servicos_dump,
-        "protocolos_iatf": _dump(protocolos_iatf),
+        # Já vem agrupado por protocolo (dicts prontos), não passa por _dump.
+        "protocolos_iatf": protocolos_iatf,
         "movimentos_lote": _dump(movimentos_lote),
         "colostragem": colostragem.model_dump() if colostragem else None,
         "controles_leiteiros": _dump(controles_leiteiros),
