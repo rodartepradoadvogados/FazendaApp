@@ -29,6 +29,8 @@ from fazenda.rules.parametros import (
     dias_reinseminacao_referencia as _dias_reinseminacao_referencia,
     intervalo_bst as _intervalo_bst_padrao,
     intervalo_visita_reprodutiva as _intervalo_visita_reprodutiva_padrao,
+    periodo_seco_dias,
+    pre_parto_max,
 )
 from fazenda.rules.scratch_pev import calcular_pev, calcular_scratch
 
@@ -299,24 +301,30 @@ class AgendaEngine:
                     numero_animal=numero,
                 ))
 
-                # ── PRÉ-PARTO (35 dias antes)
-                data_pre_parto = data_parto_provavel - timedelta(days=35)
+                # ── PRÉ-PARTO (pre_parto_max dias antes, padrão 30 — TODA
+                # gestante, novilha de 1ª cria inclusive: é só uma separação/
+                # movimentação de manejo, não depende de lactação nenhuma).
+                # Vem DEPOIS da Secagem (ver abaixo) — pre_parto_max é sempre
+                # menor que periodo_seco_dias, então esta data cai depois.
+                data_pre_parto = data_parto_provavel - timedelta(days=pre_parto_max())
                 if data_pre_parto >= data_referencia:
                     eventos.append(AgendaItem(
                         data=data_pre_parto,
                         categoria="Reprodutivo",
-                        descricao="Separar p/ pré-parto (35 dias)",
+                        descricao="Pré-parto",
                         numero_animal=numero,
                     ))
 
-                # ── SECAGEM (60 dias antes, somente vacas)
+                # ── SECAGEM (periodo_seco_dias antes, padrão 60 — só quem já
+                # pariu e está em lactação: novilha de 1ª cria nunca seca, e
+                # quem não está em lactação não tem o que secar; ver dry_off.py).
                 em_lactacao = bool(del_dias and del_dias > 0)
                 res_sec = calcular_secagem(numero, data_parto_provavel, ordem_parto, em_lactacao)
                 if res_sec.deve_secar and res_sec.data_secagem >= data_referencia:
                     eventos.append(AgendaItem(
                         data=res_sec.data_secagem,
                         categoria="Produção",
-                        descricao="Secar (60 dias antes do parto)",
+                        descricao=f"Secagem ({periodo_seco_dias()} dias antes do parto)",
                         numero_animal=numero,
                     ))
 
