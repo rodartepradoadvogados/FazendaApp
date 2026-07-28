@@ -927,6 +927,50 @@ class ValeAvulsoIn(BaseModel):
     forma_pagamento: str  # dinheiro | pix | transferencia | desconto_proximo_pagamento
     data_pagamento: date
     observacao: str | None = None
+    # Só usados em PUT (edição) quando `valor` diverge do valor atual do vale
+    # — mesma semântica de ValeParcelaEditIn.acao em rh_folha.py: "conceder"
+    # (o vale muda de valor, o alvo absorve a diferença naturalmente ao
+    # reaplicar o abatimento — comportamento padrão, sem redistribuir mais
+    # nada); "redistribuir_igual" (depois de reaplicar, redivide igualmente
+    # as parcelas/etapas do alvo ainda pendentes); "redistribuir_livre"
+    # (idem, mas com o valor de cada parcela/etapa informado explicitamente).
+    acao: str | None = None
+    valores_itens: dict[int, float] | None = None
+    confirmar: bool = False
+
+
+def _info_parcelas_vale_avulso(session: Session, vale: ValeAvulso) -> dict:
+    """Pra exibir no relatório de vales: quantas parcelas/etapas tem a
+    origem do vale avulso, e a qual(is) delas ele se refere (via
+    ValeAvulsoAbatimento) — só se aplica a empreitada/contrato; diária não
+    tem parcela agendada, então volta sempre vazio."""
+    if vale.origem_tipo == "diaria":
+        return {"total_parcelas_origem": None, "parcelas_referenciadas": []}
+    if vale.origem_tipo == "empreitada":
+        empreitada = session.get(Empreitada, vale.origem_id)
+        if empreitada and empreitada.tipo_pagamento == "por_etapa":
+            todos = session.exec(
+                select(EmpreitadaEtapa).where(EmpreitadaEtapa.empreitada_id == vale.origem_id).order_by(EmpreitadaEtapa.ordem, EmpreitadaEtapa.id)
+            ).all()
+            item_tipo = "empreitada_etapa"
+        else:
+            todos = session.exec(
+                select(EmpreitadaParcela).where(EmpreitadaParcela.empreitada_id == vale.origem_id).order_by(EmpreitadaParcela.data_vencimento)
+            ).all()
+            item_tipo = "empreitada_parcela"
+    else:
+        todos = session.exec(
+            select(ContratoParcela).where(ContratoParcela.contrato_id == vale.origem_id).order_by(ContratoParcela.data_vencimento)
+        ).all()
+        item_tipo = "contrato_parcela"
+
+    posicao = {item.id: i + 1 for i, item in enumerate(todos)}
+    abatimentos = session.exec(select(ValeAvulsoAbatimento).where(ValeAvulsoAbatimento.vale_avulso_id == vale.id)).all()
+    referenciadas = [
+        {"numero_parcela": posicao.get(ab.item_id), "valor_abatido": ab.valor_abatido}
+        for ab in abatimentos if ab.item_tipo == item_tipo
+    ]
+    return {"total_parcelas_origem": len(todos), "parcelas_referenciadas": referenciadas}
 
 
 def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) -> list[dict]:
@@ -935,7 +979,7 @@ def _listar_vales_avulsos(session: Session, origem_tipo: str, origem_id: int) ->
         .where(ValeAvulso.origem_tipo == origem_tipo, ValeAvulso.origem_id == origem_id)
         .order_by(ValeAvulso.data_pagamento)
     ).all()
-    return [v.model_dump() for v in vales]
+    return [{**v.model_dump(), **_info_parcelas_vale_avulso(session, v)} for v in vales]
 
 
 def _numeros_pagos(session: Session, numeros: list[str]) -> set[str]:
@@ -1019,6 +1063,36 @@ def _aplicar_vale_avulso(session: Session, vale_avulso_id: int, origem_tipo: str
         session.add(item)
         _sincronizar_conta_do_item(session, item)
         session.add(ValeAvulsoAbatimento(vale_avulso_id=vale_avulso_id, item_tipo=item_tipo, item_id=item.id, valor_abatido=abatido))
+
+
+def _redistribuir_itens_pendentes_igual(session: Session, itens: list) -> None:
+    """Como `_redistribuir_parcelas_pendentes` (empreitada/contrato), mas sem
+    tocar `data_vencimento` — serve tanto para parcela quanto para etapa
+    (EmpreitadaEtapa não tem data de vencimento própria)."""
+    if len(itens) < 2:
+        raise HTTPException(status_code=400, detail="É preciso ao menos 2 parcelas/etapas pendentes para redistribuir.")
+    total = round(sum(i.valor for i in itens), 2)
+    valor_base = round(total / len(itens), 2)
+    restante = total
+    for i, item in enumerate(itens):
+        valor = valor_base if i < len(itens) - 1 else round(restante, 2)
+        restante = round(restante - valor, 2)
+        item.valor = valor
+        session.add(item)
+        _sincronizar_conta_do_item(session, item)
+
+
+def _redistribuir_itens_pendentes_livre(session: Session, itens: list, valores: dict[int, float]) -> None:
+    ids_pendentes = {i.id for i in itens}
+    if set(valores.keys()) != ids_pendentes:
+        raise HTTPException(status_code=400, detail="Informe o valor de todas as parcelas/etapas pendentes, e só delas.")
+    for item in itens:
+        novo = valores[item.id]
+        if novo < 0:
+            raise HTTPException(status_code=400, detail="Valor de parcela/etapa não pode ser negativo.")
+        item.valor = round(novo, 2)
+        session.add(item)
+        _sincronizar_conta_do_item(session, item)
 
 
 def _reverter_vale_avulso(session: Session, vale_avulso_id: int) -> None:
@@ -1132,6 +1206,7 @@ def listar_todos_vales_avulsos(
             origem_descricao = "Diária"
         saida.append({
             **v.model_dump(), "pessoa_nome": pessoas.get(v.pessoa_id, "—"), "origem_descricao": origem_descricao,
+            **_info_parcelas_vale_avulso(session, v),
         })
     return saida
 
@@ -1154,6 +1229,15 @@ def atualizar_vale_avulso(
     if dados.origem_tipo != vale.origem_tipo or dados.origem_id != vale.origem_id:
         raise HTTPException(status_code=400, detail="Não é possível trocar a origem (Empreitada/Contrato/Diária) de um vale já lançado")
 
+    diferenca = round(dados.valor - vale.valor, 2)
+    if diferenca != 0 and not dados.confirmar:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": "O valor informado é diferente do valor atual deste vale.",
+            "valor_calculado": vale.valor,
+            "valor_informado": dados.valor,
+            "diferenca": diferenca,
+        })
+
     _reverter_vale_avulso(session, vale_id)
     session.commit()
 
@@ -1166,8 +1250,33 @@ def atualizar_vale_avulso(
 
     _aplicar_vale_avulso(session, vale_id, dados.origem_tipo, dados.origem_id, dados.valor)
     session.commit()
+
+    # "conceder" (ou diferenca == 0) não precisa de mais nada: o alvo já
+    # absorveu naturalmente a diferença ao reaplicar o abatimento acima.
+    # "redistribuir_*" reequilibra as parcelas/etapas do alvo ainda
+    # pendentes, para o efeito não ficar concentrado só na primeira delas.
+    if diferenca != 0 and dados.acao in ("redistribuir_igual", "redistribuir_livre") and dados.origem_tipo in ("empreitada", "contrato"):
+        _, itens_pendentes = _itens_pendentes_vale_avulso(session, dados.origem_tipo, dados.origem_id)
+        if dados.acao == "redistribuir_igual":
+            _redistribuir_itens_pendentes_igual(session, itens_pendentes)
+        else:
+            if not dados.valores_itens:
+                raise HTTPException(status_code=400, detail="Informe o valor de cada parcela/etapa pendente.")
+            _redistribuir_itens_pendentes_livre(session, itens_pendentes, dados.valores_itens)
+        session.commit()
+
     session.refresh(vale)
-    return vale.model_dump()
+    if dados.origem_tipo == "empreitada":
+        origem = session.get(Empreitada, dados.origem_id)
+        resultado = _serializar_empreitada(session, origem)
+    elif dados.origem_tipo == "contrato":
+        origem = session.get(Contrato, dados.origem_id)
+        resultado = _serializar_contrato(session, origem)
+    else:
+        origem = session.get(Diaria, dados.origem_id)
+        pessoa = session.get(Pessoa, origem.pessoa_id)
+        resultado = _resumo_diaria(session, origem, pessoa.nome if pessoa else "—")
+    return {"vale": vale.model_dump(), "origem": resultado}
 
 
 @router.delete("/vale-avulso/{vale_id}")
