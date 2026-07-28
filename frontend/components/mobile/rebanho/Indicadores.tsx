@@ -5,12 +5,13 @@
 // animais por trás do número, só com os campos pertinentes ao indicador
 // (nunca Raça, nunca Nome ao lado de Número).
 import { useState } from "react";
-import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk } from "lucide-react";
+import { ChevronRight, Fence, Baby, Syringe, CalendarClock, HeartCrack, CheckCircle2, AlertTriangle, CalendarDays, Repeat, Droplet, Milk, FileDown } from "lucide-react";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { CowIcon } from "@/components/CowIcon";
-import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, formatDate } from "@/lib/api";
+import { fetchIndicadores, fetchAnimais, fetchRelatoriosManejo, fetchEstadosReprodutivos, formatDate, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
 import { FichaDetalhe } from "@/components/mobile/rebanho/Ficha";
+import { exportarPDF, type ColunaExport } from "@/lib/export";
 
 type IndicadoresResp = {
   rebanho?: { total?: number | null };
@@ -51,11 +52,30 @@ function val(v?: number | null, sufixo = ""): string {
   return `${v.toLocaleString("pt-BR", { maximumFractionDigits: 1 })}${sufixo}`;
 }
 
-type Drill = "gestantes" | "inseminadas" | "pev" | "vazias" | "aptas" | "atrasadas" | "partoPrevisto" | "iep" | "secagens" | "producao";
+// Dias entre a data de referência do snapshot (data_referencia do endpoint)
+// e uma data-alvo ISO — usado para "Dias para o parto".
+function diasAte(referenciaIso: string, alvoIso?: string | null): number | null {
+  if (!alvoIso) return null;
+  const ref = new Date(`${referenciaIso}T00:00:00`);
+  const alvo = new Date(`${alvoIso}T00:00:00`);
+  return Math.round((alvo.getTime() - ref.getTime()) / 86400000);
+}
+
+// Rótulo do tipo de inseminação: monta natural, IATF (com protocolo) ou cio
+// natural (protocolo ausente/"cio natural") — regra combinada de tipo_servico + protocolo.
+function tipoInseminacaoLabel(a: EstadoReprodutivoAnimal): string {
+  const tipo = (a.tipo_servico || "").toLowerCase();
+  if (tipo.includes("monta") || tipo.includes("natural")) return "Monta natural";
+  const protocolo = (a.protocolo || "").trim();
+  if (protocolo && protocolo.toLowerCase() !== "cio natural") return "IA — IATF";
+  return "IA — cio natural";
+}
+
+type Drill = "gestantes" | "inseminadas" | "pev" | "vazias" | "aptas" | "atrasadas" | "protocolo" | "partoPrevisto" | "iep" | "secagens" | "producao";
 
 const DRILL_TITULO: Record<Drill, string> = {
   gestantes: "Gestantes", inseminadas: "Inseminadas", pev: "PEV", vazias: "Vazias", aptas: "Aptas",
-  atrasadas: "Atrasadas", partoPrevisto: "Parto previsto", iep: "IEP médio", secagens: "Secagens previstas",
+  atrasadas: "Atrasadas", protocolo: "IA atual (D0–D11)", partoPrevisto: "Parto previsto", iep: "IEP médio", secagens: "Secagens previstas",
   producao: "DEL médio e produção média",
 };
 
@@ -92,12 +112,19 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
   const { dados, doCache, carregando } = useCarregar<IndicadoresResp>("menu_rebanho_dash", fetchIndicadores);
   const animaisReq = useCarregar<Animal[]>("menu_rebanho_dash_animais", () => fetchAnimais() as Promise<Animal[]>);
   const secagemReq = useCarregar<Record<string, ItemSecagem[]>>("menu_rebanho_dash_secagem", fetchRelatoriosManejo);
+  // Estado reprodutivo AO VIVO (substitui Animal.sit_rep, congelado do CSV) —
+  // ver GET /indicadores/estados-reprodutivos.
+  const estadosReq = useCarregar<EstadosReprodutivos>("menu_rebanho_dash_estados", fetchEstadosReprodutivos);
   const [drill, setDrill] = useState<Drill | null>(null);
   const [numeroAberto, setNumeroAberto] = useState<string | null>(null);
+  const [exportando, setExportando] = useState(false);
 
   const animais = animaisReq.dados || [];
   const porNumero = new Map(animais.map((a) => [a.numero, a]));
   const categoriaDe = (numero: string) => porNumero.get(numero)?.categoria_abrev || porNumero.get(numero)?.grupo_primario || "—";
+  const estadoAnimais = estadosReq.dados?.animais || [];
+  const dataRef = estadosReq.dados?.data_referencia || "";
+  const contagemEstados = estadosReq.dados?.contagem || {};
 
   if (numeroAberto) {
     return <FichaDetalhe numero={numeroAberto} onVoltar={() => setNumeroAberto(null)} />;
@@ -109,38 +136,89 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
 
     let linhas: React.ReactNode[] = [];
     let total = 0;
+    // Colunas/linhas em formato plano para o botão "Exportar PDF" — mesmos
+    // valores exibidos em tela, sem re-ordenar (listas de estado já vêm
+    // ordenadas por número do endpoint).
+    let colunasExport: ColunaExport[] = [];
+    let linhasExport: Record<string, unknown>[] = [];
 
     if (drill === "gestantes") {
-      const lista = [...(rep.gestantes_detalhe || [])].sort((a, b) => b.dias_gestacao - a.dias_gestacao);
+      // Estado AO VIVO (não Animal.sit_rep, congelado do CSV) — ver
+      // GET /indicadores/estados-reprodutivos. Não reordenar: o endpoint já
+      // devolve por número crescente.
+      const lista = estadoAnimais.filter((a) => a.estado === "gestante");
       total = lista.length;
       linhas = lista.map((g) => (
         <LinhaAnimal key={g.numero} onVerAnimal={() => setNumeroAberto(g.numero)} campos={<>
-          <Pilula>{categoriaDe(g.numero)}</Pilula>
+          <Pilula>{g.categoria}</Pilula>
           <Campo label="Nº" valor={g.numero} />
-          <Campo label="Dias de gestação" valor={g.dias_gestacao} />
-          <Campo label="Parto previsto" valor={formatDate(g.parto_previsto)} />
+          <Campo label="Dias de gestação" valor={g.dias_gestacao ?? "—"} />
+          <Campo label="Dias para o parto" valor={diasAte(dataRef, g.parto_previsto) ?? "—"} />
+          <Campo label="Parto previsto" valor={formatDate(g.parto_previsto || "")} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "Dias de gestação", key: "dias_gestacao" }, { header: "Dias para o parto", key: "dias_parto" },
+        { header: "Parto previsto", key: "parto_previsto" },
+      ];
+      linhasExport = lista.map((g) => ({
+        numero: g.numero, categoria: g.categoria, dias_gestacao: g.dias_gestacao ?? "",
+        dias_parto: diasAte(dataRef, g.parto_previsto) ?? "", parto_previsto: formatDate(g.parto_previsto || ""),
+      }));
     } else if (drill === "inseminadas") {
-      const lista = animais.filter((a) => (a.sit_rep || "").trim() === "Ins.").sort(ordenarNumero);
+      const lista = estadoAnimais.filter((a) => a.estado === "inseminada");
       total = lista.length;
       linhas = lista.map((a) => (
         <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
+          <Pilula>{a.categoria}</Pilula>
           <Campo label="Nº" valor={a.numero} />
-          <Campo label="Lote atual" valor={a.grupo_primario || "—"} />
+          <Campo label="Lote atual" valor={a.lote || "—"} />
+          <Campo label="Data da inseminação" valor={formatDate(a.data_servico || "")} />
+          <Campo label="Tipo" valor={tipoInseminacaoLabel(a)} />
         </>} />
       ));
-    } else if (drill === "pev") {
-      const lista = animais.filter((a) => (a.sit_rep || "").trim() === "Vaz. pev").sort(ordenarNumero);
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "Lote atual", key: "lote" },
+        { header: "Data da inseminação", key: "data_servico" }, { header: "Tipo", key: "tipo" },
+      ];
+      linhasExport = lista.map((a) => ({
+        numero: a.numero, categoria: a.categoria, lote: a.lote || "—",
+        data_servico: formatDate(a.data_servico || ""), tipo: tipoInseminacaoLabel(a),
+      }));
+    } else if (drill === "protocolo") {
+      const lista = estadoAnimais.filter((a) => a.estado === "em_protocolo");
       total = lista.length;
       linhas = lista.map((a) => (
         <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
+          <Pilula>{a.categoria}</Pilula>
+          <Campo label="Nº" valor={a.numero} />
+          <Campo label="Dia do protocolo" valor={a.protocolo_dia_atual != null ? `D${a.protocolo_dia_atual}` : "—"} />
+          <Campo label="D0" valor={formatDate(a.protocolo_d0 || "")} />
+        </>} />
+      ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "Dia do protocolo", key: "dia" }, { header: "D0", key: "d0" },
+      ];
+      linhasExport = lista.map((a) => ({
+        numero: a.numero, categoria: a.categoria,
+        dia: a.protocolo_dia_atual != null ? `D${a.protocolo_dia_atual}` : "—", d0: formatDate(a.protocolo_d0 || ""),
+      }));
+    } else if (drill === "pev") {
+      const lista = estadoAnimais.filter((a) => a.estado === "pev");
+      total = lista.length;
+      linhas = lista.map((a) => (
+        <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
+          <Pilula>{a.categoria}</Pilula>
           <Campo label="Nº" valor={a.numero} />
           <Campo label="DEL (dias pós-parto)" valor={a.del_dias ?? "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "DEL (dias pós-parto)", key: "del" },
+      ];
+      linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "" }));
     } else if (drill === "vazias") {
       const lista = animais.filter((a) => (a.sit_rep || "").trim().startsWith("Vaz.")).sort(ordenarNumero);
       total = lista.length;
@@ -152,39 +230,73 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
           <Campo label="Lote atual" valor={a.grupo_primario || "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "Situação", key: "situacao" }, { header: "Lote atual", key: "lote" },
+      ];
+      linhasExport = lista.map((a) => ({
+        numero: a.numero, categoria: categoriaDe(a.numero), situacao: situacaoLabel(a.sit_rep), lote: a.grupo_primario || "—",
+      }));
     } else if (drill === "aptas") {
-      const nums = rep.aptas_nums || [];
-      const lista = nums.map((n) => porNumero.get(n)).filter(Boolean).sort(ordenarNumero as any) as Animal[];
+      // Estado AO VIVO — ver GET /indicadores/estados-reprodutivos.
+      const lista = estadoAnimais.filter((a) => a.estado === "apta");
       total = lista.length;
       linhas = lista.map((a) => (
         <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
+          <Pilula>{a.categoria}</Pilula>
           <Campo label="Nº" valor={a.numero} />
           <Campo label="DEL (dias pós-parto)" valor={a.del_dias ?? "—"} />
-          <Campo label="Lote atual" valor={a.grupo_primario || "—"} />
+          <Campo label="Lote atual" valor={a.lote || "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "DEL (dias pós-parto)", key: "del" }, { header: "Lote atual", key: "lote" },
+      ];
+      linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "", lote: a.lote || "—" }));
     } else if (drill === "atrasadas") {
-      const lista = animais.filter((a) => (a.sit_rep || "").trim() === "Vaz. atr.").sort(ordenarNumero);
+      const lista = estadoAnimais.filter((a) => a.estado === "atrasada");
       total = lista.length;
       linhas = lista.map((a) => (
         <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
+          <Pilula>{a.categoria}</Pilula>
           <Campo label="Nº" valor={a.numero} />
-          <Campo label="Lote atual" valor={a.grupo_primario || "—"} />
+          <Campo label="Lote atual" valor={a.lote || "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "Lote atual", key: "lote" },
+      ];
+      linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, lote: a.lote || "—" }));
     } else if (drill === "partoPrevisto") {
-      const nums = rep.partos_previstos_nums?.em_30_dias || [];
-      const datas = rep.partos_previstos_datas || {};
-      total = nums.length;
-      linhas = [...nums].sort().map((numero) => (
-        <LinhaAnimal key={numero} onVerAnimal={() => setNumeroAberto(numero)} campos={<>
-          <Pilula>{categoriaDe(numero)}</Pilula>
-          <Campo label="Nº" valor={numero} />
-          <Campo label="Parto previsto" valor={datas[numero] ? formatDate(datas[numero]) : "—"} />
+      // Sai do payload antigo (partos_previstos_nums, derivado de sit_rep) e
+      // passa a usar as gestantes AO VIVO — é o que traz dias de gestação e
+      // permite calcular quantos dias faltam para o parto.
+      const lista = estadoAnimais.filter((e) => {
+        if (e.estado !== "gestante" || !e.parto_previsto) return false;
+        const faltam = diasAte(dataRef, e.parto_previsto);
+        return faltam !== null && faltam >= 0 && faltam <= 30;
+      });
+      total = lista.length;
+      linhas = lista.map((e) => (
+        <LinhaAnimal key={e.numero} onVerAnimal={() => setNumeroAberto(e.numero)} campos={<>
+          <Pilula>{e.categoria}</Pilula>
+          <Campo label="Nº" valor={e.numero} />
+          <Campo label="Parto previsto" valor={e.parto_previsto ? formatDate(e.parto_previsto) : "—"} />
+          <Campo label="Dias de gestação" valor={e.dias_gestacao ?? "—"} />
+          <Campo label="Dias para o parto" valor={diasAte(dataRef, e.parto_previsto) ?? "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "Parto previsto", key: "parto_previsto" },
+        { header: "Dias de gestação", key: "dias_gestacao" }, { header: "Dias para o parto", key: "dias_parto" },
+      ];
+      linhasExport = lista.map((e) => ({
+        numero: e.numero, categoria: e.categoria,
+        parto_previsto: e.parto_previsto ? formatDate(e.parto_previsto) : "—",
+        dias_gestacao: e.dias_gestacao ?? "—", dias_parto: diasAte(dataRef, e.parto_previsto) ?? "—",
+      }));
     } else if (drill === "iep") {
       const lista = [...(rep.iep_por_matriz || [])].sort(ordenarNumero);
       total = lista.length;
@@ -196,6 +308,13 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
           <Campo label="Último parto" valor={formatDate(m.data_ultimo_parto)} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "IEP", key: "iep" }, { header: "Último parto", key: "ultimo_parto" },
+      ];
+      linhasExport = lista.map((m) => ({
+        numero: m.numero, categoria: categoriaDe(m.numero), iep: `${m.iep_dias} dias`, ultimo_parto: formatDate(m.data_ultimo_parto),
+      }));
     } else if (drill === "secagens") {
       const lista = [...(secagemReq.dados?.secagem || [])].sort(ordenarNumero);
       total = lista.length;
@@ -208,6 +327,15 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
           <Campo label="Previsão de secagem" valor={s.previsao_secagem ? formatDate(s.previsao_secagem) : "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" }, { header: "Lote atual", key: "lote" },
+        { header: "Secar em", key: "secar_em" }, { header: "Previsão de secagem", key: "previsao" },
+      ];
+      linhasExport = lista.map((s) => ({
+        numero: s.numero, categoria: categoriaDe(s.numero), lote: s.grupo || "—",
+        secar_em: s.dias_para_secagem != null ? `${s.dias_para_secagem} dias` : "—",
+        previsao: s.previsao_secagem ? formatDate(s.previsao_secagem) : "—",
+      }));
     } else if (drill === "producao") {
       const lista = animais.filter((a) => (a.del_dias != null && a.del_dias >= 0) || (a.ult_cl_kg != null && a.ult_cl_kg > 0)).sort(ordenarNumero);
       total = lista.length;
@@ -219,9 +347,20 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
           <Campo label="Última produção" valor={a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—"} />
         </>} />
       ));
+      colunasExport = [
+        { header: "Nº", key: "numero" }, { header: "Categoria", key: "categoria" },
+        { header: "DEL", key: "del" }, { header: "Última produção", key: "producao" },
+      ];
+      linhasExport = lista.map((a) => ({
+        numero: a.numero, categoria: categoriaDe(a.numero),
+        del: a.del_dias != null ? `${a.del_dias} dias` : "—", producao: a.ult_cl_kg != null ? `${val(a.ult_cl_kg)} L` : "—",
+      }));
     }
 
-    const carregandoLista = (drill === "secagens" ? secagemReq.carregando && !secagemReq.dados : animaisReq.carregando && !animaisReq.dados) || (carregando && !dados);
+    const carregandoLista =
+      (drill === "secagens" ? secagemReq.carregando && !secagemReq.dados
+        : ["gestantes", "inseminadas", "protocolo", "pev", "aptas", "atrasadas"].includes(drill) ? estadosReq.carregando && !estadosReq.dados
+        : animaisReq.carregando && !animaisReq.dados) || (carregando && !dados);
 
     return (
       <div>
@@ -232,9 +371,27 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
           <Vazio>Nenhum animal nesta lista.</Vazio>
         ) : (
           <>
-            <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>
-              Total: {total} animal{total !== 1 ? "is" : ""}
-            </p>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", marginBottom: "0.6rem" }}>
+              <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>
+                Total: {total} animal(is)
+              </p>
+              <button
+                type="button"
+                disabled={exportando}
+                onClick={async () => {
+                  setExportando(true);
+                  try { await exportarPDF(DRILL_TITULO[drill], colunasExport, linhasExport, `rebanho_${drill}`); }
+                  finally { setExportando(false); }
+                }}
+                style={{
+                  display: "flex", alignItems: "center", gap: "0.3rem", fontSize: "0.76rem", fontWeight: 700,
+                  padding: "0.35rem 0.65rem", borderRadius: 8, border: "1px solid var(--mob-border)",
+                  background: "var(--mob-surface)", color: "var(--mob-dourado-2)", opacity: exportando ? 0.6 : 1,
+                }}
+              >
+                <FileDown size={14} /> {exportando ? "Gerando…" : "Exportar PDF"}
+              </button>
+            </div>
             {linhas}
           </>
         )}
@@ -262,8 +419,15 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
     { chave: "pev", titulo: "PEV", valor: val(pev), onClick: () => setDrill("pev"), icone: <CalendarClock size={20} /> },
     { chave: "vazias", titulo: "Vazias", valor: val(rep.vazias), onClick: () => setDrill("vazias"), icone: <HeartCrack size={20} /> },
     { chave: "aptas", titulo: "Aptas", valor: val(rep.aptas), onClick: () => setDrill("aptas"), icone: <CheckCircle2 size={20} /> },
-    { chave: "atrasadas", titulo: "Atrasadas", valor: val((animais.filter((a) => (a.sit_rep || "").trim() === "Vaz. atr.")).length), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} /> },
-    { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(rep.partos_previstos?.em_30_dias), onClick: () => setDrill("partoPrevisto"), icone: <CalendarDays size={20} /> },
+    // Contagem AO VIVO (estado), não mais Animal.sit_rep — mesma fonte da lista de drill-down.
+    { chave: "atrasadas", titulo: "Atrasadas", valor: val(contagemEstados.atrasada ?? null), onClick: () => setDrill("atrasadas"), icone: <AlertTriangle size={20} /> },
+    { chave: "protocolo", titulo: "IA atual (D0–D11)", valor: val(contagemEstados.em_protocolo ?? null), onClick: () => setDrill("protocolo"), icone: <Syringe size={20} /> },
+    // Contagem também ao vivo, para bater com a lista que o card abre.
+    { chave: "partoPrevisto", titulo: "Parto previsto", valor: val(estadoAnimais.filter((e) => {
+      if (e.estado !== "gestante" || !e.parto_previsto) return false;
+      const faltam = diasAte(dataRef, e.parto_previsto);
+      return faltam !== null && faltam >= 0 && faltam <= 30;
+    }).length), onClick: () => setDrill("partoPrevisto"), icone: <CalendarDays size={20} /> },
     { chave: "iep", titulo: "IEP médio", valor: rep.iep_dias != null ? `${val(rep.iep_dias)} d` : "—", onClick: () => setDrill("iep"), icone: <Repeat size={20} /> },
     { chave: "secagens", titulo: "Secagens previstas", valor: val(secagemReq.dados?.secagem?.length ?? null), onClick: () => setDrill("secagens"), icone: <Droplet size={20} /> },
     {

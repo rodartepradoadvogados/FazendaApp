@@ -4041,6 +4041,22 @@ export type Estratificacao = {
 };
 export const fetchEstratificacaoRebanho = (): Promise<Estratificacao> => _rGet(`/animais/estratificacao`);
 
+// ── Estados reprodutivos AO VIVO (substitui o Animal.sit_rep congelado do CSV
+// nas listas de drill-down de Rebanho > Indicadores, ver Indicadores.tsx) ──
+export type EstadoReprodutivoAnimal = {
+  numero: string; estado: string; categoria: string; lote: string | null;
+  del_dias: number | null; data_ultimo_parto: string | null;
+  dias_gestacao: number | null; parto_previsto: string | null;
+  data_servico: string | null; tipo_servico: string | null; protocolo: string | null;
+  dias_desde_servico: number | null;
+  protocolo_d0?: string | null; protocolo_dia_atual?: number | null;
+};
+export type EstadosReprodutivos = {
+  data_referencia: string; animais: EstadoReprodutivoAnimal[];
+  contagem: Record<string, number>; parametros: Record<string, number>;
+};
+export const fetchEstadosReprodutivos = (): Promise<EstadosReprodutivos> => _rGet(`/indicadores/estados-reprodutivos`);
+
 export type CategoriaManejo = {
   id?: number; nome: string; dia_min: number; dia_max?: number | null;
   peso_min_kg?: number | null; peso_max_kg?: number | null; usa_status_reprodutivo: boolean;

@@ -76,7 +76,7 @@ function Composicao() {
         <details key={lote} style={{ marginBottom: "0.7rem" }}>
           <summary className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), cursor: "pointer", fontWeight: 700, fontSize: "0.95rem", padding: "0.85rem 1rem", border: "1px solid var(--mob-border)", borderRadius: 14, listStyle: "none", display: "flex", justifyContent: "space-between", alignItems: "center", boxShadow: "var(--mob-sombra)" }}>
             <span>{lote}</span>
-            <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>
+            <span style={{ fontSize: "0.78rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal(is)</span>
           </summary>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
             {lista.map((a) => (
@@ -122,7 +122,7 @@ function Indicadores() {
           <MobCard key={lote} className="mob-tint" style={{ ["--tint-cor" as any]: corLote(lote), marginBottom: "0.7rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: "0.6rem" }}>
               <span style={{ fontWeight: 800, fontSize: "1rem" }}>{lote}</span>
-              <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal{lista.length !== 1 ? "is" : ""}</span>
+              <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)", fontWeight: 700 }}>{lista.length} animal(is)</span>
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.6rem 1rem", marginBottom: "0.6rem" }}>
               <div>
