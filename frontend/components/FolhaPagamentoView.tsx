@@ -1,6 +1,6 @@
 "use client";
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2 } from "lucide-react";
+import { Plus, Paperclip, Check, ChevronDown, ChevronRight, RefreshCw, Filter, Pencil, Trash2, Printer } from "lucide-react";
 import {
   fetchPessoas, fetchFolhaPagamento, criarFolhaPagamento, atualizarFolhaPagamento, excluirFolhaPagamento,
   fetchFolhaPagamentoUnificada, excluirParcelaEmpreitada, excluirParcelaContrato, type LinhaFolhaUnificada,
@@ -10,6 +10,9 @@ import {
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale } from "@/components/ModalDivergenciaVale";
+import { Modal } from "@/components/Modal";
+import { ReciboModal } from "@/components/ReciboModal";
+import { exportarFichaPDF, exportarMultiExcel, type SecaoFicha, type LancamentoRecibo } from "@/lib/export";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
@@ -150,6 +153,9 @@ export default function FolhaPagamentoView() {
   const [editDiaVencimento, setEditDiaVencimento] = useState("5");
   const [editSalvando, setEditSalvando] = useState(false);
   const [editMsg, setEditMsg] = useState<string | null>(null);
+  const [editValorVale, setEditValorVale] = useState(0);
+  const [editValorLiquidoOriginal, setEditValorLiquidoOriginal] = useState(0);
+  const [confirmarDivergenciaFolha, setConfirmarDivergenciaFolha] = useState<RegistroFolha | null>(null);
 
   // Folha de pagamento unificada — funcionário + empreita + contrato + diária.
   const [unificada, setUnificada] = useState<LinhaFolhaUnificada[] | null>(null);
@@ -501,8 +507,8 @@ export default function FolhaPagamentoView() {
     [valorBruto, descontos, valorInss, valorIr]
   );
   const editValorLiquido = useMemo(
-    () => (parseFloat(editValorBruto) || 0) - (parseFloat(editDescontos) || 0) - (parseFloat(editValorInss) || 0) - (parseFloat(editValorIr) || 0),
-    [editValorBruto, editDescontos, editValorInss, editValorIr]
+    () => (parseFloat(editValorBruto) || 0) - (parseFloat(editDescontos) || 0) - (parseFloat(editValorInss) || 0) - (parseFloat(editValorIr) || 0) - editValorVale,
+    [editValorBruto, editDescontos, editValorInss, editValorIr, editValorVale]
   );
 
   async function salvar() {
@@ -587,7 +593,17 @@ export default function FolhaPagamentoView() {
     setEditObservacao(r.observacao || "");
     setEditRecorrente(r.recorrente);
     setEditDiaVencimento(r.dia_vencimento ? String(r.dia_vencimento) : "5");
+    setEditValorVale(arredonda2(r.valor_vale || 0));
+    setEditValorLiquidoOriginal(r.valor_liquido);
     setEditMsg(null);
+  }
+
+  function pedirSalvarEdicao(r: RegistroFolha) {
+    if (Math.abs(editValorLiquido - editValorLiquidoOriginal) > 0.005) {
+      setConfirmarDivergenciaFolha(r);
+    } else {
+      salvarEdicao(r);
+    }
   }
 
   async function salvarEdicao(r: RegistroFolha) {
@@ -627,6 +643,35 @@ export default function FolhaPagamentoView() {
     (regs || []).forEach((r) => { m[r.id] = r; });
     return m;
   }, [regs]);
+
+  // Imprimir holerite (folha completa do mês, todos os funcionários daquela
+  // competência) — em PDF (identidade visual de relatórios) ou Excel.
+  const [imprimindoHoleriteChave, setImprimindoHoleriteChave] = useState<string | null>(null);
+  const [holeriteExportando, setHoleriteExportando] = useState(false);
+  async function imprimirHolerites(r: RegistroFolha, formato: "pdf" | "excel") {
+    setHoleriteExportando(true);
+    try {
+      const doMes = (regs || []).filter((x) => x.competencia === r.competencia);
+      const secoes: SecaoFicha[] = doMes.map((x) => ({
+        titulo: x.pessoa_nome,
+        colunas: [{ header: "Item", key: "item" }, { header: "Valor", key: "valor" }],
+        linhas: x.detalhe.map((d) => ({ item: d.label, valor: formatBRL(d.valor) })),
+      }));
+      const base = `holerite_${r.competencia}`;
+      if (formato === "pdf") {
+        await exportarFichaPDF("Holerite — Folha de pagamento", mesCompLabel(r.competencia), secoes, base);
+      } else {
+        await exportarMultiExcel("Holerite — Folha de pagamento", secoes, base);
+      }
+    } finally {
+      setHoleriteExportando(false);
+      setImprimindoHoleriteChave(null);
+    }
+  }
+
+  // Imprimir recibo de pagamento (empreitada/contrato/diária) — reaproveita o
+  // ReciboModal já usado no financeiro.
+  const [reciboLinha, setReciboLinha] = useState<LancamentoRecibo | null>(null);
 
   return (
     <div>
@@ -829,6 +874,18 @@ export default function FolhaPagamentoView() {
                       {admin && <td>—</td>}
                       <td style={{ textAlign: "right" }}>
                         <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          <button className="btn-ghost" title="Imprimir recibo de pagamento" style={{ fontSize: "0.72rem" }}
+                            onClick={() => setReciboLinha({
+                              numero_lancamento: `${l.tipo}-${l.origem_id}`,
+                              tipo: "despesa",
+                              fornecedor: l.pessoa_nome,
+                              descricao: l.descricao,
+                              valor: l.valor,
+                              data_pagamento: l.data_pagamento,
+                              data_vencimento: l.data_vencimento,
+                            })}>
+                            <Printer size={13} />
+                          </button>
                           {editavel && (
                             <button className="btn-ghost" title="Editar este lançamento (enquanto não estiver pago)" style={{ fontSize: "0.72rem" }}
                               onClick={() => (editandoLinha ? setEditingLinhaChave(null) : iniciarEdicaoLinha(l))}>
@@ -912,16 +969,31 @@ export default function FolhaPagamentoView() {
                       <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{r.status === "pago" ? formatBRL(r.valor_liquido) : "—"}</td>
                       {admin && <td>{r.usuario_nome ?? "—"}</td>}
                       <td style={{ textAlign: "right" }} onClick={(e) => e.stopPropagation()}>
-                        {r.status === "pendente" && (
-                          <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
-                            <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
-                            <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
-                              disabled={excluindoChave === chave}
-                              onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
-                              <Trash2 size={13} />
+                        <span className="flex items-center gap-2" style={{ justifyContent: "flex-end" }}>
+                          <span style={{ position: "relative" }}>
+                            <button className="btn-ghost" title="Imprimir holerite da folha completa deste mês" style={{ fontSize: "0.72rem" }}
+                              onClick={() => setImprimindoHoleriteChave(imprimindoHoleriteChave === chave ? null : chave)}>
+                              <Printer size={13} />
                             </button>
+                            {imprimindoHoleriteChave === chave && (
+                              <span className="flex items-center gap-1" style={{ position: "absolute", top: "100%", right: 0, zIndex: 5, background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.3rem", whiteSpace: "nowrap" }}>
+                                <span style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginRight: "0.2rem" }}>Formato:</span>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "pdf")}>PDF</button>
+                                <button className="btn-ghost" style={{ fontSize: "0.68rem" }} disabled={holeriteExportando} onClick={() => imprimirHolerites(r, "excel")}>Excel</button>
+                              </span>
+                            )}
                           </span>
-                        )}
+                          {r.status === "pendente" && (
+                            <>
+                              <button className="btn-ghost" title="Registrar o pagamento deste lançamento de folha" style={{ fontSize: "0.72rem" }} onClick={() => { setPagoErro(null); setPagandoId(pagandoId === r.id ? null : r.id); }}>Marcar como pago</button>
+                              <button className="btn-ghost" title="Excluir este lançamento pendente" style={{ fontSize: "0.72rem", color: "var(--red)" }}
+                                disabled={excluindoChave === chave}
+                                onClick={() => { if (window.confirm("Excluir este lançamento de folha pendente?")) excluirLinha(l); }}>
+                                <Trash2 size={13} />
+                              </button>
+                            </>
+                          )}
+                        </span>
                       </td>
                     </tr>
                     {descAberto && (
@@ -1037,6 +1109,11 @@ export default function FolhaPagamentoView() {
                               <input style={selStyleLote} value={editObservacao} onChange={(e) => setEditObservacao(e.target.value)} /></div>
                             <div className="flex items-end"><span style={{ fontSize: "0.8rem", color: "var(--text-muted)" }}>Valor líquido: <strong style={{ color: "var(--dourado-light)" }}>{formatBRL(editValorLiquido)}</strong></span></div>
                           </div>
+                          {editValorVale > 0 && (
+                            <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+                              Desconto de vale (já incluído acima): <strong>{formatBRL(editValorVale)}</strong> — para ajustar o valor do vale, edite-o em "Relatório de vales e descontos".
+                            </p>
+                          )}
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3 items-end">
                             <div className="flex items-center gap-2" style={{ paddingBottom: "0.4rem" }}>
                               <input id="folha-edit-recorrente" type="checkbox" checked={editRecorrente} onChange={(e) => setEditRecorrente(e.target.checked)} />
@@ -1049,7 +1126,7 @@ export default function FolhaPagamentoView() {
                           </div>
                           {editMsg && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{editMsg}</p>}
                           <div className="flex items-center gap-2">
-                            <button className="btn-primary" title="Salvar as alterações deste lançamento" style={{ fontSize: "0.78rem" }} onClick={() => salvarEdicao(r)} disabled={editSalvando}>
+                            <button className="btn-primary" title="Salvar as alterações deste lançamento" style={{ fontSize: "0.78rem" }} onClick={() => pedirSalvarEdicao(r)} disabled={editSalvando}>
                               <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
                             </button>
                             <button className="btn-ghost" title="Cancelar a edição" style={{ fontSize: "0.78rem" }} onClick={() => setEditingId(null)}>Cancelar</button>
@@ -1319,6 +1396,26 @@ export default function FolhaPagamentoView() {
           onConfirmar={(acao) => salvarEdicaoValeAvulso(divergenciaValeAvulso.v, acao)}
         />
       )}
+      {confirmarDivergenciaFolha && (
+        <Modal title="Valor líquido diferente do lançado" onClose={() => setConfirmarDivergenciaFolha(null)} width="440px">
+          <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem", fontSize: "0.85rem" }}>
+            <p>O valor líquido editado é diferente do que estava lançado. Confirma a alteração ou volta para editar?</p>
+            <p>Valor líquido anterior: <b>{formatBRL(editValorLiquidoOriginal)}</b></p>
+            <p>Valor líquido novo: <b>{formatBRL(editValorLiquido)}</b></p>
+            <p>Diferença: <b style={{ color: editValorLiquido - editValorLiquidoOriginal >= 0 ? "var(--green-light)" : "var(--red)" }}>
+              {formatBRL(editValorLiquido - editValorLiquidoOriginal)}
+            </b></p>
+            <div style={{ display: "flex", gap: "0.5rem", marginTop: "0.3rem" }}>
+              <button className="btn-primary" disabled={editSalvando}
+                onClick={() => { const r = confirmarDivergenciaFolha; setConfirmarDivergenciaFolha(null); salvarEdicao(r); }}>
+                <Check size={14} /> {editSalvando ? "Salvando…" : "Confirmar valor diferente"}
+              </button>
+              <button className="btn-ghost" onClick={() => setConfirmarDivergenciaFolha(null)}>Voltar ao lançamento</button>
+            </div>
+          </div>
+        </Modal>
+      )}
+      {reciboLinha && <ReciboModal lanc={reciboLinha} onClose={() => setReciboLinha(null)} />}
       {resultadoDivergencia && (
         <ModalResultadoDivergenciaVale
           valorPago={resultadoDivergencia.valorPago}
