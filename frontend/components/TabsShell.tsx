@@ -117,13 +117,21 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   // montado, só escondido (display: none), tanto no modo normal (1 guia
   // visível) quanto no modo dividido (2 guias lado a lado).
   function estiloPainel(id: string): React.CSSProperties {
-    const base: React.CSSProperties = { position: "absolute", top: 0, bottom: 0, border: "none" };
+    const base: React.CSSProperties = { border: "none" };
     if (divisao) {
+      // Modo dividido: 2 painéis lado a lado — aí sim precisa de position:
+      // absolute (pra sobrepor um sobre o outro, escondendo os que não fazem
+      // parte da divisão) com altura explícita (top:0 + height:100%, não só
+      // top/bottom — iframe é elemento substituído e não calcula altura de
+      // forma confiável só com top+bottom sem height).
       const idx = divisao.indexOf(id);
       if (idx === -1) return { ...base, display: "none" };
-      return { ...base, display: "block", left: idx === 0 ? 0 : "50%", width: "50%", borderLeft: idx === 1 ? "1px solid var(--border)" : undefined };
+      return { ...base, display: "block", position: "absolute", top: 0, height: "100%", left: idx === 0 ? 0 : "50%", width: "50%", borderLeft: idx === 1 ? "1px solid var(--border)" : undefined };
     }
-    return { ...base, display: id === ativaId ? "block" : "none", left: 0, width: "100%" };
+    // Modo normal: mesmo comportamento de sempre (width/height 100% do
+    // container flex pai, sem position:absolute) — evita depender de
+    // top/bottom pra calcular altura, que cortava o conteúdo de guias novas.
+    return { ...base, display: id === ativaId ? "block" : "none", width: "100%", height: "100%" };
   }
 
   return (

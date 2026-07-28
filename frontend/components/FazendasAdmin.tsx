@@ -4,7 +4,7 @@ import { Building2, Plus, Check, Ban, Upload, Trash2, FileText, AlertTriangle, S
 import {
   fetchFazendas, criarFazenda, atualizarFazenda, fetchContratoFazenda, definirContratoFazenda, aprovarContratoFazenda,
   suspenderContratoFazenda, fetchPlanosCatalogo, fetchAnexosContrato, anexarContrato, excluirAnexoContrato,
-  urlAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
+  baixarAnexoContrato, fetchUsuariosVinculados, vincularUsuarioFazenda, desvincularUsuarioFazenda,
   fetchContratosConsultor, aprovarContratoConsultor, suspenderContratoConsultor,
   baixarModeloContrato, assinarContratoZapSign, fetchStatusAssinaturaZapSign,
   criarAssinaturaAsaas, criarPixSemestralAsaas, criarBoletoAsaas, fetchCobrancasAsaas,
@@ -506,9 +506,10 @@ export default function FazendasAdmin() {
               <ul style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
                 {anexos.map((a) => (
                   <li key={a.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem", fontSize: "0.8rem", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.6rem" }}>
-                    <a href={urlAnexoContrato(a.id)} target="_blank" rel="noreferrer" style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text)", textDecoration: "none" }}>
+                    <button onClick={() => baixarAnexoContrato(a.id, a.nome_arquivo).catch((e: any) => setErro(e.message))}
+                      style={{ display: "flex", alignItems: "center", gap: "0.35rem", color: "var(--text)", background: "transparent", border: "none", padding: 0, cursor: "pointer", textAlign: "left" }}>
                       <FileText size={14} /> {a.nome_arquivo} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>({formatarBytes(a.tamanho_bytes)} — {formatarData(a.criado_em)})</span>
-                    </a>
+                    </button>
                     <button onClick={() => excluirAnexo(a.id)} title="Excluir anexo" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
                       <Trash2 size={14} />
                     </button>

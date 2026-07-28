@@ -19,12 +19,13 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user
+from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import engine, get_session
 from fazenda.models import (
     AgendaManual, Animal, CompraAnimal, ContaGerencial, ControleLeiteiro, MovimentoEstoque, Estoque,
-    Parto, Pessoa, PortalMensagem, Sanidade, Servico, Usuario, VendaAnimal,
+    Parto, Pessoa, PortalMensagem, Sanidade, Servico, Usuario, UsuarioFazenda, VendaAnimal,
 )
+from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.email import enviar_email
 
 router = APIRouter(prefix="/portal", tags=["portal"])
@@ -80,9 +81,24 @@ def minhas_permissoes(user: Usuario = Depends(get_current_user), session: Sessio
 
 
 @router.get("/destinatarios")
-def listar_destinatarios(user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> list[dict]:
-    """Lista para o "@" — todos os usuários ativos, menos o robô-milknews."""
-    usuarios = session.exec(select(Usuario).where(Usuario.ativo == True)).all()  # noqa: E712
+def listar_destinatarios(
+    user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    """Lista para o "@" — usuários ativos vinculados à MESMA fazenda (via
+    UsuarioFazenda), menos o robô-milknews. Antes trazia todo mundo ativo do
+    sistema, de qualquer fazenda — vazamento real (um usuário podia mandar
+    mensagem/tarefa pra alguém de outra fazenda, que nem aparece na tela dele)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is None:
+        usuarios = session.exec(select(Usuario).where(Usuario.ativo == True)).all()  # noqa: E712
+    else:
+        usuarios = session.exec(
+            select(Usuario)
+            .join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id)
+            .where(Usuario.ativo == True, UsuarioFazenda.fazenda_id == fazenda_id)  # noqa: E712
+            .distinct()
+        ).all()
     return [
         {"id": u.id, "nome": u.nome or u.username, "username": u.username}
         for u in usuarios
@@ -101,7 +117,10 @@ class MensagemIn(BaseModel):
 
 
 @router.post("/mensagens")
-def enviar_mensagem(dados: MensagemIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+def enviar_mensagem(
+    dados: MensagemIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     if dados.aba and dados.aba not in ABAS_VALIDAS:
         raise HTTPException(400, f"Aba inválida: {dados.aba}")
     if not dados.corpo.strip():
@@ -120,6 +139,7 @@ def enviar_mensagem(dados: MensagemIn, user: Usuario = Depends(get_current_user)
             aba=dados.aba,
             corpo=dados.corpo.strip(),
             pede_retorno=dados.pede_retorno,
+            fazenda_id=fazenda_id_seguro(fazenda_id),
         )
         session.add(m)
         criadas.append(m)
@@ -193,6 +213,7 @@ def responder_mensagem(mensagem_id: int, dados: RespostaIn, user: Usuario = Depe
         corpo=dados.corpo.strip(),
         pede_retorno=False,
         resposta_de_id=original.id,
+        fazenda_id=original.fazenda_id,
     )
     session.add(resposta)
     session.commit()
@@ -306,7 +327,10 @@ class TarefaIn(BaseModel):
 
 
 @router.post("/tarefas")
-def delegar_tarefa(dados: TarefaIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)) -> dict:
+def delegar_tarefa(
+    dados: TarefaIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     if not _usuario_pode_delegar_tarefa(user, session):
         raise HTTPException(403, "Seu tipo de usuário não pode delegar tarefas")
     if not dados.corpo.strip():
@@ -314,6 +338,7 @@ def delegar_tarefa(dados: TarefaIn, user: Usuario = Depends(get_current_user), s
     if not dados.destinatarios_usuario_id:
         raise HTTPException(400, "Selecione ao menos um destinatário")
 
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     data_evento = dados.data_evento or date.today()
     criadas = []
     for dest_id in dados.destinatarios_usuario_id:
@@ -327,6 +352,7 @@ def delegar_tarefa(dados: TarefaIn, user: Usuario = Depends(get_current_user), s
             categoria="Gestão/Financeiro",
             tipo_evento="Serviço",
             usuario_id=user.id,
+            fazenda_id=fazenda_id,
         )
         session.add(evento)
         session.flush()  # garante evento.id antes de vincular
@@ -337,6 +363,7 @@ def delegar_tarefa(dados: TarefaIn, user: Usuario = Depends(get_current_user), s
             destinatario_usuario_id=dest_id,
             corpo=dados.corpo.strip(),
             agenda_manual_id=evento.id,
+            fazenda_id=fazenda_id,
         )
         session.add(tarefa)
         criadas.append(tarefa)

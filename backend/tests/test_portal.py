@@ -14,7 +14,11 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import AgendaManual, Animal, ContaGerencial, Pessoa, PortalMensagem, Usuario
+from fazenda.models import (
+    AgendaManual, Animal, ContaGerencial, ContratoFazenda, ContratoFazendaModulo, Fazenda,
+    Pessoa, PortalMensagem, Usuario, UsuarioFazenda,
+)
+from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
 @pytest.fixture
@@ -74,6 +78,44 @@ class TestDestinatarios:
         assert "robo-milknews" not in usernames
         assert "admin-teste" in usernames
         assert "vet-teste" in usernames
+
+    def test_so_lista_usuarios_da_mesma_fazenda(self, ambiente):
+        """Regressão: antes trazia TODO usuário ativo do sistema, de qualquer
+        fazenda — um usuário podia mandar mensagem/tarefa pra alguém de outra
+        fazenda, que nem aparece na tela dele. Agora só usuários vinculados à
+        fazenda atual (via UsuarioFazenda) aparecem no "@"."""
+        app, engine = ambiente
+        with Session(engine) as s:
+            s.add(Fazenda(id=1, nome="Fazenda 1"))
+            s.add(Fazenda(id=2, nome="Fazenda 2"))
+            # Contrato ativo com todos os módulos — ortogonal ao isolamento
+            # testado aqui (ver mesmo bloco em test_isolamento_reprodutivo.py);
+            # sem isso os routers barram por "fazenda sem contrato ativo"
+            # antes mesmo de chegar no filtro de fazenda_id.
+            for fid in (1, 2):
+                s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
+                for modulo in MODULOS_COMERCIAIS:
+                    s.add(ContratoFazendaModulo(fazenda_id=fid, modulo=modulo, preco=0.0, ativo=True))
+            admin_id = s.exec(select(Usuario).where(Usuario.username == "admin-teste")).first().id
+            vet_id = s.exec(select(Usuario).where(Usuario.username == "vet-teste")).first().id
+            func_id = s.exec(select(Usuario).where(Usuario.username == "func-teste")).first().id
+            s.add(UsuarioFazenda(usuario_id=admin_id, fazenda_id=1))
+            s.add(UsuarioFazenda(usuario_id=vet_id, fazenda_id=1))
+            s.add(UsuarioFazenda(usuario_id=func_id, fazenda_id=2))
+            s.commit()
+
+        import main
+        from fazenda.auth import get_fazenda_atual_id
+        main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
+        try:
+            c = _client_como(app, engine, "admin-teste")
+            r = c.get("/portal/destinatarios")
+            assert r.status_code == 200
+            usernames = {u["username"] for u in r.json()}
+            assert usernames == {"admin-teste", "vet-teste"}
+            assert "func-teste" not in usernames
+        finally:
+            del main.app.dependency_overrides[get_fazenda_atual_id]
 
 
 class TestEnviarMensagem:

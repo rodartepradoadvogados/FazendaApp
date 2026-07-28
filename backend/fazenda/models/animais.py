@@ -152,6 +152,10 @@ class Lote(SQLModel, table=True):
     # dessas categorias — refinamento adicional aos critérios diretos acima,
     # não uma substituição deles (ambos valem em E lógico).
     categoria_manejo_ids: Optional[str] = None
+    # Lote existe (ex.: enfermaria, quarentena, venda) mas não deve nunca ser
+    # sugerido automaticamente por bater nos critérios acima — a movimentação
+    # pra ele continua manual. Ver fazenda.rules.lote_criterios::sugerir_lote.
+    excluir_da_sugestao: bool = False
 
 
 # ---------------------------------------------------------------------------

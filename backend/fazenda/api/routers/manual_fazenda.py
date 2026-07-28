@@ -16,7 +16,7 @@ Endpoints:
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 from fastapi.responses import Response
@@ -71,10 +71,14 @@ async def anexar_contrato_manejo(
 ) -> dict:
     """Placeholder — hoje só guarda o NOME do arquivo (sem armazenar o
     conteúdo). Quando o Supabase Storage entrar, troca para subir o arquivo
-    de verdade e gravar a URL/path em vez do nome puro, sem mudar o contrato
-    deste endpoint para o front (mesmo campo, mesma resposta)."""
-    p = parametro_manual(session, fazenda_id_seguro(fazenda_id))
-    p.contrato_manejo_arquivo_nome = arquivo.filename
+    de verdade e gravar a URL/path em vez do nome, sem mudar o contrato deste
+    endpoint para o front (mesmo campo, mesma resposta) — o nome estruturado
+    abaixo já serve de chave de objeto pronta pro bucket (nunca o nome bruto
+    que o navegador manda, que pode vir com espaço/acento/duplicado)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    p = parametro_manual(session, fazenda_id)
+    extensao = (arquivo.filename or "").rsplit(".", 1)[-1].lower() if "." in (arquivo.filename or "") else "pdf"
+    p.contrato_manejo_arquivo_nome = f"contrato-manejo-reprodutivo-fazenda{fazenda_id or 1}-{date.today().isoformat()}.{extensao}"
     p.atualizado_em = datetime.utcnow()
     session.add(p)
     session.commit()

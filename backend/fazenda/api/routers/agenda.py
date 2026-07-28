@@ -113,7 +113,7 @@ def _gerar_agenda_recorrente(session: Session) -> None:
                 data_evento=proxima, descricao=modelo.descricao, categoria=modelo.categoria,
                 numero_animal=modelo.numero_animal, lotes=modelo.lotes, tipo_evento=modelo.tipo_evento,
                 observacao=modelo.observacao, origem_recorrencia_id=modelo.id,
-                apenas_admin=modelo.apenas_admin, link=modelo.link,
+                apenas_admin=modelo.apenas_admin, link=modelo.link, fazenda_id=modelo.fazenda_id,
             ))
             session.commit()
             proxima = _proxima_ocorrencia(proxima, modelo.intervalo_dias, modelo.intervalo_meses)
@@ -235,6 +235,7 @@ def calcular_agenda(
     quando o usuário amplia o filtro "Até").
     Retorna candidatas IATF, checagem de hormônios, BST e todos os eventos.
     """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     _gerar_agenda_recorrente(session)
     _gerar_auditorias_diarias(session)
     animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
@@ -246,7 +247,10 @@ def calcular_agenda(
     partos = [_model_to_dict(p) for p in session.exec(select(Parto)).all()]
     estoque = [_model_to_dict(e) for e in session.exec(select(Estoque)).all()]
     contas = [_model_to_dict(c) for c in session.exec(select(ContaGerencial)).all()]
-    manuais = [_model_to_dict(m) for m in session.exec(select(AgendaManual)).all()]
+    query_manuais = select(AgendaManual)
+    if fazenda_id is not None:
+        query_manuais = query_manuais.where(AgendaManual.fazenda_id.in_((fazenda_id, None)))
+    manuais = [_model_to_dict(m) for m in session.exec(query_manuais).all()]
 
     # BST a cada intervalo_bst() dias ancorado na ÚLTIMA APLICAÇÃO REAL lançada
     # (não no último serviço reprodutivo, que é só uma estimativa de reserva
@@ -307,7 +311,10 @@ def calcular_agenda(
     )
 
     # Remove da lista os eventos já marcados como "realizado" (workflow da agenda).
-    realizados = {r.evento_id for r in session.exec(select(EventoRealizado)).all()}
+    query_realizados = select(EventoRealizado)
+    if fazenda_id is not None:
+        query_realizados = query_realizados.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    realizados = {r.evento_id for r in session.exec(query_realizados).all()}
     eventos = [e for e in result.eventos if e.chave not in realizados]
 
     # Compromisso de agenda para o dia da aplicação de BST — antes disso a
@@ -1236,8 +1243,12 @@ def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> 
 
 
 @router.post("/realizados")
-def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)) -> dict:
+def marcar_realizado(
+    dados: RealizadoIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if dados.evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
     if dados.evento_id.startswith("colostragem_pendente_") or dados.evento_id.startswith("igg_pendente_"):
@@ -1251,9 +1262,12 @@ def marcar_realizado(dados: RealizadoIn, session: Session = Depends(get_session)
         _marcar_protocolo_inducao_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
 
-    existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)).first()
+    query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
+    if fazenda_id is not None:
+        query_existe = query_existe.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    existe = session.exec(query_existe).first()
     if not existe:
-        session.add(EventoRealizado(evento_id=dados.evento_id))
+        session.add(EventoRealizado(evento_id=dados.evento_id, fazenda_id=fazenda_id))
         session.commit()
         if dados.evento_id.startswith("protocolo_sanitario_"):
             _baixar_protocolo_sanitario(session, dados.evento_id)
@@ -1446,8 +1460,12 @@ def listar_protocolo_inducao_concluidos(session: Session = Depends(get_session))
 
 
 @router.delete("/realizados/{evento_id}")
-def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session)) -> dict:
+def desmarcar_realizado(
+    evento_id: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Desfaz a marcação de realizado — o evento volta a aparecer na agenda."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     if evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser excluídos — eles somem sozinhos no dia seguinte.")
     if evento_id.startswith("protocolo_iatf_"):
@@ -1457,7 +1475,10 @@ def desmarcar_realizado(evento_id: str, session: Session = Depends(get_session))
         _desmarcar_protocolo_inducao_realizado(session, evento_id)
         return {"desmarcado": True}
 
-    existe = session.exec(select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)).first()
+    query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)
+    if fazenda_id is not None:
+        query_existe = query_existe.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
+    existe = session.exec(query_existe).first()
     if existe:
         session.delete(existe)
         session.commit()
@@ -1478,7 +1499,10 @@ class AgendaManualIn(BaseModel):
 
 
 @router.post("/manual")
-def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user)) -> dict:
+def adicionar_evento_manual(
+    dados: AgendaManualIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """Adiciona um evento manual à agenda (equivalente à aba AGENDA_MANUAL do Excel)."""
     if dados.tipo_evento and dados.tipo_evento not in TIPOS_EVENTO:
         raise HTTPException(status_code=400, detail=f"tipo_evento inválido. Use um de: {', '.join(TIPOS_EVENTO)}")
@@ -1498,6 +1522,7 @@ def adicionar_evento_manual(dados: AgendaManualIn, session: Session = Depends(ge
         intervalo_dias=dados.intervalo_dias if dados.recorrente else None,
         intervalo_meses=dados.intervalo_meses if dados.recorrente else None,
         usuario_id=user.id,
+        fazenda_id=fazenda_id_seguro(fazenda_id),
     )
     session.add(evento)
     session.commit()

@@ -325,7 +325,10 @@ def _buscar_um(
         return sorted(out, key=lambda x: x["titulo"])[:200]
 
     if tipo == "evento_manual":
-        rows = session.exec(select(AgendaManual)).all()
+        query = select(AgendaManual)
+        if fazenda_id is not None:
+            query = query.where(AgendaManual.fazenda_id.in_((fazenda_id, None)))
+        rows = session.exec(query).all()
         out = [
             {
                 "id": ev.id,
@@ -844,6 +847,7 @@ def confirmar(
         id_alvo=dados.id,
         titulo=itens[0] if itens else f"{dados.tipo} #{dados.id}",
         solicitado_por=user.username,
+        fazenda_id=fazenda_id,
     )
     session.add(solicitacao)
     session.commit()
@@ -851,12 +855,14 @@ def confirmar(
 
 
 @router.get("/pendentes", dependencies=[Depends(exigir_admin)])
-def listar_pendentes(session: Session = Depends(get_session)) -> list[dict]:
-    sols = session.exec(
-        select(SolicitacaoExclusao)
-        .where(SolicitacaoExclusao.status == "pendente")
-        .order_by(SolicitacaoExclusao.criado_em.desc())
-    ).all()
+def listar_pendentes(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[dict]:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(SolicitacaoExclusao).where(SolicitacaoExclusao.status == "pendente")
+    if fazenda_id is not None:
+        query = query.where(SolicitacaoExclusao.fazenda_id.in_((fazenda_id, None)))
+    sols = session.exec(query.order_by(SolicitacaoExclusao.criado_em.desc())).all()
     return [s.model_dump() for s in sols]
 
 
@@ -870,8 +876,11 @@ def aprovar_pendente(
     sol = session.get(SolicitacaoExclusao, sol_id)
     if not sol or sol.status != "pendente":
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
-    _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id_seguro(fazenda_id))
+    _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
     for obj in alvos:
         session.delete(obj)
     sol.status = "aprovada"
@@ -892,9 +901,13 @@ def rejeitar_pendente(
     dados: RejeitarIn,
     user: Usuario = Depends(get_current_user),
     session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     sol = session.get(SolicitacaoExclusao, sol_id)
     if not sol or sol.status != "pendente":
+        raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    if fazenda_id is not None and sol.fazenda_id not in (None, fazenda_id):
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
     sol.status = "rejeitada"

@@ -65,6 +65,29 @@ class TestSugestoes:
         sug = next(s for s in d["sugestoes"] if s["numero_matriz"] == "100")
         assert any(l["codigo"] == "02" for l in sug["lotes_sugeridos"])
 
+    def test_lote_excluido_da_sugestao_nunca_e_sugerido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Lote 02 exigiria peso >= 300kg (igual ao teste acima), mas está
+            # marcado como excluído da sugestão — não deve aparecer mesmo a
+            # vaca "100" (350kg) atendendo ao critério.
+            s.add(Lote(codigo="01", nome="Recém-chegadas"))
+            s.add(Lote(codigo="02", nome="Enfermaria", peso_min=300, excluir_da_sugestao=True))
+            s.add(Animal(numero="100", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Recém-chegadas", ativo=True))
+            s.commit()
+
+        with Session(engine) as s:
+            from fazenda.models import PesagemCorporal
+            from datetime import date
+            s.add(PesagemCorporal(numero_matriz="100", data_pesagem=date.today(), peso_kg=350))
+            s.commit()
+
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["lotes_com_criterio"] == 0  # o único lote com critério está excluído da sugestão
+        assert d["sugestoes"] == []
+
     def test_animal_ja_no_lote_certo_nao_gera_sugestao(self, client):
         c, engine = client
         with Session(engine) as s:
