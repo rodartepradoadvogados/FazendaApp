@@ -1410,6 +1410,118 @@ def atualizar_vale(
     ]}
 
 
+class ValeParcelaEditIn(BaseModel):
+    valor: float
+    # Obrigatório só quando `valor` diverge do valor atual da parcela:
+    # "conceder" (só essa parcela muda — a diferença fica como concessão
+    # gratuita, o vale passa a ter soma de parcelas diferente do valor
+    # efetivamente pago); "redistribuir_igual" (a diferença é dividida
+    # igualmente entre as demais parcelas pendentes); "redistribuir_livre"
+    # (o chamador informa o valor de cada parcela pendente restante, sem
+    # validação de soma — o front já cuida de auto-balancear as não-tocadas).
+    acao: str | None = None
+    valores_parcelas: dict[int, float] | None = None  # parcela_id -> novo valor, só p/ "redistribuir_livre"
+    confirmar: bool = False
+
+
+@router.put("/vales/{vale_id}/parcelas/{parcela_id}")
+def editar_parcela_vale(
+    vale_id: int, parcela_id: int, dados: ValeParcelaEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Edita o valor de UMA parcela de um vale de funcionário — diferente de
+    PUT /vales/{id} (substitui o vale inteiro, recriando todas as parcelas
+    com split igual). `ValeFuncionario.valor_total` nunca é tocado aqui: ele
+    é o valor efetivamente pago/adiantado ao funcionário (histórico), e pode
+    legitimamente divergir da soma atual das parcelas depois de uma
+    concessão — é essa divergência que o front mostra no popup final."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    vale = session.get(ValeFuncionario, vale_id)
+    if not vale or (fazenda_id is not None and vale.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Vale não encontrado")
+    parcela = session.get(ValeParcela, parcela_id)
+    if not parcela or parcela.vale_id != vale_id:
+        raise HTTPException(status_code=404, detail="Parcela não encontrada")
+    if dados.valor < 0:
+        raise HTTPException(status_code=400, detail="Valor da parcela não pode ser negativo")
+
+    competencia_paga = _vale_competencia_paga(session, vale.pessoa_id, [parcela.competencia])
+    if competencia_paga:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Parcela já aplicada na folha paga de {competencia_paga} não pode ser editada.",
+        )
+
+    todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    outras_pendentes = [
+        p for p in todas_parcelas
+        if p.id != parcela_id and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+    ]
+    diferenca = round(dados.valor - parcela.valor, 2)
+
+    if diferenca != 0 and not dados.confirmar:
+        raise HTTPException(status_code=409, detail={
+            "mensagem": "O valor informado é diferente do valor calculado desta parcela.",
+            "valor_calculado": parcela.valor,
+            "valor_informado": dados.valor,
+            "diferenca": diferenca,
+            "parcelas_pendentes_restantes": len(outras_pendentes),
+        })
+
+    if diferenca != 0:
+        if dados.acao == "conceder":
+            pass  # só essa parcela muda
+        elif dados.acao == "redistribuir_igual":
+            if not outras_pendentes:
+                raise HTTPException(status_code=400, detail="Não há parcelas pendentes para redistribuir — escolha conceder.")
+            total_a_redistribuir = round(sum(p.valor for p in outras_pendentes) - diferenca, 2)
+            if total_a_redistribuir < 0:
+                raise HTTPException(status_code=400, detail="A diferença é maior do que o total das demais parcelas pendentes.")
+            valor_base = round(total_a_redistribuir / len(outras_pendentes), 2)
+            restante = total_a_redistribuir
+            for i, p in enumerate(outras_pendentes):
+                novo = valor_base if i < len(outras_pendentes) - 1 else round(restante, 2)
+                restante = round(restante - novo, 2)
+                p.valor = novo
+                session.add(p)
+        elif dados.acao == "redistribuir_livre":
+            if not outras_pendentes:
+                raise HTTPException(status_code=400, detail="Não há parcelas pendentes para redistribuir — escolha conceder.")
+            if not dados.valores_parcelas:
+                raise HTTPException(status_code=400, detail="Informe o valor de cada parcela pendente.")
+            ids_pendentes = {p.id for p in outras_pendentes}
+            ids_informados = set(dados.valores_parcelas.keys())
+            if ids_informados != ids_pendentes:
+                raise HTTPException(status_code=400, detail="Informe o valor de todas as parcelas pendentes, e só delas.")
+            for p in outras_pendentes:
+                novo = dados.valores_parcelas[p.id]
+                if novo < 0:
+                    raise HTTPException(status_code=400, detail="Valor de parcela não pode ser negativo.")
+                p.valor = round(novo, 2)
+                session.add(p)
+        else:
+            raise HTTPException(status_code=400, detail="Informe a ação: redistribuir_igual, redistribuir_livre ou conceder.")
+
+    parcela.valor = dados.valor
+    session.add(parcela)
+    session.commit()
+
+    todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    competencias_afetadas = sorted({p.competencia for p in todas_parcelas})
+    _reconciliar_vale_competencias(session, vale.pessoa_id, competencias_afetadas)
+    session.commit()
+    session.refresh(vale)
+
+    soma_parcelas = round(sum(p.valor for p in todas_parcelas), 2)
+    return {
+        **vale.model_dump(),
+        "parcelas_detalhe": sorted(({**p.model_dump()} for p in todas_parcelas), key=lambda p: p["competencia"]),
+        "soma_parcelas_atual": soma_parcelas,
+        "diverge_valor_pago": soma_parcelas != vale.valor_total,
+        "diferenca_valor_pago": round(soma_parcelas - vale.valor_total, 2),
+    }
+
+
 @router.delete("/vales/{vale_id}")
 def excluir_vale(
     vale_id: int, session: Session = Depends(get_session),
