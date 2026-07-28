@@ -40,6 +40,7 @@ from fazenda.api.routers import (
     importar,
     indicadores,
     lotes,
+    manual_fazenda,
     movimentacoes,
     news,
     notificacoes,
@@ -93,6 +94,7 @@ from fazenda.rules.farmacia import bootstrap_farmacia
 from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
+from fazenda.rules.manual_fazenda import enviar_manual_semanal_se_necessario
 from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
 
 # Confere a cada 6h se já passou 1 semana desde o último backup automático
@@ -107,6 +109,13 @@ _INTERVALO_VERIFICACAO_BACKUP_SEGUNDOS = 6 * 3600
 # alguém efetivamente consulta o sino. Reaproveita 100% a mesma função de
 # decisão (montar_itens_notificacoes); só itera usuários com subscription.
 _INTERVALO_DESPACHO_PUSH_SEGUNDOS = 30 * 60
+
+# Checa a cada 30 min se é segunda-feira depois das 7h e o Manual da Fazenda
+# semanal ainda não foi enviado nesta semana ISO (ver
+# fazenda.rules.manual_fazenda.deve_enviar_manual_semanal) — mesmo espírito
+# do backup automático (estado "já enviei essa semana?" fica no banco, não
+# depende de um agendador externo em horário fixo).
+_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS = 30 * 60
 
 
 async def _loop_backup_automatico() -> None:
@@ -131,6 +140,16 @@ async def _loop_despacho_push() -> None:
         except Exception:
             pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
         await asyncio.sleep(_INTERVALO_DESPACHO_PUSH_SEGUNDOS)
+
+
+async def _loop_manual_fazenda_semanal() -> None:
+    while True:
+        try:
+            with Session(engine) as session:
+                enviar_manual_semanal_se_necessario(session)
+        except Exception:
+            pass  # nunca deixa essa tarefa de fundo derrubar o resto da aplicação
+        await asyncio.sleep(_INTERVALO_VERIFICACAO_MANUAL_SEMANAL_SEGUNDOS)
 
 
 @asynccontextmanager
@@ -241,13 +260,17 @@ async def lifespan(app: FastAPI):
     registrar_webhook_telegram()
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
     tarefa_push = asyncio.create_task(_loop_despacho_push())
+    tarefa_manual_fazenda = asyncio.create_task(_loop_manual_fazenda_semanal())
     yield
     tarefa_backup.cancel()
     tarefa_push.cancel()
+    tarefa_manual_fazenda.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_backup
     with contextlib.suppress(asyncio.CancelledError):
         await tarefa_push
+    with contextlib.suppress(asyncio.CancelledError):
+        await tarefa_manual_fazenda
 
 
 app = FastAPI(
@@ -330,6 +353,7 @@ app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("fin
 app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
+app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
 app.include_router(producao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("produtivo"))])
 app.include_router(reproducao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("reprodutivo"))])

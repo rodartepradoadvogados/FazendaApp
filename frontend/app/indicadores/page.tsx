@@ -1,12 +1,11 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby, Sparkles } from "lucide-react";
+import { AlertTriangle, TrendingUp, HeartPulse, Milk, BarChart3, Target, RefreshCw, LineChart, Baby } from "lucide-react";
 import { fetchIndicadores, fetchAnimais, fetchControles, podeModulo } from "@/lib/api";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Modal } from "@/components/Modal";
 import RelatoriosGerenciais from "@/components/RelatoriosGerenciais";
-import RelatorioPersonalizado from "@/components/RelatorioPersonalizado";
 import RelatorioBezerras from "@/components/RelatorioBezerras";
 import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { Indicador } from "@/components/ui";
@@ -219,21 +218,22 @@ export function IndicadoresGerais() {
 
 // "Indicadores do Rebanho" (IndicadoresGerais) virou sub-aba de Rebanho — não
 // fica mais aqui em Análise. Ver frontend/app/rebanho/page.tsx.
-type Aba = "gerencial" | "personalizado" | "bezerras";
+// "Relatório personalizado" migrou para a aba Relatórios (ver
+// frontend/app/analise-relatorios/page.tsx) — não fica mais aqui.
+type Aba = "gerencial" | "bezerras";
 
 export default function IndicadoresPage() {
   const router = useRouter();
   const vePermiteGerencial = podeModulo("reproducao");
   const vePermiteRecria = podeModulo("recria");
-  const [aba, setAba] = useState<Aba>(vePermiteGerencial ? "gerencial" : "personalizado");
+  const [aba, setAba] = useState<Aba>(vePermiteGerencial ? "gerencial" : "bezerras");
 
   // Recria virou sub-aba de Indicadores (deixou de ter item próprio na
   // Sidebar) — mas o Dossiê Zootécnico continua sendo sua própria página
   // (rota /recria), então o clique nesse item navega em vez de trocar `aba`.
   const subNavTree: SubNavNode[] = useMemo(() => {
     const tree: SubNavNode[] = [];
-    if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Relatórios gerenciais", icon: LineChart });
-    tree.push({ id: "personalizado", label: "Relatório personalizado", icon: Sparkles });
+    if (vePermiteGerencial) tree.push({ id: "gerencial", label: "Indicadores Gerais", icon: LineChart });
     tree.push({ id: "bezerras", label: "Relatório de bezerras", icon: Baby });
     if (vePermiteRecria) tree.push({ id: "recria", label: "Recria", icon: Baby });
     return tree;
@@ -246,7 +246,6 @@ export default function IndicadoresPage() {
   return (
     <>
       {aba === "gerencial" && vePermiteGerencial && <div className="p-6 animate-in"><RelatoriosGerenciais /></div>}
-      {aba === "personalizado" && <RelatorioPersonalizado />}
       {aba === "bezerras" && <RelatorioBezerras />}
     </>
   );

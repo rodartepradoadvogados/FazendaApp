@@ -92,7 +92,7 @@ const links = [
   // ── Análise ──
   { href: "/indicadores", label: "Indicadores",  icon: LineChart,     title: "Indicadores — KPIs e desempenho reprodutivo, produtivo e financeiro", grupo: "Análise" },
   { href: "/relatorios",  label: "Listas",       icon: FileBarChart,  title: "Listas de trabalho — o que fazer hoje com cada animal (PEV, a inseminar, toque, secagem, partos, sêmen)", grupo: "Análise" },
-  { href: "/analise-relatorios", label: "Relatórios", icon: FileBarChart, title: "Relatórios — em construção", grupo: "Análise" },
+  { href: "/analise-relatorios", label: "Relatórios", icon: FileBarChart, title: "Relatórios — análise reprodutiva e relatório personalizado", grupo: "Análise" },
   // ── Financeiro ──
   { href: "/financeiro",  label: "Controle Financeiro", icon: BarChart3, title: "Controle Financeiro — contas a pagar/receber, folha e indicadores", grupo: "Financeiro" },
   { href: "/pedidos",     label: "Pedidos",      icon: ShoppingCart,  title: "Pedidos — intenção de compra/venda; só reflete em Estoque/Financeiro quando a nota fiscal/recibo é vinculada", grupo: "Financeiro" },

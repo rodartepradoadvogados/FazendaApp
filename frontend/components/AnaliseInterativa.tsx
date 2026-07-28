@@ -37,7 +37,15 @@ const METRICAS: Metrica[] = [
   { key: "num_iatf", label: "Número de IATF", unidade: "n" },
 ];
 
-const CORES = ["var(--dourado-light)", "var(--blue)", "var(--green-light)", "var(--red)", "var(--amber)", "#8B3A56", "#5A8FA3"];
+// Paleta fixa (não CSS vars do tema) — uma cor por métrica, sempre a mesma
+// independente de quais outras estão marcadas junto e do tema claro/escuro/
+// misto, para nunca haver duas linhas com a cor igual ou parecida demais.
+const CORES = [
+  "#e0a63c", "#4a90a4", "#7a9e5e", "#c0392b", "#8b3a56", "#5b6ee1", "#d4756b",
+  "#3fa796", "#b45f5f", "#6b9e3f", "#9b59b6", "#e67e22", "#2c8fae", "#a15c9e",
+  "#8fae4c", "#c9a24b", "#4e7a5a",
+];
+const corDaMetrica = (key: string) => CORES[Math.max(0, METRICAS.findIndex((m) => m.key === key)) % CORES.length];
 
 const rotuloMes = (m: string) => {
   const [ano, mes] = m.split("-");
@@ -174,8 +182,8 @@ export default function AnaliseInterativa({ ini, fim, filtros }: AnaliseInterati
               }}
             />
             <Legend wrapperStyle={{ fontSize: "0.75rem" }} formatter={(key: string) => metricaPorKey(key.replace("__norm", "")).label} />
-            {selecionadas.map((key, i) => (
-              <Line key={key} type="monotone" dataKey={normalizar ? `${key}__norm` : key} stroke={CORES[i % CORES.length]} strokeWidth={2} dot={{ r: 2 }} connectNulls />
+            {selecionadas.map((key) => (
+              <Line key={key} type="monotone" dataKey={normalizar ? `${key}__norm` : key} stroke={corDaMetrica(key)} strokeWidth={2} dot={{ r: 2 }} connectNulls />
             ))}
           </LineChart>
         </ResponsiveContainer>

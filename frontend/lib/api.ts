@@ -841,12 +841,25 @@ export async function fetchCatalogoRelatorioPersonalizado() {
   if (!res.ok) throw new Error(`Catálogo do relatório personalizado error: ${res.status}`);
   return res.json() as Promise<ParametroRelatorioPersonalizado[]>;
 }
-export async function gerarRelatorioPersonalizado(dados: { parametros: string[]; data_de?: string; data_ate?: string }) {
+export type ResumoRelatorioPersonalizado = {
+  quantidade_animais: number;
+  taxa_servico_pct: number | null;
+  taxa_concepcao_pct: number | null;
+  taxa_prenhez_pct: number | null;
+  novilhas_aptas_ate_meses: number;
+  novilhas_aptas_meses_criterio: number;
+  quantidade_perda_prenhez: number;
+  percentual_perda_prenhez_pct: number | null;
+  percentual_nascimento_macho_pct: number | null;
+  percentual_nascimento_femea_pct: number | null;
+  taxa_cura_pct: number | null;
+};
+export async function gerarRelatorioPersonalizado(dados: { parametros: string[]; data_de?: string; data_ate?: string; novilhas_aptas_meses?: number }) {
   const res = await authFetch(`${API}/indicadores/relatorio-personalizado`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao gerar relatório personalizado"); }
-  return res.json() as Promise<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[] }>;
+  return res.json() as Promise<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[]; resumo: ResumoRelatorioPersonalizado }>;
 }
 
 // ── Relatórios gerenciais e de manejo (Reprodução) ──
@@ -1352,7 +1365,7 @@ export async function fetchDiarias() {
   return res.json();
 }
 export async function criarDiaria(dados: {
-  pessoa_id: number; valor_diaria: number; data_inicio: string; observacao?: string;
+  pessoa_id: number; valor_diaria: number; data_inicio: string; data_fim?: string | null; observacao?: string;
   conta_dia_a_dia?: boolean; auditar_periodicamente?: boolean | null;
   frequencia_auditoria?: string | null; dia_semana_auditoria?: number | null; intervalo_dias_auditoria?: number | null;
 }) {
@@ -1360,6 +1373,13 @@ export async function criarDiaria(dados: {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar diária"); }
+  return res.json();
+}
+export async function atualizarDiaria(diariaId: number, dados: { data_inicio: string; data_fim?: string | null; ajuste_numero_diarias?: number | null }) {
+  const res = await authFetch(`${API}/cadastro/diarias/${diariaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar diária"); }
   return res.json();
 }
 export async function registrarPagamentoDiaria(diariaId: number, dados: { data_pagamento: string; valor: number; observacao?: string }) {
@@ -1618,6 +1638,97 @@ export async function atualizarParametro(chave: string, valor: number | string |
     body: JSON.stringify({ valor }),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetro"); }
+  return res.json();
+}
+
+// ── Manual da Fazenda (rotina automática + insights + sugestões) ──
+export type ParametroManualFazenda = {
+  id: number;
+  email_semanal_ativo: boolean;
+  ultimo_envio_semanal_em: string | null;
+  responsavel_manejo_nome: string | null;
+  responsavel_manejo_empresa: string | null;
+  tem_contrato_manejo: boolean;
+  contrato_manejo_arquivo_nome: string | null;
+};
+export type SugestaoManualFazenda = { id: number; texto: string; categoria: string; ativo: boolean; ordem: number };
+export type RotinaItemManual = { titulo: string; descricao: string; proximas_datas: string[] } | null;
+export type ManualFazenda = {
+  gerado_em: string;
+  responsavel_manejo: { nome: string | null; empresa: string | null; tem_contrato: boolean; contrato_arquivo_nome: string | null };
+  rotina: {
+    bst: RotinaItemManual;
+    visita_reprodutiva: RotinaItemManual;
+    sanitario: { titulo: string; vencidas: number; proxima: { protocolo: string; data: string; animal: string } | null };
+    compras: { nome: string; quantidade: number; estoque_minimo: number }[];
+  };
+  resultado: {
+    total_animais: number; vacas_lactacao: number;
+    taxa_prenhez_pct: number | null; taxa_concepcao_pct: number | null; taxa_servico_pct: number | null;
+    producao_media_kg: number | null; producao_total_dia_kg: number | null; del_medio: number | null;
+  };
+  insights: { categoria: string; metrica: string; tendencia: "alta" | "queda"; variacao_pct: number; valor_recente: number; valor_anterior: number; unidade: string; texto: string }[];
+  sugestoes: { texto: string; categoria: string; origem: "usuario" | "automatica" }[];
+};
+
+export async function fetchManualFazenda() {
+  const res = await authFetch(`${API}/manual-fazenda/`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Manual da Fazenda error: ${res.status}`);
+  return res.json() as Promise<ManualFazenda>;
+}
+export async function baixarPdfManualFazenda() {
+  const res = await authFetch(`${API}/manual-fazenda/pdf`);
+  if (!res.ok) throw new Error(`Erro ao gerar PDF do Manual da Fazenda: ${res.status}`);
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = "manual_da_fazenda.pdf";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+export async function fetchParametrosManualFazenda() {
+  const res = await authFetch(`${API}/manual-fazenda/parametros`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Parâmetros do Manual da Fazenda error: ${res.status}`);
+  return res.json() as Promise<ParametroManualFazenda>;
+}
+export async function atualizarParametrosManualFazenda(dados: {
+  email_semanal_ativo: boolean; responsavel_manejo_nome?: string | null; responsavel_manejo_empresa?: string | null; tem_contrato_manejo: boolean;
+}) {
+  const res = await authFetch(`${API}/manual-fazenda/parametros`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar parâmetros do Manual da Fazenda"); }
+  return res.json() as Promise<ParametroManualFazenda>;
+}
+export async function anexarContratoManejo(arquivo: File) {
+  const form = new FormData();
+  form.append("arquivo", arquivo);
+  const res = await authFetch(`${API}/manual-fazenda/contrato-anexo`, { method: "POST", body: form });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao anexar contrato"); }
+  return res.json() as Promise<ParametroManualFazenda>;
+}
+export async function fetchSugestoesManualFazenda() {
+  const res = await authFetch(`${API}/manual-fazenda/sugestoes`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Sugestões do Manual da Fazenda error: ${res.status}`);
+  return res.json() as Promise<SugestaoManualFazenda[]>;
+}
+export async function criarSugestaoManualFazenda(dados: { texto: string; categoria: string; ativo: boolean; ordem: number }) {
+  const res = await authFetch(`${API}/manual-fazenda/sugestoes`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar sugestão"); }
+  return res.json() as Promise<SugestaoManualFazenda>;
+}
+export async function atualizarSugestaoManualFazenda(id: number, dados: { texto: string; categoria: string; ativo: boolean; ordem: number }) {
+  const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar sugestão"); }
+  return res.json() as Promise<SugestaoManualFazenda>;
+}
+export async function excluirSugestaoManualFazenda(id: number) {
+  const res = await authFetch(`${API}/manual-fazenda/sugestoes/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir sugestão"); }
   return res.json();
 }
 
@@ -3000,6 +3111,15 @@ export async function fetchProtocolosIatfAtivos() {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/ativos`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Protocolos IATF ativos error: ${res.status}`);
   return res.json();
+}
+export type CandidataIatfProjetada = {
+  numero_matriz: string; sit_rep: string | null; del_dias: number | null; motivo: string;
+  del_dias_projetado: number | null; apta_na_proxima_visita: boolean;
+};
+export async function fetchCandidatasIatfProjetadas() {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf/candidatas`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Candidatas IATF error: ${res.status}`);
+  return res.json() as Promise<{ candidatas: CandidataIatfProjetada[]; proxima_visita_iatf: string | null }>;
 }
 export async function fetchLancamentosIatf() {
   const res = await authFetch(`${API}/reproducao/protocolo-iatf/lancamentos`, { cache: "no-store" });

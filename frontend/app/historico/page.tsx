@@ -6,6 +6,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import HistoricoServicos, { type Foco } from "@/components/reproducao/HistoricoServicos";
 import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
+import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
 import { ABAS_VISAO, type AbaVisao } from "@/app/reproducao/page";
 import { ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView } from "@/app/producao/page";
 
@@ -46,6 +47,7 @@ export default function HistoricoPage() {
         </div>
         {abaVisao === "partos" ? <HistoricoPartos />
           : abaVisao === "secagens" ? <HistoricoSecagens />
+          : abaVisao === "ciclos_iatf" ? <HistoricoCiclosIatf />
           : <HistoricoServicos foco={visaoAtiva.foco as Foco} titulo={visaoAtiva.titulo} descricao={visaoAtiva.descricao} />}
       </div>
     </div>

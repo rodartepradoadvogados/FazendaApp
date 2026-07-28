@@ -305,6 +305,15 @@ function RebanhoVisaoGeral() {
     return Array.from(by.entries()).sort((a, b) => a[0].localeCompare(b[0]));
   }, [filtrados]);
 
+  // Exporta na mesma ordem exibida na tela — número (modo "Ordenar por
+  // numeração") ou agrupado por lote (modo "por Grupo") — nunca a ordem crua
+  // pré-filtro/ordenação de `filtrados`.
+  const linhasParaExportar = useMemo(
+    () => (ordenarPorNumeracao ? porNumero : grupoLista.flatMap(([, lista]) => lista))
+      .map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa })),
+    [ordenarPorNumeracao, porNumero, grupoLista]
+  );
+
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
   const tip = { background: "var(--surface-2)", border: "1px solid var(--border)", borderRadius: "8px", color: "var(--text)", fontSize: "0.8rem" };
 
@@ -403,7 +412,7 @@ function RebanhoVisaoGeral() {
                 <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{total} no filtro</span>
                 <ExportarBotoes titulo="Rebanho" nomeArquivoBase="rebanho"
                   colunas={COLUNAS_REBANHO}
-                  linhas={filtrados.map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa }))} />
+                  linhas={linhasParaExportar} />
                 {!ordenarPorNumeracao && (() => {
                   const todosAbertos = abertos.size === grupoLista.length && grupoLista.length > 0;
                   return (

@@ -19,7 +19,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.parametros import get_param
-from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS
+from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
 
@@ -469,6 +469,12 @@ def ficha_animal(
         if (animal.del_dias or 0) > 0:
             seco = int(get_param("periodo_seco_dias", 60) or 60)
             previsao_secagem = concepcao + timedelta(days=GESTACAO_DIAS - seco)
+            # Atraso implausível (parto/secagem que não foi lançado a tempo,
+            # ver LIMITE_SECAGEM_RETROATIVA_DIAS) — mostra a data em que
+            # deveria ter secado (60 dias antes do último parto) em vez da
+            # projeção de gestação, sem seguir cobrando retroativo.
+            if (date.today() - previsao_secagem).days > LIMITE_SECAGEM_RETROATIVA_DIAS and ultimo_parto_data:
+                previsao_secagem = ultimo_parto_data - timedelta(days=seco)
 
     return {
         "animal": animal.model_dump(),

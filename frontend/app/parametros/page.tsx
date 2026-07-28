@@ -3,6 +3,7 @@ import { Fragment, useEffect, useState } from "react";
 import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, Plus, X } from "lucide-react";
 import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
+import ManualFazendaParametros from "@/components/ManualFazendaParametros";
 
 type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string };
 type Grupo = { titulo: string; itens: Item[] };
@@ -126,6 +127,10 @@ export default function ParametrosPage() {
           })}
         </div>
       )}
+
+      <div className="mt-4">
+        <ManualFazendaParametros podeEditar={podeEditar} />
+      </div>
 
       <div className="mt-4">
         <CadastroMotivosVenda />
