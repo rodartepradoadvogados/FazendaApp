@@ -1,0 +1,74 @@
+"use client";
+// Painel do Contador — acesso do contador externo da fazenda (vínculo
+// UsuarioFazenda.contador, ver backend/fazenda/models/multitenant.py e
+// AuthShell.tsx::ehPainelContador). Deliberadamente "soa diferente" do resto
+// do sistema (nem a paleta vinho/verde/azul da fazenda, nem o navy+dourado
+// do Painel CowData): tipografia serifada de livro-caixa sobre grafite quente,
+// com friso duplo no cabeçalho — a intenção é que nunca pareça "mais uma tela
+// da fazenda". Não tem equivalente no app móvel (ver AuthShell.tsx).
+import { usePathname } from "next/navigation";
+import { getFazendaAtual, getUsuario, logout } from "@/lib/api";
+
+export const CORES_CONTADOR = {
+  bg: "#1c1a17",
+  painel: "#242019",
+  painelAlt: "#2c2620",
+  borda: "#463c2e",
+  bordaClara: "#5a4d3a",
+  texto: "#ede4d3",
+  mudo: "#a3947a",
+  cobre: "#c1682f",
+  cobreClaro: "#e0985c",
+  positivo: "#8faa7b",
+  negativo: "#b5544a",
+};
+
+const FONTE_SERIF = "'Iowan Old Style', 'Palatino Linotype', Georgia, serif";
+const FONTE_BASE = "system-ui, -apple-system, sans-serif";
+
+export default function ContadorLayout({ children }: { children: React.ReactNode }) {
+  const path = usePathname();
+  const fazenda = getFazendaAtual();
+  const usuario = getUsuario();
+  const C = CORES_CONTADOR;
+
+  return (
+    <div style={{ minHeight: "100vh", background: C.bg, color: C.texto, fontFamily: FONTE_BASE }}>
+      <header style={{ borderBottom: `1px solid ${C.borda}`, background: C.painel }}>
+        <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.4rem 1.6rem 1.1rem" }}>
+          <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: "0.6rem" }}>
+            <div>
+              <p style={{ fontFamily: FONTE_SERIF, fontSize: "1.5rem", fontWeight: 700, letterSpacing: "0.01em", margin: 0, color: C.texto }}>
+                Painel do Contador
+              </p>
+              <p style={{ fontSize: "0.78rem", color: C.mudo, margin: "0.15rem 0 0", textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                {fazenda?.nome || "Fazenda"} {(fazenda?.cidade || fazenda?.uf) && `— ${[fazenda.cidade, fazenda.uf].filter(Boolean).join("/")}`}
+              </p>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "0.9rem" }}>
+              <span style={{
+                fontSize: "0.68rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.08em",
+                color: C.cobreClaro, border: `1px solid ${C.cobre}`, borderRadius: "3px", padding: "0.2rem 0.5rem",
+              }}>
+                Somente leitura
+              </span>
+              <div style={{ textAlign: "right" }}>
+                <p style={{ fontSize: "0.78rem", margin: 0, color: C.texto }}>{usuario?.nome || usuario?.username}</p>
+                <button type="button" onClick={logout}
+                  style={{ background: "none", border: "none", padding: 0, color: C.mudo, fontSize: "0.72rem", textDecoration: "underline", cursor: "pointer" }}>
+                  Sair
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Friso duplo — a assinatura visual do "livro-caixa", distinta de
+            qualquer outra casca do sistema. */}
+        <div style={{ height: "1px", background: C.bordaClara }} />
+        <div style={{ height: "3px", background: C.bg }} />
+        <div style={{ height: "1px", background: C.borda }} />
+      </header>
+      <main style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.8rem 1.6rem 3rem" }}>{children}</main>
+    </div>
+  );
+}

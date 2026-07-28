@@ -1,7 +1,7 @@
 "use client";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { getToken, podeModulo, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getToken, podeModulo, ehDono, ehContador, ROTA_MODULO } from "@/lib/api";
 import { iniciarMonitorInatividade } from "@/lib/idle";
 import { Sidebar } from "@/components/Sidebar";
 import { NotificationBell } from "@/components/NotificationBell";
@@ -35,6 +35,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // empresa) — casca própria (PainelCowDataSidebar), nunca a Sidebar da
   // fazenda, e restrita ao dono da plataforma.
   const ehPainelCowData = path.startsWith("/painel-cowdata");
+  // Painel do Contador (/contador): acesso restrito ao vínculo UsuarioFazenda.
+  // contador (Financeiro somente leitura/exportação, sem app móvel) — casca
+  // própria (ver frontend/app/contador/layout.tsx), nunca a Sidebar da fazenda.
+  const ehPainelContador = path.startsWith("/contador");
 
   useEffect(() => {
     if (path === "/login") { setEstado("deslogado"); return; }
@@ -45,6 +49,10 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       router.replace(ehApp ? `/login?next=${encodeURIComponent(path)}` : "/login");
       return;
     }
+    // Um vínculo de contador só enxerga o Painel do Contador — nunca o resto
+    // do sistema (nem o app móvel, que sequer tem essa tela).
+    if (ehContador() && !ehPainelContador) { router.replace("/contador"); return; }
+    if (ehPainelContador && !ehContador()) { router.replace("/"); return; }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
@@ -56,7 +64,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
     // mesmo sem nenhum outro módulo — o filtro por sub-aba já acontece dentro da página.
     if (mod && mod !== "capa" && !podeModulo(mod)) { router.replace("/"); return; }
     setEstado("logado");
-  }, [path, router, ehApp, ehPainelCowData]);
+  }, [path, router, ehApp, ehPainelCowData, ehPainelContador]);
 
   // Desloga sozinho após 15 min sem interação (mouse/teclado/toque/rolagem) —
   // segurança dos dados da fazenda e controle de acessos do proprietário.
@@ -95,6 +103,11 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // Painel CowData: casca própria (PainelCowDataLayout), nunca a Sidebar da
   // fazenda — ver comentário no topo deste componente.
   if (ehPainelCowData) return <>{children}</>;
+
+  // Painel do Contador: casca própria (frontend/app/contador/layout.tsx),
+  // nunca a Sidebar da fazenda nem a casca do app móvel — ver comentário
+  // no topo deste componente.
+  if (ehPainelContador) return <>{children}</>;
 
   return (
     <SubNavProvider>

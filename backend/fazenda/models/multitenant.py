@@ -94,12 +94,20 @@ class UsuarioFazenda(SQLModel, table=True):
     administrar News/Blog — ver exigir_dono). Um usuário pode ser contratante
     de mais de uma fazenda (vínculos independentes).
 
-    `consultor` marca um vínculo externo (ex.: veterinário, contador,
-    agrônomo) convidado por uma fazenda no plano Diamond — mesmo acesso de um
+    `consultor` marca um vínculo externo (ex.: veterinário, agrônomo)
+    convidado por uma fazenda no plano Diamond — mesmo acesso de um
     funcionário comum dentro dela (não administra a fazenda), mas o vínculo
     só é aceito se a fazenda tiver o módulo comercial "consultor" contratado
     e ativo (ver fazenda/api/routers/fazendas.py::vincular_usuario). Nunca é
-    True ao mesmo tempo que `contratante` — são papéis mutuamente exclusivos."""
+    True ao mesmo tempo que `contratante` — são papéis mutuamente exclusivos.
+
+    `contador` marca o contador externo da fazenda — vínculo sem gate de
+    plano/módulo (disponível em qualquer fazenda), mas de escopo restrito:
+    o login cai direto no Painel do Contador (`/contador`, casca própria,
+    nunca a navegação normal da fazenda) e só enxerga Financeiro, sempre em
+    modo leitura/exportação — toda escrita em `/financeiro/*` é bloqueada
+    para esse vínculo (ver fazenda/auth.py::bloquear_escrita_contador).
+    Mutuamente exclusivo com `contratante` e `consultor`."""
 
     __tablename__ = "usuario_fazenda"
     __table_args__ = (UniqueConstraint("usuario_id", "fazenda_id", name="uq_usuario_fazenda"),)
@@ -109,4 +117,5 @@ class UsuarioFazenda(SQLModel, table=True):
     fazenda_id: int = Field(foreign_key="fazenda.id", index=True)
     contratante: bool = False
     consultor: bool = False
+    contador: bool = False
     criado_em: datetime = Field(default_factory=datetime.utcnow)

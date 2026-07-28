@@ -125,10 +125,15 @@ class VincularUsuarioIn(BaseModel):
     usuario_id: int | None = None
     username: str | None = None  # alternativa a usuario_id — resolvido pelo backend
     contratante: bool = False
-    # Vínculo de consultor externo (veterinário, contador, agrônomo) — só
-    # aceito se a fazenda tiver o módulo comercial "consultor" contratado e
-    # ativo (plano Diamond). Nunca junto de contratante=True.
+    # Vínculo de consultor externo (veterinário, agrônomo) — só aceito se a
+    # fazenda tiver o módulo comercial "consultor" contratado e ativo (plano
+    # Diamond). Nunca junto de contratante=True.
     consultor: bool = False
+    # Vínculo do contador externo da fazenda — sem gate de plano/módulo,
+    # mas de escopo restrito (Painel do Contador, só Financeiro, só leitura/
+    # exportação — ver bloquear_escrita_contador em fazenda/auth.py). Nunca
+    # junto de contratante=True nem consultor=True.
+    contador: bool = False
 
 
 def _tem_modulo_consultor_ativo(session: Session, fazenda_id: int) -> bool:
@@ -226,8 +231,8 @@ def vincular_usuario(
     session: Session = Depends(get_session),
 ) -> dict:
     _validar_escopo_contratante(user, fazenda_id, fazenda_id_token)
-    if dados.contratante and dados.consultor:
-        raise HTTPException(status_code=400, detail="Um vínculo não pode ser contratante e consultor ao mesmo tempo")
+    if sum([dados.contratante, dados.consultor, dados.contador]) > 1:
+        raise HTTPException(status_code=400, detail="Um vínculo só pode ser um papel por vez: contratante, consultor ou contador")
     fazenda = session.get(Fazenda, fazenda_id)
     if not fazenda:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
@@ -251,7 +256,8 @@ def vincular_usuario(
     if ja_vinculado:
         raise HTTPException(status_code=400, detail=f"{usuario.username} já está vinculado a esta fazenda")
     session.add(UsuarioFazenda(
-        usuario_id=usuario.id, fazenda_id=fazenda_id, contratante=dados.contratante, consultor=dados.consultor,
+        usuario_id=usuario.id, fazenda_id=fazenda_id,
+        contratante=dados.contratante, consultor=dados.consultor, contador=dados.contador,
     ))
     session.commit()
     return {"vinculado": True, "usuario_id": usuario.id, "username": usuario.username}
@@ -271,7 +277,7 @@ def listar_usuarios_vinculados(
             continue
         resultado.append({
             "usuario_id": usuario.id, "username": usuario.username, "nome": usuario.nome,
-            "contratante": v.contratante, "consultor": v.consultor,
+            "contratante": v.contratante, "consultor": v.consultor, "contador": v.contador,
         })
     return resultado
 

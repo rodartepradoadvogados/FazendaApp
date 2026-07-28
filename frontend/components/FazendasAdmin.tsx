@@ -86,7 +86,7 @@ export default function FazendasAdmin() {
 
   const [usuarios, setUsuarios] = useState<UsuarioVinculado[] | null>(null);
   const [novoUsername, setNovoUsername] = useState("");
-  const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor">("funcionario");
+  const [novoPapel, setNovoPapel] = useState<"funcionario" | "contratante" | "consultor" | "contador">("funcionario");
   const [vinculando, setVinculando] = useState(false);
 
   // Assinaturas do produto de Consultor independente (Fase 2C) — fora de
@@ -173,6 +173,7 @@ export default function FazendasAdmin() {
         username: novoUsername.trim(),
         contratante: novoPapel === "contratante",
         consultor: novoPapel === "consultor",
+        contador: novoPapel === "contador",
       });
       setNovoUsername("");
       fetchUsuariosVinculados(selecionada).then(setUsuarios);
@@ -560,6 +561,7 @@ export default function FazendasAdmin() {
                 <option value="consultor" disabled={!temModuloConsultor}>
                   Consultor externo{!temModuloConsultor ? " — requer plano Diamond" : ""}
                 </option>
+                <option value="contador">Contador (Financeiro, só leitura)</option>
               </select>
               <button onClick={vincular} disabled={vinculando} className="btn-primary" style={{ fontSize: "0.78rem", padding: "0.35rem 0.7rem", display: "flex", alignItems: "center", gap: "0.3rem" }}>
                 <UserPlus size={13} /> {vinculando ? "Vinculando…" : "Vincular"}
@@ -573,6 +575,7 @@ export default function FazendasAdmin() {
                       {u.nome || u.username} <span style={{ color: "var(--text-muted)", fontSize: "0.72rem" }}>(@{u.username})</span>
                       {u.contratante && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--dourado)", fontWeight: 700 }}>Contratante</span>}
                       {u.consultor && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--green-light)", fontWeight: 700 }}>Consultor</span>}
+                      {u.contador && <span style={{ marginLeft: "0.5rem", fontSize: "0.7rem", color: "var(--blue-light, #6fa8dc)", fontWeight: 700 }}>Contador</span>}
                     </span>
                     <button onClick={() => desvincular(u.usuario_id)} title="Desvincular" style={{ background: "transparent", border: "none", color: "var(--red)", cursor: "pointer" }}>
                       <Trash2 size={14} />
