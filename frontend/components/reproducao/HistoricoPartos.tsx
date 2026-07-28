@@ -39,20 +39,31 @@ export default function HistoricoPartos() {
   useEffect(() => { carregar(); }, []);
 
   const [editando, setEditando] = useState<PartoReg | null>(null);
-  const [editVals, setEditVals] = useState({ data: "", tipoParto: "", retencaoPlacenta: false });
+  const [editVals, setEditVals] = useState({
+    data: "", tipoParto: "", retencaoPlacenta: false,
+    numeroCria1: "", numeroCria2: "", sexoCria1: "", sexoCria2: "",
+  });
   const [salvandoEdicao, setSalvandoEdicao] = useState(false);
   const [erroEdicao, setErroEdicao] = useState<string | null>(null);
 
   const abrirEdicao = (p: PartoReg) => {
     setEditando(p);
-    setEditVals({ data: p.data || "", tipoParto: p.tipo_parto || "", retencaoPlacenta: !!p.retencao_placenta });
+    setEditVals({
+      data: p.data || "", tipoParto: p.tipo_parto || "", retencaoPlacenta: !!p.retencao_placenta,
+      numeroCria1: p.numero_cria_1 || "", numeroCria2: p.numero_cria_2 || "",
+      sexoCria1: p.sexo_cria_1 || "", sexoCria2: p.sexo_cria_2 || "",
+    });
     setErroEdicao(null);
   };
   const salvarEdicao = async () => {
     if (!editando) return;
     setSalvandoEdicao(true); setErroEdicao(null);
     try {
-      await atualizarParto(editando.id, { data_parto: editVals.data || undefined, tipo_parto: editVals.tipoParto || undefined, retencao_placenta: editVals.retencaoPlacenta });
+      await atualizarParto(editando.id, {
+        data_parto: editVals.data || undefined, tipo_parto: editVals.tipoParto || undefined, retencao_placenta: editVals.retencaoPlacenta,
+        numero_cria_1: editVals.numeroCria1 || null, numero_cria_2: editVals.numeroCria2 || null,
+        sexo_cria_1: editVals.sexoCria1 || null, sexo_cria_2: editVals.sexoCria2 || null,
+      });
       setEditando(null);
       carregar();
     } catch (e: any) {
@@ -202,6 +213,27 @@ export default function HistoricoPartos() {
                 <input type="date" style={selStyle} value={editVals.data} onChange={(e) => setEditVals((v) => ({ ...v, data: e.target.value }))} /></div>
               <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Tipo de parto</label>
                 <input style={selStyle} value={editVals.tipoParto} onChange={(e) => setEditVals((v) => ({ ...v, tipoParto: e.target.value }))} placeholder="ex.: Normal, Distócico…" /></div>
+              <div className="grid grid-cols-2 gap-3">
+                <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Nº da cria 1</label>
+                  <input style={selStyle} value={editVals.numeroCria1} onChange={(e) => setEditVals((v) => ({ ...v, numeroCria1: e.target.value }))} placeholder="ex.: 9001" /></div>
+                <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Sexo da cria 1</label>
+                  <select style={selStyle} value={editVals.sexoCria1} onChange={(e) => setEditVals((v) => ({ ...v, sexoCria1: e.target.value }))}>
+                    <option value="">—</option><option value="F">Fêmea</option><option value="M">Macho</option>
+                  </select></div>
+              </div>
+              {(editando.gemelar || editVals.numeroCria2 || editVals.sexoCria2) && (
+                <div className="grid grid-cols-2 gap-3">
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Nº da cria 2 (gemelar)</label>
+                    <input style={selStyle} value={editVals.numeroCria2} onChange={(e) => setEditVals((v) => ({ ...v, numeroCria2: e.target.value }))} placeholder="ex.: 9002" /></div>
+                  <div><label style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>Sexo da cria 2</label>
+                    <select style={selStyle} value={editVals.sexoCria2} onChange={(e) => setEditVals((v) => ({ ...v, sexoCria2: e.target.value }))}>
+                      <option value="">—</option><option value="F">Fêmea</option><option value="M">Macho</option>
+                    </select></div>
+                </div>
+              )}
+              <p style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>
+                Editar o número da cria aqui só corrige o registro do parto — não move nem renomeia a ficha do animal da cria.
+              </p>
               <label className="flex items-center gap-2" style={{ fontSize: "0.82rem", cursor: "pointer" }}>
                 <input type="checkbox" checked={editVals.retencaoPlacenta} onChange={(e) => setEditVals((v) => ({ ...v, retencaoPlacenta: e.target.checked }))} /> Retenção de placenta
               </label>

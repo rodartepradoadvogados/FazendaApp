@@ -60,6 +60,80 @@ class TestListarPartosHistorico:
         assert dados["partos"][0]["mes"] == "2026-03"
 
 
+class TestEditarParto:
+    def test_edita_numero_e_sexo_da_cria(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="501", sit_rep="Ins.", ativo=True))
+            parto = Parto(numero_matriz="501", data_parto=date(2026, 3, 10), ordem_parto=2, tipo_parto="Normal")
+            s.add(parto)
+            s.commit()
+            parto_id = parto.id
+        r = c.put(f"/reproducao/partos/{parto_id}", json={"numero_cria_1": "9001", "sexo_cria_1": "F"})
+        assert r.status_code == 200, r.text
+        assert r.json()["numero_cria_1"] == "9001"
+        assert r.json()["sexo_cria_1"] == "F"
+
+
+class TestVerificarMaeParto:
+    def test_mae_sem_parto_registrado(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="601", sit_rep="Ins.", ativo=True))
+            s.commit()
+        r = c.get("/reproducao/verificar-mae", params={"mae_numero": "601"})
+        assert r.status_code == 200
+        assert r.json()["inconsistencias"] == ["A mãe 601 não tem nenhum parto registrado no Histórico."]
+
+    def test_mae_inexistente(self, client):
+        c, engine = client
+        r = c.get("/reproducao/verificar-mae", params={"mae_numero": "999"})
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["mae_encontrada"] is False
+        assert "Não existe animal cadastrado com o número 999." in dados["inconsistencias"]
+
+    def test_parto_correspondente_por_data_sem_inconsistencia(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="602", sit_rep="Ins.", ativo=True))
+            s.add(Animal(numero="9002", data_nasc=date(2026, 3, 12), sexo="F"))
+            s.add(Parto(numero_matriz="602", data_parto=date(2026, 3, 10), ordem_parto=1, numero_cria_1="9002"))
+            s.commit()
+        r = c.get("/reproducao/verificar-mae", params={"mae_numero": "602", "animal_numero": "9002"})
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["inconsistencias"] == []
+        assert dados["parto_correspondente"]["numero_cria_1"] == "9002"
+
+    def test_parto_com_outra_cria_ja_vinculada(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="603", sit_rep="Ins.", ativo=True))
+            s.add(Animal(numero="9003", data_nasc=date(2026, 3, 12), sexo="F"))
+            s.add(Parto(numero_matriz="603", data_parto=date(2026, 3, 10), ordem_parto=1, numero_cria_1="9099"))
+            s.commit()
+        r = c.get("/reproducao/verificar-mae", params={"mae_numero": "603", "animal_numero": "9003"})
+        assert r.status_code == 200
+        dados = r.json()
+        assert len(dados["inconsistencias"]) == 1
+        assert "9099" in dados["inconsistencias"][0]
+
+    def test_nenhum_parto_perto_da_data_de_nascimento(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="604", sit_rep="Ins.", ativo=True))
+            s.add(Animal(numero="9004", data_nasc=date(2026, 6, 1), sexo="F"))
+            s.add(Parto(numero_matriz="604", data_parto=date(2026, 1, 1), ordem_parto=1))
+            s.commit()
+        r = c.get("/reproducao/verificar-mae", params={"mae_numero": "604", "animal_numero": "9004"})
+        assert r.status_code == 200
+        dados = r.json()
+        assert dados["parto_correspondente"] is None
+        assert len(dados["inconsistencias"]) == 1
+        assert "Nenhum parto" in dados["inconsistencias"][0]
+
+
 class TestListarSecagensHistorico:
     def test_lista_secagens_achatadas(self, client):
         c, engine = client

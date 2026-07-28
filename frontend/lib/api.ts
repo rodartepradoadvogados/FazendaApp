@@ -800,11 +800,32 @@ export async function atualizarServico(id: number, dados: ServicoEditPayload) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
   return res.json();
 }
-export async function atualizarParto(id: number, dados: { data_parto?: string; tipo_parto?: string; retencao_placenta?: boolean }) {
+export async function atualizarParto(id: number, dados: {
+  data_parto?: string; tipo_parto?: string; retencao_placenta?: boolean;
+  numero_cria_1?: string | null; numero_cria_2?: string | null;
+  sexo_cria_1?: string | null; sexo_cria_2?: string | null;
+  gemelar?: boolean | null; gemelar_sexo?: string | null;
+}) {
   const res = await authFetch(`${API}/reproducao/partos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar parto"); }
+  return res.json();
+}
+
+export type VerificacaoMaeParto = {
+  mae_encontrada: boolean;
+  parto_correspondente: { data_parto: string | null; ordem_parto: number | null } | null;
+  partos_da_mae: { data_parto: string | null; ordem_parto: number | null }[];
+  inconsistencias: string[];
+};
+// Chamado antes de salvar a Ficha do Animal quando o campo "mãe" muda —
+// cruza com os partos da mãe já registrados (ver PUT /reproducao/verificar-mae).
+export async function verificarMaeParto(maeNumero: string, animalNumero?: string): Promise<VerificacaoMaeParto> {
+  const params = new URLSearchParams({ mae_numero: maeNumero });
+  if (animalNumero) params.set("animal_numero", animalNumero);
+  const res = await authFetch(`${API}/reproducao/verificar-mae?${params.toString()}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao verificar mãe"); }
   return res.json();
 }
 export async function atualizarSecagem(id: number, dados: { data_secagem?: string; motivo?: string; escore_condicao_corporal?: number | null; observacao?: string }) {

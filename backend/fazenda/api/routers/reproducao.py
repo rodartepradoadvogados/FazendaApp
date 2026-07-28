@@ -593,6 +593,12 @@ class PartoEditIn(BaseModel):
     data_parto: date | None = None
     tipo_parto: str | None = None
     retencao_placenta: bool | None = None
+    numero_cria_1: str | None = None
+    numero_cria_2: str | None = None
+    sexo_cria_1: str | None = None
+    sexo_cria_2: str | None = None
+    gemelar: bool | None = None
+    gemelar_sexo: str | None = None
 
 
 @router.put("/partos/{parto_id}")
@@ -602,8 +608,11 @@ def atualizar_parto(
     session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Edita os campos do parto em si (data, tipo, retenção de placenta) — não
-    mexe nas crias já cadastradas, que seguem editáveis pela ficha do animal."""
+    """Edita os campos do parto (data, tipo, retenção de placenta, número/sexo
+    das crias). Editar o número da cria aqui só corrige o REGISTRO DO PARTO —
+    não renomeia nem cria a ficha do animal da cria; isso continua sendo feito
+    pela Ficha do Animal (ver /animais/{numero} e verificar_mae_parto abaixo,
+    que cruza a mãe informada na ficha com os partos dela)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     parto = session.get(Parto, parto_id)
     if not parto or (fazenda_id is not None and parto.fazenda_id not in (None, fazenda_id)):
@@ -614,6 +623,70 @@ def atualizar_parto(
     session.commit()
     session.refresh(parto)
     return parto.model_dump()
+
+
+@router.get("/verificar-mae")
+def verificar_mae_parto(
+    mae_numero: str,
+    animal_numero: str | None = None,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Chamado ao editar a Ficha do Animal e mudar o campo "mãe" — cruza a mãe
+    informada com os partos DELA já registrados (Histórico > Reprodução >
+    Partos), para o front mostrar um popup de confirmação com data/ordem do
+    parto e apontar inconsistências (mãe sem parto registrado, nenhum parto
+    perto da data de nascimento, ou parto já com outra cria vinculada) antes
+    de salvar. Não bloqueia nada sozinho — só informa, quem decide é o usuário."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query_mae = select(Animal).where(Animal.numero == mae_numero)
+    if fazenda_id is not None:
+        query_mae = query_mae.where(Animal.fazenda_id == fazenda_id)
+    mae = session.exec(query_mae).first()
+
+    query_animal = select(Animal).where(Animal.numero == animal_numero) if animal_numero else None
+    animal = session.exec(query_animal).first() if query_animal is not None else None
+    nascimento = animal.data_nasc if animal else None
+
+    query_partos = select(Parto).where(Parto.numero_matriz == mae_numero)
+    if fazenda_id is not None:
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+    partos_da_mae = session.exec(query_partos.order_by(Parto.data_parto.desc())).all()
+
+    inconsistencias: list[str] = []
+    parto_correspondente = None
+    if not mae:
+        inconsistencias.append(f"Não existe animal cadastrado com o número {mae_numero}.")
+    elif not partos_da_mae:
+        inconsistencias.append(f"A mãe {mae_numero} não tem nenhum parto registrado no Histórico.")
+    elif nascimento:
+        # Parto mais próximo da data de nascimento informada, dentro de 15 dias
+        # (cobre desvio entre data do parto e data de nascimento lançada).
+        candidatos = [p for p in partos_da_mae if p.data_parto and abs((p.data_parto - nascimento).days) <= 15]
+        parto_correspondente = min(candidatos, key=lambda p: abs((p.data_parto - nascimento).days)) if candidatos else None
+        if not parto_correspondente:
+            inconsistencias.append(
+                f"Nenhum parto da mãe {mae_numero} está próximo da data de nascimento informada "
+                f"({nascimento.strftime('%d/%m/%Y')}) — o parto mais próximo é "
+                f"{partos_da_mae[0].data_parto.strftime('%d/%m/%Y') if partos_da_mae[0].data_parto else 'sem data'}."
+            )
+        else:
+            outra_cria = None
+            if parto_correspondente.numero_cria_1 and parto_correspondente.numero_cria_1 != animal_numero:
+                outra_cria = parto_correspondente.numero_cria_1
+            elif parto_correspondente.numero_cria_2 and parto_correspondente.numero_cria_2 != animal_numero:
+                outra_cria = parto_correspondente.numero_cria_2
+            if outra_cria and (parto_correspondente.numero_cria_1 != animal_numero and parto_correspondente.numero_cria_2 != animal_numero):
+                inconsistencias.append(f"O parto de {parto_correspondente.data_parto.strftime('%d/%m/%Y')} da mãe {mae_numero} já tem outra cria vinculada (nº {outra_cria}).")
+    else:
+        inconsistencias.append("O animal não tem data de nascimento cadastrada — não é possível cruzar com a data do parto.")
+
+    return {
+        "mae_encontrada": mae is not None,
+        "parto_correspondente": parto_correspondente.model_dump() if parto_correspondente else None,
+        "partos_da_mae": [p.model_dump() for p in partos_da_mae[:5]],
+        "inconsistencias": inconsistencias,
+    }
 
 
 @router.get("/secagens")

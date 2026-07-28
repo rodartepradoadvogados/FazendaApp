@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { FileText, AlertTriangle, Download, Pencil, Save, X } from "lucide-react";
-import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida } from "@/lib/api";
+import { fetchAnimais, fetchFichaAnimal, formatDate, atualizarAnimalFicha, registrarColostragem, fetchCategoriaSugerida, verificarMaeParto, type VerificacaoMaeParto } from "@/lib/api";
 import { exportarFichaPDF, SecaoFicha, ColunaExport } from "@/lib/export";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPicker } from "@/components/AnimalPicker";
@@ -161,6 +161,10 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
   // formulário de colostragem já aberto para preencher.
   const [destacar, setDestacar] = useState<"colostragem" | "igg" | null>(null);
   const [abrirEdicaoAoCarregar, setAbrirEdicaoAoCarregar] = useState(false);
+  // Popup de confirmação ao mudar a mãe — cruza com os partos dela (ver
+  // /reproducao/verificar-mae) antes de salvar, mostrando data/parto e
+  // eventuais inconsistências.
+  const [confirmMae, setConfirmMae] = useState<{ verificacao: VerificacaoMaeParto; payload: Record<string, any> } | null>(null);
 
   useEffect(() => { fetchAnimais({ incluirMachos: true }).then(setAnimais).catch(() => {}); }, []);
 
@@ -208,14 +212,26 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
       }).catch(() => {});
     }
   }
-  async function salvarAnimal() {
+  async function salvarAnimal(payloadConfirmado?: Record<string, any>) {
     setSalvando(true); setAviso(null);
     try {
-      const payload: Record<string, any> = { numero, ...formAnimal };
-      Object.keys(payload).forEach((k) => { if (payload[k] === "") payload[k] = null; });
-      if (payload.valor != null) payload.valor = Number(payload.valor) || null;
+      let payload = payloadConfirmado;
+      if (!payload) {
+        payload = { numero, ...formAnimal };
+        Object.keys(payload).forEach((k) => { if (payload![k] === "") payload![k] = null; });
+        if (payload.valor != null) payload.valor = Number(payload.valor) || null;
+        // Mãe mudou (e não é vazia) — cruza com os partos dela antes de
+        // salvar, avisando com um popup de confirmação (data/parto/inconsistências).
+        const maeOriginal = (ficha?.animal as any)?.mae_numero || null;
+        if (payload.mae_numero && payload.mae_numero !== maeOriginal) {
+          const verificacao = await verificarMaeParto(payload.mae_numero, numero);
+          setConfirmMae({ verificacao, payload });
+          setSalvando(false);
+          return;
+        }
+      }
       await atualizarAnimalFicha(numero, payload);
-      setEditAnimal(false); setAviso("Ficha atualizada.");
+      setEditAnimal(false); setAviso("Ficha atualizada."); setConfirmMae(null);
       await buscar(numero);
     } catch (e: any) { setAviso(e.message || "Erro ao salvar."); }
     finally { setSalvando(false); }
@@ -339,7 +355,7 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
                   </div>
                 </div>
                 <div className="flex items-center gap-2 mt-3">
-                  <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={salvarAnimal}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
+                  <button className="btn-primary" style={btnEdit} disabled={salvando} onClick={() => salvarAnimal()}><Save size={13} /> {salvando ? "Salvando…" : "Salvar"}</button>
                   <button className="btn-ghost" style={btnEdit} onClick={() => setEditAnimal(false)}><X size={13} /> Cancelar</button>
                 </div>
               </>
@@ -514,6 +530,35 @@ export default function FichaAnimal({ numeroInicial }: { numeroInicial?: string 
             <p style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>Nenhum lançamento encontrado para este animal.</p>
           )}
         </>
+      )}
+
+      {confirmMae && (
+        <div onClick={() => setConfirmMae(null)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 90, padding: "1rem" }}>
+          <div className="card" onClick={(e) => e.stopPropagation()} style={{ width: "440px", maxWidth: "95vw" }}>
+            <div className="card-header mb-3 flex items-center gap-2"><AlertTriangle size={15} /> Confirmar mãe informada</div>
+            {confirmMae.verificacao.parto_correspondente ? (
+              <p style={{ fontSize: "0.85rem", marginBottom: "0.6rem" }}>
+                Encontramos um parto da mãe {confirmMae.payload.mae_numero} em{" "}
+                {formatDate(confirmMae.verificacao.parto_correspondente.data_parto as string)}
+                {confirmMae.verificacao.parto_correspondente.ordem_parto ? ` (${confirmMae.verificacao.parto_correspondente.ordem_parto}º parto)` : ""}.
+              </p>
+            ) : (
+              <p style={{ fontSize: "0.85rem", marginBottom: "0.6rem" }}>
+                Não encontramos um parto da mãe {confirmMae.payload.mae_numero} próximo da data de nascimento deste animal.
+              </p>
+            )}
+            {confirmMae.verificacao.inconsistencias.map((msg, i) => (
+              <p key={i} style={{ fontSize: "0.8rem", color: "var(--amber, #B9831F)", display: "flex", alignItems: "flex-start", gap: "0.4rem", marginBottom: "0.4rem" }}>
+                <AlertTriangle size={13} style={{ marginTop: "0.15rem", flexShrink: 0 }} /> {msg}
+              </p>
+            ))}
+            <p style={{ fontSize: "0.8rem", marginTop: "0.4rem" }}>Confirma que deseja salvar assim mesmo?</p>
+            <div className="flex items-center gap-3 mt-4">
+              <button className="btn-primary" onClick={() => salvarAnimal(confirmMae.payload)} disabled={salvando}>{salvando ? "Salvando…" : "Confirmar e salvar"}</button>
+              <button className="btn-ghost" onClick={() => setConfirmMae(null)}>Cancelar</button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
