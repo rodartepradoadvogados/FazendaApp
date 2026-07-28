@@ -10,7 +10,7 @@ mesmo bloqueio do contador, destravável por senha (ver
 fazenda/auth.py::bloquear_escrita_contador).
 
 Revision ID: f2a3b4c5d6e7
-Revises: e1f2a3b4c5d6
+Revises: 81ad18d4e7a9
 Create Date: 2026-07-28 00:00:00.000000
 
 """
@@ -22,7 +22,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = 'f2a3b4c5d6e7'
-down_revision: Union[str, Sequence[str], None] = 'e1f2a3b4c5d6'
+down_revision: Union[str, Sequence[str], None] = '81ad18d4e7a9'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
