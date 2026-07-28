@@ -1,9 +1,11 @@
 "use client";
-// Painel do Contador — Financeiro somente leitura/exportação (ver proposta
-// aprovada: vínculo UsuarioFazenda.contador, sem gate de plano, sem escrita —
-// a trava de escrita já é reforçada no backend por bloquear_escrita_contador,
-// aqui simplesmente não existe nenhum formulário). Não tem equivalente no
-// app móvel (ver AuthShell.tsx e app/contador/layout.tsx).
+// Painel do Contador — Financeiro somente leitura/exportação por padrão (ver
+// proposta aprovada: vínculo UsuarioFazenda.contador, sem gate de plano).
+// Duas exceções deliberadas: a aba Documentos (arquivo fiscal-contábil,
+// sempre liberada) e a aba Ações extraordinárias (lançamento avulso/juros/
+// chamado, atrás do cadeado por senha — ver frontend/lib/useCadeado.ts e
+// backend/fazenda/auth.py::bloquear_escrita_contador). Não tem equivalente
+// no app móvel (ver AuthShell.tsx e app/contador/layout.tsx).
 import { useEffect, useMemo, useState } from "react";
 import { Download, Paperclip } from "lucide-react";
 import {
@@ -14,6 +16,8 @@ import {
 import { exportarMultiExcel, type SecaoFicha } from "@/lib/export";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { CORES_CONTADOR } from "./layout";
+import { PainelDocumentos } from "@/components/contador/PainelDocumentos";
+import { PainelExtraordinario } from "@/components/contador/PainelExtraordinario";
 
 type Lancamento = {
   id: number; numero_lancamento: string; tipo: string; valor: number; centro_custo: string; codigo_conta: string;
@@ -43,6 +47,8 @@ const ABAS = [
   { id: "patrimonio", label: "Patrimônio" },
   { id: "folha", label: "Folha de pagamento" },
   { id: "animais", label: "Compra/venda de animais" },
+  { id: "documentos", label: "Documentos" },
+  { id: "extraordinario", label: "Ações extraordinárias" },
 ] as const;
 type Aba = (typeof ABAS)[number]["id"];
 
@@ -486,6 +492,10 @@ export default function PainelContadorPage() {
           </table>
         </div>
       )}
+
+      {aba === "documentos" && <PainelDocumentos />}
+
+      {aba === "extraordinario" && <PainelExtraordinario planoContas={planoContas} />}
     </div>
   );
 }

@@ -287,6 +287,7 @@ export function Sidebar() {
             const todos = [...visiveis,
               ...(dono ? [{ href: "/usuarios", label: "Controle de Acesso", icon: Users, title: "Controle de Acesso — restrito ao proprietário: cadastrar usuários e definir os módulos que cada um pode ver", grupo: "Administração" }] : []),
               ...(dono ? [{ href: "/painel-cowdata", label: "Painel CowData", icon: Building2, title: "Painel CowData — administração da empresa de software (assinaturas, financeiro, equipe), separado dos dados da fazenda", grupo: "Administração" }] : []),
+              ...(dono ? [{ href: "/contador", label: "Painel do Contador", icon: FileBarChart, title: "Visão do proprietário sobre o Painel do Contador — a mesma tela que o contador externo vê (Financeiro somente leitura, arquivo fiscal-contábil)", grupo: "Administração" }] : []),
               { href: "/portal", label: "Portal", icon: MessageSquare, title: "Portal — comunicação interna: mensagens, e-mails e tarefas delegadas", grupo: "Administração" },
               { href: "/consultor", label: "Consultor", icon: Briefcase, title: "Área do consultor — fazendas gerenciadas por planilha e modo Simulação", grupo: "Administração" },
               ...(temConfiguracoes ? [{ href: "/configuracoes", label: "Configurações", icon: Settings, title: "Configurações — cadastros e parâmetros da fazenda", grupo: "Administração" }] : []),

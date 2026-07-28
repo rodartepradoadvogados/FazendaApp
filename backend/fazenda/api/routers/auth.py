@@ -14,7 +14,8 @@ from sqlmodel import Session, select
 from datetime import datetime, timedelta
 
 from fazenda.auth import (
-    EMAIL_DONO, MODULOS, criar_token, exigir_dono, get_current_user, get_fazenda_atual_id, hash_senha, verificar_senha,
+    DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, exigir_dono, get_current_user,
+    get_fazenda_atual_id, hash_senha, verificar_senha,
 )
 from fazenda.config import settings
 from fazenda.database import get_session
@@ -162,6 +163,21 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
         resposta["selecao_fazenda_necessaria"] = True
         resposta["fazendas_disponiveis"] = [_fazenda_publica(f) for f in fazendas]
     return resposta
+
+
+class DesbloqueioIn(BaseModel):
+    senha: str
+
+
+@router.post("/desbloquear")
+def desbloquear(dados: DesbloqueioIn, user: Usuario = Depends(get_current_user)) -> dict:
+    """Reautenticação por senha — destranca por 15 min o cadeado do Painel do
+    Contador (lançamentos extraordinários, recálculo de juros, chamado). Ver
+    fazenda/auth.py::bloquear_escrita_contador, que valida o token retornado
+    aqui via o header X-Desbloqueio."""
+    if not verificar_senha(dados.senha, user.senha_hash):
+        raise HTTPException(status_code=401, detail="Senha incorreta")
+    return {"token_desbloqueio": criar_token_desbloqueio(user.username), "validade_segundos": DESBLOQUEIO_VALIDADE_S}
 
 
 class SelecionarFazendaIn(BaseModel):

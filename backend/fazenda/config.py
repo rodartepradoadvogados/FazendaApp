@@ -47,6 +47,15 @@ class Settings(BaseSettings):
     asaas_ambiente: str = "sandbox"         # "sandbox" ou "producao"
     asaas_webhook_token: str = ""
 
+    # Arquivo fiscal-contábil (notas, CCIR, IRPF/IRPJ, contratos...) via
+    # Supabase Storage — o conteúdo vive lá, nunca no Postgres; o backend é o
+    # único que fala com o Supabase (chave de serviço), o navegador só vê
+    # nossos próprios endpoints (ver fazenda/rules/supabase_storage.py e
+    # fazenda/api/routers/documentos.py). Vazio = desligado.
+    supabase_url: str = ""                  # ex.: https://xxxxx.supabase.co
+    supabase_service_key: str = ""          # service_role key (nunca a anon key)
+    supabase_bucket: str = "documentos-fiscais"
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 

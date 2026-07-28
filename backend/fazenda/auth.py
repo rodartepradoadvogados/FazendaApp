@@ -26,6 +26,11 @@ from fazenda.models import (
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
+# Cadeado do Painel do Contador — reautenticação por senha que destrava,
+# por um tempo curto, a escrita normalmente bloqueada em bloquear_escrita_contador
+# (lançamentos extraordinários de guia/imposto/multa, recálculo de juros,
+# abrir chamado). Ver /auth/desbloquear em fazenda/api/routers/auth.py.
+DESBLOQUEIO_VALIDADE_S = 15 * 60  # 15 minutos
 
 # E-mail do proprietário — único com acesso ao relatório de últimos acessos
 # (ver /auth/usuarios/acessos). Fixo por enquanto, sem UI de gestão. E-mail de
@@ -96,6 +101,23 @@ def _validar_token_payload(token: str) -> dict | None:
 def validar_token(token: str) -> str | None:
     dados = _validar_token_payload(token)
     return dados.get("sub") if dados else None
+
+
+def criar_token_desbloqueio(username: str) -> str:
+    """Token curto emitido por /auth/desbloquear após reautenticação por
+    senha — ver bloquear_escrita_contador abaixo, que é quem de fato o
+    valida e concede a escrita temporária."""
+    payload_dict = {
+        "sub": username, "exp": int(time.time()) + DESBLOQUEIO_VALIDADE_S, "finalidade": "desbloqueio_contador",
+    }
+    payload = _b64(json.dumps(payload_dict).encode())
+    sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
+    return f"{payload}.{sig}"
+
+
+def validar_token_desbloqueio(token: str, username: str) -> bool:
+    dados = _validar_token_payload(token)
+    return bool(dados) and dados.get("finalidade") == "desbloqueio_contador" and dados.get("sub") == username
 
 
 # ---------------------------------------------------------------------------
@@ -233,12 +255,19 @@ def bloquear_escrita_contador():
     Contador, ver fazenda/models/multitenant.py::UsuarioFazenda) é só
     leitura/exportação: qualquer método que não seja GET/HEAD/OPTIONS é
     bloqueado para quem tiver esse vínculo na fazenda selecionada. GET passa
-    direto — é o que sustenta os relatórios do painel."""
+    direto — é o que sustenta os relatórios do painel.
+
+    Cadeado: com o header X-Desbloqueio contendo um token válido de
+    /auth/desbloquear (reautenticação por senha, validade de 15 minutos —
+    ver criar_token_desbloqueio acima), a escrita é liberada temporariamente
+    — usado para lançamentos extraordinários de guia/imposto/multa,
+    recálculo de juros e abertura de chamado."""
     def _dep(
         request: Request,
         user: Usuario = Depends(get_current_user),
         fazenda_id: int | None = Depends(get_fazenda_atual_id),
         session: Session = Depends(get_session),
+        x_desbloqueio: str | None = Header(default=None),
     ) -> None:
         if request.method in ("GET", "HEAD", "OPTIONS") or fazenda_id is None:
             return
@@ -246,7 +275,12 @@ def bloquear_escrita_contador():
             select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
         ).first()
         if vinculo and vinculo.contador:
-            raise HTTPException(status_code=403, detail="Contador tem acesso somente leitura/exportação")
+            if x_desbloqueio and validar_token_desbloqueio(x_desbloqueio, user.username):
+                return
+            raise HTTPException(
+                status_code=403,
+                detail="Contador tem acesso somente leitura/exportação — destranque o cadeado com sua senha para lançamentos extraordinários",
+            )
     return _dep
 
 

@@ -32,6 +32,15 @@ router = APIRouter(prefix="/financeiro", tags=["financeiro"])
 
 TIPOS_DOCUMENTO = ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]
 
+# Categorias do Arquivo fiscal-contábil (fazenda/api/routers/documentos.py) —
+# documentos sem contrapartida em lançamento (CCIR, IRPF/IRPJ, inscrição
+# estadual, matrículas, contratos de trabalho/prestação de serviço), somadas
+# às já usadas em TIPOS_DOCUMENTO/SEED_TIPOS_DOCUMENTO acima.
+CATEGORIAS_DOCUMENTO_ARQUIVO = [
+    "CCIR", "IRPF", "IRPJ", "Inscrição estadual", "Matrícula",
+    "Contrato de trabalho", "Contrato de prestação de serviço",
+]
+
 # Seed inicial — as duas contas correntes da fazenda no Banco do Brasil (antes
 # uma lista fixa em Python; agora cadastráveis em Configurações > Parâmetros
 # financeiros). Ver seed_parametros_financeiros, chamada uma vez no startup.
@@ -743,7 +752,7 @@ router.put("/formas-pagamento-cadastro/{item_id}")(_atualizar_forma_pgto)
 # Seed inicial — migra as listas fixas que existiam antes (TIPOS_DOCUMENTO,
 # FORMAS_PAGAMENTO) para os cadastros acima, mais os itens pedidos que ainda
 # não existiam (Ordem de serviço/Outros; dinheiro/outros) — idempotente.
-SEED_TIPOS_DOCUMENTO = [*TIPOS_DOCUMENTO, "Boleto", "Ordem de serviço", "Outros"]
+SEED_TIPOS_DOCUMENTO = [*TIPOS_DOCUMENTO, "Boleto", "Ordem de serviço", *CATEGORIAS_DOCUMENTO_ARQUIVO, "Outros"]
 SEED_FORMAS_PAGAMENTO_CADASTRO = [*FORMAS_PAGAMENTO, "dinheiro", "outros"]
 
 
@@ -1800,3 +1809,37 @@ def contas_a_pagar(
             resultado.append({**c.model_dump(), "usuario_nome": nomes_usuarios.get(c.usuario_id)})
 
     return sorted(resultado, key=lambda x: x["data_vencimento"])
+
+
+# ---------------------------------------------------------------------------
+# Recálculo de juros/multa por atraso — calculadora pura (não persiste
+# nada sozinha): o contador usa o valor sugerido para lançar o ajuste como um
+# lançamento extraordinário normal (POST /lancamentos), já com o cadeado
+# destravado (ver fazenda/auth.py::bloquear_escrita_contador). Percentuais
+# default seguem a convenção civil comum (multa de 2%, juros de mora de 1%
+# ao mês pro-rata dia) — sempre ajustáveis, pois a regra real varia por
+# tributo/contrato.
+# ---------------------------------------------------------------------------
+class CalculoJurosIn(BaseModel):
+    valor_original: float
+    data_vencimento: date
+    data_referencia: date | None = None
+    percentual_multa: float = 2.0
+    percentual_juros_mes: float = 1.0
+
+
+@router.post("/calcular-juros")
+def calcular_juros(dados: CalculoJurosIn) -> dict:
+    referencia = dados.data_referencia or date.today()
+    dias_atraso = max(0, (referencia - dados.data_vencimento).days)
+    if dias_atraso == 0:
+        return {
+            "dias_atraso": 0, "valor_multa": 0.0, "valor_juros": 0.0,
+            "valor_atualizado": round(dados.valor_original, 2),
+        }
+    valor_multa = round(dados.valor_original * dados.percentual_multa / 100, 2)
+    valor_juros = round(dados.valor_original * (dados.percentual_juros_mes / 100) * (dias_atraso / 30), 2)
+    return {
+        "dias_atraso": dias_atraso, "valor_multa": valor_multa, "valor_juros": valor_juros,
+        "valor_atualizado": round(dados.valor_original + valor_multa + valor_juros, 2),
+    }

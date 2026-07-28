@@ -6,8 +6,10 @@
 // do Painel CowData): tipografia serifada de livro-caixa sobre grafite quente,
 // com friso duplo no cabeçalho — a intenção é que nunca pareça "mais uma tela
 // da fazenda". Não tem equivalente no app móvel (ver AuthShell.tsx).
+import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { getFazendaAtual, getUsuario, logout } from "@/lib/api";
+import { ArrowLeft } from "lucide-react";
+import { ehContador, getFazendaAtual, getUsuario, logout } from "@/lib/api";
 
 export const CORES_CONTADOR = {
   bg: "#1c1a17",
@@ -36,6 +38,14 @@ export default function ContadorLayout({ children }: { children: React.ReactNode
     <div style={{ minHeight: "100vh", background: C.bg, color: C.texto, fontFamily: FONTE_BASE }}>
       <header style={{ borderBottom: `1px solid ${C.borda}`, background: C.painel }}>
         <div style={{ maxWidth: "1100px", margin: "0 auto", padding: "1.4rem 1.6rem 1.1rem" }}>
+          {/* O contador de verdade não tem "fazenda" pra voltar — esse link só
+              aparece para o proprietário espiando esta tela pela Sidebar >
+              Administração (ver AuthShell.tsx). */}
+          {!ehContador() && (
+            <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: C.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
+              <ArrowLeft size={13} /> Voltar à fazenda
+            </Link>
+          )}
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", flexWrap: "wrap", gap: "0.6rem" }}>
             <div>
               <p style={{ fontFamily: FONTE_SERIF, fontSize: "1.5rem", fontWeight: 700, letterSpacing: "0.01em", margin: 0, color: C.texto }}>

@@ -50,9 +50,12 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
       return;
     }
     // Um vínculo de contador só enxerga o Painel do Contador — nunca o resto
-    // do sistema (nem o app móvel, que sequer tem essa tela).
+    // do sistema (nem o app móvel, que sequer tem essa tela). O proprietário
+    // também pode visitar /contador (mesma tela que o contador externo vê,
+    // acessível pela Sidebar > Administração), mas não fica preso lá — só
+    // quem tem o vínculo de contador é redirecionado automaticamente.
     if (ehContador() && !ehPainelContador) { router.replace("/contador"); return; }
-    if (ehPainelContador && !ehContador()) { router.replace("/"); return; }
+    if (ehPainelContador && !ehContador() && !ehDono()) { router.replace("/"); return; }
     // Bloqueia páginas sem permissão (ex.: operador sem financeiro).
     const mod = ROTA_MODULO[path];
     if (path === "/usuarios" && !ehDono()) { router.replace("/"); return; }
