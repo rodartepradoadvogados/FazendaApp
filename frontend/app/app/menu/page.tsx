@@ -33,7 +33,6 @@ import FluxoCaixa from "@/components/mobile/menu/FluxoCaixa";
 import Dre from "@/components/mobile/menu/Dre";
 import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
-import News from "@/components/mobile/menu/News";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
@@ -93,7 +92,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 
 export default function Pagina() {
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -101,39 +100,12 @@ export default function Pagina() {
 
   useEffect(() => { setMontado(true); }, []);
 
-  // Atalho do ícone "News" no cabeçalho do app (/app/menu#news) — abre a
-  // sub-tela direto, sem passar pela grade de sessões.
-  useEffect(() => {
-    const verificarHash = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
-    verificarHash();
-    window.addEventListener("hashchange", verificarHash);
-    return () => window.removeEventListener("hashchange", verificarHash);
-  }, []);
-
   async function enviarAgora() {
     setSincronizando(true);
     try { await sincronizar(); } finally { setSincronizando(false); }
   }
 
   const usuario = montado ? getUsuario() : null;
-
-  // News é uma tela única (sem 2º nível de itens), igual "Aparência". Checada
-  // ANTES de "sub" propositalmente: o ícone de News no cabeçalho só muda o
-  // hash (não a rota), então se o usuário já estava em Menu dentro de uma
-  // sub-tela (sub !== null), o componente não remonta — sem essa ordem o
-  // early-return de "sub" abaixo manteria a sub-tela antiga e o toque no
-  // ícone pareceria não fazer nada. Limpa o hash ao voltar, senão um 2º
-  // clique no ícone (mesmo href) não dispara "hashchange" e não reabre.
-  if (secaoAberta === "news") {
-    return (
-      <News
-        onVoltar={() => {
-          if (window.location.hash === "#news") history.replaceState(null, "", "/app/menu");
-          setSecaoAberta(null);
-        }}
-      />
-    );
-  }
 
   // Sub-tela aberta: mostra só ela (com o próprio botão voltar).
   if (sub) {
@@ -207,7 +179,7 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso")}
+        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso")}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}

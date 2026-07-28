@@ -16,6 +16,7 @@ import { CowDataMark } from "@/components/brand/CowDataMark";
 import { NewsIcon } from "@/components/mobile/NewsIcon";
 import { CalendarColorfulIcon, MenuTricolorIcon } from "@/components/mobile/AppIcons";
 import { CowIcon } from "@/components/CowIcon";
+import News from "@/components/mobile/menu/News";
 
 const ABAS = [
   { href: "/app", label: "Agenda", icon: CalendarColorfulIcon },
@@ -29,6 +30,14 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   const online = useOnline();
   const fila = usePendentes();
   const [escuro, setEscuro] = useState(false);
+  // Controlado por estado, não por rota/hash: um <Link href="#news"> navegando
+  // pro mesmo pathname (já estando em qualquer aba do app) usa o roteador do
+  // Next (history.pushState), que nunca dispara "hashchange" — por isso o
+  // ícone de News "às vezes não ia" (só funcionava vindo de OUTRA aba, que
+  // remonta a página do zero). Abrir/fechar por estado funciona igual não
+  // importa em qual aba o usuário estava, e ainda preserva o que tiver
+  // preenchido nela (o overlay some, a aba de baixo nunca desmonta).
+  const [newsAberto, setNewsAberto] = useState(false);
   // Cabeçalho FIXO (não some ao rolar). Medimos a altura real — que varia com a
   // faixa de segurança do topo (notch) — para reservar o mesmo espaço abaixo.
   const headerRef = useRef<HTMLElement | null>(null);
@@ -114,10 +123,10 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
                 <CloudUpload size={14} /> {fila.length}
               </Link>
             )}
-            <Link href="/app/menu#news" title="News — notícias de pecuária leiteira" aria-label="Abrir News"
-              style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center", textDecoration: "none" }}>
+            <button type="button" onClick={() => setNewsAberto(true)} title="News — notícias de pecuária leiteira" aria-label="Abrir News"
+              style={{ width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               <NewsIcon size={19} color="var(--mob-header-fg)" />
-            </Link>
+            </button>
             <button type="button" onClick={alternarTema} aria-label={escuro ? "Mudar para tema claro" : "Mudar para tema escuro"}
               style={{ width: 44, height: 44, borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.12)", color: "var(--mob-header-fg)", display: "flex", alignItems: "center", justifyContent: "center" }}>
               {escuro ? <Sun size={17} /> : <Moon size={17} />}
@@ -129,11 +138,19 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
       {/* Espaçador da altura do cabeçalho fixo — evita que o conteúdo comece por baixo dele. */}
       <div aria-hidden="true" style={{ height: alturaHeader }} />
 
-      {/* Conteúdo da aba */}
+      {/* Conteúdo da aba — News fica por cima como overlay (a aba de baixo
+          continua montada, então fechar volta pro mesmo lugar de sempre). */}
       <main className="mob-conteudo">
         <InstalarApp />
         {children}
       </main>
+      {newsAberto && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 100, background: "var(--mob-bg)", overflowY: "auto" }}>
+          <div className="mob-conteudo" style={{ paddingTop: "calc(1rem + env(safe-area-inset-top))" }}>
+            <News onVoltar={() => setNewsAberto(false)} />
+          </div>
+        </div>
+      )}
 
       {/* Navegação inferior (zona do polegar) */}
       <nav className="mob-nav">
