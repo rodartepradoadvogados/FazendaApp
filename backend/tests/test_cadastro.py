@@ -1255,6 +1255,34 @@ class TestDiaria:
         })
         assert r.status_code == 400
 
+    def test_editar_diaria_ajusta_numero_manualmente(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        inicio = date.today() - timedelta(days=9)  # 10 diárias corridas
+        diaria_id = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(),
+        }).json()["id"]
+        r = c.put(f"/cadastro/diarias/{diaria_id}", json={
+            "data_inicio": inicio.isoformat(), "ajuste_numero_diarias": 6,
+        })
+        assert r.status_code == 200
+        dados = r.json()
+        # checkpoint do ajuste é "hoje" — soma 6 + 0 dias corridos desde então
+        assert dados["numero_diarias"] == 6
+        assert dados["total_ate_hoje"] == 600.0
+
+    def test_data_fim_limita_contagem(self, client):
+        c, engine = client
+        pessoa_id = self._diarista(c)
+        inicio = date.today() - timedelta(days=9)
+        fim = date.today() - timedelta(days=5)  # encerrada há 5 dias -> para de contar em fim
+        diaria_id = c.post("/cadastro/diarias", json={
+            "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(), "data_fim": fim.isoformat(),
+        }).json()["id"]
+        dados = next(d for d in c.get("/cadastro/diarias").json() if d["id"] == diaria_id)
+        assert dados["numero_diarias"] == 5
+        assert dados["total_ate_hoje"] == 500.0
+
 
 class TestValeAvulso:
     def test_abate_proxima_parcela_de_empreitada(self, client):

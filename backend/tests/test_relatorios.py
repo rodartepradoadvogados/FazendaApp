@@ -146,6 +146,48 @@ class TestManejo:
         prenhe = next(x for x in dados["prenhes"] if x["numero"] == "900")
         assert prenhe["reconfirmada"] is True
 
+    def test_reconfirmar_nao_coexiste_com_a_tocar_apos_nova_ia(self, client):
+        """Regressão: um positivo antigo sem reconfirmação, mas com uma nova IA
+        já aberta desde então, não pode aparecer em a_reconfirmar (o serviço
+        mais recente é outro, ainda não tocado) — só em a_tocar."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="700", sexo="F", ativo=True, del_dias=300, sit_rep="Vaz. apt."))
+            s.add(Parto(numero_matriz="700", data_parto=hoje - timedelta(days=300), ordem_parto=1))
+            s.add(Servico(numero_matriz="700", data_servico=hoje - timedelta(days=200),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro A"))
+            s.add(Servico(numero_matriz="700", data_servico=hoje - timedelta(days=40),
+                          ordem_tentativa=2, reprodutor="Touro B"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        dados = r.json()
+        assert any(x["numero"] == "700" for x in dados["a_tocar"])
+        assert not any(x["numero"] == "700" for x in dados["a_reconfirmar"])
+
+    def test_secagem_atraso_implausivel_nao_aparece_pendente(self, client):
+        """Regressão: atraso muito grande na previsão de secagem (sinal de
+        parto/secagem que não foi lançado a tempo) não deve continuar
+        aparecendo como pendência retroativa — some da lista em vez de
+        acumular -200+ dias."""
+        c, engine = client
+        hoje = _hoje()
+        with Session(engine) as s:
+            s.add(Animal(numero="701", sexo="F", ativo=True, del_dias=200, sit_rep="Ges."))
+            s.add(Parto(numero_matriz="701", data_parto=hoje - timedelta(days=400), ordem_parto=1))
+            s.add(Servico(numero_matriz="701", data_servico=hoje - timedelta(days=340),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro C"))
+            # Controle: atraso moderado (dentro do limite) continua aparecendo normalmente.
+            s.add(Animal(numero="702", sexo="F", ativo=True, del_dias=200, sit_rep="Ges."))
+            s.add(Parto(numero_matriz="702", data_parto=hoje - timedelta(days=300), ordem_parto=1))
+            s.add(Servico(numero_matriz="702", data_servico=hoje - timedelta(days=250),
+                          ordem_tentativa=1, diagnostico="POSITIVO", reprodutor="Touro C"))
+            s.commit()
+        r = c.get("/relatorios/manejo")
+        secagem = r.json()["secagem"]
+        assert not any(x["numero"] == "701" for x in secagem)
+        assert any(x["numero"] == "702" for x in secagem)
+
 
 class TestGerencial:
     def _seed(self, engine):

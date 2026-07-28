@@ -984,6 +984,55 @@ def listar_protocolos_iatf_ativos(
     return ativos
 
 
+@router.get("/protocolo-iatf/candidatas")
+def candidatas_iatf_projetadas(
+    session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """Candidatas à próxima IATF (mesmo critério de `selecionar_candidatas_iatf`
+    usado na Agenda), com projeção de aptidão na data do próximo serviço —
+    último serviço do rebanho + `intervalo_visita_reprodutiva` dias (Configurações
+    > Parâmetros). Usado em Histórico > Reprodução > Ciclos de IATF."""
+    from fazenda.rules.iatf import selecionar_candidatas_iatf
+    from fazenda.rules.parametros import get_param, intervalo_visita_reprodutiva
+
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    hoje = date.today()
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+    animais = session.exec(query_animais).all()
+    query_servicos = select(Servico)
+    if fazenda_id is not None:
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+    todos_servicos = session.exec(query_servicos).all()
+    diag_por_animal = {s.numero_matriz: s.diagnostico for s in todos_servicos if s.ult_ocorrencia == 1}
+    iatf_input = [
+        {"numero_matriz": a.numero, "sit_rep": a.sit_rep, "del_dias": a.del_dias,
+         "diagnostico_ultimo": diag_por_animal.get(a.numero)}
+        for a in animais
+    ]
+    candidatas = selecionar_candidatas_iatf(iatf_input)
+
+    datas_servico = [s.data_servico for s in todos_servicos if s.data_servico]
+    intervalo = intervalo_visita_reprodutiva()
+    proxima_visita = (max(datas_servico) + timedelta(days=intervalo)) if (datas_servico and intervalo > 0) else None
+    dias_ate_visita = (proxima_visita - hoje).days if proxima_visita else None
+    pev_dias = int(get_param("pev_dias", 45) or 45)
+
+    resultado = []
+    for c in candidatas:
+        del_projetado = (c.del_dias + dias_ate_visita) if (c.del_dias is not None and dias_ate_visita is not None) else c.del_dias
+        # "Diagnóstico negativo" não depende de DEL/PEV — já é candidata apta
+        # independente da data; as demais (vazia apta/em atraso) só se
+        # confirmam se o DEL projetado ainda cobrir o PEV na data da visita.
+        apta_projetada = True if c.motivo == "Diagnóstico negativo" else (del_projetado is not None and del_projetado >= pev_dias)
+        resultado.append({
+            "numero_matriz": c.numero_matriz, "sit_rep": c.sit_rep, "del_dias": c.del_dias, "motivo": c.motivo,
+            "del_dias_projetado": del_projetado, "apta_na_proxima_visita": apta_projetada,
+        })
+    return {"candidatas": resultado, "proxima_visita_iatf": proxima_visita.isoformat() if proxima_visita else None}
+
+
 @router.get("/protocolo-iatf/lancamentos")
 def listar_lancamentos_iatf(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),

@@ -767,6 +767,25 @@ def calcular_agenda(
             "tipo": "patrimonio_manutencao", "patrimonio_id": item.id, "situacao_manutencao": situacao,
         })
 
+    # Diária com data de fim prevista chegando hoje — avisa no próprio dia
+    # (não antes, não depois) para o usuário decidir se encerra ou estende.
+    eventos_diaria_fim = []
+    diarias_com_fim = session.exec(
+        select(Diaria, Pessoa)
+        .join(Pessoa, Diaria.pessoa_id == Pessoa.id)
+        .where(Diaria.status == "ativo", Diaria.data_fim == data)
+    ).all()
+    for diaria, pessoa in diarias_com_fim:
+        chave = f"diaria_fim_{diaria.id}_{data.isoformat()}"
+        if chave in realizados:
+            continue
+        eventos_diaria_fim.append({
+            "id": chave, "data": data.isoformat(), "categoria": "Gestão/Financeiro",
+            "descricao": f"Diária de {pessoa.nome} encerra hoje",
+            "numero_animal": None, "observacao": "Confira o total apurado e registre o pagamento final, ou edite a data de fim para estender.",
+            "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "diaria_fim", "diaria_id": diaria.id,
+        })
+
     # Só mostra o que o usuário tem permissão de ver — se falta acesso a um
     # módulo (ex.: "financeiro"), nenhum vestígio dele aparece na Agenda: nem
     # os eventos daquela categoria, nem as contas a pagar, nem os painéis
@@ -789,7 +808,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis

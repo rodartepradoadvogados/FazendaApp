@@ -681,6 +681,7 @@ class DiariaIn(BaseModel):
     pessoa_id: int
     valor_diaria: float
     data_inicio: date
+    data_fim: date | None = None
     observacao: str | None = None
     centro_custo: str = "Pecuária Leiteira"
     conta_dia_a_dia: bool = True
@@ -689,6 +690,14 @@ class DiariaIn(BaseModel):
     frequencia_auditoria: str | None = None
     dia_semana_auditoria: int | None = None
     intervalo_dias_auditoria: int | None = None
+
+
+class DiariaEditIn(BaseModel):
+    """Edição via botão no controle — sempre substitui os 3 campos por
+    inteiro (envie null para limpar data_fim/ajuste_numero_diarias)."""
+    data_inicio: date
+    data_fim: date | None = None
+    ajuste_numero_diarias: int | None = None
 
 
 class DiariaPagamentoIn(BaseModel):
@@ -714,17 +723,25 @@ def _dias_confirmados_diaria(session: Session, diaria_id: int) -> tuple[int, dat
 
 
 def _resumo_diaria(session: Session, d: Diaria, pessoa_nome: str) -> dict:
+    # "Hoje" nunca passa da data de fim — depois que a diária encerra, o
+    # contador para de correr (sem isso, teria que ser marcada como
+    # "encerrado" manualmente no dia certo pra não seguir somando diárias).
     hoje = date.today()
+    hoje_ou_fim = min(hoje, d.data_fim) if d.data_fim else hoje
     dias_confirmados, cobertura_ate = _dias_confirmados_diaria(session, d.id)
-    if cobertura_ate is not None:
-        # Períodos já auditados usam o valor confirmado (pode ser < dias
-        # corridos, se o diarista faltou); o restante (da última auditoria
-        # até hoje, ainda sem resposta) continua contado dia a dia — mesma
-        # regra de sempre, só que sem sobrescrever o que já foi confirmado.
-        dias_desde_cobertura = max((hoje - cobertura_ate).days, 0)
-        numero_diarias = dias_confirmados + dias_desde_cobertura
+    # O ajuste manual (botão de editar) e a cobertura de auditoria são dois
+    # "checkpoints" concorrentes — o mais recente vence como base da
+    # contagem, e os dias corridos desde ele são somados por cima.
+    if d.ajuste_numero_diarias is not None and d.ajuste_numero_diarias_em is not None and (
+        cobertura_ate is None or d.ajuste_numero_diarias_em >= cobertura_ate
+    ):
+        base, desde = d.ajuste_numero_diarias, d.ajuste_numero_diarias_em
     else:
-        numero_diarias = max((hoje - d.data_inicio).days + 1, 0)
+        base, desde = dias_confirmados, cobertura_ate
+    if desde is not None:
+        numero_diarias = base + max((hoje_ou_fim - desde).days, 0)
+    else:
+        numero_diarias = max((hoje_ou_fim - d.data_inicio).days + 1, 0)
     total_ate_hoje = round(numero_diarias * d.valor_diaria, 2)
     pagamentos = sorted(
         session.exec(select(DiariaPagamento).where(DiariaPagamento.diaria_id == d.id)).all(),
@@ -836,6 +853,7 @@ def criar_diaria(
     intervalo = dados.intervalo_dias_auditoria if dados.intervalo_dias_auditoria is not None else padrao.intervalo_dias_auditoria
     diaria = Diaria(
         pessoa_id=dados.pessoa_id, valor_diaria=dados.valor_diaria, data_inicio=dados.data_inicio,
+        data_fim=dados.data_fim,
         observacao=dados.observacao, usuario_id=user.id, centro_custo=dados.centro_custo,
         conta_dia_a_dia=dados.conta_dia_a_dia, auditar_periodicamente=auditar,
         frequencia_auditoria=frequencia, dia_semana_auditoria=dia_semana, intervalo_dias_auditoria=intervalo,
@@ -844,6 +862,32 @@ def criar_diaria(
     session.add(diaria)
     session.commit()
     session.refresh(diaria)
+    return _resumo_diaria(session, diaria, pessoa.nome)
+
+
+@router.put("/diarias/{diaria_id}")
+def editar_diaria(
+    diaria_id: int, dados: DiariaEditIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    diaria = session.get(Diaria, diaria_id)
+    if not diaria or (fazenda_id is not None and diaria.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Diária não encontrada")
+    if dados.ajuste_numero_diarias is not None and dados.ajuste_numero_diarias < 0:
+        raise HTTPException(status_code=400, detail="Número de diárias não pode ser negativo")
+    diaria.data_inicio = dados.data_inicio
+    diaria.data_fim = dados.data_fim
+    if dados.ajuste_numero_diarias is not None:
+        diaria.ajuste_numero_diarias = dados.ajuste_numero_diarias
+        diaria.ajuste_numero_diarias_em = date.today()
+    else:
+        diaria.ajuste_numero_diarias = None
+        diaria.ajuste_numero_diarias_em = None
+    session.add(diaria)
+    session.commit()
+    session.refresh(diaria)
+    pessoa = session.get(Pessoa, diaria.pessoa_id)
     return _resumo_diaria(session, diaria, pessoa.nome)
 
 

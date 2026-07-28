@@ -423,7 +423,17 @@ class Diaria(SQLModel, table=True):
     pessoa_id: int = Field(foreign_key="pessoa.id")
     valor_diaria: float
     data_inicio: date
+    # Data prevista de encerramento (opcional) — quando informada, a Agenda
+    # avisa no próprio dia (ver eventos_diaria_fim em routers/agenda.py) e o
+    # relatório de estimativa (frontend) usa esta data para projetar
+    # quantidade/valor totais mesmo antes de ela chegar.
+    data_fim: Optional[date] = None
     status: str = "ativo"  # ativo | encerrado
+    # Correção manual do contador de diárias (botão de editar no controle) —
+    # substitui, a partir de `ajuste_numero_diarias_em`, a contagem dia a dia
+    # que viria de `data_inicio`/auditorias. Ver _resumo_diaria.
+    ajuste_numero_diarias: Optional[int] = None
+    ajuste_numero_diarias_em: Optional[date] = None
     observacao: Optional[str] = None
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     usuario_id: Optional[int] = Field(default=None, foreign_key="usuario.id")

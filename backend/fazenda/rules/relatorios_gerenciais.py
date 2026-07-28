@@ -22,6 +22,15 @@ from fazenda.rules.parametros import get_param
 
 GESTACAO_DIAS = 280  # gestação média usada nas previsões de parto/secagem
 
+# Quando a previsão de secagem (baseada na concepção em curso) já passou há
+# mais que isso sem o animal ter sido secado, o atraso deixa de ser real —
+# é sinal de parto/secagem que não foi lançado a tempo (dado histórico
+# incompleto), não de um animal que precisa ser secado retroativamente hoje.
+# Nesse caso considera-se secada 60 dias antes do último parto (ver uso em
+# `relatorios_manejo` e em `animais.py::ficha_animal`) em vez de seguir
+# cobrando o usuário animal por animal.
+LIMITE_SECAGEM_RETROATIVA_DIAS = 60
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -189,8 +198,15 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
 
         # 4b) Reconfirmação — positivo, passou dias de reconfirmação, ainda sem
         # reconfirmar. Só vacas: novilha (nunca pariu) dispensa o 2º toque
-        # nesta fazenda, ver reconfirmada_efetiva.
-        if eh_vaca and ups and ups.get("data_servico") and not ups.get("data_reconfirmacao"):
+        # nesta fazenda, ver reconfirmada_efetiva. `ups.get("id") == us.get("id")`
+        # garante que o último positivo (ups) ainda É o serviço mais recente do
+        # animal — sem isso, um animal com uma nova IA aberta desde então (us
+        # mais novo) caía aqui E em "a tocar" ao mesmo tempo, o que é
+        # impossível: se já foi tocado (tem um positivo mais recente que
+        # qualquer outro serviço), está para reconfirmar; se não foi tocado
+        # (o serviço mais recente ainda está em aberto), está a tocar — nunca
+        # os dois.
+        if eh_vaca and ups and us and ups.get("id") == us.get("id") and ups.get("data_servico") and not ups.get("data_reconfirmacao"):
             dp = _dias(ups["data_servico"], hoje)
             if dp is not None and dp >= dias_toque + dias_reconf:
                 cor_r = "amarelo" if dp <= dias_toque + dias_reconf + visita_vet else "vermelho"
@@ -222,7 +238,9 @@ def relatorios_manejo(animais: list[dict], servicos: list[dict], partos: list[di
             if eh_vaca and (a.get("del_dias") or 0) > 0 and concep:
                 prev_secagem = concep + timedelta(days=GESTACAO_DIAS - seco)
                 d_secar = _dias(hoje, prev_secagem)
-                if d_secar is not None and d_secar <= 60:  # só as próximas
+                if d_secar is not None and d_secar < -LIMITE_SECAGEM_RETROATIVA_DIAS:
+                    pass  # atraso implausível — considerada secada 60 dias antes do último parto, sai da pendência
+                elif d_secar is not None and d_secar <= 60:  # só as próximas
                     if d_secar > 15:
                         cor, luzes = "verde", 0
                     elif d_secar >= 8:

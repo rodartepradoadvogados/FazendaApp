@@ -191,6 +191,8 @@ from .sistema import (
     PushSubscription,
     PushNotificacaoEnviada,
     PortalMensagem,
+    ParametroManualFazenda,
+    SugestaoManualFazenda,
 )
 
 __all__ = [
@@ -330,4 +332,6 @@ __all__ = [
     "PushSubscription",
     "PushNotificacaoEnviada",
     "PortalMensagem",
+    "ParametroManualFazenda",
+    "SugestaoManualFazenda",
 ]

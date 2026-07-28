@@ -9,6 +9,7 @@ import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAx
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
+import { ManualFazendaButton } from "@/components/ManualFazendaModal";
 
 const SIT_CORES: Record<string, string> = {
   Prenhes: "var(--green-light)", Inseminadas: "var(--dourado-light)",
@@ -133,9 +134,12 @@ export default function Home() {
             Pecuária leiteira · Girolando / Holandês · {new Date().toLocaleDateString("pt-BR", { weekday: "long", day: "numeric", month: "long", year: "numeric" })}
           </p>
         </div>
-        <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
-          <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
-        </button>
+        <div className="flex items-center gap-3">
+          <ManualFazendaButton />
+          <button onClick={carregar} className="btn-ghost" title="Recarregar dados" disabled={recarregando}>
+            <RefreshCw size={16} className={recarregando ? "animate-spin" : ""} />
+          </button>
+        </div>
       </div>
 
       {nota && !notaFechada && (

@@ -381,3 +381,44 @@ class PortalMensagem(SQLModel, table=True):
     # Quando tipo="tarefa", aponta para o evento correspondente na Agenda.
     agenda_manual_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
+# ---------------------------------------------------------------------------
+# Manual da Fazenda — rotina automática + insights, ver fazenda.rules.manual_fazenda.
+# ---------------------------------------------------------------------------
+class ParametroManualFazenda(SQLModel, table=True):
+    """Configuração do Manual da Fazenda (Configurações > Parâmetros > Manual
+    da Fazenda) — linha única (get-or-create), mesmo padrão de
+    ParametroDiariaPadrao. Fica fora de ParametroFazenda (chave/valor genérico)
+    porque tem campos estruturados demais para caber num único valor texto."""
+
+    __tablename__ = "parametro_manual_fazenda"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    email_semanal_ativo: bool = False
+    ultimo_envio_semanal_em: Optional[datetime] = None
+    responsavel_manejo_nome: Optional[str] = None
+    responsavel_manejo_empresa: Optional[str] = None
+    tem_contrato_manejo: bool = False
+    # Nome do arquivo anexado — hoje é só um rótulo (sem armazenamento real);
+    # o botão de anexar já fica pronto na tela para quando entrar o Supabase
+    # Storage (guardará a URL/path do arquivo em vez do nome puro).
+    contrato_manejo_arquivo_nome: Optional[str] = None
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+
+
+class SugestaoManualFazenda(SQLModel, table=True):
+    """Uma sugestão customizada exibida na seção "Preditivo e sugestões" do
+    Manual da Fazenda — além das sugestões automáticas calculadas a partir
+    dos parâmetros/indicadores, o usuário pode cadastrar as próprias."""
+
+    __tablename__ = "sugestao_manual_fazenda"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    texto: str
+    categoria: str = "geral"  # geral | reprodutivo | producao | sanidade | financeiro
+    ativo: bool = True
+    ordem: int = 0
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)

@@ -3,16 +3,28 @@ import { useEffect, useMemo, useState } from "react";
 import { Sparkles, Search, AlertTriangle } from "lucide-react";
 import {
   fetchCatalogoRelatorioPersonalizado, gerarRelatorioPersonalizado,
-  type ParametroRelatorioPersonalizado,
+  type ParametroRelatorioPersonalizado, type ResumoRelatorioPersonalizado,
 } from "@/lib/api";
 import { BarChart, Bar, XAxis, YAxis, Tooltip, Legend, ResponsiveContainer, CartesianGrid } from "recharts";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
 
-const MAX_PARAMETROS = 10;
-const MAX_PARAMETROS_GRAFICO = 5;
+const MAX_PARAMETROS_GRAFICO = 8;
 const MAX_ANIMAIS_GRAFICO = 80;
 
-const CORES = ["#c9a24b", "#8B3A56", "#4a90a4", "#7a9e5e", "#b45f5f"];
+const CORES = ["#c9a24b", "#8B3A56", "#4a90a4", "#7a9e5e", "#b45f5f", "#5b8fb0", "#a15c9e", "#6b9e3f"];
+
+const RESUMO_ITENS: { key: keyof ResumoRelatorioPersonalizado; label: string; sufixo?: string }[] = [
+  { key: "quantidade_animais", label: "Quantidade de animais" },
+  { key: "taxa_servico_pct", label: "Taxa de serviço", sufixo: "%" },
+  { key: "taxa_concepcao_pct", label: "Taxa de concepção", sufixo: "%" },
+  { key: "taxa_prenhez_pct", label: "Taxa de prenhez", sufixo: "%" },
+  { key: "novilhas_aptas_ate_meses", label: "Novilhas aptas até X meses" },
+  { key: "quantidade_perda_prenhez", label: "Quantidade de perda de prenhez" },
+  { key: "percentual_perda_prenhez_pct", label: "Percentual de perda de prenhez", sufixo: "%" },
+  { key: "percentual_nascimento_macho_pct", label: "Nascimento de machos", sufixo: "%" },
+  { key: "percentual_nascimento_femea_pct", label: "Nascimento de fêmeas", sufixo: "%" },
+  { key: "taxa_cura_pct", label: "Taxa de cura", sufixo: "%" },
+];
 
 const inputStyle: React.CSSProperties = {
   background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)",
@@ -21,10 +33,13 @@ const inputStyle: React.CSSProperties = {
 const lbl: React.CSSProperties = { fontSize: "0.72rem", color: "var(--text-muted)", display: "block", marginBottom: "0.25rem" };
 
 /**
- * Relatório personalizado (Análise) — v1 livre: escolha até 10 parâmetros
- * (um valor por animal) para montar uma tabela e, opcionalmente, um gráfico
- * de barras com até 5 desses parâmetros (só os numéricos). Se algum parâmetro
- * de data for escolhido, abre um filtro de período (de/até).
+ * Relatório personalizado — escolha livremente quantos parâmetros quiser (um
+ * valor por animal) para montar sua própria tabela e, opcionalmente, um
+ * gráfico de barras com até {MAX_PARAMETROS_GRAFICO} desses parâmetros (só os
+ * numéricos). Se algum parâmetro de data for escolhido, abre um filtro de
+ * período (de/até). O card "Resumo do período" traz métricas agregadas do
+ * rebanho (taxas, novilhas aptas, nascimentos, cura) que não fazem sentido
+ * por animal.
  */
 export default function RelatorioPersonalizado() {
   const [catalogo, setCatalogo] = useState<ParametroRelatorioPersonalizado[]>([]);
@@ -33,7 +48,8 @@ export default function RelatorioPersonalizado() {
   const [parametrosGrafico, setParametrosGrafico] = useState<string[]>([]);
   const [dataDe, setDataDe] = useState("");
   const [dataAte, setDataAte] = useState("");
-  const [resultado, setResultado] = useState<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[] } | null>(null);
+  const [novilhasAptasMeses, setNovilhasAptasMeses] = useState("15");
+  const [resultado, setResultado] = useState<{ colunas: ParametroRelatorioPersonalizado[]; linhas: Record<string, any>[]; resumo: ResumoRelatorioPersonalizado } | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
 
@@ -55,7 +71,6 @@ export default function RelatorioPersonalizado() {
         setParametrosGrafico((g) => g.filter((x) => x !== id));
         return prev.filter((x) => x !== id);
       }
-      if (prev.length >= MAX_PARAMETROS) return prev;
       return [...prev, id];
     });
   }
@@ -75,6 +90,7 @@ export default function RelatorioPersonalizado() {
       parametros: selecionados,
       data_de: temParametroData ? (dataDe || undefined) : undefined,
       data_ate: temParametroData ? (dataAte || undefined) : undefined,
+      novilhas_aptas_meses: Number(novilhasAptasMeses) || 15,
     }).then(setResultado).catch((e) => setErro(e.message)).finally(() => setCarregando(false));
   };
 
@@ -93,13 +109,12 @@ export default function RelatorioPersonalizado() {
       <div className="mb-4">
         <h1 className="text-2xl font-bold flex items-center gap-2"><Sparkles size={22} style={{ color: "var(--dourado-light)" }} /> Relatório personalizado</h1>
         <p style={{ color: "var(--text-muted)", fontSize: "0.875rem" }}>
-          Escolha até {MAX_PARAMETROS} parâmetros para montar sua própria tabela (um valor por animal) e, se quiser, um gráfico com até {MAX_PARAMETROS_GRAFICO} deles.
-          Versão inicial — vamos lapidar conforme o uso.
+          Escolha quantos parâmetros quiser para montar sua própria tabela (um valor por animal) e, se quiser, um gráfico com até {MAX_PARAMETROS_GRAFICO} deles.
         </p>
       </div>
 
       <div className="card mb-4">
-        <div className="card-header mb-3">Parâmetros ({selecionados.length}/{MAX_PARAMETROS})</div>
+        <div className="card-header mb-3">Parâmetros ({selecionados.length} selecionado{selecionados.length !== 1 ? "s" : ""})</div>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {Array.from(porCategoria.entries()).map(([categoria, params]) => (
             <div key={categoria}>
@@ -107,10 +122,9 @@ export default function RelatorioPersonalizado() {
               <div className="space-y-1">
                 {params.map((p) => {
                   const marcado = selecionados.includes(p.id);
-                  const desabilitado = !marcado && selecionados.length >= MAX_PARAMETROS;
                   return (
-                    <label key={p.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", cursor: desabilitado ? "not-allowed" : "pointer", opacity: desabilitado ? 0.5 : 1 }}>
-                      <input type="checkbox" checked={marcado} disabled={desabilitado} onChange={() => alternarParametro(p.id)} />
+                    <label key={p.id} style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.8rem", cursor: "pointer" }}>
+                      <input type="checkbox" checked={marcado} onChange={() => alternarParametro(p.id)} />
                       {p.label}
                     </label>
                   );
@@ -126,6 +140,11 @@ export default function RelatorioPersonalizado() {
             <div><label style={lbl}>Período — até</label><input type="date" style={inputStyle} value={dataAte} onChange={(e) => setDataAte(e.target.value)} /></div>
           </div>
         )}
+
+        <div className="mt-4" style={{ maxWidth: "320px" }}>
+          <label style={lbl}>Novilhas aptas até quantos meses? (usado no Resumo do período)</label>
+          <input type="number" min={1} style={inputStyle} value={novilhasAptasMeses} onChange={(e) => setNovilhasAptasMeses(e.target.value)} />
+        </div>
 
         <div className="mt-4" style={{ borderTop: "1px solid var(--border)", paddingTop: "0.75rem" }}>
           <label style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.85rem", cursor: "pointer" }}>
@@ -169,6 +188,26 @@ export default function RelatorioPersonalizado() {
 
       {resultado && (
         <>
+          <div className="card mb-4">
+            <div className="card-header mb-3">Resumo do período</div>
+            <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
+              Métricas agregadas do rebanho — não são por animal, por isso ficam à parte da tabela.
+            </p>
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+              {RESUMO_ITENS.map((item) => {
+                const v = resultado.resumo[item.key];
+                return (
+                  <div key={item.key} style={{ background: "var(--surface-2)", borderRadius: "8px", padding: "0.6rem 0.7rem" }}>
+                    <p style={{ fontSize: "1.1rem", fontWeight: 700, color: "var(--dourado-light)" }}>
+                      {v === null || v === undefined ? "—" : `${v}${item.sufixo || ""}`}
+                    </p>
+                    <p style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>{item.label}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
           {montarGrafico && !!parametrosGrafico.length && (
             <div className="card mb-4">
               <div className="card-header mb-3">Gráfico</div>

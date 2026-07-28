@@ -1,8 +1,8 @@
 "use client";
-import { useEffect, useState } from "react";
-import { Plus, DollarSign } from "lucide-react";
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { Plus, DollarSign, Pencil, Check, X } from "lucide-react";
 import {
-  fetchPessoas, fetchDiarias, criarDiaria, registrarPagamentoDiaria, formatBRL,
+  fetchPessoas, fetchDiarias, criarDiaria, atualizarDiaria, registrarPagamentoDiaria, formatBRL,
   fetchParametroDiariaPadrao, salvarParametroDiariaPadrao, responderAuditoriaDiaria, ParametroDiariaPadrao, ehAdmin,
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
@@ -15,7 +15,7 @@ type Pagamento = { id: number; data_pagamento: string; valor: number; observacao
 type ValeAvulso = { id: number; valor: number; forma_pagamento: string; data_pagamento: string; observacao: string | null };
 type AuditoriaPendente = { id: number; diaria_id: number; periodo_inicio: string; periodo_fim: string };
 type Diaria = {
-  id: number; pessoa_id: number; pessoa_nome: string; valor_diaria: number; data_inicio: string; status: string;
+  id: number; pessoa_id: number; pessoa_nome: string; valor_diaria: number; data_inicio: string; data_fim: string | null; status: string;
   numero_diarias: number; total_ate_hoje: number; valor_pago: number; valor_vale: number; saldo_devedor: number;
   pagamentos: Pagamento[]; vales: ValeAvulso[];
   conta_dia_a_dia: boolean; auditar_periodicamente: boolean;
@@ -25,6 +25,11 @@ type Diaria = {
 
 const DIAS_SEMANA = ["Domingo", "Segunda", "Terça", "Quarta", "Quinta", "Sexta", "Sábado"];
 
+function fmtDataBR(iso: string | null): string {
+  if (!iso) return "—";
+  return iso.split("-").reverse().join("/");
+}
+
 export default function DiariaView() {
   const [pessoas, setPessoas] = useState<Pessoa[]>([]);
   const [itens, setItens] = useState<Diaria[] | null>(null);
@@ -33,6 +38,7 @@ export default function DiariaView() {
   const [pessoaId, setPessoaId] = useState("");
   const [valorDiaria, setValorDiaria] = useState("");
   const [dataInicio, setDataInicio] = useState(() => new Date().toISOString().slice(0, 10));
+  const [dataFim, setDataFim] = useState("");
   const [observacao, setObservacao] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
@@ -55,6 +61,28 @@ export default function DiariaView() {
   const [diasTrabalhadosPorAuditoria, setDiasTrabalhadosPorAuditoria] = useState<Record<number, string>>({});
   const [auditoriaErro, setAuditoriaErro] = useState<string | null>(null);
 
+  const [editandoId, setEditandoId] = useState<number | null>(null);
+  const [editDataInicio, setEditDataInicio] = useState("");
+  const [editDataFim, setEditDataFim] = useState("");
+  const [editAjuste, setEditAjuste] = useState("");
+  const [editSalvando, setEditSalvando] = useState(false);
+  const [editErro, setEditErro] = useState<string | null>(null);
+
+  // Estimativa de nº de diárias/valor quando início e fim são informados no
+  // lançamento — se o fim é futuro, mostra também a quantidade até hoje.
+  const estimativa = useMemo(() => {
+    const valor = parseFloat(valorDiaria) || 0;
+    if (!dataInicio || !dataFim || !valor) return null;
+    const ini = new Date(`${dataInicio}T00:00:00`);
+    const fim = new Date(`${dataFim}T00:00:00`);
+    if (fim < ini) return null;
+    const totalDias = Math.round((fim.getTime() - ini.getTime()) / 86400000) + 1;
+    const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+    const futura = fim > hoje;
+    const diasAteHoje = futura ? Math.max(Math.round((Math.min(hoje.getTime(), fim.getTime()) - ini.getTime()) / 86400000) + 1, 0) : totalDias;
+    return { totalDias, totalValor: totalDias * valor, futura, diasAteHoje, valorAteHoje: diasAteHoje * valor };
+  }, [dataInicio, dataFim, valorDiaria]);
+
   const carregar = () => fetchDiarias().then(setItens).catch((e) => setError(e.message));
   useEffect(() => {
     carregar();
@@ -70,7 +98,7 @@ export default function DiariaView() {
     setSalvando(true);
     try {
       await criarDiaria({
-        pessoa_id: Number(pessoaId), valor_diaria: parseFloat(valorDiaria), data_inicio: dataInicio, observacao: observacao || undefined,
+        pessoa_id: Number(pessoaId), valor_diaria: parseFloat(valorDiaria), data_inicio: dataInicio, data_fim: dataFim || null, observacao: observacao || undefined,
         conta_dia_a_dia: contaDiaADia,
         auditar_periodicamente: auditarPeriodicamente,
         frequencia_auditoria: frequenciaAuditoria || null,
@@ -78,7 +106,7 @@ export default function DiariaView() {
         intervalo_dias_auditoria: intervaloDiasAuditoria !== "" ? Number(intervaloDiasAuditoria) : null,
       });
       setMsg({ tipo: "sucesso", texto: "Diarista lançada." });
-      setPessoaId(""); setValorDiaria(""); setObservacao("");
+      setPessoaId(""); setValorDiaria(""); setDataFim(""); setObservacao("");
       setContaDiaADia(true); setAuditarPeriodicamente(null); setFrequenciaAuditoria(""); setDiaSemanaAuditoria(""); setIntervaloDiasAuditoria("");
       carregar();
     } catch (e: any) {
@@ -127,11 +155,38 @@ export default function DiariaView() {
     }
   }
 
+  function abrirEdicao(d: Diaria) {
+    setEditandoId(d.id);
+    setEditDataInicio(d.data_inicio);
+    setEditDataFim(d.data_fim || "");
+    setEditAjuste("");
+    setEditErro(null);
+  }
+
+  async function salvarEdicao(diariaId: number) {
+    setEditErro(null);
+    if (!editDataInicio) { setEditErro("Informe a data de início."); return; }
+    setEditSalvando(true);
+    try {
+      await atualizarDiaria(diariaId, {
+        data_inicio: editDataInicio,
+        data_fim: editDataFim || null,
+        ajuste_numero_diarias: editAjuste !== "" ? Number(editAjuste) : null,
+      });
+      setEditandoId(null);
+      carregar();
+    } catch (e: any) {
+      setEditErro(e.message || "Erro ao editar diária");
+    } finally {
+      setEditSalvando(false);
+    }
+  }
+
   if (error) return <div className="alert-critico"><span>Sem dados: {error}.</span></div>;
 
   return (
     <div>
-      <SecaoRecolhivel titulo="Nova diarista" icon={Plus} defaultAberta={false} descricao="Valor da diária e data de início da contagem">
+      <SecaoRecolhivel titulo="Novo diarista" icon={Plus} defaultAberta={false} descricao="Valor da diária e data de início da contagem">
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mb-3">
           <div>
             <label style={lbl}>Diarista</label>
@@ -148,7 +203,20 @@ export default function DiariaView() {
             <label style={lbl}>Data de início</label>
             <input type="date" style={inputSm} value={dataInicio} onChange={(e) => setDataInicio(e.target.value)} />
           </div>
+          <div>
+            <label style={lbl}>Data de fim (opcional)</label>
+            <input type="date" style={inputSm} value={dataFim} onChange={(e) => setDataFim(e.target.value)} />
+          </div>
         </div>
+        {estimativa && (
+          <div style={{ fontSize: "0.78rem", color: "var(--text-muted)", background: "var(--surface-2)", borderRadius: "6px", padding: "0.5rem 0.7rem", marginBottom: "0.75rem" }}>
+            {estimativa.futura ? (
+              <>Estimativa: <strong>{estimativa.totalDias}</strong> diária(s) no período (<strong>{formatBRL(estimativa.totalValor)}</strong>) — até hoje, <strong>{estimativa.diasAteHoje}</strong> diária(s) (<strong>{formatBRL(estimativa.valorAteHoje)}</strong>).</>
+            ) : (
+              <>Estimativa: <strong>{estimativa.totalDias}</strong> diária(s) no período, totalizando <strong>{formatBRL(estimativa.totalValor)}</strong>.</>
+            )}
+          </div>
+        )}
         <div><label style={lbl}>Observação</label>
           <textarea style={{ ...inputSm, minHeight: "2.4rem" }} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
 
@@ -291,15 +359,17 @@ export default function DiariaView() {
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Nome</th><th>Início</th><th>Nº diárias</th><th>Valor diária</th>
+                  <th>Nome</th><th>Início</th><th>Fim</th><th>Nº diárias</th><th>Valor diária</th>
                   <th>Total até hoje</th><th>Pago</th><th>Vale</th><th>Saldo devedor</th><th></th>
                 </tr>
               </thead>
               <tbody>
                 {itens.map((d) => (
-                  <tr key={d.id}>
+                  <Fragment key={d.id}>
+                  <tr>
                     <td style={{ fontWeight: 700 }}>{d.pessoa_nome}</td>
-                    <td>{d.data_inicio}</td>
+                    <td>{fmtDataBR(d.data_inicio)}</td>
+                    <td>{fmtDataBR(d.data_fim)}</td>
                     <td>{d.numero_diarias}</td>
                     <td>{formatBRL(d.valor_diaria)}</td>
                     <td>{formatBRL(d.total_ate_hoje)}</td>
@@ -307,12 +377,42 @@ export default function DiariaView() {
                     <td>{formatBRL(d.valor_vale)}</td>
                     <td style={{ fontWeight: 700, color: d.saldo_devedor > 0 ? "var(--amber)" : "var(--green-light)" }}>{formatBRL(d.saldo_devedor)}</td>
                     <td>
-                      <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
-                        onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagoErro(null); }}>
-                        <DollarSign size={13} /> Pagar
-                      </button>
+                      <span className="flex items-center gap-2">
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem" }} title="Editar data de início, data de fim ou corrigir o número de diárias"
+                          onClick={() => (editandoId === d.id ? setEditandoId(null) : abrirEdicao(d))}>
+                          <Pencil size={13} />
+                        </button>
+                        <button className="btn-ghost" style={{ fontSize: "0.72rem", display: "flex", alignItems: "center", gap: "0.3rem" }}
+                          onClick={() => { setPagandoId(d.id); setValorPagamento(d.saldo_devedor > 0 ? d.saldo_devedor.toFixed(2) : ""); setPagoErro(null); }}>
+                          <DollarSign size={13} /> Pagar
+                        </button>
+                      </span>
                     </td>
                   </tr>
+                  {editandoId === d.id && (
+                    <tr>
+                      <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-2">
+                          <div><label style={lbl}>Data de início</label>
+                            <input type="date" style={inputSm} value={editDataInicio} onChange={(e) => setEditDataInicio(e.target.value)} /></div>
+                          <div><label style={lbl}>Data de fim (opcional)</label>
+                            <input type="date" style={inputSm} value={editDataFim} onChange={(e) => setEditDataFim(e.target.value)} /></div>
+                          <div><label style={lbl}>Corrigir nº de diárias (opcional)</label>
+                            <input type="number" min={0} style={inputSm} placeholder={String(d.numero_diarias)} value={editAjuste} onChange={(e) => setEditAjuste(e.target.value)} /></div>
+                        </div>
+                        {editErro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginBottom: "0.5rem" }}>{editErro}</p>}
+                        <div className="flex items-center gap-2">
+                          <button className="btn-primary" style={{ fontSize: "0.78rem" }} disabled={editSalvando} onClick={() => salvarEdicao(d.id)}>
+                            <Check size={13} /> {editSalvando ? "Salvando…" : "Salvar"}
+                          </button>
+                          <button className="btn-ghost" style={{ fontSize: "0.78rem" }} onClick={() => setEditandoId(null)}>
+                            <X size={13} /> Cancelar
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                  </Fragment>
                 ))}
               </tbody>
             </table>
