@@ -71,21 +71,26 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   }, [dentroDeAba, abas.length]);
 
   function abrirAba(url: string, titulo: string) {
-    setAbas((atuais) => {
-      // Já existe uma aba com essa URL — só ativa ela em vez de duplicar.
-      const existente = atuais.find((a) => a.url === url);
-      if (existente) {
-        setAtivaId(existente.id);
-        return atuais;
-      }
-      if (atuais.length + 1 >= LIMITE_ABAS) {
-        setAviso(`Limite de ${LIMITE_ABAS} abas atingido — feche alguma aba antes de abrir outra.`);
-        return atuais;
-      }
-      const id = `aba-${proximoId.current++}`;
-      setAtivaId(id);
-      return [...atuais, { id, url, titulo }];
-    });
+    // Decide fora do updater do setAbas — nunca gerar o id nem chamar outro
+    // setState (setAtivaId) de dentro da função passada a setAbas: em Strict
+    // Mode (dev) o React invoca essa função duas vezes para detectar
+    // impurezas, e como proximoId.current é uma ref mutável, cada chamada
+    // gerava um id DIFERENTE ("aba-1" na 1ª, "aba-2" na 2ª) — o array de abas
+    // ficava com um id e ativaId apontava pro outro, então nenhuma aba batia
+    // no id === ativaId de estiloPainel() e o painel novo nunca aparecia
+    // (display: none permanente, tela em branco na 2ª guia).
+    const existente = abas.find((a) => a.url === url);
+    if (existente) {
+      setAtivaId(existente.id);
+      return;
+    }
+    if (abas.length + 1 >= LIMITE_ABAS) {
+      setAviso(`Limite de ${LIMITE_ABAS} abas atingido — feche alguma aba antes de abrir outra.`);
+      return;
+    }
+    const id = `aba-${proximoId.current++}`;
+    setAtivaId(id);
+    setAbas((atuais) => [...atuais, { id, url, titulo }]);
   }
 
   function fecharAba(id: string) {
@@ -175,9 +180,15 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
             title={labelNativa}
             style={{
               display: "flex", alignItems: "center", gap: "0.35rem", padding: "0 0.9rem", border: "none",
-              borderRight: "1px solid var(--border)", cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
-              background: ativaId === "nativa" ? "var(--surface)" : "transparent",
-              color: ativaId === "nativa" ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap",
+              borderRight: "1px solid var(--border)",
+              borderBottom: ativaId === "nativa" ? "2px solid var(--sidebar-active-border)" : "2px solid transparent",
+              cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
+              // Preenchimento na cor de "ativo" da paleta/tema atuais (mesma
+              // variável usada no item ativo da Sidebar — já muda sozinha com
+              // claro/misto/escuro e vinho/verde/azul), pra ficar óbvio qual
+              // guia está em uso ao navegar entre elas.
+              background: ativaId === "nativa" ? "var(--sidebar-active-bg)" : "transparent",
+              color: ativaId === "nativa" ? "var(--sidebar-active-fg)" : "var(--text-muted)", whiteSpace: "nowrap",
               maxWidth: "12rem", overflow: "hidden", textOverflow: "ellipsis",
             }}
           >
@@ -189,14 +200,17 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
               // Contorno na cor da paleta escolhida (var(--dourado) — muda com
               // vinho/verde/azul) em toda aba aberta por duplo clique, pra
               // diferenciar de cara da aba Principal e não confundir quando
-              // há várias abertas.
+              // há várias abertas. O preenchimento (var(--sidebar-active-bg)/
+              // --sidebar-active-fg — mesmas variáveis do item ativo da
+              // Sidebar, já sensíveis a tema e paleta) só aparece na guia em
+              // uso, pra distinguir de cara qual está ativa ao navegar.
               style={{
                 display: "flex", alignItems: "center", gap: "0.35rem", padding: "0 0.5rem 0 0.9rem",
                 margin: "0.25rem 0.3rem", borderRadius: "6px",
-                border: "1.5px solid var(--dourado)",
+                border: `1.5px solid ${ativaId === aba.id ? "var(--sidebar-active-border)" : "var(--dourado)"}`,
                 cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
-                background: ativaId === aba.id ? "var(--surface)" : "transparent",
-                color: ativaId === aba.id ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap",
+                background: ativaId === aba.id ? "var(--sidebar-active-bg)" : "transparent",
+                color: ativaId === aba.id ? "var(--sidebar-active-fg)" : "var(--text-muted)", whiteSpace: "nowrap",
               }}
               onClick={() => setAtivaId(aba.id)}
               onContextMenu={(e) => abrirMenu(e, aba.id)}
