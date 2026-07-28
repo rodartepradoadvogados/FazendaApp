@@ -607,6 +607,17 @@ html, body { max-width: 100%; overflow-x: hidden; }
   .fazenda-table thead th, .fazenda-table tbody td { padding: 0.45rem 0.6rem; }
 }
 
+/* Faixa de botões do topo do site (News + Manual da Fazenda quando presente,
+   ver AuthShell.tsx) — um único container fixed com gap, em vez de cada botão
+   calcular sua própria posição (foi assim que os dois ficaram sobrepostos).
+   No celular/tablet estreito (abaixo do breakpoint md do Sidebar), desce para
+   ficar abaixo da barra fixa do menu hambúrguer (3.25rem de altura, ver
+   Sidebar.tsx) em vez de sobrepor o logotipo. */
+.site-top-actions { position: fixed; top: 1rem; right: 16rem; z-index: 60; display: inline-flex; align-items: center; gap: 0.6rem; }
+@media (max-width: 767px) {
+  .site-top-actions { top: 3.65rem; right: 0.6rem; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════════════
    APP MÓVEL (/app) — design próprio, pensado para o campo:
    claro = alto contraste p/ sol forte; escuro = OLED (#121212) p/ bateria.

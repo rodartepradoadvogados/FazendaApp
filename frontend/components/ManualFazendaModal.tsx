@@ -1,9 +1,11 @@
 "use client";
-// Manual da Fazenda — botão (Capa) que abre janela suspensa com a rotina
-// automática (BST, visita reprodutiva, sanitário, compras), o resultado
-// atual (KPIs), insights (comparativo com o período anterior) e sugestões
-// (customizadas + automáticas). Ver Configurações > Parâmetros > Manual da
-// Fazenda para o envio semanal por e-mail e o cadastro de sugestões.
+// Manual da Fazenda — botão (só na Capa, ver AuthShell.tsx) que abre janela
+// suspensa com a rotina automática (BST, visita reprodutiva, sanitário,
+// compras), o resultado atual (KPIs), insights (comparativo com o período
+// anterior) e sugestões (customizadas + automáticas). Ver Configurações >
+// Parâmetros > Manual da Fazenda para o envio semanal por e-mail e o
+// cadastro de sugestões. Posicionamento (fixed no topo, ao lado do News) é
+// do container pai — ver .site-top-actions em globals.css.
 import { useEffect, useState } from "react";
 import { BookOpen, Download, TrendingUp, TrendingDown, Activity, Sparkles, AlertTriangle, X } from "lucide-react";
 import { fetchManualFazenda, baixarPdfManualFazenda, type ManualFazenda } from "@/lib/api";
@@ -30,7 +32,7 @@ export function ManualFazendaButton() {
           background: "linear-gradient(135deg, var(--vinho, #3A0F1A), var(--vinho-light, #6B2438))",
           color: "var(--dourado-light)", border: "none", borderRadius: "999px",
           padding: "0.55rem 1.1rem", fontSize: "0.82rem", fontWeight: 600, cursor: "pointer",
-          boxShadow: "0 4px 14px rgba(58,15,26,0.35)",
+          boxShadow: "0 4px 14px rgba(58,15,26,0.35)", whiteSpace: "nowrap",
         }}>
         <BookOpen size={15} /> Manual da Fazenda
       </button>

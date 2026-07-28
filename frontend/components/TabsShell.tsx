@@ -7,25 +7,52 @@
 // sem iframe — zero mudança de comportamento/performance para quem nunca usa
 // o recurso. Limite de 5 abas simultâneas (nativa + até 4 extras); ao tentar
 // abrir a 6ª, avisa e bloqueia (decisão do usuário, não fecha nada sozinho).
+// Botão direito numa guia abre um menu: Fechar / Dividir tela (escolhe outra
+// guia aberta pra mostrar lado a lado) / Desfazer divisão / Cancelar.
 //
 // Só a JANELA DE CIMA desenha a barra — se este componente estiver rodando
 // dentro de um <iframe> de aba (ver estaDentroDeAba), ele só repassa
 // {children} direto, sem desenhar nada, para nunca aninhar uma barra de abas
 // dentro de outra.
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { X, Plus } from "lucide-react";
 import { MENSAGEM_ABRIR_ABA, estaDentroDeAba } from "@/lib/tabs";
+import { rotuloDaPagina, caminhoLabels } from "@/components/Sidebar";
+import { useSubNav } from "@/components/SubNavContext";
 
 const LIMITE_ABAS = 5;
 
 type AbaExtra = { id: string; url: string; titulo: string };
+type MenuContexto = { id: string; x: number; y: number };
+
+const itemMenu: React.CSSProperties = {
+  display: "block", width: "100%", textAlign: "left", padding: "0.4rem 0.7rem",
+  border: "none", background: "transparent", cursor: "pointer", fontSize: "0.8rem",
+  color: "var(--text)", borderRadius: "5px",
+};
 
 export function TabsShell({ children }: { children: React.ReactNode }) {
   const [dentroDeAba, setDentroDeAba] = useState<boolean | null>(null);
   const [abas, setAbas] = useState<AbaExtra[]>([]);
   const [ativaId, setAtivaId] = useState<"nativa" | string>("nativa");
   const [aviso, setAviso] = useState<string | null>(null);
+  // Divisão de tela: duas guias (ids) mostradas lado a lado — null fora do
+  // modo dividido. Ver menu de contexto (botão direito numa guia).
+  const [divisao, setDivisao] = useState<[string, string] | null>(null);
+  const [menu, setMenu] = useState<MenuContexto | null>(null);
+  const [escolhendoParceiro, setEscolhendoParceiro] = useState(false);
   const proximoId = useRef(1);
+  const path = usePathname();
+  const subNav = useSubNav();
+  // Rótulo da 1ª aba (a página real, sem iframe): página + sub-aba(s) atuais
+  // — mesmo formato ("Página › Sub › Sub-sub") usado ao abrir uma aba nova em
+  // duplo clique (ver Sidebar.tsx::SubNavItem), em vez do "Principal" fixo.
+  const labelNativa = useMemo(() => {
+    const base = rotuloDaPagina(path);
+    const labels = subNav ? caminhoLabels(subNav.tree, subNav.activeId) : null;
+    return labels ? [base, ...labels].join(" › ") : base;
+  }, [path, subNav]);
 
   useEffect(() => {
     setDentroDeAba(estaDentroDeAba());
@@ -64,6 +91,19 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   function fecharAba(id: string) {
     setAbas((atuais) => atuais.filter((a) => a.id !== id));
     setAtivaId((atual) => (atual === id ? "nativa" : atual));
+    setDivisao((atual) => (atual && atual.includes(id) ? null : atual));
+  }
+
+  function fecharMenu() {
+    setMenu(null);
+    setEscolhendoParceiro(false);
+  }
+
+  function abrirMenu(e: React.MouseEvent, id: string) {
+    e.preventDefault();
+    e.stopPropagation();
+    setEscolhendoParceiro(false);
+    setMenu({ id, x: e.clientX, y: e.clientY });
   }
 
   // Ainda não sabemos se estamos numa aba (1º render, antes do useEffect) —
@@ -71,6 +111,20 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   if (dentroDeAba !== false) return <>{children}</>;
 
   const temAbasExtras = abas.length > 0;
+  const todasAbas: { id: string; titulo: string }[] = [{ id: "nativa", titulo: labelNativa }, ...abas.map((a) => ({ id: a.id, titulo: a.titulo }))];
+
+  // Posição/visibilidade de cada painel (a guia nativa ou um iframe) — sempre
+  // montado, só escondido (display: none), tanto no modo normal (1 guia
+  // visível) quanto no modo dividido (2 guias lado a lado).
+  function estiloPainel(id: string): React.CSSProperties {
+    const base: React.CSSProperties = { position: "absolute", top: 0, bottom: 0, border: "none" };
+    if (divisao) {
+      const idx = divisao.indexOf(id);
+      if (idx === -1) return { ...base, display: "none" };
+      return { ...base, display: "block", left: idx === 0 ? 0 : "50%", width: "50%", borderLeft: idx === 1 ? "1px solid var(--border)" : undefined };
+    }
+    return { ...base, display: id === ativaId ? "block" : "none", left: 0, width: "100%" };
+  }
 
   return (
     // A faixa de abas continua fixed (começando em left-56, mesma largura da
@@ -82,7 +136,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
     <div style={{ height: "100vh", position: "relative", display: "flex", flexDirection: "column" }}>
       {temAbasExtras && <div className="hidden md:block" style={{ height: "2.2rem", flexShrink: 0 }} aria-hidden="true" />}
       <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
-        <div style={{ display: ativaId === "nativa" ? "block" : "none", height: "100%" }}>
+        <div style={estiloPainel("nativa")}>
           {children}
         </div>
         {abas.map((aba) => (
@@ -90,7 +144,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
             key={aba.id}
             src={aba.url}
             title={aba.titulo}
-            style={{ display: ativaId === aba.id ? "block" : "none", width: "100%", height: "100%", border: "none" }}
+            style={estiloPainel(aba.id)}
           />
         ))}
       </div>
@@ -109,16 +163,17 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
           }}
         >
           <button
-            type="button" onClick={() => setAtivaId("nativa")}
-            title="Aba principal"
+            type="button" onClick={() => setAtivaId("nativa")} onContextMenu={(e) => abrirMenu(e, "nativa")}
+            title={labelNativa}
             style={{
               display: "flex", alignItems: "center", gap: "0.35rem", padding: "0 0.9rem", border: "none",
               borderRight: "1px solid var(--border)", cursor: "pointer", fontSize: "0.76rem", fontWeight: 700,
               background: ativaId === "nativa" ? "var(--surface)" : "transparent",
               color: ativaId === "nativa" ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap",
+              maxWidth: "12rem", overflow: "hidden", textOverflow: "ellipsis",
             }}
           >
-            Principal
+            {labelNativa}
           </button>
           {abas.map((aba) => (
             <div
@@ -136,6 +191,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
                 color: ativaId === aba.id ? "var(--text)" : "var(--text-muted)", whiteSpace: "nowrap",
               }}
               onClick={() => setAtivaId(aba.id)}
+              onContextMenu={(e) => abrirMenu(e, aba.id)}
               title={aba.titulo}
             >
               <span style={{ maxWidth: "9rem", overflow: "hidden", textOverflow: "ellipsis" }}>{aba.titulo}</span>
@@ -153,6 +209,55 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
             <Plus size={12} /> duplo clique num item da barra lateral abre aba nova
           </div>
         </div>
+      )}
+
+      {menu && (
+        <>
+          <div onClick={fecharMenu} style={{ position: "fixed", inset: 0, zIndex: 70 }} />
+          <div
+            style={{
+              position: "fixed", top: menu.y, left: menu.x, zIndex: 71, minWidth: "13rem",
+              background: "var(--surface)", border: "1px solid var(--border)", borderRadius: "8px",
+              boxShadow: "0 4px 16px rgba(0,0,0,0.25)", padding: "0.3rem",
+            }}
+          >
+            {!escolhendoParceiro ? (
+              <>
+                <button type="button" style={{ ...itemMenu, opacity: menu.id === "nativa" ? 0.4 : 1, cursor: menu.id === "nativa" ? "not-allowed" : "pointer" }}
+                  disabled={menu.id === "nativa"}
+                  title={menu.id === "nativa" ? "A guia principal não pode ser fechada" : undefined}
+                  onClick={() => { fecharAba(menu.id); fecharMenu(); }}>
+                  Fechar
+                </button>
+                <button type="button" style={{ ...itemMenu, opacity: abas.length === 0 ? 0.4 : 1, cursor: abas.length === 0 ? "not-allowed" : "pointer" }}
+                  disabled={abas.length === 0}
+                  title={abas.length === 0 ? "Abra outra guia antes de dividir a tela" : undefined}
+                  onClick={() => setEscolhendoParceiro(true)}>
+                  Dividir tela
+                </button>
+                <button type="button" style={{ ...itemMenu, opacity: divisao ? 1 : 0.4, cursor: divisao ? "pointer" : "not-allowed" }}
+                  disabled={!divisao}
+                  onClick={() => { setDivisao(null); fecharMenu(); }}>
+                  Desfazer divisão de telas
+                </button>
+                <button type="button" style={itemMenu} onClick={fecharMenu}>Cancelar</button>
+              </>
+            ) : (
+              <>
+                <div style={{ padding: "0.3rem 0.7rem", color: "var(--text-muted)", fontSize: "0.7rem", fontWeight: 700, textTransform: "uppercase" }}>
+                  Dividir com qual guia?
+                </div>
+                {todasAbas.filter((a) => a.id !== menu.id).map((a) => (
+                  <button key={a.id} type="button" style={itemMenu}
+                    onClick={() => { setDivisao([menu.id, a.id]); setAtivaId(menu.id); fecharMenu(); }}>
+                    {a.titulo}
+                  </button>
+                ))}
+                <button type="button" style={itemMenu} onClick={fecharMenu}>Cancelar</button>
+              </>
+            )}
+          </div>
+        </>
       )}
 
       {aviso && (

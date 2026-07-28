@@ -1,14 +1,13 @@
 "use client";
 // Sub-tela: News (blog de pecuária leiteira) — mesmas matérias do site
-// (GET /news/), geridas por nós via Configurações > News (site, admin) ou
-// aqui mesmo no app. Só administradores abrem esta tela (ver app/layout.tsx
-// e app/menu/page.tsx); dentro dela, escrever/excluir/revisar exigem também
+// (GET /news/). Qualquer usuário logado abre esta tela e lê as matérias (ver
+// app/layout.tsx e app/menu/page.tsx); escrever/editar/excluir/revisar exigem
 // a permissão "publicar matérias no blog" (podePublicarMaterias()), igual ao site.
 import { useMemo, useState } from "react";
 import { Newspaper, Link as LinkIcon, CalendarDays, Plus, X, Check, Trash2, ShieldCheck, AlertTriangle, Pencil, Ban } from "lucide-react";
 import { MobVoltar, MobCard, MobCampo } from "@/components/mobile/ui";
 import {
-  fetchTodasMaterias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias,
+  fetchTodasMaterias, fetchNoticias, criarMateriaBlog, atualizarMateriaBlog, excluirMateriaBlog, revisarPublicacaoFinal, podePublicarMaterias,
   type NoticiaNews,
 } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
@@ -37,8 +36,15 @@ const ABAS = [
 
 export default function News({ onVoltar }: { onVoltar: () => void }) {
   const podePublicar = podePublicarMaterias();
+  // Quem não tem permissão de publicar só pode LER as matérias já publicadas
+  // (GET /news/, sem gate) — GET /news/materias exige podePublicarMaterias no
+  // backend (traz também as pendentes de revisão), então usá-lo aqui derrubaria
+  // a tela com 403 pra qualquer usuário comum.
   const [aba, setAba] = useState<(typeof ABAS)[number]["key"]>("publicadas");
-  const { dados, doCache, carregando, recarregar } = useCarregar<NoticiaNews[]>("menu_news_todas", () => fetchTodasMaterias());
+  const { dados, doCache, carregando, recarregar } = useCarregar<NoticiaNews[]>(
+    podePublicar ? "menu_news_todas" : "menu_news_publicas",
+    () => podePublicar ? fetchTodasMaterias() : fetchNoticias(true).then((f) => f.fontes.flatMap((x) => x.noticias)),
+  );
 
   const [abrirForm, setAbrirForm] = useState(false);
   const [manchete, setManchete] = useState("");
@@ -129,13 +135,17 @@ export default function News({ onVoltar }: { onVoltar: () => void }) {
     finally { setEditSalvando(false); }
   };
 
+  // Sem permissão de publicar não há nada pra revisar por aqui (a leitura já
+  // só traz matérias revisadas) — some com a aba em vez de mostrá-la vazia.
+  const abas = podePublicar ? ABAS : ABAS.filter((t) => t.key === "publicadas");
+
   return (
     <div>
       <MobVoltar titulo="News" onVoltar={onVoltar} />
-      <AvisoCopia chave="menu_news_todas" mostrar={doCache} />
+      <AvisoCopia chave={podePublicar ? "menu_news_todas" : "menu_news_publicas"} mostrar={doCache} />
 
       <div style={{ display: "flex", gap: "0.5rem", marginBottom: "0.9rem" }}>
-        {ABAS.map((t) => (
+        {abas.map((t) => (
           <button key={t.key} type="button" className={`mob-pill${aba === t.key ? " ativa" : ""}`} style={{ flex: 1, position: "relative" }}
             onClick={() => setAba(t.key)}>
             {t.label}

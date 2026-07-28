@@ -14,12 +14,21 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import exigir_admin, get_current_user
+from fazenda.auth import exigir_admin, exigir_pode_publicar, get_current_user
 from fazenda.database import get_session
 from fazenda.models import LancamentoPendente, Usuario
 from fazenda.rules import telegram_fluxos as fx
 
 router = APIRouter(prefix="/aprovacoes", tags=["aprovacoes"])
+
+
+def _exigir_permissao_do_tipo(p: LancamentoPendente, user: Usuario) -> None:
+    """Pendente de matéria do blog (tipo "noticia_manual", ver
+    POST /news/manual) exige a mesma permissão de publicar matérias
+    (Usuario.pode_publicar_materias_blog) de tudo mais em News — não basta
+    ser admin, senão qualquer admin aprovaria matéria do blog por aqui."""
+    if p.tipo == "noticia_manual":
+        exigir_pode_publicar(user)
 
 
 def _dto(p: LancamentoPendente) -> dict:
@@ -70,6 +79,7 @@ def editar(pendente_id: int, entrada: EditarPendenteIn, session: Session = Depen
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
     p.payload = json.dumps(entrada.dados)
@@ -87,6 +97,7 @@ def aprovar(pendente_id: int, session: Session = Depends(get_session), user: Usu
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
 
@@ -118,6 +129,7 @@ def rejeitar(pendente_id: int, session: Session = Depends(get_session), user: Us
     p = session.get(LancamentoPendente, pendente_id)
     if not p:
         raise HTTPException(status_code=404, detail="Lançamento pendente não encontrado")
+    _exigir_permissao_do_tipo(p, user)
     if p.status != "pendente":
         raise HTTPException(status_code=409, detail=f"Este lançamento já está {p.status}.")
     p.status = "rejeitado"

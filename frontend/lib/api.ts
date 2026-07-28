@@ -54,10 +54,12 @@ export function ehDono(): boolean {
 export function ehContador(): boolean {
   return getFazendaAtual()?.vinculo_contador === true;
 }
-// Administração de News/Blog (fontes, matérias, revisão) é restrita ao
-// proprietário da plataforma — ver backend/fazenda/auth.py::exigir_dono.
+// Administração de News/Blog (matérias: criar, editar, revisar, aprovar) —
+// o dono sempre pode; além dele, só quem o dono designar via o toggle
+// "Permitir publicação de matérias no blog" em Usuários (Usuario.pode_publicar_materias_blog).
+// Ver backend/fazenda/auth.py::exigir_pode_publicar.
 export function podePublicarMaterias(): boolean {
-  return ehDono();
+  return ehDono() || getUsuario()?.pode_publicar_materias_blog === true;
 }
 export async function fetchUsuarios() {
   const res = await fetch(`${API}/auth/usuarios`, { headers: getToken() ? { Authorization: `Bearer ${getToken()}` } : {}, cache: "no-store" });
@@ -798,11 +800,32 @@ export async function atualizarServico(id: number, dados: ServicoEditPayload) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar serviço"); }
   return res.json();
 }
-export async function atualizarParto(id: number, dados: { data_parto?: string; tipo_parto?: string; retencao_placenta?: boolean }) {
+export async function atualizarParto(id: number, dados: {
+  data_parto?: string; tipo_parto?: string; retencao_placenta?: boolean;
+  numero_cria_1?: string | null; numero_cria_2?: string | null;
+  sexo_cria_1?: string | null; sexo_cria_2?: string | null;
+  gemelar?: boolean | null; gemelar_sexo?: string | null;
+}) {
   const res = await authFetch(`${API}/reproducao/partos/${id}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar parto"); }
+  return res.json();
+}
+
+export type VerificacaoMaeParto = {
+  mae_encontrada: boolean;
+  parto_correspondente: { data_parto: string | null; ordem_parto: number | null } | null;
+  partos_da_mae: { data_parto: string | null; ordem_parto: number | null }[];
+  inconsistencias: string[];
+};
+// Chamado antes de salvar a Ficha do Animal quando o campo "mãe" muda —
+// cruza com os partos da mãe já registrados (ver PUT /reproducao/verificar-mae).
+export async function verificarMaeParto(maeNumero: string, animalNumero?: string): Promise<VerificacaoMaeParto> {
+  const params = new URLSearchParams({ mae_numero: maeNumero });
+  if (animalNumero) params.set("animal_numero", animalNumero);
+  const res = await authFetch(`${API}/reproducao/verificar-mae?${params.toString()}`);
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao verificar mãe"); }
   return res.json();
 }
 export async function atualizarSecagem(id: number, dados: { data_secagem?: string; motivo?: string; escore_condicao_corporal?: number | null; observacao?: string }) {
@@ -1298,7 +1321,7 @@ export async function excluirVale(valeId: number) {
  * `confirmar: true` (e `valores_parcelas` se redistribuir_livre). */
 export async function atualizarParcelaVale(valeId: number, parcelaId: number, dados: {
   valor: number; acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
-  valores_parcelas?: Record<number, number>; confirmar?: boolean;
+  valores_parcelas?: Record<number, number>; confirmar?: boolean; confirmar_divergencia_total?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

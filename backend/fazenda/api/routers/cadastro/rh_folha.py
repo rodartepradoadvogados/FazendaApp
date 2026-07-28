@@ -1416,12 +1416,18 @@ class ValeParcelaEditIn(BaseModel):
     # "conceder" (só essa parcela muda — a diferença fica como concessão
     # gratuita, o vale passa a ter soma de parcelas diferente do valor
     # efetivamente pago); "redistribuir_igual" (a diferença é dividida
-    # igualmente entre as demais parcelas pendentes); "redistribuir_livre"
-    # (o chamador informa o valor de cada parcela pendente restante, sem
+    # igualmente entre as parcelas pendentes POSTERIORES a esta — nunca
+    # mexe em parcela já vencida/anterior); "redistribuir_livre" (o
+    # chamador informa o valor de cada parcela pendente posterior, sem
     # validação de soma — o front já cuida de auto-balancear as não-tocadas).
     acao: str | None = None
     valores_parcelas: dict[int, float] | None = None  # parcela_id -> novo valor, só p/ "redistribuir_livre"
     confirmar: bool = False
+    # Só para "redistribuir_livre": confirma que o total final (parcela
+    # editada + demais posteriores + já pagas) pode ficar diferente do
+    # valor efetivamente pago no vale (vale.valor_total) — sem isso, a
+    # divergência vira um 409 pedindo confirmação antes de salvar.
+    confirmar_divergencia_total: bool = False
 
 
 @router.put("/vales/{vale_id}/parcelas/{parcela_id}")
@@ -1453,9 +1459,13 @@ def editar_parcela_vale(
         )
 
     todas_parcelas = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
+    # Só as parcelas POSTERIORES (mesma ordem de competência) entram na
+    # redistribuição — editar a parcela 3/10 nunca deve alterar 1 e 2, só
+    # 4-10. "Pendente" continua significando "ainda não aplicada na folha paga".
     outras_pendentes = [
         p for p in todas_parcelas
-        if p.id != parcela_id and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
+        if p.id != parcela_id and p.competencia > parcela.competencia
+        and not _vale_competencia_paga(session, vale.pessoa_id, [p.competencia])
     ]
     diferenca = round(dados.valor - parcela.valor, 2)
 
@@ -1493,11 +1503,31 @@ def editar_parcela_vale(
             ids_informados = set(dados.valores_parcelas.keys())
             if ids_informados != ids_pendentes:
                 raise HTTPException(status_code=400, detail="Informe o valor de todas as parcelas pendentes, e só delas.")
-            for p in outras_pendentes:
-                novo = dados.valores_parcelas[p.id]
+            for novo in dados.valores_parcelas.values():
                 if novo < 0:
                     raise HTTPException(status_code=400, detail="Valor de parcela não pode ser negativo.")
-                p.valor = round(novo, 2)
+
+            # Valores livres não são obrigados a somar o valor original —
+            # antes de aplicar, confirma que o total final (parcela editada +
+            # posteriores + já aplicadas, que não mudam) pode divergir do
+            # valor efetivamente pago no vale (lança como concessão se
+            # ficar menor, como acréscimo se ficar maior).
+            ids_outras_pendentes = {p.id for p in outras_pendentes}
+            parcelas_nao_tocadas = [p for p in todas_parcelas if p.id != parcela_id and p.id not in ids_outras_pendentes]
+            soma_final = round(
+                dados.valor + sum(dados.valores_parcelas.values()) + sum(p.valor for p in parcelas_nao_tocadas), 2
+            )
+            diferenca_total = round(soma_final - vale.valor_total, 2)
+            if diferenca_total != 0 and not dados.confirmar_divergencia_total:
+                raise HTTPException(status_code=409, detail={
+                    "mensagem": "O valor total das parcelas ficará diferente do valor efetivamente pago no vale.",
+                    "valor_vale": vale.valor_total,
+                    "valor_lancado": soma_final,
+                    "diferenca": diferenca_total,
+                })
+
+            for p in outras_pendentes:
+                p.valor = round(dados.valores_parcelas[p.id], 2)
                 session.add(p)
         else:
             raise HTTPException(status_code=400, detail="Informe a ação: redistribuir_igual, redistribuir_livre ou conceder.")

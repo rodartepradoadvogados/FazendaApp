@@ -246,6 +246,52 @@ def test_editar_parcela_redistribuir_livre_aplica_valores_informados(client):
     assert [p.valor for p in restantes] == [400.0, 400.0, 100.0]
 
 
+def test_editar_parcela_redistribuir_igual_nao_mexe_em_parcelas_anteriores(client):
+    """Regressão: editar a parcela do meio (2/3) com redistribuir_igual só
+    pode mexer nas posteriores (3/3) — a 1/3, já vencida/anterior, fica
+    intocada."""
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
+    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    parcelas = _parcelas_do_vale(engine, vale["id"])
+
+    r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[1].id}", json={
+        "valor": 100.0, "acao": "redistribuir_igual", "confirmar": True,
+    })
+    assert r.status_code == 200, r.text
+    restantes = _parcelas_do_vale(engine, vale["id"])
+    assert restantes[0].valor == 300.0  # 1ª parcela intocada
+    assert restantes[1].valor == 100.0  # a editada
+    assert restantes[2].valor == 500.0  # absorveu toda a diferença (200)
+
+
+def test_editar_parcela_redistribuir_livre_divergencia_total_exige_confirmacao(client):
+    c, engine = client
+    pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
+    vale = _criar_vale_3_parcelas(c, pessoa_id)
+    parcelas = _parcelas_do_vale(engine, vale["id"])
+
+    # 400 + 400 + 200 = 1000, diferente dos 900 pagos no vale.
+    payload = {
+        "valor": 400.0, "acao": "redistribuir_livre", "confirmar": True,
+        "valores_parcelas": {parcelas[1].id: 400.0, parcelas[2].id: 200.0},
+    }
+    r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json=payload)
+    assert r.status_code == 409, r.text
+    detalhe = r.json()["detail"]
+    assert detalhe["valor_vale"] == 900.0
+    assert detalhe["valor_lancado"] == 1000.0
+    assert detalhe["diferenca"] == 100.0
+
+    payload["confirmar_divergencia_total"] = True
+    r = c.put(f"/cadastro/vales/{vale['id']}/parcelas/{parcelas[0].id}", json=payload)
+    assert r.status_code == 200, r.text
+    dados = r.json()
+    assert dados["soma_parcelas_atual"] == 1000.0
+    assert dados["diverge_valor_pago"] is True
+    assert dados["diferenca_valor_pago"] == 100.0
+
+
 def test_editar_parcela_ja_paga_e_bloqueada(client):
     c, engine = client
     pessoa_id = _criar_pessoa(engine, salario_base=5000.0)
