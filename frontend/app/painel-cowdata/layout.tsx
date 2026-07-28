@@ -6,8 +6,9 @@
 // tela da fazenda" — reforça visualmente a separação de dados/negócio.
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useState } from "react";
 import {
-  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft,
+  LayoutGrid, CreditCard, Building2, Wallet, Users, Bot, Lock, ShieldCheck, ArrowLeft, Menu, X,
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
@@ -45,48 +46,78 @@ const GRUPOS = [
 
 export default function PainelCowDataLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
-  return (
-    <div style={{ display: "flex", minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif" }}>
-      <aside style={{ width: "15rem", flexShrink: 0, background: COR.painel, borderRight: `1px solid ${COR.borda}`, display: "flex", flexDirection: "column" }}>
-        <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
-          <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
-            <ArrowLeft size={13} /> Voltar à fazenda
-          </Link>
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
-            <CowDataMark size={40} />
-            <CowDataWordmark size="1.1rem" cowColor={COR.texto} dataColor={COR.doradoClaro} />
-          </div>
-          <p style={{ fontSize: "0.62rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem" }}>
-            Painel da empresa
-          </p>
+  const [aberto, setAberto] = useState(false);
+
+  const navConteudo = (
+    <>
+      <div style={{ padding: "1.1rem 1.1rem 0.9rem" }}>
+        <Link href="/" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.75rem", color: COR.mudo, textDecoration: "none", marginBottom: "0.9rem" }}>
+          <ArrowLeft size={13} /> Voltar à fazenda
+        </Link>
+        <div style={{ display: "flex", flexDirection: "column", gap: "0.3rem" }}>
+          <CowDataMark size={40} />
+          <CowDataWordmark size="1.1rem" cowColor={COR.texto} dataColor={COR.doradoClaro} />
         </div>
-        <nav style={{ flex: 1, padding: "0.4rem 0.8rem", overflowY: "auto" }}>
-          {GRUPOS.map((g) => (
-            <div key={g.titulo} style={{ marginBottom: "1.1rem" }}>
-              <p style={{ fontSize: "0.62rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: COR.mudo, margin: "0 0 0.4rem 0.5rem" }}>
-                {g.titulo}
-              </p>
-              {g.itens.map((item) => {
-                const ativo = item.href === "/painel-cowdata" ? path === item.href : path.startsWith(item.href);
-                const Icon = item.icon;
-                return (
-                  <Link key={item.href} href={item.href}
-                    style={{
-                      display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "8px",
-                      fontSize: "0.8rem", textDecoration: "none", marginBottom: "0.15rem",
-                      color: ativo ? COR.doradoClaro : "#c3cbde",
-                      background: ativo ? "rgba(212,160,23,0.12)" : "transparent",
-                      borderLeft: ativo ? `2px solid ${COR.dourado}` : "2px solid transparent",
-                    }}>
-                    <Icon size={15} /> {item.label}
-                  </Link>
-                );
-              })}
-            </div>
-          ))}
-        </nav>
+        <p style={{ fontSize: "0.62rem", color: COR.mudo, textTransform: "uppercase", letterSpacing: "0.08em", marginTop: "0.4rem" }}>
+          Painel da empresa
+        </p>
+      </div>
+      <nav style={{ flex: 1, padding: "0.4rem 0.8rem", overflowY: "auto" }}>
+        {GRUPOS.map((g) => (
+          <div key={g.titulo} style={{ marginBottom: "1.1rem" }}>
+            <p style={{ fontSize: "0.62rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.07em", color: COR.mudo, margin: "0 0 0.4rem 0.5rem" }}>
+              {g.titulo}
+            </p>
+            {g.itens.map((item) => {
+              const ativo = item.href === "/painel-cowdata" ? path === item.href : path.startsWith(item.href);
+              const Icon = item.icon;
+              return (
+                <Link key={item.href} href={item.href} onClick={() => setAberto(false)}
+                  style={{
+                    display: "flex", alignItems: "center", gap: "0.55rem", padding: "0.45rem 0.6rem", borderRadius: "8px",
+                    fontSize: "0.8rem", textDecoration: "none", marginBottom: "0.15rem",
+                    color: ativo ? COR.doradoClaro : "#c3cbde",
+                    background: ativo ? "rgba(212,160,23,0.12)" : "transparent",
+                    borderLeft: ativo ? `2px solid ${COR.dourado}` : "2px solid transparent",
+                  }}>
+                  <Icon size={15} /> {item.label}
+                </Link>
+              );
+            })}
+          </div>
+        ))}
+      </nav>
+    </>
+  );
+
+  return (
+    <div style={{ minHeight: "100vh", background: COR.bg, color: COR.texto, fontFamily: "system-ui, sans-serif" }} className="md:flex">
+      {/* Barra superior — só no mobile. Mesmo padrão do Sidebar.tsx do site. */}
+      <div className="md:hidden flex items-center gap-3 px-4 fixed top-0 left-0 right-0 z-30"
+        style={{ height: "3.25rem", background: COR.painel, borderBottom: `1px solid ${COR.borda}` }}>
+        <button onClick={() => setAberto(true)} aria-label="Abrir menu" title="Abrir o menu do Painel CowData"
+          style={{ background: "none", border: "none", color: COR.texto, cursor: "pointer", display: "flex" }}>
+          <Menu size={22} />
+        </button>
+        <CowDataWordmark size="0.85rem" cowColor={COR.texto} dataColor={COR.doradoClaro} />
+        <span style={{ color: COR.mudo, fontSize: "0.7rem" }}>· Painel da empresa</span>
+      </div>
+      <div className="md:hidden" style={{ height: "3.25rem" }} aria-hidden="true" />
+
+      {aberto && <div className="md:hidden fixed inset-0 z-40" style={{ background: "rgba(0,0,0,0.55)" }} onClick={() => setAberto(false)} />}
+
+      <aside
+        style={{ width: "15rem", flexShrink: 0, background: COR.painel, borderRight: `1px solid ${COR.borda}`, display: "flex", flexDirection: "column" }}
+        className={`fixed md:static inset-y-0 left-0 z-50 transform transition-transform duration-200 ${aberto ? "translate-x-0" : "-translate-x-full"} md:translate-x-0`}
+      >
+        <button onClick={() => setAberto(false)} aria-label="Fechar menu" title="Fechar o menu do Painel CowData"
+          className="md:hidden"
+          style={{ position: "absolute", top: 12, right: 12, background: "none", border: "none", color: COR.mudo, cursor: "pointer" }}>
+          <X size={20} />
+        </button>
+        {navConteudo}
       </aside>
-      <main style={{ flex: 1, padding: "2rem 2.5rem", overflowY: "auto" }}>{children}</main>
+      <main style={{ flex: 1, padding: "1.2rem 1rem", overflowY: "auto", overflowX: "hidden" }} className="md:py-8 md:px-10">{children}</main>
     </div>
   );
 }

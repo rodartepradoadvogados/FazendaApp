@@ -37,7 +37,7 @@ function Cartao({ titulo, subtitulo, children }: { titulo: string; subtitulo: st
         <h2 style={{ fontSize: "0.95rem", fontWeight: 700 }}>{titulo}</h2>
         <p style={{ fontSize: "0.76rem", color: COR.mudo, marginTop: "0.15rem" }}>{subtitulo}</p>
       </div>
-      {children}
+      <div style={{ overflowX: "auto" }}>{children}</div>
     </div>
   );
 }

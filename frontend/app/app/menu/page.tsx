@@ -2,16 +2,21 @@
 // Tela MENU do app de campo. NADA remete ao site: cada item abre a informação
 // GERENCIAL (só leitura, enxuta) dentro do próprio app, numa SUB-TELA com botão
 // voltar (estado interno, sem navegar de rota). Itens filtrados por permissão.
+// Única exceção deliberada: "Painel CowData" (dono-only) navega mesmo pra
+// rota /painel-cowdata — é a administração da EMPRESA de software, já
+// isolada visualmente do app da fazenda (paleta própria, ver
+// app/painel-cowdata/layout.tsx, agora responsivo), não uma tela de campo.
 //
 // Navegação em grade de 2 níveis (mesmo padrão lúdico já usado em Lançar e
 // Rebanho > Lotes, via GradeAcoes): 1º nível = sessões (quadrados grandes e
 // coloridos); ao tocar numa sessão, abre um 2º nível com os itens daquela
 // sessão (também em quadrados); ao tocar num item, abre a sub-tela real.
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -33,7 +38,6 @@ import FluxoCaixa from "@/components/mobile/menu/FluxoCaixa";
 import Dre from "@/components/mobile/menu/Dre";
 import Rmca from "@/components/mobile/menu/Rmca";
 import ExtratoCompleto from "@/components/mobile/menu/ExtratoCompleto";
-import News from "@/components/mobile/menu/News";
 import Estoque from "@/components/mobile/menu/Estoque";
 import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
@@ -92,8 +96,9 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 };
 
 export default function Pagina() {
+  const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -101,39 +106,12 @@ export default function Pagina() {
 
   useEffect(() => { setMontado(true); }, []);
 
-  // Atalho do ícone "News" no cabeçalho do app (/app/menu#news) — abre a
-  // sub-tela direto, sem passar pela grade de sessões.
-  useEffect(() => {
-    const verificarHash = () => { if (window.location.hash === "#news") setSecaoAberta("news"); };
-    verificarHash();
-    window.addEventListener("hashchange", verificarHash);
-    return () => window.removeEventListener("hashchange", verificarHash);
-  }, []);
-
   async function enviarAgora() {
     setSincronizando(true);
     try { await sincronizar(); } finally { setSincronizando(false); }
   }
 
   const usuario = montado ? getUsuario() : null;
-
-  // News é uma tela única (sem 2º nível de itens), igual "Aparência". Checada
-  // ANTES de "sub" propositalmente: o ícone de News no cabeçalho só muda o
-  // hash (não a rota), então se o usuário já estava em Menu dentro de uma
-  // sub-tela (sub !== null), o componente não remonta — sem essa ordem o
-  // early-return de "sub" abaixo manteria a sub-tela antiga e o toque no
-  // ícone pareceria não fazer nada. Limpa o hash ao voltar, senão um 2º
-  // clique no ícone (mesmo href) não dispara "hashchange" e não reabre.
-  if (secaoAberta === "news") {
-    return (
-      <News
-        onVoltar={() => {
-          if (window.location.hash === "#news") history.replaceState(null, "", "/app/menu");
-          setSecaoAberta(null);
-        }}
-      />
-    );
-  }
 
   // Sub-tela aberta: mostra só ela (com o próprio botão voltar).
   if (sub) {
@@ -196,6 +174,7 @@ export default function Pagina() {
     ...(montado && podeModulo("estoque") ? [{ id: "estoque", label: "Estoque", icone: <Boxes size={26} />, cor: "var(--cat-estoque)" }] : []),
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
+    ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
     { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
@@ -207,7 +186,11 @@ export default function Pagina() {
 
       <GradeAcoes
         opcoes={secoesOpcoes}
-        onEscolher={(id) => id === "sair" ? logout() : setSecaoAberta(id as SecaoKey | "aparencia" | "news" | "estoque" | "recria" | "controleAcesso")}
+        onEscolher={(id) => {
+          if (id === "sair") { logout(); return; }
+          if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
+          setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
+        }}
       />
 
       {/* Sincronização offline — sempre visível, independente das sessões acima. */}

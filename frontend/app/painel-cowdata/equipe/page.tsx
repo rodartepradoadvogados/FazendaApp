@@ -125,8 +125,8 @@ export default function EquipeCowData() {
         </div>
       )}
 
-      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflow: "hidden" }}>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem" }}>
+      <div style={{ background: COR.cartao, border: `1px solid ${COR.borda}`, borderRadius: "12px", overflowX: "auto", overflowY: "hidden" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.82rem", minWidth: "40rem" }}>
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
               <th style={{ padding: "0.6rem 1rem", width: "1.5rem" }}></th>
