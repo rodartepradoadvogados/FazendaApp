@@ -11,8 +11,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session
 
 from fazenda.auth import (
-    exigir_contrato_ativo, exigir_modulo, exigir_modulo_contratado, exigir_modulo_qualquer, get_current_user,
-    seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c, seed_permissao_publicar_dono,
+    bloquear_escrita_contador, exigir_contrato_ativo, exigir_modulo, exigir_modulo_contratado, exigir_modulo_qualquer,
+    get_current_user, seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c,
+    seed_permissao_publicar_dono,
 )
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
@@ -312,16 +313,20 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
-app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
-app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
-app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
-app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+# bloquear_escrita_contador vem por último: o vínculo `contador` (Painel do
+# Contador) já tem permissoes=["financeiro"] pelo cadastro normal do usuário
+# — sem essa trava adicional, ele conseguiria escrever em qualquer endpoint
+# destes 4 routers, não só ler (ver fazenda/auth.py::bloquear_escrita_contador).
+app.include_router(financeiro.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(relatorio_custo_hectare.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(relatorio_custo_producao.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
+app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 # Planejamento (Orçamento/Planejamento financeiro) é uma sub-aba de Financeiro
 # na permissão do usuário, mas um módulo comercial PRÓPRIO no contrato (Silver
 # não inclui, Gold/Diamond incluem — "financeiro completo"). Pedidos também é
 # módulo próprio (não mexe em Estoque/Financeiro sozinho — só quando um
 # lançamento/movimento é vinculado a ele).
-app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento"))])
+app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())])
 app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)

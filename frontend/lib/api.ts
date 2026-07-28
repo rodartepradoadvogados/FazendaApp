@@ -12,7 +12,7 @@ export function getUsuario(): any | null {
 // Piloto conservador de multi-fazenda (ver backend/fazenda/models/multitenant.py)
 // — fazenda selecionada no login/troca de fazenda. Ausente para todo mundo
 // que nunca teve mais de uma fazenda vinculada (o caso de hoje).
-export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null };
+export type FazendaAtual = { id: number; nome: string; cidade?: string | null; uf?: string | null; vinculo_contador?: boolean };
 export function getFazendaAtual(): FazendaAtual | null {
   if (typeof window === "undefined") return null;
   try { return JSON.parse(localStorage.getItem("fazenda_atual") || "null"); } catch { return null; }
@@ -47,6 +47,12 @@ export function ehAdmin(): boolean {
 // e-mail cadastrado e devolve o booleano pronto em /auth/me e /auth/login.
 export function ehDono(): boolean {
   return getUsuario()?.eh_dono === true;
+}
+// Contador externo da fazenda (vínculo UsuarioFazenda.contador) — login cai
+// direto no Painel do Contador (/contador), casca própria, nunca a
+// navegação normal da fazenda. Ver components/AuthShell.tsx.
+export function ehContador(): boolean {
+  return getFazendaAtual()?.vinculo_contador === true;
 }
 // Administração de News/Blog (fontes, matérias, revisão) é restrita ao
 // proprietário da plataforma — ver backend/fazenda/auth.py::exigir_dono.
@@ -431,10 +437,12 @@ export async function fetchCobrancasAsaas(fazendaId: number): Promise<CobrancaAs
   return res.json();
 }
 
-// Vínculo de usuário a uma fazenda — contratante (administra a fazenda) ou
-// consultor externo (veterinário/contador/agrônomo; só aceito em fazenda com
-// módulo "consultor" contratado — plano Diamond). Ver Fase 2B.
-export type UsuarioVinculado = { usuario_id: number; username: string; nome: string | null; contratante: boolean; consultor: boolean };
+// Vínculo de usuário a uma fazenda — contratante (administra a fazenda),
+// consultor externo (veterinário/agrônomo; só aceito em fazenda com módulo
+// "consultor" contratado — plano Diamond) ou contador externo (sem gate de
+// plano, mas cai direto no Painel do Contador — só Financeiro, só leitura/
+// exportação). Ver Fase 2B e fazenda/models/multitenant.py::UsuarioFazenda.
+export type UsuarioVinculado = { usuario_id: number; username: string; nome: string | null; contratante: boolean; consultor: boolean; contador: boolean };
 
 export async function fetchUsuariosVinculados(fazendaId: number): Promise<UsuarioVinculado[]> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/usuarios`);
@@ -442,7 +450,7 @@ export async function fetchUsuariosVinculados(fazendaId: number): Promise<Usuari
   return res.json();
 }
 export async function vincularUsuarioFazenda(
-  fazendaId: number, dados: { username: string; contratante?: boolean; consultor?: boolean },
+  fazendaId: number, dados: { username: string; contratante?: boolean; consultor?: boolean; contador?: boolean },
 ): Promise<{ vinculado: boolean; usuario_id: number; username: string }> {
   const res = await authFetch(`${API}/fazendas/${fazendaId}/vincular-usuario`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),

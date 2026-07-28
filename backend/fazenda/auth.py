@@ -15,7 +15,7 @@ import os
 import secrets
 import time
 
-from fastapi import Depends, Header, HTTPException
+from fastapi import Depends, Header, HTTPException, Request
 from sqlmodel import Session, select
 
 from fazenda.database import get_session
@@ -224,6 +224,29 @@ def exigir_modulo_qualquer(*modulos: str):
         if not any(tem_modulo(user, m) for m in modulos):
             raise HTTPException(status_code=403, detail=f"Sem acesso a nenhum dos módulos: {', '.join(modulos)}")
         return user
+    return _dep
+
+
+def bloquear_escrita_contador():
+    """Dependência de router (aplicada no include_router de main.py, junto
+    com exigir_modulo("financeiro")) — o vínculo `contador` (Painel do
+    Contador, ver fazenda/models/multitenant.py::UsuarioFazenda) é só
+    leitura/exportação: qualquer método que não seja GET/HEAD/OPTIONS é
+    bloqueado para quem tiver esse vínculo na fazenda selecionada. GET passa
+    direto — é o que sustenta os relatórios do painel."""
+    def _dep(
+        request: Request,
+        user: Usuario = Depends(get_current_user),
+        fazenda_id: int | None = Depends(get_fazenda_atual_id),
+        session: Session = Depends(get_session),
+    ) -> None:
+        if request.method in ("GET", "HEAD", "OPTIONS") or fazenda_id is None:
+            return
+        vinculo = session.exec(
+            select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == fazenda_id)
+        ).first()
+        if vinculo and vinculo.contador:
+            raise HTTPException(status_code=403, detail="Contador tem acesso somente leitura/exportação")
     return _dep
 
 

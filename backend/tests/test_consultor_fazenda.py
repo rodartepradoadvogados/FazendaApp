@@ -133,7 +133,7 @@ class TestVinculoConsultor:
         c.post("/fazendas/1/vincular-usuario", json={"username": "vet_externo", "consultor": True})
         r = c.get("/fazendas/1/usuarios")
         assert r.status_code == 200
-        assert r.json() == [{"usuario_id": 1, "username": "vet_externo", "nome": None, "contratante": False, "consultor": True}]
+        assert r.json() == [{"usuario_id": 1, "username": "vet_externo", "nome": None, "contratante": False, "consultor": True, "contador": False}]
 
     def test_desvincula_consultor(self, client):
         c, engine = client

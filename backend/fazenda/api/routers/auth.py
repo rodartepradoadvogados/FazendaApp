@@ -123,8 +123,17 @@ def _fazendas_vinculadas(session: Session, usuario_id: int) -> list[Fazenda]:
     return [f for f in fazendas if f and f.ativa]
 
 
-def _fazenda_publica(f: Fazenda) -> dict:
-    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf}
+def _fazenda_publica(f: Fazenda, vinculo: UsuarioFazenda | None = None) -> dict:
+    # `vinculo_contador` diz ao frontend se deve mandar direto pro Painel do
+    # Contador (/contador, casca própria) em vez da navegação normal da
+    # fazenda — ver components/AuthShell.tsx e fazenda/models/multitenant.py.
+    return {"id": f.id, "nome": f.nome, "cidade": f.cidade, "uf": f.uf, "vinculo_contador": bool(vinculo and vinculo.contador)}
+
+
+def _vinculo(session: Session, usuario_id: int, fazenda_id: int) -> UsuarioFazenda | None:
+    return session.exec(
+        select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == usuario_id, UsuarioFazenda.fazenda_id == fazenda_id)
+    ).first()
 
 
 @router.post("/login")
@@ -148,7 +157,7 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
-        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto)
+        resposta["fazenda_atual"] = _fazenda_publica(fazenda_auto, _vinculo(session, user.id, fazenda_auto.id))
     if len(fazendas) > 1:
         resposta["selecao_fazenda_necessaria"] = True
         resposta["fazendas_disponiveis"] = [_fazenda_publica(f) for f in fazendas]
@@ -174,7 +183,7 @@ def selecionar_fazenda(
     fazenda = session.get(Fazenda, dados.fazenda_id)
     if not fazenda or not fazenda.ativa:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
-    return {"token": criar_token(user.username, fazenda_id=fazenda.id), "fazenda_atual": _fazenda_publica(fazenda)}
+    return {"token": criar_token(user.username, fazenda_id=fazenda.id), "fazenda_atual": _fazenda_publica(fazenda, vinculo)}
 
 
 class EsqueciSenhaVerificarIn(BaseModel):
@@ -251,7 +260,7 @@ def me(
     if fazenda_id:
         fazenda = session.get(Fazenda, fazenda_id)
         if fazenda:
-            dados["fazenda_atual"] = _fazenda_publica(fazenda)
+            dados["fazenda_atual"] = _fazenda_publica(fazenda, _vinculo(session, user.id, fazenda_id))
     return dados
 
 

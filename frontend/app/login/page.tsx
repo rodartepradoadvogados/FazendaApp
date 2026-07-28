@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
-import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, type NoticiaNews, type FazendaAtual } from "@/lib/api";
+import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
 import { Building2 } from "lucide-react";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
@@ -126,6 +126,9 @@ function Hero() {
   const [carregandoEsqueci, setCarregandoEsqueci] = useState(false);
 
   const irParaDestino = () => {
+    // Vínculo de contador: não tem acesso ao resto do sistema (nem ao app
+    // móvel) — vai direto para o Painel do Contador, ignorando "next".
+    if (ehContador()) { router.replace("/contador"); return; }
     // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
     const next = new URLSearchParams(window.location.search).get("next");
     router.replace(next && next.startsWith("/") ? next : "/");
