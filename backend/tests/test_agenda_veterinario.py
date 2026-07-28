@@ -274,18 +274,33 @@ class TestVerificarAptidao:
 
 
 class TestPreParto:
-    def test_gestante_31_a_60_dias_para_parto(self, client):
+    def test_gestante_0_a_30_dias_para_parto(self, client):
         c, engine = client
         _add_animal(engine, "30", "Vaca", idade_meses=IDADE_APTA)
         _add_peso(engine, "30", PESO_APTO)
-        # gestação de 283 dias; faltando 45 dias -> serviço há 238 dias
-        _add_servico(engine, "30", 238, data_diagnostico=HOJE - timedelta(days=200), diagnostico="POSITIVO",
+        # gestação de referência 288 dias; faltando 20 dias -> serviço há 268 dias.
+        # Janela real de pré-parto: últimos 30 dias antes do parto (vem DEPOIS
+        # do período seco/Secagem, que é 31-60 dias antes — ver o teste abaixo
+        # e fazenda.rules.parametros.pre_parto_max).
+        _add_servico(engine, "30", 268, data_diagnostico=HOJE - timedelta(days=200), diagnostico="POSITIVO",
                      data_reconfirmacao=HOJE - timedelta(days=170), diagnostico_reconfirmacao="POSITIVO")
         # data=HOJE fixa a data de referência do endpoint (default é date.today()
         # real, ver #490) — sem isso os testes de janela de dias (1-29/30-59/
         # pré-parto) driftam e quebram conforme o calendário real avança.
         r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
         assert any(a["numero_matriz"] == "30" for a in r.json()["listas"]["verificar_pre_parto"])
+
+    def test_gestante_31_a_60_dias_para_parto_nao_e_pre_parto(self, client):
+        c, engine = client
+        _add_animal(engine, "31", "Vaca", idade_meses=IDADE_APTA)
+        _add_peso(engine, "31", PESO_APTO)
+        # gestação de referência 288 dias; faltando 45 dias -> serviço há 243 dias.
+        # 45 dias para o parto é a janela do período seco/Secagem, não de
+        # pré-parto — não deve entrar em "verificar_pre_parto".
+        _add_servico(engine, "31", 243, data_diagnostico=HOJE - timedelta(days=200), diagnostico="POSITIVO",
+                     data_reconfirmacao=HOJE - timedelta(days=170), diagnostico_reconfirmacao="POSITIVO")
+        r = c.get("/reproducao/agenda-veterinario", params={"data": HOJE.isoformat()})
+        assert not any(a["numero_matriz"] == "31" for a in r.json()["listas"]["verificar_pre_parto"])
 
 
 class TestPendentesClassificacao:

@@ -18,7 +18,7 @@ from fazenda.models import (
 )
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.auditoria import fazenda_id_seguro
-from fazenda.rules.parametros import get_param
+from fazenda.rules.parametros import get_param, pre_parto_max
 from fazenda.rules.relatorios_gerenciais import GESTACAO_DIAS, LIMITE_SECAGEM_RETROATIVA_DIAS
 
 router = APIRouter(prefix="/animais", tags=["animais"])
@@ -130,13 +130,16 @@ def estratificacao_rebanho(
         total += 1
         pariu = a.numero in ult_parto
         if pariu:
-            # Vaca adulta: lactação (lote 01–03), pré-parto (prenhe e gestação
-            # avançada ≥ 240 dias) ou seca.
+            # Vaca adulta: lactação (lote 01–03), pré-parto (últimos
+            # pre_parto_max dias antes do parto previsto — padrão 30; ver
+            # fazenda.rules.parametros e agenda_engine.py, mesma janela usada
+            # na Agenda) ou seca (inclui o período seco/Secagem, 31-60 dias).
             gest = (hoje - ult_pos[a.numero]).days if a.numero in ult_pos else None
+            limite_pre_parto = GESTACAO_DIAS - pre_parto_max()
             if _codigo_lote(a.grupo_primario) in LOTES_LACTACAO:
                 estratos["vacas_lactacao"] += 1
                 numeros["vacas_lactacao"].append(a.numero)
-            elif gest is not None and gest >= 240:
+            elif gest is not None and gest >= limite_pre_parto:
                 estratos["vacas_pre_parto"] += 1
                 numeros["vacas_pre_parto"].append(a.numero)
             else:
