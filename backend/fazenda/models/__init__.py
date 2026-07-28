@@ -173,6 +173,10 @@ from .consultores import (
     FazendaGerenciada,
     RegistroImportado,
 )
+from .documentos import (
+    DocumentoArquivado,
+    Chamado,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -209,6 +213,8 @@ __all__ = [
     "ContratoConsultor",
     "FazendaGerenciada",
     "RegistroImportado",
+    "DocumentoArquivado",
+    "Chamado",
     "Animal",
     "Lote",
     "MovimentoLote",

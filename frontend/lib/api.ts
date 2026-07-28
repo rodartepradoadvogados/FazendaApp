@@ -4168,3 +4168,131 @@ export type PortalOpcaoExportacao = { chave: string; rotulo: string; tem_periodo
 export const fetchPortalOpcoesExportacao = (): Promise<PortalOpcaoExportacao[]> => _rGet(`/portal/exportar/opcoes`);
 export const solicitarPortalExportacao = (d: { itens: { chave: string; data_inicio?: string; data_fim?: string }[] }) =>
   _rSend(`/portal/exportar`, "POST", d);
+
+// ── Arquivo fiscal-contábil (Documentos) ──
+// Ver backend/fazenda/api/routers/documentos.py — upload pergunta "inserir
+// no balanço?", conteúdo vive no Supabase Storage, aqui só os metadados.
+export type DocumentoArquivado = {
+  id: number; categoria: string; nome_original: string; mime_type: string; tamanho_bytes: number;
+  data_documento: string | null; data_upload: string; inserir_no_balanco: boolean;
+  numero_lancamento: string | null; descricao: string | null;
+};
+
+export async function fetchCategoriasDocumento(): Promise<string[]> {
+  const res = await authFetch(`${API}/documentos/categorias`);
+  if (!res.ok) throw new Error("Erro ao listar categorias de documento");
+  return res.json();
+}
+
+export async function fetchDocumentos(filtros?: {
+  categoria?: string; inserir_no_balanco?: boolean; numero_lancamento?: string; data_de?: string; data_ate?: string;
+}): Promise<DocumentoArquivado[]> {
+  const params = new URLSearchParams();
+  if (filtros?.categoria) params.set("categoria", filtros.categoria);
+  if (filtros?.inserir_no_balanco !== undefined) params.set("inserir_no_balanco", String(filtros.inserir_no_balanco));
+  if (filtros?.numero_lancamento) params.set("numero_lancamento", filtros.numero_lancamento);
+  if (filtros?.data_de) params.set("data_de", filtros.data_de);
+  if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/documentos${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Erro ao listar documentos");
+  return res.json();
+}
+
+export async function enviarDocumento(dados: {
+  file: File; categoria: string; inserirNoBalanco: boolean; numeroLancamento?: string; dataDocumento?: string; descricao?: string;
+}): Promise<DocumentoArquivado> {
+  const fd = new FormData();
+  fd.append("file", dados.file);
+  fd.append("categoria", dados.categoria);
+  fd.append("inserir_no_balanco", String(dados.inserirNoBalanco));
+  if (dados.numeroLancamento) fd.append("numero_lancamento", dados.numeroLancamento);
+  if (dados.dataDocumento) fd.append("data_documento", dados.dataDocumento);
+  if (dados.descricao) fd.append("descricao", dados.descricao);
+  const res = await authFetch(`${API}/documentos/upload`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao arquivar documento"); }
+  return res.json();
+}
+
+// Baixa via blob (não um <a href> direto) — o endpoint exige o token da
+// sessão, e assim o arquivo nunca aparece com uma URL "crua" navegável.
+export async function baixarDocumento(id: number, nomeArquivo: string): Promise<void> {
+  const res = await authFetch(`${API}/documentos/${id}/download`);
+  if (!res.ok) throw new Error("Erro ao baixar documento");
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = nomeArquivo;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+}
+
+export async function excluirDocumento(id: number): Promise<void> {
+  const res = await authFetch(`${API}/documentos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir documento"); }
+}
+
+// ── Cadeado do Painel do Contador ──
+// Reautenticação por senha que destrava, por 15 minutos, lançamentos
+// extraordinários, recálculo de juros e abertura de chamado — ver
+// backend/fazenda/auth.py::bloquear_escrita_contador e POST /auth/desbloquear.
+// O token retornado vai no header X-Desbloqueio das chamadas seguintes.
+export async function desbloquearContador(senha: string): Promise<{ token_desbloqueio: string; validade_segundos: number }> {
+  const res = await fetch(`${API}/auth/desbloquear`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...(getToken() ? { Authorization: `Bearer ${getToken()}` } : {}) },
+    body: JSON.stringify({ senha }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Senha incorreta"); }
+  return res.json();
+}
+
+function comDesbloqueio(token: string): HeadersInit {
+  return { "X-Desbloqueio": token };
+}
+
+// ── Chamados (suporte) ──
+export type Chamado = {
+  id: number; assunto: string; descricao: string; status: "aberto" | "em_andamento" | "resolvido";
+  criado_em: string; atualizado_em: string; resposta: string | null;
+};
+
+export async function fetchChamados(): Promise<Chamado[]> {
+  const res = await authFetch(`${API}/chamados`);
+  if (!res.ok) throw new Error("Erro ao listar chamados");
+  return res.json();
+}
+
+export async function abrirChamado(dados: { assunto: string; descricao: string }, tokenDesbloqueio: string): Promise<Chamado> {
+  const res = await authFetch(`${API}/chamados`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir chamado"); }
+  return res.json();
+}
+
+// ── Recálculo de juros/multa (calculadora — não persiste nada sozinha) ──
+export type CalculoJuros = { dias_atraso: number; valor_multa: number; valor_juros: number; valor_atualizado: number };
+
+export async function calcularJuros(
+  dados: { valor_original: number; data_vencimento: string; data_referencia?: string; percentual_multa?: number; percentual_juros_mes?: number },
+  tokenDesbloqueio: string,
+): Promise<CalculoJuros> {
+  const res = await authFetch(`${API}/financeiro/calcular-juros`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao calcular juros"); }
+  return res.json();
+}
+
+// Lançamento extraordinário do contador (guia/imposto/multa) — mesmo POST
+// /financeiro/lancamentos de sempre, só que com o cadeado destravado.
+export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio: string) {
+  const res = await authFetch(`${API}/financeiro/lancamentos`, {
+    method: "POST", headers: { "Content-Type": "application/json", ...comDesbloqueio(tokenDesbloqueio) },
+    body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
+  return res.json();
+}

@@ -27,11 +27,13 @@ from fazenda.api.routers import (
     auth,
     baixas,
     cadastro,
+    chamados,
     cobranca,
     cofre_acesso,
     compra_animal,
     compra_semen,
     consultores,
+    documentos,
     estoque,
     exclusoes,
     farmacia,
@@ -351,6 +353,13 @@ app.include_router(relatorio_custo_safra.router, dependencies=[Depends(exigir_mo
 # lançamento/movimento é vinculado a ele).
 app.include_router(planejamento.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("planejamento")), Depends(bloquear_escrita_contador())])
 app.include_router(pedidos.router, dependencies=[Depends(exigir_modulo("pedidos")), Depends(exigir_modulo_contratado("pedidos"))])
+# Arquivo fiscal-contábil (Documentos) — SEM bloquear_escrita_contador: o
+# contador pode arquivar documentos livremente (decisão do usuário), só a
+# escrita em Financeiro/Planejamento/Chamados fica atrás do cadeado.
+app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro"))])
+# Chamados (suporte) — mesmo padrão de financeiro: contador só escreve
+# (abrir chamado) com o cadeado destravado.
+app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
