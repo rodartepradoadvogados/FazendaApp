@@ -74,7 +74,7 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
         ) : (
           <>
             <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>
-              {lista.length} animal{lista.length !== 1 ? "is" : ""}
+              {lista.length} animal(is)
             </p>
             {lista.map((a) => (
               <div key={a.numero} className="mob-card" style={{ padding: "0.75rem 0.9rem", marginBottom: "0.5rem", display: "flex", alignItems: "center", gap: "0.75rem" }}>

@@ -12,8 +12,12 @@ from sqlmodel import Session, select
 
 from fazenda.auth import get_fazenda_atual_id
 from fazenda.database import get_session
-from fazenda.models import Animal, Lote, OcorrenciaClinica, Parto, PesagemCorporal, Sanidade, Servico
+from fazenda.models import (
+    Animal, Lote, OcorrenciaClinica, Parto, PesagemCorporal, ProtocoloIatfAplicacao, Sanidade, Servico,
+)
+from fazenda.rules.estado_reprodutivo import classificar_animal
 from fazenda.rules.indicadores import calcular_indicadores
+from fazenda.rules.parametros import get_param, idade_apta_min_meses, peso_apta_min, pev_dias
 
 router = APIRouter(prefix="/indicadores", tags=["indicadores"])
 
@@ -265,3 +269,96 @@ def obter_indicadores(
 
     lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
     return calcular_indicadores(animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal, lotes=lotes)
+
+
+@router.get("/estados-reprodutivos")
+def estados_reprodutivos(
+    data: date = date.today(),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
+    """Estado reprodutivo AO VIVO de cada fêmea ativa, recalculado dos
+    registros (Parto/Servico/ProtocoloIatfAplicacao) — NÃO usa o texto
+    congelado de Animal.sit_rep, que só muda no próximo upload de CSV e
+    produzia listas erradas (gestante que já pariu, PEV vencido, inseminada
+    listada como atrasada, vaca em protocolo listada como apta).
+
+    Ver fazenda.rules.estado_reprodutivo para a matriz de exclusão entre as
+    categorias. Consumido pelas listas de Rebanho do app e do site.
+    """
+    query_animais = select(Animal).where(Animal.ativo == True)  # noqa: E712
+    query_servicos = select(Servico)
+    query_partos = select(Parto)
+    query_iatf = select(ProtocoloIatfAplicacao)
+    query_pesagem = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_animais = query_animais.where(Animal.fazenda_id == fazenda_id)
+        query_servicos = query_servicos.where(Servico.fazenda_id == fazenda_id)
+        query_partos = query_partos.where(Parto.fazenda_id == fazenda_id)
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+
+    femeas = [a for a in session.exec(query_animais).all() if not a.eh_semen and a.sexo != "M"]
+
+    # Indexa por número uma vez só — evita varrer as listas por animal (o
+    # rebanho tem milhares de serviços/partos).
+    servicos_por: dict[str, list] = {}
+    for s in session.exec(query_servicos).all():
+        servicos_por.setdefault(s.numero_matriz, []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in session.exec(query_partos).all():
+        partos_por.setdefault(p.numero_matriz, []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in session.exec(query_iatf).all():
+        iatf_por.setdefault(ap.numero_matriz, []).append(ap)
+
+    peso_por: dict[str, float] = {}
+    ultima: dict[str, date] = {}
+    for pes in session.exec(query_pesagem).all():
+        if pes.numero_matriz not in ultima or pes.data_pesagem > ultima[pes.numero_matriz]:
+            ultima[pes.numero_matriz] = pes.data_pesagem
+            peso_por[pes.numero_matriz] = pes.peso_kg
+
+    pev = pev_dias()
+    del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    idade_apta = int(idade_apta_min_meses() * 30.44)
+    peso_apta = peso_apta_min()
+
+    resultado = []
+    for a in femeas:
+        idade = (data - a.data_nasc).days if a.data_nasc else None
+        estado = classificar_animal(
+            a.numero,
+            hoje=data,
+            partos=partos_por.get(a.numero, []),
+            servicos=servicos_por.get(a.numero, []),
+            aplicacoes_iatf=iatf_por.get(a.numero, []),
+            pev_dias=pev,
+            del_max_1o_servico=del_max,
+            # "Vaca" = já pariu alguma vez; novilha nulípara segue a regra de
+            # idade+peso, não a de DEL.
+            eh_vaca=bool(partos_por.get(a.numero)),
+            idade_dias=idade,
+            peso_kg=peso_por.get(a.numero),
+            idade_apta_dias=idade_apta,
+            peso_apta_kg=peso_apta,
+        )
+        estado["categoria"] = a.categoria_abrev or a.grupo_primario or "—"
+        estado["lote"] = a.grupo_primario
+        resultado.append(estado)
+
+    # Ordem crescente do número do brinco em TODA lista (pedido do produtor) —
+    # numérica quando o brinco é número, alfabética como desempate.
+    resultado.sort(key=lambda e: (0, int(e["numero"]), "") if e["numero"].isdigit() else (1, 0, e["numero"]))
+
+    por_estado: dict[str, int] = {}
+    for e in resultado:
+        por_estado[e["estado"]] = por_estado.get(e["estado"], 0) + 1
+
+    return {
+        "data_referencia": data.isoformat(),
+        "animais": resultado,
+        "contagem": por_estado,
+        "parametros": {"pev_dias": pev, "del_max_1o_servico": del_max,
+                       "idade_apta_dias": idade_apta, "peso_apta_kg": peso_apta},
+    }
