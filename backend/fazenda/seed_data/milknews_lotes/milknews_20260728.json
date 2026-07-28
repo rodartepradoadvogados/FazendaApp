@@ -1,0 +1,40 @@
+[
+  {
+    "manchete": "Leite spot tem leve recuo na segunda quinzena de julho, aponta MilkPoint/Cepea",
+    "resumo": "O leite spot fechou a segunda quinzena de julho com viés de baixa em parte dos estados brasileiros, revertendo a alta observada na primeira quinzena do mês. Minas Gerais, Goiás e Paraná mantiveram os preços estáveis, enquanto São Paulo, Santa Catarina e Rio Grande do Sul registraram recuos moderados. Dados: MilkPoint/Cepea.",
+    "materia": "O leite spot fechou a segunda quinzena de julho com viés de baixa em parte dos estados brasileiros, revertendo o movimento de alta observado na primeira quinzena do mês. Segundo o levantamento do MilkPoint com base em dados do Cepea, Minas Gerais, Goiás e Paraná mantiveram os preços estáveis no período, enquanto São Paulo, Santa Catarina e Rio Grande do Sul registraram recuos moderados na cotação.\n\nO ajuste é atribuído ao início do período sazonal de aumento da captação de leite, somado a vendas no atacado ainda abaixo do esperado — o que reduziu o volume de compras no mercado spot em algumas praças. Ainda assim, a retração foi qualificada como leve, sem reverter o patamar mais alto alcançado ao longo do mês.\n\nNo comparativo internacional, o indicador de referência do Global Dairy Trade seguiu em relativa estabilidade no período, sem o mesmo movimento de queda observado no mercado brasileiro, o que reforça que o recuo do spot nacional tem raiz mais em fatores de oferta e demanda internos do que em pressão externa.",
+    "link": "/news#milknews-2026-07-28-01",
+    "data_publicacao": "2026-07-28",
+    "fontes": [
+      "https://www.milkpoint.com.br/noticias-e-mercado/panorama-mercado/atualizacao-quinzenal-de-precos-mercado-global-mantem-estabilidade-recuo-no-spot-e-conseleites-241105/",
+      "https://www.cepea.org.br/br/indicador/leite.aspx"
+    ],
+    "categoria": "Mercado"
+  },
+  {
+    "manchete": "Preço do leite sobe 6% no ano, mas custo de produção avança 14%, aponta Cepea",
+    "resumo": "Levantamento do Cepea/Esalq mostra que a valorização de 6% no preço do leite pago ao produtor neste ano não tem se traduzido em maior rentabilidade: o custo operacional efetivo da atividade avançou 14% no mesmo período, puxado principalmente por concentrado e suplementação mineral. A estiagem que compromete a qualidade da forragem também eleva a dependência de insumos comprados. Dados: Cepea/Esalq.",
+    "materia": "Um novo levantamento do Cepea/Esalq mostra que a alta de 6% no preço do leite pago ao produtor neste ano não tem se traduzido em maior rentabilidade para quem produz. No mesmo período, o custo operacional efetivo da atividade leiteira avançou 14%, um ritmo mais do que duas vezes superior ao da valorização do produto — o que aperta as margens no campo mesmo em um cenário de preços nominalmente mais altos.\n\nSegundo o Cepea, a pressão de custos está concentrada principalmente nos insumos ligados ao manejo nutricional do rebanho, como concentrado e suplementação mineral. A estiagem que afeta a qualidade da forragem em boa parte das regiões produtoras tem obrigado produtores a complementar a dieta com mais insumos comprados, justamente os que mais subiram de preço no período.\n\nO estudo aponta ainda que a pressão das redes de distribuição sobre o preço final dos laticínios tem desvalorizado o produto na ponta do varejo, o que prejudica a capacidade de repasse das indústrias — e, por consequência, o quanto elas conseguem pagar ao produtor. O aumento das importações de lácteos observado neste ano é citado como outro fator que pode conter novos movimentos de valorização do leite nos próximos meses.",
+    "link": "/news#milknews-2026-07-28-02",
+    "data_publicacao": "2026-07-28",
+    "fontes": [
+      "https://www.cepea.org.br/br/releases/8.aspx"
+    ],
+    "imagem": "/news-images/cochos-headlock-luz-dourada.jpg",
+    "categoria": "Custo de Produção"
+  },
+  {
+    "manchete": "Fairlife, marca de leite da Coca-Cola avaliada em US$ 4 bilhões, suspende produção nos EUA após ataque de ransomware",
+    "resumo": "A Coca-Cola comunicou que a fairlife, sua marca de leite ultrafiltrado rico em proteína, sofreu acesso não autorizado a sistemas de produção em um ataque de ransomware, levando à suspensão temporária das operações fabris nos Estados Unidos — a produção no Canadá não foi afetada. A empresa afirma que a qualidade e a segurança dos produtos não foram comprometidas e que já ativou protocolos de resposta a incidentes. Dados: Coca-Cola/fairlife.",
+    "materia": "A Coca-Cola comunicou, em 16 de julho, que a fairlife — sua marca de leite ultrafiltrado rico em proteína, avaliada em cerca de US$ 4 bilhões — identificou o acesso não autorizado de terceiros a uma parte de seus sistemas, incluindo os sistemas ligados à produção, em conexão com um ataque de ransomware. Como consequência, as operações fabris da fairlife nos Estados Unidos foram temporariamente suspensas.\n\nSegundo o comunicado oficial da empresa, a produção da fairlife no Canadá não foi afetada pelo incidente. A Coca-Cola afirma que a qualidade e a segurança dos produtos não foram comprometidas e que, assim que o problema foi identificado, os protocolos internos de resposta a incidentes e continuidade de negócios foram acionados, com o apoio de consultores externos e especialistas em cibersegurança para investigar e avaliar o alcance do ataque.\n\nA fairlife é hoje uma das marcas de maior destaque na categoria de leites de alto valor agregado nos Estados Unidos, com forte apelo entre consumidores que buscam produtos ricos em proteína e com baixo teor de açúcar — um segmento que vinha crescendo acima da média do mercado lácteo americano. Episódios como este reforçam a exposição crescente da cadeia de produção de laticínios a ataques cibernéticos, à medida que fábricas se tornam mais automatizadas e dependentes de sistemas conectados.",
+    "link": "/news#milknews-2026-07-28-03",
+    "data_publicacao": "2026-07-28",
+    "fontes": [
+      "https://fairlife.com/news/technology-disruption-fairlife-operations/",
+      "https://www.cbsnews.com/news/coca-cola-fairlife-milk-cyberattack/",
+      "https://techcrunch.com/2026/07/16/coca-cola-suspended-production-at-its-fairlife-dairy-after-a-ransomware-attack/"
+    ],
+    "imagem": "/news-images/banco-ordenha-rotativa-silos-generico.jpg",
+    "categoria": "Mercado Internacional"
+  }
+]
