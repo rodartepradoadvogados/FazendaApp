@@ -33,6 +33,7 @@ import { useSubNavRegister, type SubNavNode } from "@/components/SubNavContext";
 import { RESPONSAVEIS } from "@/lib/constants";
 import FolhaPagamentoView from "@/components/FolhaPagamentoView";
 import RelatorioFolhaPagamentoView from "@/components/RelatorioFolhaPagamentoView";
+import { DocumentosFiscais } from "@/components/DocumentosFiscais";
 
 const COLUNAS_LANCAMENTOS = [
   { header: "Nº lanç.", key: "numero_lancamento" }, { header: "Data", key: "data" },
@@ -59,7 +60,7 @@ type Lanc = {
   usuario_nome?: string | null;
 };
 
-type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro";
+type Rel = "fluxo" | "dre" | "livro" | "a_pagar" | "a_receber" | "pagas" | "recebidas" | "folha_relatorio" | "extrato" | "patrimonio" | "lote" | "pagamento" | "recebimento" | "folha" | "rmca" | "custo_litro_leite" | "custo_hectare" | "custo_vaca_lote" | "custo_safra" | "compra_venda_animais" | "orcamento" | "planejamento_financeiro" | "documentos";
 const RELATORIOS: { id: Rel; label: string; icon: any; desc: string }[] = [
   { id: "fluxo", label: "Fluxo de Caixa", icon: Wallet, desc: "Entradas × saídas por regime de caixa" },
   { id: "dre", label: "DRE Gerencial", icon: FileText, desc: "Resultado por competência" },
@@ -254,9 +255,11 @@ export default function FinanceiroPage() {
     { id: "acoes-grupo", label: "Ações", icon: Layers, children: ACOES.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "relatorios-grupo", label: "Relatórios", icon: FileText, children: RELATORIOS.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
     { id: "planejamento-grupo", label: "Planejamento", icon: Compass, children: PLANEJAMENTO.map((r) => ({ id: r.id, label: r.label, icon: r.icon })) },
-    // Patrimônio é um destino único — vira folha direta (sem grupo "guarda-chuva"
-    // de 1 item só), economizando um nível/clique da árvore de navegação.
+    // Patrimônio e Documentos são destinos únicos — viram folha direta (sem
+    // grupo "guarda-chuva" de 1 item só), economizando um nível/clique da
+    // árvore de navegação.
     { id: "patrimonio", label: "Patrimônio", icon: Building2 },
+    { id: "documentos", label: "Documentos", icon: Paperclip },
   ], []);
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId: rel, onSelect: (id: string) => setRel(id as Rel) }), [subNavTree, rel]));
 
@@ -494,6 +497,7 @@ export default function FinanceiroPage() {
 
       {regs && regs.length > 0 && <>
         {rel === "patrimonio" ? <PatrimonioView />
+          : rel === "documentos" ? <DocumentosFiscais />
           : rel === "pagamento" ? <PagamentoIndividualView key="despesa" tipo="despesa" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "recebimento" ? <PagamentoIndividualView key="receita" tipo="receita" contasBancarias={contasBancarias} notaAlvoRef={notaAlvoRef} onNotaTratada={() => setNotaAlvoRef(null)} onFeito={recarregar} />
           : rel === "lote" ? <PagamentoLoteView contasBancarias={contasBancarias} onFeito={recarregar} /> : rel === "folha" ? <FolhaPagamentoView />
