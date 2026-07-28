@@ -1270,6 +1270,27 @@ export async function excluirVale(valeId: number) {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir vale"); }
   return res.json();
 }
+/** Edita UMA parcela do vale (sem recriar as demais) — se o valor divergir do
+ * calculado, o backend responde 409 com {mensagem, valor_calculado,
+ * valor_informado, diferenca, parcelas_pendentes_restantes}; reenviar com
+ * `acao` ("conceder" | "redistribuir_igual" | "redistribuir_livre") e
+ * `confirmar: true` (e `valores_parcelas` se redistribuir_livre). */
+export async function atualizarParcelaVale(valeId: number, parcelaId: number, dados: {
+  valor: number; acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
+  valores_parcelas?: Record<number, number>; confirmar?: boolean;
+}) {
+  const res = await authFetch(`${API}/cadastro/vales/${valeId}/parcelas/${parcelaId}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao editar parcela do vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
+  return res.json();
+}
 
 // ── Empreitada (Financeiro > Ações > Folha de Pagamento) ──
 export async function fetchEmpreitadas() {
@@ -1505,14 +1526,27 @@ export async function fetchValesAvulsos() {
   if (!res.ok) throw new Error(`Vales avulsos error: ${res.status}`);
   return res.json();
 }
+/** Se `valor` divergir do valor atual do vale, o backend responde 409 com
+ * {mensagem, valor_calculado, valor_informado, diferenca}; reenviar com
+ * `acao` ("conceder" | "redistribuir_igual" | "redistribuir_livre") e
+ * `confirmar: true` (e `valores_itens` — parcela/etapa do alvo → novo valor —
+ * se redistribuir_livre). Resposta: {vale, origem} (origem já atualizada). */
 export async function atualizarValeAvulso(valeId: number, dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
+  acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
+  valores_itens?: Record<number, number>; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso/${valeId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar vale"); }
+  if (!res.ok) {
+    const d = await res.json().catch(() => ({}));
+    const err: any = new Error(typeof d.detail === "string" ? d.detail : d.detail?.mensagem || "Erro ao editar vale");
+    err.detail = d.detail;
+    err.status = res.status;
+    throw err;
+  }
   return res.json();
 }
 export async function excluirValeAvulso(valeId: number) {
