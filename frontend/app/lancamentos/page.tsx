@@ -3,7 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import {
   ClipboardList, Info, Heart, Stethoscope, Milk, Syringe, Wallet, Package, Baby, Scale,
-  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge,
+  Trash2, Droplet, CalendarClock, Wheat, ArrowRightLeft, ShoppingCart, Skull, HeartPulse, Shield, Droplets, Dna, Gauge, ListChecks,
 } from "lucide-react";
 import { fetchAnimais, fetchEstoque, fetchServicosAnalise, fetchSanidade } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
@@ -40,6 +40,7 @@ const FormProtocoloSanitario = dynamic(() => import("@/components/lancamentos/Fo
 const FormAlimentacaoDieta = dynamic(() => import("@/components/lancamentos/FormAlimentacaoDieta").then((m) => m.FormAlimentacaoDieta), { ssr: false });
 const FormEstoque = dynamic(() => import("@/components/lancamentos/FormEstoque").then((m) => m.FormEstoque), { ssr: false });
 const FormAjusteSaldoEstoque = dynamic(() => import("@/components/lancamentos/FormAjusteSaldoEstoque").then((m) => m.FormAjusteSaldoEstoque), { ssr: false });
+const FormProtocoloCustomizado = dynamic(() => import("@/components/lancamentos/FormProtocoloCustomizado").then((m) => m.FormProtocoloCustomizado), { ssr: false });
 
 /**
  * Tela de Lançamentos — entrada de dados operacionais no sistema.
@@ -103,6 +104,11 @@ const TIPOS_GRUPOS = [
       { id: "entrega_leite", label: "Venda mensal do leite", icon: Milk, desc: "Quantidade entregue ao laticínio no mês — compara com o controle leiteiro e a receita recebida." },
       { id: "bst", label: "BST", icon: Droplets, desc: "Somatotropina bovina — selecione os animais direto nas tabelas de Aptas/Incluir no próximo BST/Inaptas e lance (aplicar, agendar ou marcar inapta)." },
     ],
+  },
+  {
+    id: "protocolo_customizado", label: "Protocolo personalizado", icon: ListChecks,
+    desc: "Aplicar um protocolo personalizado (Cadastro > Protocolos personalizados) a animal(is), lote(s) ou como tarefa da fazenda.",
+    leaf: "protocolo_customizado",
   },
   {
     id: "reprodutivo", label: "Reprodutivo", icon: Heart,
@@ -287,6 +293,8 @@ export default function LancamentosPage() {
             <><strong style={{ color: "var(--text)" }}>Protocolo IATF já grava de verdade.</strong> Agenda só os passos hormonais (D0/D7/D9/D11) na Agenda — a inseminação em si é lançada à parte, na sub-aba Inseminação.</>
           ) : sel === "inseminacao" ? (
             <><strong style={{ color: "var(--text)" }}>Inseminação já grava de verdade.</strong> Registra a cobertura/IA (cio natural ou vinda de um protocolo IATF já agendado) e calcula a ordem/intervalo de tentativas.</>
+          ) : sel === "protocolo_customizado" ? (
+            <><strong style={{ color: "var(--text)" }}>Protocolo personalizado já grava de verdade.</strong> Gera um evento por dia do cronograma na Agenda — em animal(is), lote(s) ou como tarefa geral da fazenda (sem animal específico). O insumo sugerido é só informativo, sem baixa automática de estoque.</>
           ) : null}
         </p>
       </div>
@@ -296,6 +304,7 @@ export default function LancamentosPage() {
         <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", margin: "0.4rem 0 1rem" }}>{tipo.desc}</p>
         {sel === "protocolo_iatf" && <FormProtocoloIatf animais={aptasServico} />}
         {sel === "inseminacao" && <FormInseminacao animais={aptasServico} />}
+        {sel === "protocolo_customizado" && <FormProtocoloCustomizado animais={animais} />}
         {sel === "diagnostico" && <FormDiagnostico animais={animais} ultServico={ultServico} />}
         {sel === "parto" && <FormParto animais={animais} lotes={lotes} />}
         {sel === "controle" && <FormControle animais={animais} lotesLact={lotesLact} />}
