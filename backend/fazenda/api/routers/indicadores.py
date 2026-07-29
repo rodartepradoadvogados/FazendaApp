@@ -268,7 +268,17 @@ def obter_indicadores(
             peso_por_animal[p.numero_matriz] = p.peso_kg
 
     lotes = [l.model_dump() for l in session.exec(select(Lote)).all()]
-    return calcular_indicadores(animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal, lotes=lotes)
+    # Aplicações de IATF entram para o estado reprodutivo ao vivo enxergar
+    # "em protocolo" — sem elas, a Capa classificaria como apta uma vaca que
+    # o Rebanho mostra em protocolo, criando divergência entre as telas.
+    query_iatf = select(ProtocoloIatfAplicacao)
+    if fazenda_id is not None:
+        query_iatf = query_iatf.where(ProtocoloIatfAplicacao.fazenda_id == fazenda_id)
+    aplicacoes_iatf = [ap.model_dump() for ap in session.exec(query_iatf).all()]
+    return calcular_indicadores(
+        animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
+        lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
+    )
 
 
 @router.get("/estados-reprodutivos")

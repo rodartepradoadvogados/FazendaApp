@@ -20,6 +20,8 @@ from fazenda.rules.parametros import (
     data_corte_taxa_concepcao,
     gestacao_dias_min,
     gestacao_dias_referencia,
+    get_param,
+    idade_apta_min_meses,
     peso_apta_min,
     pev_dias,
 )
@@ -244,11 +246,77 @@ def _benchmark_categorias(
 DEL_APTA_MIN = 45  # vaca apta a novo serviço: dias mínimos após o último parto
 
 
+def _estados_ao_vivo(
+    animais: list[dict],
+    servicos: list[dict],
+    partos: list[dict],
+    aplicacoes_iatf: list[dict],
+    peso_por_animal: dict[str, float],
+    vacas_nums: set,
+    hoje: date,
+) -> dict[str, str]:
+    """Estado reprodutivo de cada animal, recalculado dos registros.
+
+    Devolve {} quando não há NENHUM parto nem serviço carregado — nesse caso
+    não há o que recalcular, e quem chamar cai no `sit_rep` de antes (é o que
+    mantém chamadores legados, como o relatório personalizado e os testes que
+    passam só uma lista de animais, funcionando exatamente como funcionavam).
+    """
+    if not partos and not servicos:
+        return {}
+
+    from fazenda.rules.estado_reprodutivo import classificar_animal
+    from fazenda.rules.parametros import idade_apta_min_meses, peso_apta_min
+
+    servicos_por: dict[str, list] = {}
+    for s in servicos:
+        servicos_por.setdefault(s.get("numero_matriz"), []).append(s)
+    partos_por: dict[str, list] = {}
+    for p in partos:
+        partos_por.setdefault(p.get("numero_matriz"), []).append(p)
+    iatf_por: dict[str, list] = {}
+    for ap in aplicacoes_iatf:
+        iatf_por.setdefault(ap.get("numero_matriz"), []).append(ap)
+
+    pev = pev_dias()
+    del_max = int(get_param("meta_del_max_1o_servico", 100) or 100)
+    idade_apta = int(idade_apta_min_meses() * 30.44)
+    peso_apta = peso_apta_min()
+
+    estados: dict[str, str] = {}
+    for a in animais:
+        numero = a.get("numero")
+        if not numero:
+            continue
+        nasc = a.get("data_nasc")
+        if isinstance(nasc, str):
+            try:
+                nasc = date.fromisoformat(nasc[:10])
+            except ValueError:
+                nasc = None
+        estados[numero] = classificar_animal(
+            numero,
+            hoje=hoje,
+            partos=partos_por.get(numero, []),
+            servicos=servicos_por.get(numero, []),
+            aplicacoes_iatf=iatf_por.get(numero, []),
+            pev_dias=pev,
+            del_max_1o_servico=del_max,
+            eh_vaca=numero in vacas_nums,
+            idade_dias=(hoje - nasc).days if nasc else None,
+            peso_kg=peso_por_animal.get(numero),
+            idade_apta_dias=idade_apta,
+            peso_apta_kg=peso_apta,
+        )["estado"]
+    return estados
+
+
 def _reproducao_categorias(
     animais: list[dict],
     numeros_com_servico: set,
     peso_por_animal: dict[str, float],
     vacas_nums: set,
+    estados: dict[str, str] | None = None,
 ) -> dict:
     """Situação reprodutiva (prenhes/vazias/inseminadas/aptas) por categoria:
     todas / vaca (já pariu) / novilha.
@@ -264,6 +332,13 @@ def _reproducao_categorias(
       aqui para não divergir o número em dois lugares); novilha não tem
       parto, então o critério de DEL não se aplica a ela.
     "Todas" soma os dois grupos.
+
+    `estados` (numero -> estado ao vivo, ver fazenda.rules.estado_reprodutivo)
+    é o caminho CORRETO e preferido: quando vem preenchido, a classificação
+    sai dos registros reais (Parto/Servico/ProtocoloIatf) e a Capa/Menu passam
+    a bater com as listas de Rebanho. Sem ele, cai no `sit_rep` congelado do
+    CSV — mantido só para chamadores legados (ex.: relatório personalizado),
+    que continuam funcionando como antes.
     """
     peso_apta = peso_apta_min()
     resultado: dict[str, dict] = {}
@@ -282,6 +357,25 @@ def _reproducao_categorias(
         # Indicadores > Gerais e no Menu do app.
         pev = a_inseminar = nao_classificadas = 0
         for a in subset:
+            estado = (estados or {}).get(a.get("numero"))
+            if estado is not None:
+                # Caminho ao vivo: "vazias" agrega tudo que não está prenhe
+                # nem inseminada nem em protocolo — mesmo conjunto que o
+                # "Vaz.*" do CSV representava, para o número do card não
+                # mudar de significado.
+                if estado == "gestante":
+                    prenhes += 1
+                elif estado == "inseminada":
+                    inseminadas += 1
+                elif estado in ("vazia", "apta", "atrasada", "pev", "nao_apta"):
+                    vazias += 1
+                if estado == "pev":
+                    pev += 1
+                elif estado in ("apta", "atrasada"):
+                    a_inseminar += 1
+                elif estado in ("vazia", "nao_apta"):
+                    nao_classificadas += 1
+                continue
             sit = (a.get("sit_rep") or "").strip()
             if sit == "Ges.":
                 prenhes += 1
@@ -300,6 +394,13 @@ def _reproducao_categorias(
         aptas_nums: list[str] = []
         for a in subset:
             numero = a.get("numero")
+            estado = (estados or {}).get(numero)
+            if estado is not None:
+                # Ao vivo, "apta" já é uma categoria exclusiva: quem está
+                # prenhe, inseminada ou em protocolo nunca cai aqui.
+                if estado == "apta":
+                    aptas_nums.append(numero)
+                continue
             sit = (a.get("sit_rep") or "").strip()
             if sit in ("Ins.", "Ges."):
                 continue  # já inseminada ou prenhe — não é "apta" a novo serviço
@@ -329,6 +430,7 @@ def calcular_indicadores(
     data_ref: date | None = None,
     peso_por_animal: dict[str, float] | None = None,
     lotes: list[dict] | None = None,
+    aplicacoes_iatf: list[dict] | None = None,
 ) -> dict:
     """Calcula o painel de indicadores a partir dos dados carregados.
 
@@ -377,8 +479,25 @@ def calcular_indicadores(
     vacas_nums = {p.get("numero_matriz") for p in partos if p.get("numero_matriz")}
     numeros_com_servico = {s.get("numero_matriz") for s in servicos if s.get("numero_matriz")}
 
+    # Estado reprodutivo AO VIVO por animal (ver fazenda.rules.estado_reprodutivo).
+    # É o que faz a Capa/Menu baterem com as listas de Rebanho: os dois lados
+    # passam a ler os mesmos registros, em vez de a Capa ler o sit_rep
+    # congelado do CSV e o Rebanho ler os lançamentos.
+    estados_por_animal = _estados_ao_vivo(
+        animais, servicos, partos, aplicacoes_iatf or [], peso_por_animal, vacas_nums, hoje,
+    )
+
     prenhes = vazias = inseminadas = 0
     for a in animais:
+        estado = estados_por_animal.get(a.get("numero"))
+        if estado is not None:
+            if estado == "gestante":
+                prenhes += 1
+            elif estado == "inseminada":
+                inseminadas += 1
+            else:
+                vazias += 1
+            continue
         sit = (a.get("sit_rep") or "").strip()
         if sit == "Ges.":
             prenhes += 1
@@ -399,7 +518,9 @@ def calcular_indicadores(
     # bug relatado: antes "aptas" somava prenhes+vazias+inseminadas (ou seja,
     # "qualquer fêmea com situação reprodutiva definida"), o oposto de "apta
     # pela 1ª vez".
-    reproducao_categorias = _reproducao_categorias(animais, numeros_com_servico, peso_por_animal, vacas_nums)
+    reproducao_categorias = _reproducao_categorias(
+        animais, numeros_com_servico, peso_por_animal, vacas_nums, estados_por_animal,
+    )
     aptas = reproducao_categorias["todas"]["aptas"]
 
     # ---------------------------------------------------------------
