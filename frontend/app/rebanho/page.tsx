@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Filter, Search, ChevronDown, ChevronRight, ChevronsDown, ChevronsUp, ArrowRightLeft, Sparkles, Skull, ShoppingCart, FileText, Dna, BarChart3 } from "lucide-react";
 import { CowIcon } from "@/components/CowIcon";
 import { IndicadoresGerais } from "@/app/indicadores/page";
-import { fetchAnimais, fetchEstratificacaoRebanho, marcarADescartar, type Estratificacao } from "@/lib/api";
+import { fetchAnimais, fetchEstratificacaoRebanho, fetchEstadosReprodutivos, marcarADescartar, type Estratificacao, type EstadosReprodutivos, type EstadoReprodutivoAnimal } from "@/lib/api";
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
 import MovimentarAnimais from "@/components/MovimentarAnimais";
@@ -35,7 +35,24 @@ type Animal = {
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
   "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
+  // Rótulos do estado reprodutivo AO VIVO (ver ROTULO_ESTADO) — somados aos
+  // códigos antigos do CSV acima para não quebrar as cores já em uso.
+  "Gestante": "var(--green-light)", "Inseminada": "var(--dourado-light)",
+  "Em protocolo (IA atual)": "var(--vinho-light)", "PEV": "var(--amber)",
+  "Apta": "var(--blue)", "Atrasada": "var(--red)", "Não apta": "#8A6a3a", "Vazia": "var(--text-muted)",
 };
+// Estado reprodutivo AO VIVO (GET /indicadores/estados-reprodutivos) — substitui
+// o Animal.sit_rep congelado do último CSV importado. Ver EstadoReprodutivoAnimal em lib/api.ts.
+const ROTULO_ESTADO: Record<string, string> = {
+  gestante: "Gestante", inseminada: "Inseminada", em_protocolo: "Em protocolo (IA atual)",
+  pev: "PEV", apta: "Apta", atrasada: "Atrasada", nao_apta: "Não apta", vazia: "Vazia",
+};
+// Rótulo do estado ao vivo de um animal a partir do mapa numero→estado — animal
+// sem estado (ex.: macho) devolve undefined, que os chamadores tratam como "—".
+function rotuloEstadoDoAnimal(numero: string, porNumero: Map<string, EstadoReprodutivoAnimal>): string | undefined {
+  const e = porNumero.get(numero);
+  return e ? ROTULO_ESTADO[e.estado] : undefined;
+}
 const LACTACAO = ["01", "02", "03"];
 const cod = (g: string | null) => (g && g.length >= 2 && /\d\d/.test(g.slice(0, 2)) ? g.slice(0, 2) : null);
 
@@ -106,7 +123,7 @@ function EstratificacaoRebanho({ animais }: { animais: Animal[] }) {
 // Caixa de animais marcados "A descartar" (Animal.a_descartar=true): seguem
 // ativos no rebanho, mas fora das ações reprodutivas. Permite desmarcar em
 // lote direto daqui (sem precisar voltar em Lançamentos > Baixar animal).
-function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtualizar: () => void }) {
+function CaixaADescartar({ animais, aoAtualizar, estadosPorNumero }: { animais: Animal[]; aoAtualizar: () => void; estadosPorNumero: Map<string, EstadoReprodutivoAnimal> }) {
   const marcados = useMemo(() => animais.filter((a) => a.a_descartar), [animais]);
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [salvando, setSalvando] = useState(false);
@@ -157,7 +174,7 @@ function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtuali
                     <td style={{ fontWeight: 700 }}>{a.numero}</td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.grupo_primario || "—"}</td>
                     <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                    <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                    <td><span style={{ color: SIT_CORES[rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "—"}</span></td>
                     <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.observacoes || "—"}</td>
                   </tr>
                 ))}
@@ -180,11 +197,14 @@ function CaixaADescartar({ animais, aoAtualizar }: { animais: Animal[]; aoAtuali
 // aqui a lista é fim em si mesma, não um recorte do filtro de fêmeas.
 function RebanhoDescarte() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
+  const [estados, setEstados] = useState<EstadosReprodutivos | null>(null);
   const [error, setError] = useState<string | null>(null);
   const carregar = useCallback(() => {
     fetchAnimais({ incluirMachos: true }).then(setRegs).catch((e) => setError(e.message));
+    fetchEstadosReprodutivos().then(setEstados).catch(() => setEstados(null));
   }, []);
   useEffect(carregar, [carregar]);
+  const estadosPorNumero = useMemo(() => new Map((estados?.animais ?? []).map((e) => [e.numero, e])), [estados]);
 
   return (
     <div className="p-6 animate-in">
@@ -194,7 +214,7 @@ function RebanhoDescarte() {
       </div>
       {error && <div className="alert-critico mb-4"><AlertTriangle size={18} /><span>Sem dados: {error}.</span></div>}
       {!regs && !error && <p style={{ color: "var(--text-muted)" }}>Carregando…</p>}
-      {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} />}
+      {regs && <CaixaADescartar animais={regs} aoAtualizar={carregar} estadosPorNumero={estadosPorNumero} />}
     </div>
   );
 }
@@ -203,8 +223,14 @@ function RebanhoDescarte() {
 // parte para poder ordenar por coluna (clique no cabeçalho) de forma
 // independente em cada grupo (cada instância deste componente tem seu
 // próprio estado de ordenação via useOrdenacao).
-function TabelaGrupoAnimais({ lista, femeasApenas }: { lista: Animal[]; femeasApenas: boolean }) {
-  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(lista);
+function TabelaGrupoAnimais({ lista, femeasApenas, estadosPorNumero }: { lista: Animal[]; femeasApenas: boolean; estadosPorNumero: Map<string, EstadoReprodutivoAnimal> }) {
+  // Enriquece com o rótulo do estado ao vivo só para poder ordenar pela coluna
+  // "Sit. Rep." — useOrdenacao ordena por um campo do próprio objeto.
+  const comRotulo = useMemo(
+    () => lista.map((a) => ({ ...a, sitRepAoVivo: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) ?? null })),
+    [lista, estadosPorNumero]
+  );
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(comRotulo);
   return (
     <table className="fazenda-table" style={{ margin: 0 }}>
       <thead><tr>
@@ -212,7 +238,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas }: { lista: Animal[]; femeasAp
         <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={coluna} dir={dir} ordenar={ordenar} />
         {!femeasApenas && <ThOrdenavel label="Sexo" campo="sexo" coluna={coluna} dir={dir} ordenar={ordenar} />}
         <ThOrdenavel label="Raça" campo="raca" coluna={coluna} dir={dir} ordenar={ordenar} />
-        <ThOrdenavel label="Sit. Rep." campo="sit_rep" coluna={coluna} dir={dir} ordenar={ordenar} />
+        <ThOrdenavel label="Sit. Rep." campo="sitRepAoVivo" coluna={coluna} dir={dir} ordenar={ordenar} />
         <ThOrdenavel label="DEL" campo="del_dias" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
         <ThOrdenavel label="Últ. CL" campo="ult_cl_kg" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
       </tr></thead>
@@ -223,7 +249,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas }: { lista: Animal[]; femeasAp
             <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
             {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
             <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-            <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+            <td><span style={{ color: SIT_CORES[a.sitRepAoVivo || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sitRepAoVivo || "—"}</span></td>
             <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
             <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
           </tr>
@@ -235,6 +261,7 @@ function TabelaGrupoAnimais({ lista, femeasApenas }: { lista: Animal[]; femeasAp
 
 function RebanhoVisaoGeral() {
   const [regs, setRegs] = useState<Animal[] | null>(null);
+  const [estados, setEstados] = useState<EstadosReprodutivos | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [fGrupo, setFGrupo] = useState<string[]>([]);
   const [fSit, setFSit] = useState<string[]>([]);
@@ -254,8 +281,15 @@ function RebanhoVisaoGeral() {
 
   const carregar = useCallback(() => {
     fetchAnimais({ incluirMachos }).then(setRegs).catch((e) => setError(e.message));
+    fetchEstadosReprodutivos().then(setEstados).catch(() => setEstados(null));
   }, [incluirMachos]);
   useEffect(carregar, [carregar]);
+
+  // Estado reprodutivo AO VIVO por número (substitui o Animal.sit_rep
+  // congelado do CSV) — animal sem entrada aqui (ex.: macho) fica sem estado.
+  const estadosPorNumero = useMemo(() => new Map((estados?.animais ?? []).map((e) => [e.numero, e])), [estados]);
+  const estadoDe = (numero: string) => estadosPorNumero.get(numero)?.estado;
+  const rotuloDe = (numero: string) => rotuloEstadoDoAnimal(numero, estadosPorNumero);
 
   const opc = (f: (a: Animal) => string | null) => {
     const s = new Set<string>(); (regs ?? []).forEach((a) => { const v = f(a); if (v) s.add(v); });
@@ -264,13 +298,14 @@ function RebanhoVisaoGeral() {
 
   const filtrados = useMemo(() => {
     if (!regs) return [];
-    return regs.filter((a) =>
-      (fGrupo.length === 0 || (a.grupo_primario ? fGrupo.includes(a.grupo_primario) : false)) &&
-      (fSit.length === 0 || (a.sit_rep ? fSit.includes(a.sit_rep) : false)) &&
-      (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
-      (!somenteFemeas || a.sexo !== "M")
-    );
-  }, [regs, fGrupo, fSit, busca, somenteFemeas]);
+    return regs.filter((a) => {
+      const rotulo = rotuloEstadoDoAnimal(a.numero, estadosPorNumero);
+      return (fGrupo.length === 0 || (a.grupo_primario ? fGrupo.includes(a.grupo_primario) : false)) &&
+        (fSit.length === 0 || (rotulo ? fSit.includes(rotulo) : false)) &&
+        (!busca || a.numero.toLowerCase().includes(busca.toLowerCase())) &&
+        (!somenteFemeas || a.sexo !== "M");
+    });
+  }, [regs, estadosPorNumero, fGrupo, fSit, busca, somenteFemeas]);
 
   const porNumero = useMemo(
     () => [...filtrados].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true })),
@@ -279,10 +314,13 @@ function RebanhoVisaoGeral() {
   const pagPorNumero = usePaginacao(porNumero);
 
   const total = filtrados.length;
-  const gestantes = filtrados.filter((a) => a.sit_rep === "Ges.").length;
-  const vazias = filtrados.filter((a) => (a.sit_rep || "").startsWith("Vaz.")).length;
-  const inseminadas = filtrados.filter((a) => a.sit_rep === "Ins.").length;
-  const vacasPev = filtrados.filter((a) => a.sit_rep === "Vaz. pev").length;
+  const gestantes = filtrados.filter((a) => estadoDe(a.numero) === "gestante").length;
+  // "vazias" antes contava tudo que começava com "Vaz." no sit_rep congelado
+  // (o que incluía pev, apta e atrasada) — somamos os quatro estados ao vivo
+  // equivalentes para manter o mesmo significado do card.
+  const vazias = filtrados.filter((a) => ["vazia", "apta", "atrasada", "pev"].includes(estadoDe(a.numero) || "")).length;
+  const inseminadas = filtrados.filter((a) => estadoDe(a.numero) === "inseminada").length;
+  const vacasPev = filtrados.filter((a) => estadoDe(a.numero) === "pev").length;
   const aDescartar = filtrados.filter((a) => a.a_descartar).length;
   const delLact = filtrados.filter((a) => LACTACAO.includes(cod(a.grupo_primario) || "") && a.del_dias).map((a) => a.del_dias!);
   const delMedio = delLact.length ? Math.round(delLact.reduce((x, y) => x + y, 0) / delLact.length) : null;
@@ -295,9 +333,9 @@ function RebanhoVisaoGeral() {
 
   const porSit = useMemo(() => {
     const by = new Map<string, number>();
-    filtrados.forEach((a) => { const s = a.sit_rep || "(sem)"; by.set(s, (by.get(s) ?? 0) + 1); });
+    filtrados.forEach((a) => { const s = rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || "(sem)"; by.set(s, (by.get(s) ?? 0) + 1); });
     return Array.from(by.entries()).map(([sit, n]) => ({ sit, n }));
-  }, [filtrados]);
+  }, [filtrados, estadosPorNumero]);
 
   const grupoLista = useMemo(() => {
     const by = new Map<string, Animal[]>();
@@ -307,11 +345,12 @@ function RebanhoVisaoGeral() {
 
   // Exporta na mesma ordem exibida na tela — número (modo "Ordenar por
   // numeração") ou agrupado por lote (modo "por Grupo") — nunca a ordem crua
-  // pré-filtro/ordenação de `filtrados`.
+  // pré-filtro/ordenação de `filtrados`. "sit_rep" exportado é o rótulo do
+  // estado ao vivo, não mais o texto cru do CSV.
   const linhasParaExportar = useMemo(
     () => (ordenarPorNumeracao ? porNumero : grupoLista.flatMap(([, lista]) => lista))
-      .map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa })),
-    [ordenarPorNumeracao, porNumero, grupoLista]
+      .map((a) => ({ ...a, categoria: a.categoria_abrev || a.categoria_completa, sit_rep: rotuloEstadoDoAnimal(a.numero, estadosPorNumero) || null })),
+    [ordenarPorNumeracao, porNumero, grupoLista, estadosPorNumero]
   );
 
   const selStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem", width: "100%" };
@@ -336,7 +375,7 @@ function RebanhoVisaoGeral() {
             <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} style={{ color: "var(--dourado)" }} /> Filtros</div>
             <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
               <GrupoLotePicker label="Grupo / lote" opcoes={opc((a) => a.grupo_primario)} selecionados={fGrupo} onChange={setFGrupo} />
-              <MultiFiltro label="Situação rep." opcoes={opc((a) => a.sit_rep)} selecionados={fSit} onChange={setFSit} />
+              <MultiFiltro label="Situação rep." opcoes={opc((a) => rotuloDe(a.numero) ?? null)} selecionados={fSit} onChange={setFSit} />
               <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Buscar nº</label>
                 <div style={{ position: "relative" }}>
                   <Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} />
@@ -354,13 +393,13 @@ function RebanhoVisaoGeral() {
             <Indicador categoria="geral" valor={total} rotulo={femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)"}
               onClick={() => setModal({ title: femeasApenas ? "Fêmeas (filtro)" : "Animais (filtro)", list: filtrados })} />
             <Indicador categoria="reprodutivo" valor={gestantes} cor="var(--green-light)" rotulo="Gestantes"
-              onClick={() => setModal({ title: "Gestantes", list: filtrados.filter((a) => a.sit_rep === "Ges.") })} />
+              onClick={() => setModal({ title: "Gestantes", list: filtrados.filter((a) => estadoDe(a.numero) === "gestante") })} />
             <Indicador categoria="reprodutivo" valor={vazias} cor="var(--amber)" rotulo="Vazias"
-              onClick={() => setModal({ title: "Vazias", list: filtrados.filter((a) => (a.sit_rep || "").startsWith("Vaz.")) })} />
+              onClick={() => setModal({ title: "Vazias", list: filtrados.filter((a) => ["vazia", "apta", "atrasada", "pev"].includes(estadoDe(a.numero) || "")) })} />
             <Indicador categoria="reprodutivo" valor={inseminadas} cor="var(--dourado-light)" rotulo="Inseminadas"
-              onClick={() => setModal({ title: "Inseminadas", list: filtrados.filter((a) => a.sit_rep === "Ins.") })} />
+              onClick={() => setModal({ title: "Inseminadas", list: filtrados.filter((a) => estadoDe(a.numero) === "inseminada") })} />
             <Indicador categoria="reprodutivo" valor={vacasPev} cor="var(--blue)" rotulo="Vacas no PEV"
-              onClick={() => setModal({ title: "Vacas no PEV", list: filtrados.filter((a) => a.sit_rep === "Vaz. pev") })} />
+              onClick={() => setModal({ title: "Vacas no PEV", list: filtrados.filter((a) => estadoDe(a.numero) === "pev") })} />
             <Indicador categoria="geral" icon={Skull} valor={aDescartar} cor="var(--red)" rotulo="A descartar"
               onClick={() => setModal({ title: "A descartar", list: filtrados.filter((a) => a.a_descartar) })} />
             <Indicador categoria="producao" valor={delMedio ?? "—"} rotulo="DEL médio (lactação)"
@@ -387,7 +426,7 @@ function RebanhoVisaoGeral() {
                 <PieChart>
                   <Pie data={porSit} dataKey="n" nameKey="sit" cx="50%" cy="50%" outerRadius={80} label={(e: any) => `${e.sit} (${e.n})`} labelLine={false} fontSize={10}
                     style={{ cursor: "pointer" }}
-                    onClick={(e: any) => { const sit = e?.sit; if (!sit) return; setModal({ title: `Situação: ${sit}`, list: filtrados.filter((a) => (a.sit_rep || "(sem)") === sit) }); }}>
+                    onClick={(e: any) => { const sit = e?.sit; if (!sit) return; setModal({ title: `Situação: ${sit}`, list: filtrados.filter((a) => (rotuloDe(a.numero) || "(sem)") === sit) }); }}>
                     {porSit.map((s, i) => <Cell key={i} fill={SIT_CORES[s.sit] || "var(--text-muted)"} />)}
                   </Pie>
                   <Tooltip contentStyle={tip} />
@@ -443,7 +482,7 @@ function RebanhoVisaoGeral() {
                         <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
                         {!femeasApenas && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.sexo || "—"}</td>}
                         <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.raca || "—"}</td>
-                        <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                        <td><span style={{ color: SIT_CORES[rotuloDe(a.numero) || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero) || "—"}</span></td>
                         <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                         <td style={{ textAlign: "right", fontWeight: 600 }}>{a.ult_cl_kg ? a.ult_cl_kg.toFixed(1) : "—"}</td>
                       </tr>
@@ -467,7 +506,7 @@ function RebanhoVisaoGeral() {
                       </button>
                       {aberto && (
                         <div className="overflow-x-auto">
-                          <TabelaGrupoAnimais lista={lista} femeasApenas={femeasApenas} />
+                          <TabelaGrupoAnimais lista={lista} femeasApenas={femeasApenas} estadosPorNumero={estadosPorNumero} />
                         </div>
                       )}
                     </div>

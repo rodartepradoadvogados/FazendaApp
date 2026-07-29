@@ -41,6 +41,13 @@ function situacaoLabel(sit?: string | null): string {
   return SIT_LABEL[s] || (s.startsWith("Vaz.") ? "Vazia" : s || "—");
 }
 
+// Rótulo de cada estado reprodutivo ao vivo (ver backend
+// fazenda/rules/estado_reprodutivo.py — mesmas chaves).
+const ROTULO_ESTADO: Record<string, string> = {
+  gestante: "Gestante", inseminada: "Inseminada", em_protocolo: "Em protocolo (IA atual)",
+  pev: "PEV", apta: "Apta", atrasada: "Atrasada", nao_apta: "Não apta", vazia: "Vazia",
+};
+
 function ordenarNumero(a: { numero: string }, b: { numero: string }): number {
   const na = Number(a.numero), nb = Number(b.numero);
   if (!Number.isNaN(na) && !Number.isNaN(nb)) return na - nb;
@@ -220,14 +227,17 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
       ];
       linhasExport = lista.map((a) => ({ numero: a.numero, categoria: a.categoria, del: a.del_dias ?? "" }));
     } else if (drill === "vazias") {
-      const lista = animais.filter((a) => (a.sit_rep || "").trim().startsWith("Vaz.")).sort(ordenarNumero);
+      // Estado AO VIVO. "Vazia" aqui é o guarda-chuva de quem NÃO está prenhe,
+      // inseminada nem em protocolo — mesmo conjunto que o "Vaz.*" do CSV
+      // representava, para o número do card não mudar de significado.
+      const lista = estadoAnimais.filter((a) => ["vazia", "apta", "atrasada", "pev", "nao_apta"].includes(a.estado));
       total = lista.length;
       linhas = lista.map((a) => (
         <LinhaAnimal key={a.numero} onVerAnimal={() => setNumeroAberto(a.numero)} campos={<>
-          <Pilula>{categoriaDe(a.numero)}</Pilula>
+          <Pilula>{a.categoria}</Pilula>
           <Campo label="Nº" valor={a.numero} />
-          <Campo label="Situação" valor={situacaoLabel(a.sit_rep)} />
-          <Campo label="Lote atual" valor={a.grupo_primario || "—"} />
+          <Campo label="Situação" valor={ROTULO_ESTADO[a.estado] || a.estado} />
+          <Campo label="Lote atual" valor={a.lote || "—"} />
         </>} />
       ));
       colunasExport = [
@@ -235,7 +245,7 @@ export default function Indicadores({ onAbrirAnimais, onAbrirLotes }: { onAbrirA
         { header: "Situação", key: "situacao" }, { header: "Lote atual", key: "lote" },
       ];
       linhasExport = lista.map((a) => ({
-        numero: a.numero, categoria: categoriaDe(a.numero), situacao: situacaoLabel(a.sit_rep), lote: a.grupo_primario || "—",
+        numero: a.numero, categoria: a.categoria, situacao: ROTULO_ESTADO[a.estado] || a.estado, lote: a.lote || "—",
       }));
     } else if (drill === "aptas") {
       // Estado AO VIVO — ver GET /indicadores/estados-reprodutivos.
