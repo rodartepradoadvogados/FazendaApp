@@ -8,8 +8,15 @@ Secagem, não junto). Ver fazenda/rules/parametros.py e agenda_engine.py.
 Só corrige quem ainda está no valor errado original — nunca sobrescreve um
 valor que o usuário já tenha editado manualmente em Configurações > Parâmetros.
 
-Revision ID: d1e2f3a4b5c6
-Revises: 0738880aaec2
+Nota: esta migração originalmente também tinha o id 'd1e2f3a4b5c6' — coincidiu
+com o id de outra migração paralela (parametro_fazenda: fazenda_id, Fase 0),
+que também nasceu de '0738880aaec2'. Renomeada para 'e5f6a7b8c9d0' e reencadeada
+depois dela (em vez de mais um merge de heads) — as duas mudanças são
+independentes (uma só mexe em fazenda_id/unique, a outra só corrige `valor`
+por `chave`), então a ordem entre elas não importa.
+
+Revision ID: e5f6a7b8c9d0
+Revises: d1e2f3a4b5c6
 Create Date: 2026-07-28 22:30:00.000000
 
 """
@@ -20,8 +27,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = 'd1e2f3a4b5c6'
-down_revision: Union[str, Sequence[str], None] = '0738880aaec2'
+revision: str = 'e5f6a7b8c9d0'
+down_revision: Union[str, Sequence[str], None] = 'd1e2f3a4b5c6'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
