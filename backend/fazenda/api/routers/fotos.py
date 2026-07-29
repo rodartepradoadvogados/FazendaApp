@@ -65,7 +65,12 @@ async def enviar_foto(
             bucket=settings.supabase_bucket_fotos,
         )
     except RuntimeError as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
+        # 502 (não 400): isto é falha do Supabase Storage (fora do ar,
+        # credencial ruim), não erro do cliente — a fila offline do app
+        # (lib/offline.ts) trata >=500 como "tenta depois" e só marca erro
+        # definitivo (exige "Descartar") em 4xx. Uma foto de verdade não
+        # pode virar erro permanente por uma instabilidade de infra.
+        raise HTTPException(status_code=502, detail=str(exc))
 
     foto = FotoCampo(
         fazenda_id=fazenda_id,

@@ -32,6 +32,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useState } from "react";
 import { API, getToken } from "@/lib/api";
+import { garantirPronto, pedirStoragePersistente } from "@/lib/outboxDb";
 
 const CHAVE_OUTBOX = "mob_outbox";
 const PREFIXO_CACHE = "mob_cache_";
@@ -234,6 +235,13 @@ export function usePendentes(): ItemOutbox[] {
  *  martelar o servidor — este intervalo só precisa ser curto o bastante
  *  pra sentir a volta da conexão). */
 export function iniciarSincronizacaoAutomatica(): () => void {
+  // Prepara o IndexedDB (abre + migra itens antigos do localStorage — ver
+  // lib/outboxDb.ts) e pede armazenamento persistente (reduz o risco do
+  // navegador despejar a fila sob pressão de disco). Fatia A: só prepara o
+  // terreno — a fila em si ainda vive no localStorage até a Fatia B.
+  garantirPronto().catch(() => {});
+  pedirStoragePersistente().catch(() => {});
+
   const aoConectar = () => { sincronizar(); };
   window.addEventListener("online", aoConectar);
   sincronizar();
