@@ -947,10 +947,10 @@ def lancar_protocolo(
             animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
             del_no_caso = animal.del_dias if animal else None
             # Última CCS do animal (ou do tanque, na falta) — snapshot do caso.
-            ult_ccs = session.exec(
-                select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
-                .order_by(QualidadeLeite.data_coleta.desc())
-            ).first()
+            query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
+            if fazenda_id is not None:
+                query_ccs = query_ccs.where(QualidadeLeite.fazenda_id == fazenda_id)
+            ult_ccs = session.exec(query_ccs.order_by(QualidadeLeite.data_coleta.desc())).first()
             ccs_ultima = ult_ccs.ccs if ult_ccs else None
             # Recidiva: caso de mastite anterior no MESMO teto com intervalo < 20 dias.
             tetos_novos = set(dados.tetos_afetados)
@@ -1009,19 +1009,22 @@ def opcoes_mastite() -> dict:
 
 
 @router.get("/mastite/contexto")
-def contexto_mastite(numero: str, session: Session = Depends(get_session)) -> dict:
+def contexto_mastite(
+    numero: str, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
     """DEL atual, última CCS e último CMT do animal — preenchidos automaticamente
     ao abrir um caso de mastite."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     animal = session.exec(select(Animal).where(Animal.numero == numero)).first()
-    ult_ccs = session.exec(
-        select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
-        .order_by(QualidadeLeite.data_coleta.desc())
-    ).first()
-    ult_caso = session.exec(
-        select(ProtocoloSanitarioLancamento).where(
-            ProtocoloSanitarioLancamento.numero_matriz == numero, ProtocoloSanitarioLancamento.resultado_cmt != None  # noqa: E711
-        ).order_by(ProtocoloSanitarioLancamento.data_inicio.desc())
-    ).first()
+    query_ccs = select(QualidadeLeite).where(QualidadeLeite.numero_matriz == numero, QualidadeLeite.ccs != None)  # noqa: E711
+    query_caso = select(ProtocoloSanitarioLancamento).where(
+        ProtocoloSanitarioLancamento.numero_matriz == numero, ProtocoloSanitarioLancamento.resultado_cmt != None  # noqa: E711
+    )
+    if fazenda_id is not None:
+        query_ccs = query_ccs.where(QualidadeLeite.fazenda_id == fazenda_id)
+        query_caso = query_caso.where(ProtocoloSanitarioLancamento.fazenda_id == fazenda_id)
+    ult_ccs = session.exec(query_ccs.order_by(QualidadeLeite.data_coleta.desc())).first()
+    ult_caso = session.exec(query_caso.order_by(ProtocoloSanitarioLancamento.data_inicio.desc())).first()
     return {
         "numero": numero,
         "del_atual": animal.del_dias if animal else None,

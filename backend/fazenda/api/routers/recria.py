@@ -552,13 +552,16 @@ def categoria_sugerida_animal(
     categorias = session.exec(categorias_query).all()
     hoje = date.today()
     dias = (hoje - animal.data_nasc).days if animal.data_nasc else None
-    ult = session.exec(
-        select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
-    ).all()
+    peso_query = select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
+    secagens_query = select(Secagem).where(Secagem.numero_matriz == numero)
+    if fazenda_id is not None:
+        peso_query = peso_query.where(PesagemCorporal.fazenda_id == fazenda_id)
+        secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
+    ult = session.exec(peso_query).all()
     peso = ult[-1].peso_kg if ult else None
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero)).all()
     partos = session.exec(select(Parto).where(Parto.numero_matriz == numero)).all()
-    secagens = session.exec(select(Secagem).where(Secagem.numero_matriz == numero)).all()
+    secagens = session.exec(secagens_query).all()
     ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens)
     return {"categoria": classificar_categoria(ctx, categorias)}
 

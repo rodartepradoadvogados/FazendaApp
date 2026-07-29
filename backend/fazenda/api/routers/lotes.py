@@ -17,7 +17,6 @@ from fazenda.database import get_session
 from fazenda.models import Animal, CategoriaManejo, Lote, Parto, PesagemCorporal, Sanidade, Secagem, Servico
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.lote_criterios import animal_atende_criterios
-from fazenda.auth import get_fazenda_atual_id
 
 router = APIRouter(prefix="/lotes", tags=["lotes"])
 
@@ -305,19 +304,23 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
     exigidos por `_contexto_categoria` (fazenda.api.routers.recria), reaproveitada
     para calcular situação produtiva/dias pós-parto/gestação AO VIVO.
 
-    `PesagemCorporal`/`Secagem` (Produção) e `CategoriaManejo` (Recria) ainda
-    não têm `fazenda_id` — ver proposta de separação fazenda/empresa, Parte
-    1.6; ficam sem filtro até esses domínios serem migrados."""
+    `CategoriaManejo` (Recria) ainda não tem `fazenda_id` — ver proposta de
+    separação fazenda/empresa, Parte 1.6; fica sem filtro até esse domínio
+    ser migrado."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
     query_animal = select(Animal).where(Animal.ativo == True)  # noqa: E712
     query_servico = select(Servico)
     query_sanidade = select(Sanidade)
     query_parto = select(Parto)
+    query_pesagem = select(PesagemCorporal)
+    query_secagem = select(Secagem)
     if fazenda_id is not None:
         query_animal = query_animal.where(Animal.fazenda_id == fazenda_id)
         query_servico = query_servico.where(Servico.fazenda_id == fazenda_id)
         query_sanidade = query_sanidade.where(Sanidade.fazenda_id == fazenda_id)
         query_parto = query_parto.where(Parto.fazenda_id == fazenda_id)
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+        query_secagem = query_secagem.where(Secagem.fazenda_id == fazenda_id)
 
     animais = [
         a.model_dump() for a in session.exec(query_animal).all()
@@ -337,7 +340,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
 
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
-    for p in session.exec(select(PesagemCorporal)).all():
+    for p in session.exec(query_pesagem).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem
@@ -348,7 +351,7 @@ def coletar_dados_criterios(session: Session, fazenda_id: int | None = None) -> 
         partos_obj_por_animal.setdefault(p.numero_matriz, []).append(p)
 
     secagens_obj_por_animal: dict[str, list] = {}
-    for s in session.exec(select(Secagem)).all():
+    for s in session.exec(query_secagem).all():
         secagens_obj_por_animal.setdefault(s.numero_matriz, []).append(s)
 
     categorias_ativas = list(session.exec(select(CategoriaManejo).where(CategoriaManejo.ativo == True)).all())  # noqa: E712
