@@ -294,6 +294,33 @@ class TestEndpointEstadosReprodutivos:
         assert protocolos[0]["concluido"] is True
         assert protocolos[0]["data_d0"] == "2026-07-01"
 
+    def test_capa_e_rebanho_contam_a_mesma_coisa(self, client):
+        """A Capa (calcular_indicadores) e as listas de Rebanho
+        (estados-reprodutivos) tem que ler os MESMOS registros. Antes a Capa
+        lia sit_rep congelado e o Rebanho lia os lancamentos, entao as duas
+        telas mostravam numeros diferentes para o mesmo rebanho."""
+        c, engine = client
+        with Session(engine) as s:
+            # sit_rep gravado ERRADO de proposito nos dois animais.
+            s.add(Animal(numero="900", sexo="F", ativo=True, sit_rep="Ges."))
+            s.add(Parto(numero_matriz="900", data_parto=date(2026, 7, 26)))
+            s.add(Servico(numero_matriz="900", data_servico=date(2025, 10, 1), diagnostico="POSITIVO"))
+            s.add(Animal(numero="901", sexo="F", ativo=True, sit_rep="Vaz. atr."))
+            s.add(Servico(numero_matriz="901", data_servico=date(2026, 7, 20)))
+            s.commit()
+
+        estados = c.get("/indicadores/estados-reprodutivos", params={"data": "2026-07-28"}).json()
+        indicadores = c.get("/indicadores/", params={"data": "2026-07-28"}).json()
+
+        # 900 pariu (nao e gestante); 901 foi inseminada (nao esta atrasada).
+        por_numero = {a["numero"]: a["estado"] for a in estados["animais"]}
+        assert por_numero["900"] == PEV
+        assert por_numero["901"] == INSEMINADA
+
+        rep = indicadores["reproducao"]
+        assert rep["prenhes"] == 0, "Capa ainda conta a vaca que ja pariu como prenhe"
+        assert rep["inseminadas"] == 1, "Capa nao viu a inseminacao lancada"
+
     def test_ordena_por_numero_do_brinco_crescente(self, client):
         """Toda listagem abre em ordem crescente de brinco (pedido do produtor)."""
         c, engine = client
