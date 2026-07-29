@@ -23,6 +23,7 @@ import { ReciboModal } from "@/components/ReciboModal";
 import { Modal } from "@/components/Modal";
 import { ModalDivididoDocumento } from "@/components/ModalDivididoDocumento";
 import { AvisoSalvo } from "@/components/AvisoSalvo";
+import { FiltrosSalvos } from "@/components/FiltrosSalvos";
 import { FormFinanceiro } from "@/components/FormFinanceiro";
 import NovoFornecedorRapido from "@/components/NovoFornecedorRapido";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
@@ -224,6 +225,29 @@ export default function FinanceiroPage() {
   const [relDocumento, setRelDocumento] = useState("");
   const [relConta, setRelConta] = useState("");
   const [relContaNome, setRelContaNome] = useState("");
+
+  // Filtros salvos (ver components/FiltrosSalvos.tsx) — cada aba de relatório
+  // tem seu próprio conjunto ("tela" = `financeiro_${rel}`), com o formato de
+  // filtro variando conforme a aba seja uma "Conta" (período+centro+banco) ou
+  // um dos outros relatórios (tipo/fornecedor/produto/documento/conta gerencial).
+  function filtrosAtuais(): Record<string, any> {
+    return CONTAS_IDS.has(rel)
+      ? { campoPeriodoContas, inicio, fim, centro, contaBanco }
+      : { inicio, fim, centro, relTipo, relFornecedor, relProduto, relDocumento, relConta, relContaNome };
+  }
+  function aplicarFiltrosSalvos(f: Record<string, any>) {
+    if ("campoPeriodoContas" in f) setCampoPeriodoContas(f.campoPeriodoContas || "emissao");
+    if ("inicio" in f) setInicio(f.inicio || "");
+    if ("fim" in f) setFim(f.fim || "");
+    if ("centro" in f) setCentro(f.centro || "");
+    if ("contaBanco" in f) setContaBanco(f.contaBanco || "");
+    if ("relTipo" in f) setRelTipo(f.relTipo || "");
+    if ("relFornecedor" in f) setRelFornecedor(f.relFornecedor || "");
+    if ("relProduto" in f) setRelProduto(f.relProduto || "");
+    if ("relDocumento" in f) setRelDocumento(f.relDocumento || "");
+    if ("relConta" in f) setRelConta(f.relConta || "");
+    if ("relContaNome" in f) setRelContaNome(f.relContaNome || "");
+  }
 
   const recarregar = () => fetchLancamentos().then((d) => setRegs(d.lancamentos)).catch((e) => setError(e.message));
   useEffect(() => {
@@ -512,6 +536,9 @@ export default function FinanceiroPage() {
         {/* Filtros */}
         <div className="card mb-4">
           <div className="card-header mb-3 flex items-center gap-2"><Filter size={14} /> Filtros</div>
+          <div className="mb-3">
+            <FiltrosSalvos tela={`financeiro_${rel}`} valor={filtrosAtuais()} aoAplicar={aplicarFiltrosSalvos} />
+          </div>
           <div className="flex flex-wrap gap-3 items-end">
             {CONTAS_IDS.has(rel) ? (
               <div>

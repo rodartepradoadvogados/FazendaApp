@@ -180,6 +180,9 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .filtro_salvo import (
+    FiltroSalvo,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -221,6 +224,7 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "FiltroSalvo",
     "Animal",
     "Lote",
     "MovimentoLote",

@@ -4206,11 +4206,12 @@ export const ABAS_PORTAL = [
 
 export type PortalDestinatario = { id: number; nome: string; username: string };
 export type PortalMensagem = {
-  id: number; tipo: "mensagem" | "tarefa";
+  id: number; tipo: "mensagem" | "tarefa" | "foto";
   remetente: string | null; remetente_usuario_id: number;
   destinatario: string | null; destinatario_usuario_id: number;
   aba: string | null; corpo: string; pede_retorno: boolean;
-  lida: boolean; resolvida: boolean; resposta_de_id: number | null; criado_em: string;
+  lida: boolean; resolvida: boolean; resposta_de_id: number | null;
+  foto_campo_id: number | null; criado_em: string;
 };
 
 export const fetchPortalPermissoes = (): Promise<{ pode_delegar_tarefa: boolean }> => _rGet(`/portal/permissoes`);
@@ -4307,14 +4308,17 @@ export async function excluirDocumento(id: number): Promise<void> {
 // metadados.
 export type FotoCampo = {
   id: number; mime_type: string; tamanho_bytes: number;
-  descricao: string | null; identificacao_animal: string | null; data_captura: string;
+  descricao: string | null; identificacao_animal: string | null;
+  tipo_assunto: "animal" | "lote" | "outro" | null; animal_id: number | null;
+  lotes: string | null; assunto_fixo: string | null; data_captura: string;
 };
 
 export async function fetchFotosCampo(filtros?: {
-  identificacao_animal?: string; data_de?: string; data_ate?: string;
+  identificacao_animal?: string; lote?: string; data_de?: string; data_ate?: string;
 }): Promise<FotoCampo[]> {
   const params = new URLSearchParams();
   if (filtros?.identificacao_animal) params.set("identificacao_animal", filtros.identificacao_animal);
+  if (filtros?.lote) params.set("lote", filtros.lote);
   if (filtros?.data_de) params.set("data_de", filtros.data_de);
   if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
   const qs = params.toString();
@@ -4400,4 +4404,29 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
   });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
   return res.json();
+}
+
+// ── Filtros salvos (genérico — qualquer tela de relatório pode adotar) ──
+// Ver backend/fazenda/api/routers/filtros_salvos.py. `tela` namespacia os
+// filtros salvos (ex.: "financeiro_extrato"); `filtros` é um objeto livre,
+// específico do formato de estado da tela que está salvando/aplicando.
+export type FiltroSalvo = { id: number; tela: string; nome: string; filtros: Record<string, any>; criado_em: string };
+
+export async function fetchFiltrosSalvos(tela: string): Promise<FiltroSalvo[]> {
+  const res = await authFetch(`${API}/filtros-salvos?tela=${encodeURIComponent(tela)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao listar filtros salvos");
+  return res.json();
+}
+
+export async function criarFiltroSalvo(dados: { tela: string; nome: string; filtros: Record<string, any> }): Promise<FiltroSalvo> {
+  const res = await authFetch(`${API}/filtros-salvos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar filtro"); }
+  return res.json();
+}
+
+export async function excluirFiltroSalvo(id: number): Promise<void> {
+  const res = await authFetch(`${API}/filtros-salvos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir filtro salvo"); }
 }
