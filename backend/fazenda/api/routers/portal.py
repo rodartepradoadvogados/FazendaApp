@@ -55,6 +55,23 @@ def _usuario_pode_delegar_tarefa(user: Usuario, session: Session) -> bool:
     return bool(tipos & TIPOS_DELEGAM_TAREFA)
 
 
+def usuarios_da_fazenda(session: Session, fazenda_id: int | None) -> list[Usuario]:
+    """Usuários ativos vinculados a uma fazenda (via UsuarioFazenda), menos o
+    robô-milknews. Compartilhado entre listar_destinatarios (Portal) e o
+    fan-out de fotos do campo (fotos.py) — mesma regra de "quem pode ser
+    destinatário nesta fazenda" nos dois lugares."""
+    if fazenda_id is None:
+        usuarios = session.exec(select(Usuario).where(Usuario.ativo == True)).all()  # noqa: E712
+    else:
+        usuarios = session.exec(
+            select(Usuario)
+            .join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id)
+            .where(Usuario.ativo == True, UsuarioFazenda.fazenda_id == fazenda_id)  # noqa: E712
+            .distinct()
+        ).all()
+    return [u for u in usuarios if u.username != "robo-milknews"]
+
+
 def _serializar(m: PortalMensagem, session: Session) -> dict:
     remetente = session.get(Usuario, m.remetente_usuario_id)
     destinatario = session.get(Usuario, m.destinatario_usuario_id)
@@ -71,6 +88,7 @@ def _serializar(m: PortalMensagem, session: Session) -> dict:
         "lida": m.lida,
         "resolvida": m.resolvida,
         "resposta_de_id": m.resposta_de_id,
+        "foto_campo_id": m.foto_campo_id,
         "criado_em": m.criado_em.isoformat(),
     }
 
@@ -90,20 +108,8 @@ def listar_destinatarios(
     sistema, de qualquer fazenda — vazamento real (um usuário podia mandar
     mensagem/tarefa pra alguém de outra fazenda, que nem aparece na tela dele)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    if fazenda_id is None:
-        usuarios = session.exec(select(Usuario).where(Usuario.ativo == True)).all()  # noqa: E712
-    else:
-        usuarios = session.exec(
-            select(Usuario)
-            .join(UsuarioFazenda, UsuarioFazenda.usuario_id == Usuario.id)
-            .where(Usuario.ativo == True, UsuarioFazenda.fazenda_id == fazenda_id)  # noqa: E712
-            .distinct()
-        ).all()
-    return [
-        {"id": u.id, "nome": u.nome or u.username, "username": u.username}
-        for u in usuarios
-        if u.username != "robo-milknews"
-    ]
+    usuarios = usuarios_da_fazenda(session, fazenda_id)
+    return [{"id": u.id, "nome": u.nome or u.username, "username": u.username} for u in usuarios]
 
 
 # ---------------------------------------------------------------------------
