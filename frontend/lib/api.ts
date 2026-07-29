@@ -3883,6 +3883,28 @@ export async function unsubscribePush(endpoint?: string) {
   return res.json();
 }
 
+// ── Push nativo (FCM, app Android Capacitor) ──
+// Canal irmão do Web Push acima — usado só dentro do app nativo (ver
+// lib/nativo.ts), que não confia no PushManager/service worker (não
+// funciona de forma confiável com o app fechado dentro da WebView).
+export async function registrarTokenFcm(dados: {
+  token: string; plataforma?: string; modelo?: string; device_id?: string;
+}): Promise<{ ok: boolean }> {
+  const res = await authFetch(`${API}/push/registrar-fcm`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar notificações"); }
+  return res.json();
+}
+
+export async function removerTokenFcm(token?: string): Promise<{ ok: boolean }> {
+  const res = await authFetch(`${API}/push/registrar-fcm`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover notificações"); }
+  return res.json();
+}
+
 // ── Aprovações de lançamentos vindos do Telegram (só admin) ──
 export type LancamentoPendente = {
   id: number; tipo: string; rotulo: string; resumo: string; dados: Record<string, any>;
