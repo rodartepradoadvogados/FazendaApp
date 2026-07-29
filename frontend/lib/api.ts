@@ -4281,6 +4281,9 @@ export async function fetchFotosCampo(filtros?: {
   return res.json();
 }
 
+// Sem uso desde que FotosCampo.tsx passou a enviar via
+// lib/offline.ts::enviarOuEnfileirarArquivo (fila offline com fallback de
+// rede embutido) — mantida por ora, candidata a remoção.
 export async function enviarFotoCampo(dados: {
   file: File | Blob; descricao?: string; identificacaoAnimal?: string;
 }): Promise<FotoCampo> {

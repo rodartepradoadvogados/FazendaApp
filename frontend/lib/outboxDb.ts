@@ -145,14 +145,18 @@ async function migrarDoLocalStorage(db: IDBDatabase): Promise<void> {
         metodo: item.metodo ?? "POST",
       } as RegistroOutbox);
       req.onerror = (e) => {
-        if ((req.error as any)?.name === "ConstraintError") { e.preventDefault(); return; } // já migrado
+        if (req.error?.name === "ConstraintError") { e.preventDefault(); return; } // já migrado
       };
     }
     tx.oncomplete = () => resolve();
     tx.onerror = () => reject(tx.error);
   });
 
+  // Só remove a chave antiga DEPOIS do tx.oncomplete acima — se o app for
+  // morto no meio, a próxima abertura ainda encontra os dados originais e
+  // tenta de novo (a flag só é marcada aqui, no final).
   localStorage.setItem(CHAVE_BACKUP_MIGRACAO, raw);
+  localStorage.removeItem(CHAVE_LEGADA);
   localStorage.setItem(CHAVE_FLAG_MIGRADO, "1");
 }
 
@@ -175,8 +179,7 @@ export async function inserirRegistro(reg: RegistroOutbox): Promise<void> {
     tx.objectStore(STORE).add(reg);
     tx.oncomplete = () => resolve();
     tx.onerror = () => {
-      const nome = (tx.error as any)?.name;
-      if (nome === "QuotaExceededError") reject(new ErroCotaOutbox());
+      if (tx.error?.name === "QuotaExceededError") reject(new ErroCotaOutbox());
       else reject(tx.error);
     };
   });
@@ -191,8 +194,8 @@ export async function lerRegistro(id: string): Promise<RegistroOutbox | null> {
 
 function semBlob(reg: RegistroOutbox): ResumoOutbox {
   if (!reg.arquivo) return reg as ResumoOutbox;
-  const { blob, ...resto } = reg.arquivo;
-  return { ...reg, arquivo: resto };
+  const { campo, nome, mime, tamanho } = reg.arquivo; // omite blob de propósito
+  return { ...reg, arquivo: { campo, nome, mime, tamanho } };
 }
 
 /** Ordenado por criadoEm (FIFO) — a ordem entre lançamentos importa (ex.:

@@ -1,8 +1,10 @@
 import type { CapacitorConfig } from "@capacitor/cli";
 
 // PROVISÓRIO: URL do site apontada aqui fica soldada dentro do .apk gerado —
-// trocar depois exige novo .apk em todos os celulares E apaga o localStorage
-// da origem antiga (token, cache, fila de lançamentos pendentes). Antes de
+// trocar depois exige novo .apk em todos os celulares E apaga o storage
+// da origem antiga: localStorage (token, cache) E IndexedDB (fila de
+// lançamentos e FOTOS pendentes, ver lib/outboxDb.ts) — só trocar de
+// domínio com todos os celulares sincronizados (fila vazia). Antes de
 // gerar o primeiro .apk para os funcionários, confirmar com o usuário se
 // "fazenda-app-jfye.vercel.app" é definitivo ou se vai existir um domínio
 // próprio — ver docs/APP_INSTALACAO.md e README do app Capacitor.
