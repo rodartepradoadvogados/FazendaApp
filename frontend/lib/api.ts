@@ -4401,3 +4401,28 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
   return res.json();
 }
+
+// ── Filtros salvos (genérico — qualquer tela de relatório pode adotar) ──
+// Ver backend/fazenda/api/routers/filtros_salvos.py. `tela` namespacia os
+// filtros salvos (ex.: "financeiro_extrato"); `filtros` é um objeto livre,
+// específico do formato de estado da tela que está salvando/aplicando.
+export type FiltroSalvo = { id: number; tela: string; nome: string; filtros: Record<string, any>; criado_em: string };
+
+export async function fetchFiltrosSalvos(tela: string): Promise<FiltroSalvo[]> {
+  const res = await authFetch(`${API}/filtros-salvos?tela=${encodeURIComponent(tela)}`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao listar filtros salvos");
+  return res.json();
+}
+
+export async function criarFiltroSalvo(dados: { tela: string; nome: string; filtros: Record<string, any> }): Promise<FiltroSalvo> {
+  const res = await authFetch(`${API}/filtros-salvos`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao salvar filtro"); }
+  return res.json();
+}
+
+export async function excluirFiltroSalvo(id: number): Promise<void> {
+  const res = await authFetch(`${API}/filtros-salvos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir filtro salvo"); }
+}
