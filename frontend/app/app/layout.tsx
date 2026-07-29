@@ -10,6 +10,7 @@ import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
+import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
@@ -26,6 +27,8 @@ const ABAS = [
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const pathRef = useRef(path);
+  pathRef.current = path;
   const online = useOnline();
   const fila = usePendentes();
   const [escuro, setEscuro] = useState(false);
@@ -60,6 +63,25 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
     }
     return iniciarSincronizacaoAutomatica();
   }, []);
+
+  // App Android nativo (Capacitor) — nenhuma destas chamadas faz nada fora
+  // dele (ver lib/nativo.ts). Esconde a splash assim que a casca montou (a
+  // config tem um teto de segurança caso isto nunca rode) e registra o botão
+  // voltar físico: navega como o navegador, só fecha o app na raiz do /app.
+  useEffect(() => {
+    esconderSplash();
+  }, []);
+  useEffect(() => {
+    let ativo = true;
+    let remover = () => {};
+    // pathRef (não `path` direto) — registra uma única vez; o listener nativo
+    // sempre lê o caminho MAIS RECENTE sem precisar remover/recriar a cada navegação.
+    registrarBotaoVoltar(() => pathRef.current === "/app").then((r) => { if (ativo) remover = r; else r(); });
+    return () => { ativo = false; remover(); };
+  }, []);
+  useEffect(() => {
+    ajustarStatusBar(escuro);
+  }, [escuro]);
 
   // Bolinha no ícone do app instalado (Badging API) com a quantidade de
   // eventos da agenda de hoje — mesma contagem do push "Agenda do dia"
