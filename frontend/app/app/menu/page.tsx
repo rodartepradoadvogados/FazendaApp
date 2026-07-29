@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Camera,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Camera, Monitor,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO, fetchAssistenteAcesso } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -217,6 +217,13 @@ export default function Pagina() {
     { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
     { id: "fotos", label: "Fotos do campo", icone: <Camera size={26} />, cor: "var(--mob-verde)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
+    // Escape hatch para as áreas que só existem no site (Configurações,
+    // Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios
+    // avançados etc.) — mesma sessão (localStorage é da mesma origem), sem
+    // precisar logar de novo. Sai da casca do app (header/nav de baixo) e
+    // mostra a navegação normal do site, em "modo desktop" espremido na
+    // tela do celular — aceitável para uso ocasional/administrativo.
+    { id: "siteCompleto", label: "Site completo", icone: <Monitor size={26} />, cor: "var(--mob-azul)" },
     { id: "sair", label: "Sair / trocar de usuário", icone: <LogOut size={26} />, cor: "var(--mob-vermelho)" },
   ];
 
@@ -229,6 +236,7 @@ export default function Pagina() {
         onEscolher={(id) => {
           if (id === "sair") { logout(); return; }
           if (id === "painelCowData") { router.push("/painel-cowdata"); return; }
+          if (id === "siteCompleto") { router.push("/"); return; }
           setSecaoAberta(id as SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso");
         }}
       />
