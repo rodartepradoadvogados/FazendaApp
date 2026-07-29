@@ -16,7 +16,26 @@ android {
             ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
         }
     }
+    // Chave de debug FIXA, versionada em app/debug.keystore — sem isso, cada
+    // build (local ou do GitHub Actions) usa a chave efêmera padrão
+    // (~/.android/debug.keystore, gerada do zero em cada máquina/runner),
+    // e o Android recusa instalar um .apk novo por cima do anterior por
+    // "assinaturas diferentes" — o testador precisaria excluir o app a cada
+    // atualização, perdendo a fila offline (fotos/lançamentos pendentes).
+    // Alias/senha "androiddebugkey"/"android" são os mesmos padrões do
+    // Android — só o arquivo em si muda de efêmero para fixo.
+    signingConfigs {
+        debug {
+            storeFile file('debug.keystore')
+            storePassword 'android'
+            keyAlias 'androiddebugkey'
+            keyPassword 'android'
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
         release {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
