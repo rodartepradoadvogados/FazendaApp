@@ -1,7 +1,8 @@
 /* Service worker do app móvel (/app).
    Objetivo: o app ABRIR mesmo sem internet (casca + páginas do /app em cache).
-   Os DADOS offline (agenda, listas, fila de lançamentos) são tratados pela
-   aplicação em localStorage (lib/offline.ts) — aqui só cuidamos dos arquivos. */
+   Os DADOS offline (agenda, listas, fila de lançamentos e fotos) são
+   tratados pela aplicação em IndexedDB (lib/offline.ts, lib/outboxDb.ts) —
+   aqui só cuidamos dos arquivos estáticos (casca do app). */
 const CACHE = "fazenda-app-v1";
 const PAGINAS_APP = ["/app", "/app/lancar", "/app/rebanho", "/app/menu"];
 

@@ -4259,6 +4259,57 @@ export async function excluirDocumento(id: number): Promise<void> {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir documento"); }
 }
 
+// ── Fotos do campo (app móvel) ──
+// Ver backend/fazenda/api/routers/fotos.py — foto tirada pela câmera do
+// celular, conteúdo vive no Supabase Storage (bucket próprio), aqui só os
+// metadados.
+export type FotoCampo = {
+  id: number; mime_type: string; tamanho_bytes: number;
+  descricao: string | null; identificacao_animal: string | null; data_captura: string;
+};
+
+export async function fetchFotosCampo(filtros?: {
+  identificacao_animal?: string; data_de?: string; data_ate?: string;
+}): Promise<FotoCampo[]> {
+  const params = new URLSearchParams();
+  if (filtros?.identificacao_animal) params.set("identificacao_animal", filtros.identificacao_animal);
+  if (filtros?.data_de) params.set("data_de", filtros.data_de);
+  if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/fotos${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Erro ao listar fotos");
+  return res.json();
+}
+
+// Sem uso desde que FotosCampo.tsx passou a enviar via
+// lib/offline.ts::enviarOuEnfileirarArquivo (fila offline com fallback de
+// rede embutido) — mantida por ora, candidata a remoção.
+export async function enviarFotoCampo(dados: {
+  file: File | Blob; descricao?: string; identificacaoAnimal?: string;
+}): Promise<FotoCampo> {
+  const fd = new FormData();
+  fd.append("file", dados.file, "foto.jpg");
+  if (dados.descricao) fd.append("descricao", dados.descricao);
+  if (dados.identificacaoAnimal) fd.append("identificacao_animal", dados.identificacaoAnimal);
+  const res = await authFetch(`${API}/fotos/upload`, { method: "POST", body: fd });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar foto"); }
+  return res.json();
+}
+
+// Busca via blob (não um <img src="..."> direto) — o endpoint exige o token
+// da sessão. Chamador é responsável por URL.revokeObjectURL quando descartar.
+export async function fetchFotoCampoUrl(id: number): Promise<string> {
+  const res = await authFetch(`${API}/fotos/${id}/arquivo`);
+  if (!res.ok) throw new Error("Erro ao carregar foto");
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function excluirFotoCampo(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir foto"); }
+}
+
 // ── Cadeado do Painel do Contador ──
 // Reautenticação por senha que destrava, por 15 minutos, lançamentos
 // extraordinários, recálculo de juros e abertura de chamado — ver

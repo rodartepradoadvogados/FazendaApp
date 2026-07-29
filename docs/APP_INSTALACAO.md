@@ -1,6 +1,15 @@
 # 📱 App de campo da Fazenda — como instalar no celular
 
-O app dos funcionários fica neste endereço (é só um link — não tem arquivo para baixar):
+Existem hoje DUAS formas de instalar, dependendo do celular. Use a que se aplica:
+
+- **Android**: app nativo (arquivo `.apk`), enviado por WhatsApp/link — ver seção
+  **"Android (app nativo, .apk)"** abaixo. É a forma recomendada para os funcionários
+  enquanto o app ainda não está na Play Store.
+- **iPhone**: não existe app nativo ainda (só compilamos para Android por enquanto).
+  Use o site instalado como app (PWA) — ver seção **"iPhone (Safari)"** abaixo, funciona
+  igual no dia a dia (abre em tela cheia, ícone próprio, funciona sem internet).
+
+O app dos funcionários (site/PWA) também fica neste endereço (é só um link — não tem arquivo para baixar):
 
 **https://fazenda-app-jfye.vercel.app/app**
 
@@ -8,7 +17,20 @@ Cada pessoa instala UMA vez, em 1 minuto. Depois é só tocar no ícone, como qu
 
 ---
 
-## Android (Chrome)
+## Android (app nativo, .apk)
+
+1. Baixe o `.apk` mais recente gerado pelo GitHub Actions (peça o link de download —
+   é o mesmo app, só que atualizado, a cada nova versão nativa).
+2. Abra o arquivo baixado no celular e toque em **Instalar**. O Android vai avisar
+   "app de fonte desconhecida" — toque em **Instalar mesmo assim** (é normal, o app
+   ainda não está na Play Store).
+3. Abra o app pelo ícone. Faça login normalmente.
+
+Esse `.apk` de teste (debug) é só para os funcionários experimentarem antes de irmos
+para a Play Store — quando isso acontecer, a atualização passa a ser automática, como
+qualquer outro app.
+
+### Android (alternativa: Chrome, sem instalar .apk)
 
 1. Mande o link acima por WhatsApp para o funcionário.
 2. Ele abre o link no **Chrome** e entra com o usuário e a senha dele.
@@ -30,7 +52,8 @@ Cada pessoa instala UMA vez, em 1 minuto. Depois é só tocar no ícone, como qu
 - **Agenda** — as tarefas do dia, com botão verde de concluir.
 - **Lançar** — lançamento rápido: reprodutivo, leite, sanidade, alimentação, estoque.
 - **Rebanho** — ficha do animal, movimentar de lote e baixar animal.
-- **Menu** — agenda do veterinário, calendário sanitário, relatórios, indicadores.
+- **Menu** — agenda do veterinário, calendário sanitário, relatórios, indicadores,
+  Fotos do campo (tira foto com a câmera e já envia).
 
 ### Funciona sem internet ("do mato")
 

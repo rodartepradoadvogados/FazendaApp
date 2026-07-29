@@ -39,6 +39,7 @@ from fazenda.api.routers import (
     farmacia,
     fazendas,
     financeiro,
+    fotos,
     importar,
     indicadores,
     lotes,
@@ -360,6 +361,9 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+# Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
+# comercial próprio, só exige contrato ativo.
+app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
 # bloquear_escrita_contador vem por último: o vínculo `contador` (Painel do
 # Contador) já tem permissoes=["financeiro"] pelo cadastro normal do usuário
