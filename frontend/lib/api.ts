@@ -4430,3 +4430,81 @@ export async function excluirFiltroSalvo(id: number): Promise<void> {
   const res = await authFetch(`${API}/filtros-salvos/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir filtro salvo"); }
 }
+
+// ── Protocolos personalizados (motor de protocolos configurável) ──
+// Ver backend/fazenda/api/routers/cadastro/protocolos_customizados.py (molde)
+// e backend/fazenda/api/routers/protocolos_customizados.py (lançar/ativos/cancelar).
+export type EtapaProtocoloCustomizado = {
+  dia: number; descricao_evento: string; insumo_padrao?: string | null;
+  dose?: number | null; unidade?: string | null; via?: string | null;
+  observacao?: string | null; ordem?: number;
+};
+export type ProtocoloCustomizado = {
+  id: number; nome: string; categoria: string; dia_inicial: number;
+  observacao: string | null; ativo: boolean; duracao_dias: number;
+  etapas: EtapaProtocoloCustomizado[];
+};
+export const CATEGORIAS_PROTOCOLO_CUSTOM: [string, string][] = [
+  ["Atividades", "Atividades (geral)"], ["Reprodutivo", "Reprodutivo"], ["Produção", "Produção"],
+  ["sanidade", "Sanidade"], ["Rebanho", "Rebanho"], ["Gestão/Financeiro", "Gestão/Financeiro"],
+];
+
+export async function fetchProtocolosCustomizados(): Promise<ProtocoloCustomizado[]> {
+  const res = await authFetch(`${API}/cadastro/protocolos-customizados`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos personalizados error: ${res.status}`);
+  return res.json();
+}
+export async function criarProtocoloCustomizado(dados: {
+  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  etapas: EtapaProtocoloCustomizado[];
+}): Promise<ProtocoloCustomizado> {
+  const res = await authFetch(`${API}/cadastro/protocolos-customizados`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar protocolo"); }
+  return res.json();
+}
+export async function atualizarProtocoloCustomizado(id: number, dados: {
+  nome: string; categoria: string; dia_inicial: number; observacao?: string | null; ativo?: boolean;
+  etapas: EtapaProtocoloCustomizado[];
+}): Promise<ProtocoloCustomizado> {
+  const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao atualizar protocolo"); }
+  return res.json();
+}
+export async function excluirProtocoloCustomizado(id: number): Promise<void> {
+  const res = await authFetch(`${API}/cadastro/protocolos-customizados/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir protocolo"); }
+}
+
+export async function fetchProtocolosCustomizadosParaLancar(): Promise<ProtocoloCustomizado[]> {
+  const res = await authFetch(`${API}/protocolos-customizados`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos personalizados error: ${res.status}`);
+  return res.json();
+}
+export async function lancarProtocoloCustomizado(dados: {
+  protocolo_id: number; animais: string[]; lote?: string | null; data_inicio: string;
+  responsavel?: string | null; observacao?: string | null;
+}): Promise<{ criado: boolean; lancamento_id: number; eventos_criados: number; animais: number }> {
+  const res = await authFetch(`${API}/protocolos-customizados/lancar`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar protocolo"); }
+  return res.json();
+}
+export type ProtocoloCustomizadoAtivo = {
+  lancamento_id: number; nome_protocolo: string; categoria: string; data_inicio: string; lote: string | null;
+  responsavel: string | null; total_etapas: number; pendentes: number; animais: string[];
+  proxima_etapa: string; proxima_data: string;
+};
+export async function fetchProtocolosCustomizadosAtivos(): Promise<ProtocoloCustomizadoAtivo[]> {
+  const res = await authFetch(`${API}/protocolos-customizados/ativos`, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Protocolos personalizados ativos error: ${res.status}`);
+  return res.json();
+}
+export async function cancelarLancamentoProtocoloCustomizado(lancamentoId: number): Promise<void> {
+  const res = await authFetch(`${API}/protocolos-customizados/${lancamentoId}/cancelar`, { method: "POST" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao cancelar lançamento"); }
+}
