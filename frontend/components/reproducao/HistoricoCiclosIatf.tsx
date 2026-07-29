@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { AlertTriangle, CalendarClock, CheckCircle2, History, Syringe } from "lucide-react";
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 type GrupoIatf = {
   lancamento_id: number;
@@ -23,6 +24,7 @@ export default function HistoricoCiclosIatf() {
   const [grupos, setGrupos] = useState<GrupoIatf[] | null>(null);
   const [candidatas, setCandidatas] = useState<{ candidatas: CandidataIatfProjetada[]; proxima_visita_iatf: string | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const { rotuloDe } = useEstadosReprodutivos();
 
   useEffect(() => {
     fetchProtocolosIatfAtivos().then(setGrupos).catch((e) => setError(e.message));
@@ -97,7 +99,7 @@ export default function HistoricoCiclosIatf() {
                 {candidatas.candidatas.map((c) => (
                   <tr key={c.numero_matriz}>
                     <td style={{ fontWeight: 700 }}>{c.numero_matriz}</td>
-                    <td style={{ fontSize: "0.8rem" }}>{c.sit_rep || "—"}</td>
+                    <td style={{ fontSize: "0.8rem" }}>{rotuloDe(c.numero_matriz)}</td>
                     <td style={{ fontSize: "0.8rem" }}>{c.motivo}</td>
                     <td style={{ textAlign: "right" }}>{c.del_dias ?? "—"}</td>
                     <td style={{ textAlign: "right" }}>{c.del_dias_projetado ?? "—"}</td>

@@ -9,6 +9,7 @@ import { fetchAnimais } from "@/lib/api";
 import { fetchComCache } from "@/lib/offline";
 import { MobCard, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes } from "@/components/mobile/lancar/comum";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 type AnimalLote = {
   numero: string;
@@ -22,13 +23,15 @@ type AnimalLote = {
   ult_cl_kg?: number | null;
 };
 
-// Cor por situação reprodutiva (sit_rep) — valores reais vindos do backend.
+// Cor por situação reprodutiva ao vivo (rótulos de ROTULO_ESTADO).
 const SIT_COR: Record<string, string> = {
   "Ges.": "var(--mob-azul)",
   "Ins.": "var(--mob-dourado)",
   "Vaz. pev": "var(--mob-amarelo)",
   "Vaz. apt.": "var(--mob-verde)",
   "Vaz. atr.": "var(--mob-vinho)",
+  Gestante: "var(--mob-azul)", Inseminada: "var(--mob-dourado)", "Em protocolo (IA atual)": "var(--mob-dourado)",
+  PEV: "var(--mob-amarelo)", Apta: "var(--mob-verde)", Atrasada: "var(--mob-vinho)", "Não apta": "var(--mob-muted)", Vazia: "var(--mob-verde)",
 };
 
 // Cor do "quadro" de cada lote, pelo tipo indicado no nome do grupo.
@@ -67,6 +70,7 @@ function useAnimaisPorLote() {
 
 function Composicao() {
   const { porLote, carregando, total } = useAnimaisPorLote();
+  const { rotuloDe } = useEstadosReprodutivos();
   if (carregando) return <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>;
   if (!total) return <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>;
 
@@ -80,14 +84,14 @@ function Composicao() {
           </summary>
           <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem", marginTop: "0.5rem" }}>
             {lista.map((a) => (
-              <MobCard key={a.numero} className="mob-tint" style={{ ["--tint-cor" as any]: SIT_COR[a.sit_rep || ""] || "var(--mob-muted)" }}>
+              <MobCard key={a.numero} className="mob-tint" style={{ ["--tint-cor" as any]: SIT_COR[rotuloDe(a.numero)] || "var(--mob-muted)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
                   <span style={{ fontWeight: 800 }}>{a.numero}{a.nome ? ` · ${a.nome}` : ""}</span>
                   <span style={{ fontSize: "0.8rem", color: "var(--mob-muted)" }}>{a.categoria_abrev || a.categoria_completa || "—"}</span>
                 </div>
                 <div style={{ display: "flex", flexWrap: "wrap", gap: "0.5rem 0.9rem", marginTop: "0.35rem", fontSize: "0.8rem", color: "var(--mob-muted)" }}>
                   <span>Raça: {a.raca || "—"}</span>
-                  <span style={{ color: SIT_COR[a.sit_rep || ""] || "var(--mob-muted)", fontWeight: 600 }}>{a.sit_rep || "Sit. Rep. —"}</span>
+                  <span style={{ color: SIT_COR[rotuloDe(a.numero)] || "var(--mob-muted)", fontWeight: 600 }}>{rotuloDe(a.numero) !== "—" ? rotuloDe(a.numero) : "Sit. Rep. —"}</span>
                   <span>DEL: {a.del_dias ?? "—"}</span>
                   <span>Últ. CL: {a.ult_cl_kg != null ? `${a.ult_cl_kg.toFixed(1)} kg` : "—"}</span>
                 </div>
@@ -102,6 +106,7 @@ function Composicao() {
 
 function Indicadores() {
   const { porLote, carregando, total } = useAnimaisPorLote();
+  const { rotuloDe } = useEstadosReprodutivos();
   if (carregando) return <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>;
   if (!total) return <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>;
 
@@ -114,7 +119,7 @@ function Indicadores() {
         const clMedio = comCl.length ? comCl.reduce((s, a) => s + (a.ult_cl_kg || 0), 0) / comCl.length : null;
         const porSit = new Map<string, number>();
         lista.forEach((a) => {
-          const sit = a.sit_rep || "Sem situação";
+          const sit = rotuloDe(a.numero) !== "—" ? rotuloDe(a.numero) : "Sem situação";
           porSit.set(sit, (porSit.get(sit) || 0) + 1);
         });
 

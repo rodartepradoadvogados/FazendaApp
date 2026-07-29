@@ -396,8 +396,13 @@ def indicadores_mensais_analise(
 
     registros = [r for r in registros if passa(r)]
 
-    secagens = [s.model_dump() for s in session.exec(select(Secagem)).all()]
-    controles = [c.model_dump() for c in session.exec(select(ControleLeiteiro)).all()]
+    secagens_query = select(Secagem)
+    controles_query = select(ControleLeiteiro)
+    if fazenda_id is not None:
+        secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
+        controles_query = controles_query.where(ControleLeiteiro.fazenda_id == fazenda_id)
+    secagens = [s.model_dump() for s in session.exec(secagens_query).all()]
+    controles = [c.model_dump() for c in session.exec(controles_query).all()]
 
     if ini or fim:
         def no_periodo(d: object) -> bool:
@@ -714,9 +719,13 @@ class SecagemEditIn(BaseModel):
 
 
 @router.put("/secagens/{secagem_id}")
-def atualizar_secagem(secagem_id: int, dados: SecagemEditIn, session: Session = Depends(get_session)) -> dict:
+def atualizar_secagem(
+    secagem_id: int, dados: SecagemEditIn, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     secagem = session.get(Secagem, secagem_id)
-    if not secagem:
+    if not secagem or (fazenda_id is not None and secagem.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Secagem não encontrada")
     for campo, valor in dados.model_dump(exclude_unset=True).items():
         setattr(secagem, campo, valor)

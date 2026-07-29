@@ -14,6 +14,7 @@ import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, codigoGrupo } from "@/components/lancamentos/comumForms";
 import { CATEGORIAS_ANIMAIS, FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { SeletorEventoPreventivo } from "@/components/lancamentos/FormCalendarioSanitario";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 // ─────────────────────── Preventivo — aplicação (vacina/exame) ───────────────────────
 type EventoPrev = {
@@ -24,6 +25,7 @@ type EventoPrev = {
 const LABEL_RESULTADO_EXAME: Record<string, string> = { positivo: "Positivo", negativo: "Negativo", indefinido: "Indefinido" };
 
 export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: AnimalRow[]; lotes: string[]; estoque: EstoqueItem[] }) {
+  const { rotuloDe } = useEstadosReprodutivos();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
   const [dataEvento, setDataEvento] = useState("");
@@ -399,7 +401,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },
               { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
-              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+              { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
             ]}
           />
         </div>
@@ -417,7 +419,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
                   { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                   { header: "Lote", render: (a) => a.grupo_primario || "—" },
                   { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
-                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                  { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                 ]}
               />
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>
@@ -447,7 +449,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
                   { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                   { header: "Lote", render: (a) => a.grupo_primario || "—" },
                   { header: "Categoria", render: (a) => a.categoria_abrev || a.categoria_completa || "—" },
-                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                  { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                 ]}
               />
               <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>

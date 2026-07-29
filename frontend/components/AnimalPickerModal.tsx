@@ -4,6 +4,7 @@ import { Search, X, ChevronDown, UserPlus } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
 import { Modal } from "./Modal";
 import NovoAnimalRapido from "./NovoAnimalRapido";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 /**
  * Padrão único de seleção de VÁRIOS animais no site: um botão mostra quantos
@@ -30,6 +31,7 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
   const [filtroLote, setFiltroLote] = useState("");
   const [novoAnimalAberto, setNovoAnimalAberto] = useState(false);
   const [extras, setExtras] = useState<AnimalRow[]>([]);
+  const { rotuloDe } = useEstadosReprodutivos();
 
   const animaisComExtras = useMemo(() => {
     if (!extras.length) return animais;
@@ -47,9 +49,9 @@ export function AnimalPickerModal({ animais, selecionados, onToggle, colunas, pl
     return animaisComExtras.filter((a) => {
       if (filtroLote && (a.grupo_primario || "") !== filtroLote) return false;
       if (!q) return true;
-      return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`.toLowerCase().includes(q);
+      return `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q);
     });
-  }, [animaisComExtras, busca, filtroLote]);
+  }, [animaisComExtras, busca, filtroLote, rotuloDe]);
 
   const todosFiltradosSelecionados = filtrados.length > 0 && filtrados.every((a) => selecionados.has(a.numero));
   function alternarFiltrados() {

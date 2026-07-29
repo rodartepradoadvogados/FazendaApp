@@ -97,6 +97,25 @@ def _autorizado(chat_id: int) -> bool:
     return bool(liberados) and chat_id in liberados
 
 
+def _fazenda_do_chat(chat_id: int) -> int | None:
+    """A qual fazenda pertence este chat (TELEGRAM_CHAT_FAZENDA, formato
+    "chat_id:fazenda_id,..."). None = não mapeado: o pendente nasce sem
+    fazenda e continua visível na fila de aprovação como antes — é o
+    comportamento de instalação de fazenda única, mantido de propósito para
+    não quebrar quem já usa o robô sem essa variável."""
+    for parte in (settings.telegram_chat_fazenda or "").split(","):
+        parte = parte.strip()
+        if not parte or ":" not in parte:
+            continue
+        chat_txt, _, fazenda_txt = parte.partition(":")
+        try:
+            if int(chat_txt.strip()) == chat_id:
+                return int(fazenda_txt.strip())
+        except ValueError:
+            continue
+    return None
+
+
 def _ler_documento_pendente(pend: TelegramPendente) -> dict:
     conteudo = _baixar_arquivo(pend.file_id)
     if pend.kind == "xml":
@@ -186,6 +205,7 @@ def _enviar_para_aprovacao_documento(session: Session, pend: TelegramPendente, c
     pendente = LancamentoPendente(
         tipo=tipo, payload=pend.dados_lidos, resumo=resumo,
         solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
+        fazenda_id=_fazenda_do_chat(chat_id),
     )
     session.add(pendente)
     session.delete(pend)
@@ -517,6 +537,7 @@ def _finalizar(session: Session, sess: TelegramSessao) -> None:
     pend = LancamentoPendente(
         tipo=tipo, payload=json.dumps(dados), resumo=resumo,
         solicitante_chat_id=chat_id, solicitante_nome=nome, status="pendente",
+        fazenda_id=_fazenda_do_chat(chat_id),
     )
     session.add(pend)
     session.delete(sess)

@@ -238,15 +238,27 @@ def calcular_agenda(
     fazenda_id = fazenda_id_seguro(fazenda_id)
     _gerar_agenda_recorrente(session)
     _gerar_auditorias_diarias(session)
-    animais = [_model_to_dict(a) for a in session.exec(select(Animal).where(Animal.ativo == True)).all() if not a.eh_semen and a.sexo != "M"]
+    # Toda a base da agenda é escopada pela fazenda atual — sem isso a tela
+    # mais usada do sistema misturava animal, serviço, parto, estoque e
+    # financeiro de fazendas diferentes no mesmo cálculo.
+    def _da_fazenda(query, modelo):
+        if fazenda_id is None:
+            return query
+        return query.where(modelo.fazenda_id == fazenda_id)
+
+    animais = [
+        _model_to_dict(a)
+        for a in session.exec(_da_fazenda(select(Animal).where(Animal.ativo == True), Animal)).all()  # noqa: E712
+        if not a.eh_semen and a.sexo != "M"
+    ]
     servicos_ult = [
         _model_to_dict(s) for s in session.exec(
-            select(Servico).where(Servico.ult_ocorrencia == 1)
+            _da_fazenda(select(Servico).where(Servico.ult_ocorrencia == 1), Servico)
         ).all()
     ]
-    partos = [_model_to_dict(p) for p in session.exec(select(Parto)).all()]
-    estoque = [_model_to_dict(e) for e in session.exec(select(Estoque)).all()]
-    contas = [_model_to_dict(c) for c in session.exec(select(ContaGerencial)).all()]
+    partos = [_model_to_dict(p) for p in session.exec(_da_fazenda(select(Parto), Parto)).all()]
+    estoque = [_model_to_dict(e) for e in session.exec(_da_fazenda(select(Estoque), Estoque)).all()]
+    contas = [_model_to_dict(c) for c in session.exec(_da_fazenda(select(ContaGerencial), ContaGerencial)).all()]
     query_manuais = select(AgendaManual)
     if fazenda_id is not None:
         query_manuais = query_manuais.where(AgendaManual.fazenda_id.in_((fazenda_id, None)))
@@ -261,7 +273,7 @@ def calcular_agenda(
     # realimentava o cálculo de elegibilidade, deixando animais entrarem cedo
     # demais.
     sanidades_bst = [
-        s for s in session.exec(select(Sanidade)).all()
+        s for s in session.exec(_da_fazenda(select(Sanidade), Sanidade)).all()
         if s.atividade == "BST" or MARCADORES_BST.search(s.produto or "")
     ]
     datas_bst = [s.data_aplicacao for s in sanidades_bst if s.data_aplicacao]
@@ -656,10 +668,14 @@ def calcular_agenda(
     # (fase) gera um lembrete na Agenda nos dias configurados (periodicidade +
     # dia da semana), com a contagem de animais da faixa de idade-alvo.
     eventos_pesagem = []
-    agend_pesagem = session.exec(select(AgendamentoPesagem).where(AgendamentoPesagem.ativo == True)).all()  # noqa: E712
+    agend_pesagem = session.exec(
+        _da_fazenda(select(AgendamentoPesagem).where(AgendamentoPesagem.ativo == True), AgendamentoPesagem)  # noqa: E712
+    ).all()
     if agend_pesagem:
         # Todos os animais ativos (inclui bezerros de ambos os sexos) com nascimento.
-        todos_ativos = session.exec(select(Animal).where(Animal.ativo == True)).all()  # noqa: E712
+        todos_ativos = session.exec(
+            _da_fazenda(select(Animal).where(Animal.ativo == True), Animal)  # noqa: E712
+        ).all()
         animais_pesagem = [a for a in todos_ativos if not a.eh_semen]
         for ag in agend_pesagem:
             for dref in ocorrencias_pesagem(ag.data_referencia, ag.frequencia_valor, ag.frequencia_unidade,

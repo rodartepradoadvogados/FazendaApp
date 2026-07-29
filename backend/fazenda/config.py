@@ -13,6 +13,12 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""            # token do @BotFather
     telegram_webhook_secret: str = ""       # segredo que valida chamadas do Telegram
     telegram_allowed_chat_ids: str = ""     # ids de chat liberados, separados por vírgula
+    # A qual fazenda pertence cada chat do robô — "chat_id:fazenda_id" separados
+    # por vírgula (ex.: "12345:1,67890:2"). Sem isso, o lançamento que chega
+    # pelo Telegram nasce sem fazenda e aparece na fila de aprovação de todas
+    # elas (ver LancamentoPendente.fazenda_id). Instalação de fazenda única
+    # pode deixar vazio — o comportamento continua o de sempre.
+    telegram_chat_fazenda: str = ""
     public_base_url: str = ""               # ex.: https://fazendaapp-production.up.railway.app
     # URL pública do frontend (site) — usada para montar o link de
     # redefinição de senha enviado por e-mail. Ex.: https://app.fazendaestreito.com

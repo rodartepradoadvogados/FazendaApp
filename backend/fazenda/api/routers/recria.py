@@ -406,7 +406,9 @@ def classificar_categoria(ctx: dict, categorias: list[CategoriaManejo]) -> str:
     if dias is None:
         return "Sem data de nascimento"
     peso = ctx.get("peso")
-    sit_rep_3 = _situacao_reprodutiva_3(ctx.get("sit_rep"))
+    # Prefere a situação calculada dos lançamentos; só cai no texto do CSV
+    # quando o animal não tem serviço nem parto registrado.
+    sit_rep_3 = ctx.get("situacao_reprodutiva_viva") or _situacao_reprodutiva_3(ctx.get("sit_rep"))
     peso_faltou: CategoriaManejo | None = None
     for cat in sorted(categorias, key=lambda c: (c.ordem, c.dia_min)):
         if dias < cat.dia_min:
@@ -469,8 +471,26 @@ def _contexto_categoria(
         situacao_produtiva = None  # novilha — nunca pariu, não se aplica
     dias_pos_parto = (hoje - ult_parto).days if ult_parto else None
 
+    # Situação reprodutiva AO VIVO, derivada dos mesmos lançamentos acima em
+    # vez do texto congelado de sit_rep (que só muda no próximo GERAL.csv).
+    # Regra: prenha = tem concepção vigente; inseminada = último serviço é
+    # POSTERIOR ao último parto e ainda sem diagnóstico fechado; vazia = o
+    # resto de quem já tem histórico. None = animal sem nenhum lançamento,
+    # aí o `sit_rep` continua servindo de última referência.
+    if concep is not None and (not ult_parto or concep > ult_parto):
+        situacao_reprodutiva_viva = "prenha"
+    elif ult_serv and (not ult_parto or ult_serv.data_servico > ult_parto) and \
+            (ult_serv.diagnostico or "").strip().upper() not in ("POSITIVO", "NEGATIVO") and \
+            not ult_serv.data_perda_prenhez:
+        situacao_reprodutiva_viva = "inseminada"
+    elif servs or ult_parto:
+        situacao_reprodutiva_viva = "vazia"
+    else:
+        situacao_reprodutiva_viva = None
+
     return {
         "dias": dias, "peso": peso, "sit_rep": sit_rep,
+        "situacao_reprodutiva_viva": situacao_reprodutiva_viva,
         "dias_gestacao": dias_gestacao, "dias_desde_servico": dias_desde_servico,
         "dias_para_parto": dias_para_parto, "dias_pos_parto": dias_pos_parto,
         "situacao_produtiva": situacao_produtiva,
@@ -552,13 +572,16 @@ def categoria_sugerida_animal(
     categorias = session.exec(categorias_query).all()
     hoje = date.today()
     dias = (hoje - animal.data_nasc).days if animal.data_nasc else None
-    ult = session.exec(
-        select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
-    ).all()
+    peso_query = select(PesagemCorporal).where(PesagemCorporal.numero_matriz == numero).order_by(PesagemCorporal.data_pesagem)
+    secagens_query = select(Secagem).where(Secagem.numero_matriz == numero)
+    if fazenda_id is not None:
+        peso_query = peso_query.where(PesagemCorporal.fazenda_id == fazenda_id)
+        secagens_query = secagens_query.where(Secagem.fazenda_id == fazenda_id)
+    ult = session.exec(peso_query).all()
     peso = ult[-1].peso_kg if ult else None
     servicos = session.exec(select(Servico).where(Servico.numero_matriz == numero)).all()
     partos = session.exec(select(Parto).where(Parto.numero_matriz == numero)).all()
-    secagens = session.exec(select(Secagem).where(Secagem.numero_matriz == numero)).all()
+    secagens = session.exec(secagens_query).all()
     ctx = _contexto_categoria(dias, peso, animal.sit_rep, hoje, servicos, partos, secagens)
     return {"categoria": classificar_categoria(ctx, categorias)}
 

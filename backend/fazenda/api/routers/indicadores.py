@@ -261,7 +261,10 @@ def obter_indicadores(
     # usado aqui para a elegibilidade de 1ª cobertura ("aptas").
     peso_por_animal: dict[str, float] = {}
     ultima_data: dict[str, date] = {}
-    for p in session.exec(select(PesagemCorporal)).all():
+    query_pesagem = select(PesagemCorporal)
+    if fazenda_id is not None:
+        query_pesagem = query_pesagem.where(PesagemCorporal.fazenda_id == fazenda_id)
+    for p in session.exec(query_pesagem).all():
         atual = ultima_data.get(p.numero_matriz)
         if not atual or p.data_pesagem > atual:
             ultima_data[p.numero_matriz] = p.data_pesagem

@@ -333,3 +333,39 @@ class TestEndpointEstadosReprodutivos:
         assert r.status_code == 200, r.text
         numeros = [a["numero"] for a in r.json()["animais"]]
         assert numeros == ["007", "9", "23", "100"]
+
+
+class TestRecriaSituacaoAoVivo:
+    """recria._contexto_categoria classificava a situação reprodutiva pelo
+    texto congelado de sit_rep; agora deriva dos lançamentos, igual ao resto
+    do sistema (senão a categoria de manejo do animal ficava presa ao último
+    upload de CSV)."""
+
+    def test_parto_derruba_prenha_mesmo_com_sit_rep_gestante(self):
+        from fazenda.api.routers.recria import _contexto_categoria
+        from fazenda.models import Parto as P, Servico as S
+        ctx = _contexto_categoria(
+            dias=1200, peso=500, sit_rep="Ges.", hoje=HOJE,
+            servicos=[S(numero_matriz="1", data_servico=date(2025, 10, 1), diagnostico="POSITIVO")],
+            partos=[P(numero_matriz="1", data_parto=date(2026, 7, 26))],
+            secagens=[],
+        )
+        assert ctx["situacao_reprodutiva_viva"] == "vazia"
+
+    def test_servico_recente_vira_inseminada(self):
+        from fazenda.api.routers.recria import _contexto_categoria
+        from fazenda.models import Servico as S
+        ctx = _contexto_categoria(
+            dias=600, peso=380, sit_rep="Vaz. atr.", hoje=HOJE,
+            servicos=[S(numero_matriz="2", data_servico=date(2026, 7, 17))],
+            partos=[], secagens=[],
+        )
+        assert ctx["situacao_reprodutiva_viva"] == "inseminada"
+
+    def test_sem_lancamento_nenhum_cai_no_sit_rep(self):
+        from fazenda.api.routers.recria import _contexto_categoria
+        ctx = _contexto_categoria(
+            dias=300, peso=250, sit_rep="Ges.", hoje=HOJE,
+            servicos=[], partos=[], secagens=[],
+        )
+        assert ctx["situacao_reprodutiva_viva"] is None

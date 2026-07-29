@@ -5,6 +5,7 @@
 import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
 import { Search } from "lucide-react";
 import { fetchComCache, enviarOuEnfileirar } from "@/lib/offline";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 // ── Tipos das listas usadas nos formulários ──────────────────────────────────
 export type Animal = {
@@ -36,17 +37,20 @@ export function normalizar(s: string): string {
   return (s || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
-export function rotuloAnimal(a: Animal): string {
+// `estadoDe` é opcional: quando informado (rotuloDe do hook useEstadosReprodutivos),
+// mostra a situação reprodutiva AO VIVO em vez do texto congelado a.sit_rep.
+export function rotuloAnimal(a: Animal, estadoDe?: (numero: string) => string): string {
   const cat = a.categoria_abrev || a.categoria_completa || a.grupo_primario || "";
-  return [a.nome, cat, a.sit_rep].filter(Boolean).join(" · ");
+  const sit = estadoDe ? estadoDe(a.numero) : a.sit_rep;
+  return [a.nome, cat, sit && sit !== "—" ? sit : null].filter(Boolean).join(" · ");
 }
 
 /** Busca por número (brinco), nome, lote, categoria ou situação reprodutiva. */
-export function filtrarAnimais(animais: Animal[], busca: string): Animal[] {
+export function filtrarAnimais(animais: Animal[], busca: string, estadoDe?: (numero: string) => string): Animal[] {
   const q = normalizar(busca);
   if (!q) return animais;
   return animais.filter((a) =>
-    normalizar(`${a.numero} ${a.nome || ""} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`).includes(q),
+    normalizar(`${a.numero} ${a.nome || ""} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${estadoDe ? estadoDe(a.numero) : (a.sit_rep || "")}`).includes(q),
   );
 }
 
@@ -190,12 +194,13 @@ export function SeletorAnimal({ animais, valor, onChange, placeholder }:
   const [q, setQ] = useState("");
   const [editando, setEditando] = useState(false);
   const sel = animais.find((a) => a.numero === valor);
+  const { rotuloDe } = useEstadosReprodutivos();
 
   if (sel && !editando) {
     return (
       <button type="button" className="mob-input" style={{ textAlign: "left", cursor: "pointer" }}
         onClick={() => { setEditando(true); setQ(""); }}>
-        <strong>{sel.numero}</strong>{rotuloAnimal(sel) ? ` · ${rotuloAnimal(sel)}` : ""}
+        <strong>{sel.numero}</strong>{rotuloAnimal(sel, rotuloDe) ? ` · ${rotuloAnimal(sel, rotuloDe)}` : ""}
       </button>
     );
   }
@@ -205,7 +210,7 @@ export function SeletorAnimal({ animais, valor, onChange, placeholder }:
   // essa lista. Nunca é possível "enviar" texto livre: só o toque num item
   // chama onChange.
   const ordenados = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, undefined, { numeric: true }));
-  const filtrados = filtrarAnimais(ordenados, q).slice(0, 30);
+  const filtrados = filtrarAnimais(ordenados, q, rotuloDe).slice(0, 30);
   return (
     <div>
       <div style={{ position: "relative" }}>
@@ -217,7 +222,7 @@ export function SeletorAnimal({ animais, valor, onChange, placeholder }:
         {filtrados.map((a) => (
           <button key={a.numero} type="button" className="mob-btn-2" style={{ justifyContent: "flex-start", textAlign: "left", padding: "0.7rem 0.9rem" }}
             onClick={() => { onChange(a.numero); setEditando(false); setQ(""); }}>
-            <span><strong>{a.numero}</strong>{rotuloAnimal(a) ? ` · ${rotuloAnimal(a)}` : ""}</span>
+            <span><strong>{a.numero}</strong>{rotuloAnimal(a, rotuloDe) ? ` · ${rotuloAnimal(a, rotuloDe)}` : ""}</span>
           </button>
         ))}
         {filtrados.length === 0 && <p style={{ color: "var(--mob-muted)", fontSize: "0.9rem", padding: "0.2rem" }}>Nenhum animal encontrado.</p>}
