@@ -54,6 +54,15 @@ export type RegistroOutbox = {
   erro?: string;
   tentativas?: number;
   proximaTentativaEm?: string;
+  // Fazenda selecionada no momento em que o item foi enfileirado (ver
+  // fazenda_atual em lib/api.ts). Se o usuário trocar de fazenda com o item
+  // ainda pendente, sincronizar() (lib/offline.ts) pula esse item até o
+  // usuário voltar pra fazenda certa — sem isso, o lançamento/foto seria
+  // gravado na fazenda ERRADA (o backend lê a fazenda do token vigente, não
+  // da fazenda de quando o item foi criado). undefined = item antigo,
+  // migrado antes deste campo existir — sincroniza normalmente (mesmo
+  // comportamento de sempre, sem o guard).
+  fazendaId?: number | null;
 };
 
 /** Projeção seguro para UI/React — nunca carrega o Blob (evita reter

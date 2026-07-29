@@ -40,7 +40,7 @@
 //     IndexedDB (ver lib/outboxDb.ts), guardando o Blob por referência.
 // ─────────────────────────────────────────────────────────────────────────────
 import { useEffect, useMemo, useState } from "react";
-import { API, getToken } from "@/lib/api";
+import { API, getToken, getFazendaAtual } from "@/lib/api";
 import {
   garantirPronto, pedirStoragePersistente, idbDisponivel, cabeNoDisco,
   inserirRegistro, lerRegistro, listarResumos, atualizarRegistro, removerRegistro, lerBlob,
@@ -218,7 +218,7 @@ function proximaTentativa(tentativas: number): string {
 export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descricao: string, metodo: "POST" | "PUT" | "DELETE" = "POST"): Promise<{ enviado: boolean }> {
   await iniciar();
   if (!navigator.onLine) {
-    await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente" });
+    await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
     await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
     return { enviado: false };
   }
@@ -239,7 +239,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente" });
+      await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
       await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
     }
@@ -315,6 +315,7 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
     await inserirItem({
       id: gerarId(), criadoEm: new Date().toISOString(), descricao: opcoes.descricao,
       caminho: opcoes.caminho, metodo, tipo: "form", status: "pendente",
+      fazendaId: getFazendaAtual()?.id ?? null,
       corpo: camposLimpos,
       arquivo: { campo: campoArquivo, nome: nomeArquivo, mime: opcoes.arquivo.type || "application/octet-stream", tamanho: opcoes.arquivo.size, blob: opcoes.arquivo },
     });
@@ -393,6 +394,13 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
       for (const item of grupo) {
         const atual = await lerItemCompleto(item.id);
         if (!atual) continue; // descartado/enviado por outra aba desde a listagem
+        // Item enfileirado numa fazenda e o usuário trocou de fazenda antes
+        // de sincronizar — o backend grava na fazenda do TOKEN vigente, não
+        // na de quando o item foi criado, então enviar agora gravaria no
+        // lugar errado. Pula (sem contar tentativa) até o usuário voltar
+        // pra fazenda certa. `fazendaId` undefined = item antigo (migrado
+        // antes deste campo existir) — sincroniza normalmente.
+        if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) continue;
         try {
           const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo);
           if (res.ok) {

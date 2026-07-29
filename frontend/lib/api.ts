@@ -4281,21 +4281,6 @@ export async function fetchFotosCampo(filtros?: {
   return res.json();
 }
 
-// Sem uso desde que FotosCampo.tsx passou a enviar via
-// lib/offline.ts::enviarOuEnfileirarArquivo (fila offline com fallback de
-// rede embutido) — mantida por ora, candidata a remoção.
-export async function enviarFotoCampo(dados: {
-  file: File | Blob; descricao?: string; identificacaoAnimal?: string;
-}): Promise<FotoCampo> {
-  const fd = new FormData();
-  fd.append("file", dados.file, "foto.jpg");
-  if (dados.descricao) fd.append("descricao", dados.descricao);
-  if (dados.identificacaoAnimal) fd.append("identificacao_animal", dados.identificacaoAnimal);
-  const res = await authFetch(`${API}/fotos/upload`, { method: "POST", body: fd });
-  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao enviar foto"); }
-  return res.json();
-}
-
 // Busca via blob (não um <img src="..."> direto) — o endpoint exige o token
 // da sessão. Chamador é responsável por URL.revokeObjectURL quando descartar.
 export async function fetchFotoCampoUrl(id: number): Promise<string> {
