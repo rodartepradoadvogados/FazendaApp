@@ -1,17 +1,19 @@
 "use client";
 import { useEffect, useRef, useState } from "react";
 import { Sparkles, X, Send } from "lucide-react";
-import { perguntarAssistente } from "@/lib/api";
+import { perguntarAssistente, fetchAssistenteAcesso } from "@/lib/api";
 
 type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
 
 /**
  * Botão flutuante do Assistente Virtual (protótipo) — abre um painel de chat
  * simples que consulta os dados reais da fazenda via tool-use no backend
- * (/assistente/perguntar). Restrito a administradores enquanto o recurso
- * está em avaliação (mesmo gate do backend).
+ * (/assistente/perguntar). Restrito ao dono da fazenda (ou usuário liberado
+ * por ele — ver GET /assistente/acesso) — some da tela para quem não tem
+ * acesso, em vez de aparecer e devolver 403 ao tentar usar.
  */
 export default function AssistenteClaude() {
+  const [liberado, setLiberado] = useState(false);
   const [aberto, setAberto] = useState(false);
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
   const [historico, setHistorico] = useState<any[]>([]);
@@ -20,9 +22,15 @@ export default function AssistenteClaude() {
   const fimRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
+    fetchAssistenteAcesso().then((r) => setLiberado(r.liberado)).catch(() => setLiberado(false));
+  }, []);
+
+  useEffect(() => {
     const reduzMovimento = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     fimRef.current?.scrollIntoView({ behavior: reduzMovimento ? "auto" : "smooth" });
   }, [mensagens, aberto]);
+
+  if (!liberado) return null;
 
   const enviar = async () => {
     const texto = pergunta.trim();

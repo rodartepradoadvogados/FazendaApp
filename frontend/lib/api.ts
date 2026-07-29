@@ -4143,11 +4143,25 @@ export const fetchNotaCapa = (): Promise<NotaCapa | null> => _rGet(`/news/nota-c
 export const atualizarNotaCapa = (d: { titulo: string; texto: string; ativa: boolean }): Promise<NotaCapa> =>
   _rSend(`/news/nota-capa`, "PUT", d);
 
-// ── Assistente Claude (protótipo, admin-only) ──
+// ── Assistente Claude (protótipo, restrito ao dono da fazenda ou usuário
+// liberado por ele — ver backend/fazenda/api/routers/assistente.py) ──
 export type AssistenteResposta = { resposta: string; historico: any[] };
 export async function perguntarAssistente(mensagem: string, historico: any[] = []): Promise<AssistenteResposta> {
   return _rSend(`/assistente/perguntar`, "POST", { mensagem, historico });
 }
+// Nunca dá 403 — só diz se o usuário logado tem acesso, para o menu do app
+// decidir se mostra o item sem precisar tentar e tomar erro.
+export const fetchAssistenteAcesso = (): Promise<{ liberado: boolean }> => _rGet(`/assistente/acesso`);
+
+export type AssistenteEnsinamento = {
+  id: number; titulo: string; texto: string; ativo: boolean; criado_em: string; atualizado_em: string;
+};
+export const fetchEnsinamentos = (): Promise<AssistenteEnsinamento[]> => _rGet(`/assistente/ensinamentos`);
+export const criarEnsinamento = (d: { titulo: string; texto: string }): Promise<AssistenteEnsinamento> =>
+  _rSend(`/assistente/ensinamentos`, "POST", d);
+export const atualizarEnsinamento = (id: number, d: { titulo: string; texto: string; ativo: boolean }): Promise<AssistenteEnsinamento> =>
+  _rSend(`/assistente/ensinamentos/${id}`, "PUT", d);
+export const excluirEnsinamento = (id: number) => _rSend(`/assistente/ensinamentos/${id}`, "DELETE");
 
 // ── Portal (Administração > Portal > Comunicação) ──
 export const ABAS_PORTAL = [

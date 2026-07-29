@@ -83,6 +83,11 @@ DEFINICOES: list[dict] = [
     {"chave": "janela_eventos_sanitarios_futuro", "grupo": "agenda_sistema", "label": "Janela de eventos sanitários — dias no futuro", "valor": 180, "unidade": "dias"},
     {"chave": "dias_contas_a_pagar_agenda", "grupo": "agenda_sistema", "label": "Contas a pagar na agenda — próximos dias", "valor": 10, "unidade": "dias"},
     {"chave": "data_corte_taxa_concepcao", "grupo": "agenda_sistema", "label": "Data de corte para taxa de concepção", "valor": "2026-01-01", "tipo": "date"},
+    # Ids de usuário (separados por vírgula) liberados a usar o Assistente
+    # Virtual além do dono da fazenda (contratante) — ver
+    # fazenda.rules.assistente e fazenda.api.routers.assistente. Vazio = só o
+    # dono mesmo (comportamento de hoje).
+    {"chave": "assistente_usuarios_liberados", "grupo": "agenda_sistema", "label": "Assistente — usuários liberados além do dono (ids separados por vírgula)", "valor": "", "tipo": "texto"},
 
     # ---- Metas reprodutivas ----------------------------------------------------
     {"chave": "meta_del_max_1o_servico", "grupo": "metas_reproducao", "label": "DEL máximo para 1º serviço", "valor": 100, "unidade": "dias"},
@@ -225,6 +230,16 @@ def get_param_date(chave: str, padrao: date | None = None) -> date | None:
         return date.fromisoformat(row.valor)
     except ValueError:
         return padrao
+
+
+def get_param_texto(chave: str, padrao: str = "") -> str:
+    """Retorna o valor de texto livre de um parâmetro (ex.:
+    'assistente_usuarios_liberados') — get_param() não serve aqui porque só
+    sabe converter para int/float."""
+    row = _linha(chave)
+    if row is None or row.valor is None:
+        return padrao
+    return row.valor
 
 
 # ---------------------------------------------------------------------------
