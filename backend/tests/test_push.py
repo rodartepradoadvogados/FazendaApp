@@ -19,7 +19,7 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 import fazenda.api.routers.push as push_module
-from fazenda.models import PushNotificacaoEnviada, PushSubscription, Usuario
+from fazenda.models import PushNotificacaoEnviada, PushSubscription, PushTokenFcm, Usuario
 
 
 class _FakeUsuario:
@@ -130,6 +130,91 @@ class TestSubscribeEndpoint:
 
 
 # ---------------------------------------------------------------------------
+# Endpoint HTTP: registrar-fcm / remover-fcm — token do app Android nativo
+# ---------------------------------------------------------------------------
+class TestRegistrarFcm:
+    def test_registrar_cria_token_novo(self, app, engine):
+        c = _client_as(app, _FakeUsuario())
+        r = c.post("/push/registrar-fcm", json={"token": "tok-abc", "modelo": "Xiaomi Redmi 12", "device_id": "dev-1"})
+        assert r.status_code == 200
+        assert r.json() == {"ok": True}
+
+        with Session(engine) as session:
+            tokens = session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 1)).all()
+            assert len(tokens) == 1
+            assert tokens[0].token == "tok-abc"
+            assert tokens[0].modelo == "Xiaomi Redmi 12"
+            assert tokens[0].device_id == "dev-1"
+            assert tokens[0].plataforma == "android"
+
+    def test_registrar_mesmo_token_duas_vezes_nao_duplica(self, app, engine):
+        c = _client_as(app, _FakeUsuario())
+        c.post("/push/registrar-fcm", json={"token": "tok-abc"})
+        r = c.post("/push/registrar-fcm", json={"token": "tok-abc", "modelo": "novo-modelo"})
+        assert r.status_code == 200
+
+        with Session(engine) as session:
+            tokens = session.exec(select(PushTokenFcm).where(PushTokenFcm.token == "tok-abc")).all()
+            assert len(tokens) == 1
+            assert tokens[0].modelo == "novo-modelo"
+
+    def test_registrar_token_existente_de_outro_usuario_troca_de_dono(self, app, engine):
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=2, token="tok-compartilhado"))
+            session.commit()
+
+        c = _client_as(app, _FakeUsuario())  # id=1
+        r = c.post("/push/registrar-fcm", json={"token": "tok-compartilhado"})
+        assert r.status_code == 200
+
+        with Session(engine) as session:
+            tokens = session.exec(select(PushTokenFcm).where(PushTokenFcm.token == "tok-compartilhado")).all()
+            assert len(tokens) == 1  # não duplicou
+            assert tokens[0].usuario_id == 1  # trocou de dono
+
+    def test_registrar_token_vazio_da_422(self, app):
+        c = _client_as(app, _FakeUsuario())
+        r = c.post("/push/registrar-fcm", json={"token": ""})
+        assert r.status_code == 422
+
+    def test_remover_sem_token_remove_todos_do_usuario(self, app, engine):
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="a"))
+            session.add(PushTokenFcm(usuario_id=1, token="b"))
+            session.add(PushTokenFcm(usuario_id=2, token="de-outro-usuario"))
+            session.commit()
+
+        c = _client_as(app, _FakeUsuario())
+        r = c.request("DELETE", "/push/registrar-fcm", json={})
+        assert r.status_code == 200
+        assert r.json()["removidos"] == 2
+
+        with Session(engine) as session:
+            assert session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 1)).all() == []
+            assert len(session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 2)).all()) == 1
+
+    def test_remover_com_token_remove_so_aquele(self, app, engine):
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="a"))
+            session.add(PushTokenFcm(usuario_id=1, token="b"))
+            session.commit()
+
+        c = _client_as(app, _FakeUsuario())
+        r = c.request("DELETE", "/push/registrar-fcm", json={"token": "a"})
+        assert r.status_code == 200
+        assert r.json()["removidos"] == 1
+
+        with Session(engine) as session:
+            restantes = session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 1)).all()
+            assert len(restantes) == 1 and restantes[0].token == "b"
+
+    def test_registrar_fcm_sem_login_e_negado(self, app):
+        c = TestClient(app)  # sem dependency_override de get_current_user
+        r = c.post("/push/registrar-fcm", json={"token": "x"})
+        assert r.status_code in (401, 403)
+
+
+# ---------------------------------------------------------------------------
 # enviar_push: mocka pywebpush.webpush — nunca bate na rede de verdade
 # ---------------------------------------------------------------------------
 class TestEnviarPush:
@@ -222,6 +307,94 @@ class TestEnviarPush:
 
             # Não deve levantar — um push que falha não pode derrubar quem chamou.
             push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session)
+
+
+# ---------------------------------------------------------------------------
+# enviar_push com os DOIS canais (Web Push + FCM) — o cerne da integração:
+# usuário só com um canal usa só aquele; com os dois, usa os dois; nenhum
+# canal falhando derruba o outro.
+# ---------------------------------------------------------------------------
+class TestEnviarPushMultiCanal:
+    def test_usuario_so_com_webpush_nao_chama_fcm(self, engine, monkeypatch):
+        monkeypatch.setattr(push_module, "webpush", lambda **kwargs: None)
+        chamadas_fcm = []
+        monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: chamadas_fcm.append((a, k)))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.commit()
+            push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session)
+
+        assert chamadas_fcm == []
+
+    def test_usuario_so_com_fcm_entra_no_laco_de_usuarios_com_canal(self, engine, monkeypatch):
+        """Regressão do bug que o refactor corrige: antes, só PushSubscription
+        entrava no JOIN das varreduras periódicas — quem só tinha o app
+        nativo nunca era considerado."""
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="tok-nativo"))
+            session.commit()
+            assert push_module.usuarios_com_canal_push(session) == {1}
+            assert push_module.tem_canal_push(1, session) is True
+            assert push_module.tem_canal_push(999, session) is False
+
+    def test_usuario_com_os_dois_canais_recebe_pelos_dois(self, engine, monkeypatch):
+        chamadas_webpush = []
+        chamadas_fcm = []
+        monkeypatch.setattr(push_module, "webpush", lambda **kwargs: chamadas_webpush.append(kwargs))
+        monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: chamadas_fcm.append((a, k)))
+
+        with Session(engine) as session:
+            session.add(PushSubscription(usuario_id=1, endpoint="https://push.exemplo/1", p256dh="p1", auth="a1"))
+            session.add(PushTokenFcm(usuario_id=1, token="tok-nativo"))
+            session.commit()
+            push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session, count=3)
+
+        assert len(chamadas_webpush) == 1
+        assert len(chamadas_fcm) == 1
+        assert chamadas_fcm[0][0] == ("tok-nativo", "Título", "Corpo", "/agenda")
+        assert chamadas_fcm[0][1] == {"count": 3}
+
+    def test_fcm_desabilitado_nao_chama_enviar(self, engine, monkeypatch):
+        chamadas_fcm = []
+        monkeypatch.setattr(push_module.fcm, "habilitado", lambda: False)
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: chamadas_fcm.append((a, k)))
+
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="tok-nativo"))
+            session.commit()
+            push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session)
+
+        assert chamadas_fcm == []
+
+    def test_token_fcm_invalido_e_removido_sem_propagar_erro(self, engine, monkeypatch):
+        monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
+
+        def _falha(*a, **k):
+            raise push_module.fcm.FcmTokenInvalido("morto")
+        monkeypatch.setattr(push_module.fcm, "enviar", _falha)
+
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="tok-morto"))
+            session.commit()
+            push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session)  # não deve levantar
+
+            restantes = session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 1)).all()
+            assert restantes == []
+
+    def test_erro_inesperado_do_fcm_nao_propaga_e_nao_remove_token(self, engine, monkeypatch):
+        monkeypatch.setattr(push_module.fcm, "habilitado", lambda: True)
+        monkeypatch.setattr(push_module.fcm, "enviar", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("rede caiu")))
+
+        with Session(engine) as session:
+            session.add(PushTokenFcm(usuario_id=1, token="tok-1"))
+            session.commit()
+            push_module.enviar_push(1, "Título", "Corpo", "/agenda", session=session)  # não deve levantar
+
+            restantes = session.exec(select(PushTokenFcm).where(PushTokenFcm.usuario_id == 1)).all()
+            assert len(restantes) == 1  # erro transitório — token NÃO é removido, só token morto é
 
 
 # ---------------------------------------------------------------------------

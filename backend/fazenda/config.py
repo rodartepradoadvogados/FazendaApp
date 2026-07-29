@@ -65,6 +65,18 @@ class Settings(BaseSettings):
     # acima; mesma conta/chave de serviço do Supabase, ver fazenda/api/routers/fotos.py.
     supabase_bucket_fotos: str = "fotos-campo"
 
+    # Push do app Android NATIVO (Capacitor) via Firebase Cloud Messaging —
+    # canal irmão do Web Push (VAPID, acima em fazenda/api/routers/push.py):
+    # dentro da WebView do Capacitor, Web Push não é confiável com o app
+    # fechado, então o app nativo usa FCM (ver fazenda/rules/fcm.py). Vazio =
+    # desligado (Web Push do navegador/PWA continua funcionando normalmente).
+    # Valor: o CONTEÚDO INTEIRO do JSON da conta de serviço (Firebase Console
+    # > Configurações do projeto > Contas de serviço > Gerar nova chave
+    # privada), colado numa única variável de ambiente — NUNCA um arquivo no
+    # repositório.
+    fcm_service_account_json: str = ""
+    fcm_project_id: str = ""  # opcional: por padrão sai do project_id do JSON acima
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
 
