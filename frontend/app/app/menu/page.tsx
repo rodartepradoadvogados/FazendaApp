@@ -16,7 +16,7 @@ import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Camera, Monitor,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Monitor,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -43,7 +43,6 @@ import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
-import FotosCampo from "@/components/mobile/menu/FotosCampo";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
   | "fluxoCaixa" | "dre" | "rmca" | "extrato";
@@ -100,7 +99,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "fotos" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
@@ -157,17 +156,11 @@ export default function Pagina() {
     return <ControleAcesso onVoltar={() => setSecaoAberta(null)} />;
   }
 
-  // Portal (comunicação interna) — sem gate de módulo, igual ao site (qualquer
-  // usuário logado pode mandar mensagem/e-mail; "Exportar" já é admin-only
-  // dentro do próprio PortalView).
+  // Portal (comunicação interna + Fotos do campo) — sem gate de módulo, igual
+  // ao site (qualquer usuário logado pode mandar mensagem/e-mail/foto;
+  // "Exportar" já é admin-only dentro do próprio PortalView).
   if (secaoAberta === "portal") {
     return <Portal onVoltar={() => setSecaoAberta(null)} />;
-  }
-
-  // Fotos do campo — sem gate de módulo (mesmo padrão do Portal): qualquer
-  // usuário logado com contrato ativo pode tirar/enviar fotos.
-  if (secaoAberta === "fotos") {
-    return <FotosCampo onVoltar={() => setSecaoAberta(null)} />;
   }
 
   // 2º nível: itens da sessão escolhida, em quadrados.
@@ -201,7 +194,6 @@ export default function Pagina() {
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
     { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
-    { id: "fotos", label: "Fotos do campo", icone: <Camera size={26} />, cor: "var(--mob-verde)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },
     // Escape hatch para as áreas que só existem no site (Configurações,
     // Consultor, Painel do Contador, Pedidos, Histórico, Análise/Relatórios

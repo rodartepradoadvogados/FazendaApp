@@ -4192,11 +4192,12 @@ export const ABAS_PORTAL = [
 
 export type PortalDestinatario = { id: number; nome: string; username: string };
 export type PortalMensagem = {
-  id: number; tipo: "mensagem" | "tarefa";
+  id: number; tipo: "mensagem" | "tarefa" | "foto";
   remetente: string | null; remetente_usuario_id: number;
   destinatario: string | null; destinatario_usuario_id: number;
   aba: string | null; corpo: string; pede_retorno: boolean;
-  lida: boolean; resolvida: boolean; resposta_de_id: number | null; criado_em: string;
+  lida: boolean; resolvida: boolean; resposta_de_id: number | null;
+  foto_campo_id: number | null; criado_em: string;
 };
 
 export const fetchPortalPermissoes = (): Promise<{ pode_delegar_tarefa: boolean }> => _rGet(`/portal/permissoes`);
@@ -4293,14 +4294,17 @@ export async function excluirDocumento(id: number): Promise<void> {
 // metadados.
 export type FotoCampo = {
   id: number; mime_type: string; tamanho_bytes: number;
-  descricao: string | null; identificacao_animal: string | null; data_captura: string;
+  descricao: string | null; identificacao_animal: string | null;
+  tipo_assunto: "animal" | "lote" | "outro" | null; animal_id: number | null;
+  lotes: string | null; assunto_fixo: string | null; data_captura: string;
 };
 
 export async function fetchFotosCampo(filtros?: {
-  identificacao_animal?: string; data_de?: string; data_ate?: string;
+  identificacao_animal?: string; lote?: string; data_de?: string; data_ate?: string;
 }): Promise<FotoCampo[]> {
   const params = new URLSearchParams();
   if (filtros?.identificacao_animal) params.set("identificacao_animal", filtros.identificacao_animal);
+  if (filtros?.lote) params.set("lote", filtros.lote);
   if (filtros?.data_de) params.set("data_de", filtros.data_de);
   if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
   const qs = params.toString();

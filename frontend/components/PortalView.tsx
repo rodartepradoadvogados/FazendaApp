@@ -9,6 +9,7 @@ import {
   enviarPortalMensagem, marcarPortalMensagemLida, resolverPortalMensagem, responderPortalMensagem,
   enviarPortalEmail, delegarPortalTarefa,
   fetchPortalOpcoesExportacao, solicitarPortalExportacao,
+  fetchFotoCampoUrl,
   type PortalDestinatario, type PortalMensagem, type PortalOpcaoExportacao,
 } from "@/lib/api";
 
@@ -122,8 +123,9 @@ function ItemPendente({ m, onAtualizado }: { m: PortalMensagem; onAtualizado: ()
   return (
     <div className="card" style={{ padding: "0.75rem" }}>
       <div style={{ fontSize: "0.7rem", color: "var(--text-muted)", textTransform: "uppercase" }}>
-        {m.tipo === "tarefa" ? "Tarefa" : "Mensagem"} de {m.remetente}{m.aba ? ` · ${m.aba}` : ""}
+        {m.tipo === "tarefa" ? "Tarefa" : m.tipo === "foto" ? "Foto" : "Mensagem"} de {m.remetente}{m.aba ? ` · ${m.aba}` : ""}
       </div>
+      {m.tipo === "foto" && m.foto_campo_id != null && <MiniaturaFotoCampo id={m.foto_campo_id} />}
       <div style={{ fontSize: "0.88rem", margin: "0.3rem 0" }}>{m.corpo}</div>
       {m.tipo === "tarefa" ? (
         <button className="btn-primary" disabled={ocupado} onClick={marcarLida} style={{ fontSize: "0.8rem" }}>
@@ -149,6 +151,20 @@ function ItemPendente({ m, onAtualizado }: { m: PortalMensagem; onAtualizado: ()
       )}
     </div>
   );
+}
+
+function MiniaturaFotoCampo({ id }: { id: number }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelado = false;
+    let urlLocal: string | null = null;
+    fetchFotoCampoUrl(id).then((u) => { if (!cancelado) { urlLocal = u; setUrl(u); } }).catch(() => {});
+    return () => { cancelado = true; if (urlLocal) URL.revokeObjectURL(urlLocal); };
+  }, [id]);
+
+  if (!url) return null;
+  return <img src={url} alt="Foto do campo" style={{ width: "100%", maxHeight: 180, objectFit: "cover", borderRadius: 8, display: "block", marginTop: "0.4rem" }} />;
 }
 
 function FormEnviarMensagem({ destinatarios, onEnviado }: { destinatarios: PortalDestinatario[]; onEnviado: () => void }) {
