@@ -220,6 +220,11 @@ export default function Pagina() {
           <div key={item.id} className="mob-card" style={{ padding: "0.85rem 1rem", marginBottom: "0.6rem" }}>
             <div style={{ fontWeight: 700, fontSize: "0.92rem" }}>{item.descricao}</div>
             <div style={{ fontSize: "0.76rem", color: "var(--mob-muted)" }}>{new Date(item.criadoEm).toLocaleString("pt-BR")}</div>
+            {!item.erro && (
+              <div style={{ marginTop: "0.35rem", fontSize: "0.78rem", color: "var(--mob-muted)" }}>
+                {(item.tentativas || 0) > 0 ? `Aguardando envio (tentativa ${item.tentativas})…` : "Aguardando envio…"}
+              </div>
+            )}
             {item.erro && (
               <div style={{ marginTop: "0.5rem", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.5rem" }}>
                 <span style={{ color: "var(--mob-vermelho)", fontSize: "0.8rem", fontWeight: 600, flex: 1, minWidth: 0 }}>{item.erro}</span>

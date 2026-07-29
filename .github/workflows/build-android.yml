@@ -11,7 +11,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [main, claude/capacitor-app-2026-07-29] # TODO: tirar o segundo branch antes do merge — só validando o build aqui
+    branches: [main]
     paths:
       - "frontend/android/**"
       - "frontend/capacitor.config.ts"
