@@ -51,3 +51,7 @@ android/app/release/
 android/app/debug/
 *.keystore
 *.jks
+# Exceção: chave de DEBUG fixa e versionada de propósito (ver comentário em
+# android/app/build.gradle::signingConfigs.debug) — sem segredo real (senha
+# padrão "android", só usada para builds de teste, nunca release/produção).
+!android/app/debug.keystore
