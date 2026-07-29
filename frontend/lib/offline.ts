@@ -184,14 +184,14 @@ export function pendentes(): ItemOutbox[] {
 
 export async function pendentesAsync(): Promise<ItemOutbox[]> {
   await iniciar();
-  await recarregarEspelho();
+  await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
   return espelho;
 }
 
 export async function descartarPendente(id: string): Promise<void> {
   await iniciar();
   await removerItem(id);
-  await recarregarEspelho();
+  await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
 }
 
 /** Bytes de um item pendente ainda não enviado (ex.: miniatura de uma foto
@@ -219,7 +219,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
   await iniciar();
   if (!navigator.onLine) {
     await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente" });
-    await recarregarEspelho();
+    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
     return { enviado: false };
   }
   const { authFetch } = await import("@/lib/api");
@@ -240,7 +240,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
       await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente" });
-      await recarregarEspelho();
+      await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
     }
     throw e; // resposta do servidor (validação etc.) → o formulário mostra
@@ -318,7 +318,7 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
       corpo: camposLimpos,
       arquivo: { campo: campoArquivo, nome: nomeArquivo, mime: opcoes.arquivo.type || "application/octet-stream", tamanho: opcoes.arquivo.size, blob: opcoes.arquivo },
     });
-    await recarregarEspelho();
+    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
   }
 }
 
@@ -419,7 +419,7 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
     }
   } finally {
     sincronizando = false;
-    await recarregarEspelho();
+    await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
   }
   return { enviados, restantes: (await listarTudo()).length };
 }
@@ -429,7 +429,7 @@ export function usePendentes(): ItemOutbox[] {
   const [fila, setFila] = useState<ItemOutbox[]>(espelho);
   useEffect(() => {
     let cancelado = false;
-    iniciar().then(() => recarregarEspelho()).then(() => { if (!cancelado) setFila(espelho); });
+    iniciar().then(() => recarregarEspelho()).then(() => { if (!cancelado) setFila(espelho); }).catch(() => {});
     const ler = () => setFila(espelho);
     window.addEventListener(EVENTO_OUTBOX, ler);
     window.addEventListener("storage", ler); // fallback do modoLegado (localStorage)
@@ -459,7 +459,7 @@ export function usePendentesDe(tipo: TipoItem, caminho?: string): ItemOutbox[] {
  *  itens antigos do localStorage) e pede armazenamento persistente (reduz o
  *  risco do navegador despejar a fila sob pressão de disco). */
 export function iniciarSincronizacaoAutomatica(): () => void {
-  iniciar().then(() => { pedirStoragePersistente().catch(() => {}); recarregarEspelho(); });
+  iniciar().then(() => { pedirStoragePersistente().catch(() => {}); recarregarEspelho().catch(() => {}); });
 
   const aoConectar = () => { sincronizar(); };
   window.addEventListener("online", aoConectar);
