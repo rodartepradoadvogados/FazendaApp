@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">CowData Fazenda</string>
+    <string name="title_activity_main">CowData Fazenda</string>
+    <string name="package_name">br.com.cowdata.fazenda</string>
+    <string name="custom_url_scheme">br.com.cowdata.fazenda</string>
+</resources>

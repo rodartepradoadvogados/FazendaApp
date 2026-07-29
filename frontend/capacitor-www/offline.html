@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+<title>CowData Fazenda — sem conexão</title>
+<style>
+  :root { color-scheme: dark; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; flex-direction: column; align-items: center;
+    justify-content: center; gap: 1rem; text-align: center; padding: 2rem;
+    font-family: -apple-system, system-ui, sans-serif; background: #1b1013; color: #f3e9e6;
+  }
+  h1 { font-size: 1.1rem; margin: 0; }
+  p { font-size: 0.9rem; color: #cbb9b6; max-width: 26rem; margin: 0; line-height: 1.5; }
+  button {
+    margin-top: 0.5rem; padding: 0.7rem 1.4rem; border-radius: 8px; border: none;
+    background: #c9a24a; color: #1b1013; font-weight: 700; font-size: 0.9rem; cursor: pointer;
+  }
+  #status { font-size: 0.78rem; color: #8a7572; }
+</style>
+</head>
+<body>
+  <h1 id="titulo">Sem conexão</h1>
+  <p id="mensagem">Carregando…</p>
+  <button onclick="tentarAgora()">Tentar de novo</button>
+  <div id="status"></div>
+
+<script>
+  // A URL real do app (mesma de server.url no capacitor.config.ts). Mantida
+  // aqui em duplicidade proposital — esta página roda numa origem local
+  // (capacitor://localhost), sem acesso ao localStorage do app de verdade,
+  // então não há como "ler" a config de dentro do bundle nativo.
+  var URL_APP = "https://fazenda-app-jfye.vercel.app/app";
+  var CHAVE_JA_ABRIU = "cowdata_ja_abriu_online";
+
+  function jaAbriuAntes() {
+    try { return localStorage.getItem(CHAVE_JA_ABRIU) === "1"; } catch (e) { return false; }
+  }
+
+  function atualizarMensagem() {
+    var titulo = document.getElementById("titulo");
+    var mensagem = document.getElementById("mensagem");
+    if (jaAbriuAntes()) {
+      titulo.textContent = "Sem internet agora";
+      mensagem.textContent = "Seus lançamentos guardados estão salvos no aparelho e serão enviados sozinhos assim que a conexão voltar.";
+    } else {
+      titulo.textContent = "Primeira abertura precisa de internet";
+      mensagem.textContent = "Conecte-se uma vez para carregar o app — depois disso ele volta a abrir mesmo sem sinal.";
+    }
+  }
+
+  function tentarAgora() {
+    document.getElementById("status").textContent = "Tentando…";
+    location.href = URL_APP;
+  }
+
+  // navigator.onLine mente (ex.: Wi-Fi sem internet de verdade) — por isso,
+  // além do evento "online", faz um HEAD periódico contra o próprio app.
+  // O flag é gravado NESTA origem local (capacitor://localhost), separada da
+  // origem do app de verdade — só serve pra esta própria página lembrar, da
+  // próxima vez que cair aqui, que já passou por uma conexão real alguma vez.
+  function verificarConexaoReal() {
+    fetch(URL_APP, { method: "HEAD", mode: "no-cors", cache: "no-store" })
+      .then(function () {
+        try { localStorage.setItem(CHAVE_JA_ABRIU, "1"); } catch (e) {}
+        location.href = URL_APP;
+      })
+      .catch(function () { /* ainda sem conexão real — tenta de novo no próximo ciclo */ });
+  }
+
+  atualizarMensagem();
+  window.addEventListener("online", verificarConexaoReal);
+  setInterval(verificarConexaoReal, 5000);
+</script>
+</body>
+</html>
