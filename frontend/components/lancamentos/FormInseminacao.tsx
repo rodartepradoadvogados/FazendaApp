@@ -14,6 +14,7 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, lbl, nota, codigoGrupo } from "@/components/lancamentos/comumForms";
 import { IDADE_MIN_SERVICO } from "@/components/lancamentos/_shared";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 const CAT_TOURO = [
   { id: "convencional" as const, label: "Convencional" },
@@ -22,6 +23,7 @@ const CAT_TOURO = [
 ];
 
 export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
+  const { rotuloDe } = useEstadosReprodutivos();
   const [sel, setSel] = useState<Set<string>>(new Set());
   const [dataServico, setDataServico] = useState("");
   const [tipo, setTipo] = useState<"cio_natural" | "iatf" | "monta_natural">("cio_natural");
@@ -213,7 +215,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
             colunas={[
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },
-              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+              { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
               { header: "Protocolo", render: (a: AnimalRow) => mapaProtocoloPorAnimal.get(a.numero) || "—" },
             ]}
           />
@@ -235,7 +237,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                 colunas={[
                   { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                   { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                  { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                  { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                 ]}
               />
             ) : (
@@ -255,7 +257,7 @@ export function FormInseminacao({ animais }: { animais: AnimalRow[] }) {
                       colunas={[
                         { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                         { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                        { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                        { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                       ]}
                     />
                     <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.3rem" }}>

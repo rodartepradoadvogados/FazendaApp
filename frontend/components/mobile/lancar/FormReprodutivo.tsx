@@ -8,6 +8,7 @@ import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
 import { fetchEstoqueSemen, fetchTouros, fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO, type Touro, type AgendaVetResposta } from "@/lib/api";
 import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 import {
   type Animal, type Semen, useCache, useEnvio, hoje, rotuloAnimal,
   BotoesEscolha, SeletorAnimal, GradeAcoes, MobPill, LinhaPills,
@@ -133,7 +134,17 @@ function Inseminacao({ animais, animalFixado }: { animais: Animal[]; animalFixad
 // manejo no curral.
 function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, setAviso, enviando, erroValidacao } = useEnvio();
-  const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
+  const { porNumero, rotuloDe } = useEstadosReprodutivos();
+  // Servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo. Enquanto
+  // ele não chegou (ou a requisição falhou) cai no texto do CSV: melhor um
+  // filtro desatualizado do que um formulário sem nenhum animal.
+  const servidas = useMemo(() => {
+    if (!porNumero.size) return animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges.");
+    return animais.filter((a) => {
+      const estado = porNumero.get(a.numero)?.estado;
+      return estado === "inseminada" || estado === "gestante";
+    });
+  }, [animais, porNumero]);
 
   const [vinculo, setVinculo] = useState<"animal" | "lote" | "agenda">("animal");
   const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);
@@ -286,7 +297,7 @@ function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixad
                 display: "inline-flex", alignItems: "center", gap: "0.4rem",
                 padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999,
                 background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700,
-              }} title={a ? rotuloAnimal(a) : undefined}>
+              }} title={a ? rotuloAnimal(a, rotuloDe) : undefined}>
                 {n}
                 <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
                   style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>
@@ -373,6 +384,7 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
 // backend — aqui exibimos os hormônios de cada dia para conferência.
 function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
+  const { rotuloDe } = useEstadosReprodutivos();
   const [matrizes, setMatrizes] = useState<string[]>(animalFixado ? [animalFixado] : []);
   const [dataD0, setDataD0] = useState(hoje());
   const [verHormonios, setVerHormonios] = useState(false);
@@ -419,7 +431,7 @@ function ProtocoloIatf({ animais, animalFixado }: { animais: Animal[]; animalFix
                 display: "inline-flex", alignItems: "center", gap: "0.4rem",
                 padding: "0.4rem 0.5rem 0.4rem 0.7rem", borderRadius: 999,
                 background: "var(--mob-vinho)", color: "#FFFFFF", fontSize: "0.85rem", fontWeight: 700,
-              }} title={a ? rotuloAnimal(a) : undefined}>
+              }} title={a ? rotuloAnimal(a, rotuloDe) : undefined}>
                 {n}
                 <button type="button" onClick={() => remover(n)} aria-label={`Remover ${n}`}
                   style={{ width: 32, height: 32, margin: "-4px -6px -4px 0", borderRadius: "50%", border: "none", cursor: "pointer", background: "rgba(255,255,255,0.2)", color: "#FFFFFF", display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1rem", lineHeight: 1, flexShrink: 0 }}>

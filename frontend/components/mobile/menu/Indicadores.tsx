@@ -8,6 +8,7 @@ import { ChevronRight } from "lucide-react";
 import { MobVoltar } from "@/components/mobile/ui";
 import { fetchIndicadores, fetchAnimais } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 type Resposta = {
   reproducao?: { prenhes?: number | null; taxa_concepcao_pct?: number | null; iep_meses?: number | null; vazias?: number | null };
@@ -26,8 +27,10 @@ const codigoGrupo = (g?: string | null): string | null => {
   const s = (g || "").trim();
   return s.length >= 2 && /^\d\d/.test(s.slice(0, 2)) ? s.slice(0, 2) : null;
 };
-const ehPrenhe = (a: Animal) => (a.sit_rep || "").trim() === "Ges.";
-const ehVazia = (a: Animal) => (a.sit_rep || "").trim().startsWith("Vaz.");
+// Estados "vazia" ao vivo — equivalem ao antigo prefixo textual "Vaz.".
+const ESTADOS_VAZIA = new Set(["pev", "apta", "atrasada", "nao_apta", "vazia"]);
+const ehPrenhe = (estado?: string) => estado === "gestante";
+const ehVazia = (estado?: string) => !!estado && ESTADOS_VAZIA.has(estado);
 const ehLactacao = (a: Animal) => GRUPOS_LACTACAO.has(codigoGrupo(a.grupo_primario) || "");
 
 function val(v?: number | null, sufixo = ""): string {
@@ -49,10 +52,17 @@ export default function Indicadores({ onVoltar }: { onVoltar: () => void }) {
   const [drill, setDrill] = useState<Drill | null>(null);
 
   const animais = animaisReq.dados || [];
+  const { porNumero } = useEstadosReprodutivos();
 
   const listaDe = (d: Drill): Animal[] => {
-    if (d === "prenhes") return animais.filter(ehPrenhe);
-    if (d === "vazias") return animais.filter(ehVazia);
+    // Sem o estado ao vivo (ainda carregando ou falhou) cai no texto do CSV, para
+    // o drill-down não abrir vazio.
+    if (d === "prenhes") return porNumero.size
+      ? animais.filter((a) => ehPrenhe(porNumero.get(a.numero)?.estado))
+      : animais.filter((a) => (a.sit_rep || "").trim() === "Ges.");
+    if (d === "vazias") return porNumero.size
+      ? animais.filter((a) => ehVazia(porNumero.get(a.numero)?.estado))
+      : animais.filter((a) => (a.sit_rep || "").trim().startsWith("Vaz."));
     if (d === "lactacao") return animais.filter(ehLactacao);
     // média por vaca → relatório do último controle leiteiro: vacas com produção
     // no último controle, da maior para a menor.

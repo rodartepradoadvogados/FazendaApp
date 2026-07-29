@@ -1,5 +1,6 @@
 "use client";
 import { X } from "lucide-react";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 export type AnimalRow = {
   numero: string;
@@ -18,30 +19,37 @@ export type AnimalRow = {
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
   "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
+  Gestante: "var(--green-light)", Inseminada: "var(--dourado-light)", "Em protocolo (IA atual)": "var(--dourado-light)",
+  PEV: "var(--amber)", Apta: "var(--blue)", Atrasada: "var(--red)", "Não apta": "var(--text-muted)", Vazia: "var(--blue)",
 };
+
+// Estados "vazia" ao vivo — equivalem ao antigo prefixo textual "Vaz." usado
+// para decidir se calcula PEV (dias desde o último parto).
+const ESTADOS_VAZIA = new Set(["pev", "apta", "atrasada", "nao_apta", "vazia"]);
 
 const GESTACAO = 280;
 const diasEntre = (aIso: string, bIso: string) =>
   Math.round((new Date(bIso + "T00:00:00").getTime() - new Date(aIso + "T00:00:00").getTime()) / 86400000);
 
 // Indicadores reprodutivos por animal, calculados das datas de serviço/parto.
-function repro(a: AnimalRow) {
+// `estado` é o estado reprodutivo AO VIVO (chave do backend, não o rótulo).
+function repro(a: AnimalRow, estado: string | undefined) {
   const hoje = new Date().toISOString().slice(0, 10);
-  const sit = a.sit_rep || "";
   let gestacao: number | null = null, paraParto: number | null = null, partoData: string | null = null, pev: number | null = null;
-  if (sit === "Ges." && a.data_ult_servico_pos) {
+  if (estado === "gestante" && a.data_ult_servico_pos) {
     gestacao = diasEntre(a.data_ult_servico_pos, hoje);
     const p = new Date(a.data_ult_servico_pos + "T00:00:00"); p.setDate(p.getDate() + GESTACAO);
     partoData = p.toLocaleDateString("pt-BR");
     paraParto = Math.round((p.getTime() - new Date(hoje + "T00:00:00").getTime()) / 86400000);
   }
-  if (sit.startsWith("Vaz.") && a.data_ult_parto) pev = diasEntre(a.data_ult_parto, hoje);
+  if (estado && ESTADOS_VAZIA.has(estado) && a.data_ult_parto) pev = diasEntre(a.data_ult_parto, hoje);
   return { gestacao, paraParto, partoData, pev };
 }
 
 /** Modal que lista os animais por trás de um número (drill-down). */
 export function AnimalModal({ title, animais, onClose }: { title: string; animais: AnimalRow[]; onClose: () => void }) {
   const temRepro = animais.some((a) => a.data_ult_servico_pos || a.data_ult_parto);
+  const { porNumero, rotuloDe } = useEstadosReprodutivos();
   return (
     <div
       onClick={onClose}
@@ -61,13 +69,13 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
               </tr></thead>
               <tbody>
                 {animais.map((a) => {
-                  const r = repro(a);
+                  const r = repro(a, porNumero.get(a.numero)?.estado);
                   return (
                     <tr key={a.numero}>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                      <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                      <td><span style={{ color: SIT_CORES[rotuloDe(a.numero)] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero)}</span></td>
                       <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                       {temRepro && <>
                         <td style={{ textAlign: "right", fontSize: "0.78rem" }}>{r.gestacao != null ? `${r.gestacao}d` : "—"}</td>

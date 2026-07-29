@@ -2,10 +2,13 @@
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 import { AnimalRow } from "./AnimalModal";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 const SIT_CORES: Record<string, string> = {
   "Ges.": "var(--green-light)", "Vaz. apt.": "var(--blue)", "Vaz. atr.": "var(--red)",
   "Vaz. pev": "var(--amber)", "Ins.": "var(--dourado-light)",
+  Gestante: "var(--green-light)", Inseminada: "var(--dourado-light)", "Em protocolo (IA atual)": "var(--dourado-light)",
+  PEV: "var(--amber)", Apta: "var(--blue)", Atrasada: "var(--red)", "Não apta": "var(--text-muted)", Vazia: "var(--blue)",
 };
 
 /**
@@ -18,13 +21,14 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState("");
   const sel = animais.find((a) => a.numero === value);
+  const { rotuloDe } = useEstadosReprodutivos();
 
   const filtrados = useMemo(() => {
     const q = busca.trim().toLowerCase();
     if (!q) return animais;
     return animais.filter((a) =>
-      `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${a.sit_rep || ""}`.toLowerCase().includes(q));
-  }, [animais, busca]);
+      `${a.numero} ${a.grupo_primario || ""} ${a.categoria_abrev || a.categoria_completa || ""} ${rotuloDe(a.numero)}`.toLowerCase().includes(q));
+  }, [animais, busca, rotuloDe]);
 
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: sel ? "var(--text)" : "var(--text-muted)",
@@ -36,7 +40,7 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
     <>
       <button type="button" style={btn} onClick={() => { setAberto(true); setBusca(""); }}>
         <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {sel ? <><strong>{sel.numero}</strong> · {sel.categoria_abrev || sel.categoria_completa || sel.grupo_primario || "—"}{sel.sit_rep ? ` · ${sel.sit_rep}` : ""}</> : placeholder}
+          {sel ? <><strong>{sel.numero}</strong> · {sel.categoria_abrev || sel.categoria_completa || sel.grupo_primario || "—"}{rotuloDe(sel.numero) !== "—" ? ` · ${rotuloDe(sel.numero)}` : ""}</> : placeholder}
         </span>
         <ChevronDown size={15} style={{ flexShrink: 0, color: "var(--text-muted)" }} />
       </button>
@@ -62,7 +66,7 @@ export function AnimalPicker({ animais, value, onChange, placeholder = "Selecion
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.grupo_primario || "—"}</td>
                       <td style={{ fontSize: "0.75rem" }}>{a.categoria_abrev || a.categoria_completa || "—"}</td>
-                      <td><span style={{ color: SIT_CORES[a.sit_rep || ""] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{a.sit_rep || "—"}</span></td>
+                      <td><span style={{ color: SIT_CORES[rotuloDe(a.numero)] || "var(--text-muted)", fontWeight: 600, fontSize: "0.78rem" }}>{rotuloDe(a.numero)}</span></td>
                       <td style={{ textAlign: "right" }}>{a.del_dias ?? "—"}</td>
                     </tr>
                   ))}

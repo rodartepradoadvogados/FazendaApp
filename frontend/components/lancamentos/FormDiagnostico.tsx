@@ -9,10 +9,20 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, codigoGrupo } from "@/components/lancamentos/comumForms";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
+import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
 export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
-  // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar).
-  const servidas = useMemo(() => animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges."), [animais]);
+  const { porNumero, rotuloDe } = useEstadosReprodutivos();
+  // Lista as matrizes servidas (inseminadas ou prenhes a reconfirmar) — estado ao vivo.
+  // Enquanto o estado ao vivo não chegou (ou a requisição falhou) cai no texto do
+  // CSV: melhor um filtro desatualizado do que um formulário sem nenhum animal.
+  const servidas = useMemo(() => {
+    if (!porNumero.size) return animais.filter((a) => a.sit_rep === "Ins." || a.sit_rep === "Ges.");
+    return animais.filter((a) => {
+      const estado = porNumero.get(a.numero)?.estado;
+      return estado === "inseminada" || estado === "gestante";
+    });
+  }, [animais, porNumero]);
   const [selecionados, setSelecionados] = useState<Set<string>>(new Set());
   const toggle = (n: string) => setSelecionados((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; });
 
@@ -183,7 +193,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
             colunas={[
               { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
               { header: "Lote", render: (a) => a.grupo_primario || "—" },
-              { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+              { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
               { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
             ]}
           />
@@ -205,7 +215,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
                   colunas={[
                     { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                     { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                    { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                    { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                     { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
                   ]}
                 />
@@ -247,7 +257,7 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
                       colunas={[
                         { header: "Nº", render: (a) => <span style={{ fontWeight: 700 }}>{a.numero}</span> },
                         { header: "Lote", render: (a) => a.grupo_primario || "—" },
-                        { header: "Sit. rep.", render: (a) => a.sit_rep || "—" },
+                        { header: "Sit. rep.", render: (a) => rotuloDe(a.numero) },
                         { header: "Última IA/cobertura", render: (a) => ultServico[a.numero] ? new Date(ultServico[a.numero] + "T00:00:00").toLocaleDateString("pt-BR") : "—" },
                       ]}
                     />
