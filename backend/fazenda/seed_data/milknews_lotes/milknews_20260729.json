@@ -1,0 +1,28 @@
+[
+  {
+    "manchete": "Embrapa e ABCGIL lançam software que simula acasalamentos e reduz consanguinidade no Gir Leiteiro",
+    "resumo": "Pesquisadores da Embrapa Gado de Leite, em parceria com a Associação Brasileira dos Criadores de Gir Leiteiro (ABCGIL), lançaram um software que simula acasalamentos e calcula na hora o coeficiente de consanguinidade da futura cria, alertando o produtor quando o índice ultrapassa os limites biológicos recomendados. A ferramenta usa o novo Índice de Produção do Gir Leiteiro (IPGL) — que pondera produção de leite, sólidos e precocidade sexual — para indicar os cruzamentos mais produtivos e seguros. Dados: Embrapa Gado de Leite/ABCGIL.",
+    "materia": "Pesquisadores da Embrapa Gado de Leite, em parceria com a Associação Brasileira dos Criadores de Gir Leiteiro (ABCGIL), lançaram um novo software de simulação de acasalamentos para a raça Gir Leiteiro. A ferramenta funciona como um consultor digital: ao simular o cruzamento entre uma fêmea e um touro, o sistema calcula instantaneamente o coeficiente de consanguinidade da futura cria e emite um alerta sempre que o índice ultrapassa os limites biológicos recomendados — permitindo ao produtor escolher touros alternativos sem abrir mão do ganho genético.\n\nSegundo o pesquisador da Embrapa Gado de Leite João Cláudio Panetto, o programa cruza informações de valores genéticos estimados com dados de parentesco genômico para indicar os acasalamentos mais produtivos e geneticamente seguros. A ferramenta utiliza o novo Índice de Produção do Gir Leiteiro (IPGL), que pondera características como produção de leite, teor de sólidos (gordura e proteína) e precocidade sexual na recomendação de cruzamentos.\n\nO modelo já está em expansão para integrar as bases de dados da própria ABCGIL, da Associação Brasileira dos Criadores de Girolando e da Associação Brasileira dos Criadores de Gado Holandês. A ideia é permitir simular e prever com precisão também os resultados de cruzamentos entre raças puras e sintéticas — um recurso especialmente relevante para o Girolando, cruzamento entre Gir e Holandês que domina boa parte da bacia leiteira brasileira.",
+    "link": "/news#milknews-2026-07-29-01",
+    "data_publicacao": "2026-07-29",
+    "fontes": [
+      "https://portaldbo.com.br/novo-software-favorece-o-ganho-genetico-e-reduz-a-consanguinidade-na-raca-gir-leiteiro/",
+      "https://www.comprerural.com/novo-software-favorece-o-ganho-genetico-e-reduz-a-consanguinidade-na-raca-gir-leiteiro/",
+      "https://www.canalrural.com.br/pecuaria/novo-software-favorece-o-ganho-genetico-e-reduz-a-consanguinidade-do-gir-leiteiro"
+    ],
+    "categoria": "Genética"
+  },
+  {
+    "manchete": "Ranking dos maiores laticínios do Brasil capta 11 bilhões de litros em 2025, alta de 6,5%, mas com menos produtores",
+    "resumo": "O \"Carta Leite\", levantamento da Scot Consultoria com os maiores laticínios e cooperativas do país, mostra que as 17 empresas participantes captaram 11,0 bilhões de litros de leite em 2025, avanço de 6,5% sobre os 10,3 bilhões de 2024. A Lactalis segue na liderança, com 2,9 bilhões de litros — ela, a Piracanjuba e a UNIUM somam 59% do volume do ranking. O número de produtores vinculados a essas empresas caiu 3,2% no período, enquanto a produtividade média avançou 13,3%. Dados: Scot Consultoria/Carta Leite.",
+    "materia": "O levantamento \"Carta Leite\", da Scot Consultoria, com o ranking dos maiores laticínios e cooperativas do Brasil, mostra que as 17 empresas que participaram da pesquisa em 2025 captaram, juntas, 11,0 bilhões de litros de leite — um avanço de 6,5% sobre os 10,3 bilhões de litros captados em 2024.\n\nA Lactalis segue na liderança do ranking, com captação de 2,9 bilhões de litros no ano. Somada à Piracanjuba e à UNIUM, as três maiores empresas concentram 59% de todo o volume levantado — um retrato da concentração crescente do setor de processamento de leite no país.\n\nAo mesmo tempo em que a captação avança, o número de produtores vinculados às empresas do ranking caiu 3,2% entre 2024 e 2025, enquanto a produtividade média por produtor avançou 13,3% no período — confirmando três tendências estruturais do setor: mais volume captado, menos fornecedores e mais eficiência por propriedade. Segundo a Scot Consultoria, o volume do ranking equivale a cerca de 40% dos 27,4 bilhões de litros de leite fiscalizados formalmente no país, de acordo com o IBGE.",
+    "link": "/news#milknews-2026-07-29-02",
+    "data_publicacao": "2026-07-29",
+    "fontes": [
+      "https://www.scotconsultoria.com.br/noticias/cartas/60477/carta-leite-em-ranking-em-dos-maiores-latic%C3%ADnios-mostra-aumento-da-produ%C3%A7%C3%A3o-formal-e-redu%C3%A7%C3%A3o-no-n%C3%BAmero-de-produtores.htm",
+      "https://www.milkpoint.com.br/noticias-e-mercado/giro-noticias/ranking-dos-maiores-laticinios-do-brasil-2025-mais-eficiencia-menos-produtores-e-captacao-em-alta-240452/",
+      "https://www.abraleite.org.br/29o-ranking-abraleite-2025-mostra-avanco-expressivo-na-captacao-e-ganhos-de-produtividade-no-leite/"
+    ],
+    "categoria": "Mercado"
+  }
+]
