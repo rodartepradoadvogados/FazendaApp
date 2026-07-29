@@ -13,16 +13,19 @@ import {
 } from "@/lib/offline";
 import { excluirFotoCampo, fetchFotosCampo, fetchFotoCampoUrl, type FotoCampo } from "@/lib/api";
 import { Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { redimensionarFoto } from "@/lib/imagem";
 
 const CAMINHO_UPLOAD = "/fotos/upload";
 
 export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
   const online = useOnline();
   const inputRef = useRef<HTMLInputElement | null>(null);
-  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [arquivo, setArquivo] = useState<Blob | null>(null);
+  const [nomeArquivo, setNomeArquivo] = useState("foto.jpg");
   const [preview, setPreview] = useState<string | null>(null);
   const [identificacao, setIdentificacao] = useState("");
   const [descricao, setDescricao] = useState("");
+  const [preparando, setPreparando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
@@ -50,14 +53,24 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
   // vazamento de memória — URL.createObjectURL fica viva até revogada).
   useEffect(() => () => { if (preview) URL.revokeObjectURL(preview); }, [preview]);
 
-  function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
+  async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];
     e.target.value = ""; // permite escolher o mesmo arquivo de novo depois
     if (!f) return;
-    if (preview) URL.revokeObjectURL(preview);
-    setArquivo(f);
-    setPreview(URL.createObjectURL(f));
-    setErro(null); setAviso(null);
+    setPreparando(true);
+    try {
+      // Reduz para até 1600px/JPEG q0.8 antes de guardar/enviar — cabe mais
+      // fotos na fila offline e sobe bem mais rápido em 3G rural (ver
+      // lib/imagem.ts). Nunca lança: se falhar, usa o arquivo original.
+      const reduzido = await redimensionarFoto(f);
+      if (preview) URL.revokeObjectURL(preview);
+      setNomeArquivo(f.name || "foto.jpg");
+      setArquivo(reduzido);
+      setPreview(URL.createObjectURL(reduzido));
+      setErro(null); setAviso(null);
+    } finally {
+      setPreparando(false);
+    }
   }
 
   function descartarPreview() {
@@ -72,7 +85,7 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
       const { enviado } = await enviarOuEnfileirarArquivo({
         caminho: CAMINHO_UPLOAD,
         descricao: `Foto do campo${identificacao ? ` — nº ${identificacao}` : ""}`,
-        arquivo, nomeArquivo: arquivo.name || "foto.jpg",
+        arquivo, nomeArquivo,
         campos: { descricao: descricao || undefined, identificacao_animal: identificacao || undefined },
       });
       descartarPreview();
@@ -95,8 +108,8 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
       <input ref={inputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoEscolherArquivo} />
 
       {!preview ? (
-        <button type="button" className="mob-btn" onClick={() => inputRef.current?.click()} style={{ marginBottom: "1.1rem" }}>
-          <Camera size={19} /> Tirar foto
+        <button type="button" className="mob-btn" onClick={() => inputRef.current?.click()} disabled={preparando} style={{ marginBottom: "1.1rem" }}>
+          <Camera size={19} /> {preparando ? "Preparando foto…" : "Tirar foto"}
         </button>
       ) : (
         <div className="mob-card" style={{ padding: "0.9rem", marginBottom: "1.1rem" }}>
