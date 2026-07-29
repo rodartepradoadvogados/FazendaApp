@@ -121,7 +121,17 @@ def test_contrato_anexo_placeholder(client):
     c, engine = client
     r = c.post("/manual-fazenda/contrato-anexo", files={"arquivo": ("contrato.pdf", b"conteudo", "application/pdf")})
     assert r.status_code == 200
-    assert r.json()["contrato_manejo_arquivo_nome"] == "contrato.pdf"
+    # Nome estruturado (chave de storage pronta pro Supabase), não o nome
+    # bruto que o navegador manda — ver fazenda/api/routers/manual_fazenda.py.
+    nome = r.json()["contrato_manejo_arquivo_nome"]
+    assert nome == f"contrato-manejo-reprodutivo-fazenda1-{date.today().isoformat()}.pdf"
+
+
+def test_contrato_anexo_preserva_extensao_do_arquivo(client):
+    c, engine = client
+    r = c.post("/manual-fazenda/contrato-anexo", files={"arquivo": ("contrato assinado.docx", b"conteudo", "application/octet-stream")})
+    assert r.status_code == 200
+    assert r.json()["contrato_manejo_arquivo_nome"].endswith(".docx")
 
 
 class TestEnvioSemanal:

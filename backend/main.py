@@ -39,6 +39,7 @@ from fazenda.api.routers import (
     farmacia,
     fazendas,
     financeiro,
+    fotos,
     importar,
     indicadores,
     lotes,
@@ -97,6 +98,7 @@ from fazenda.rules.touros import bootstrap_touros_naab
 from fazenda.rules.parametros import seed_parametros
 from fazenda.rules.backup import executar_backup_se_necessario
 from fazenda.rules.manual_fazenda import enviar_manual_semanal_se_necessario
+from fazenda.rules.supabase_storage import garantir_buckets
 from fazenda.api.routers.push import despachar_agenda_do_dia, despachar_push_pendentes
 
 # Confere a cada 6h se já passou 1 semana desde o último backup automático
@@ -258,6 +260,10 @@ async def lifespan(app: FastAPI):
         # cada touro do Estoque de Sêmen (compras antigas nunca criavam esse
         # item — só apareciam em Rebanho > Touros > Sêmen).
         backfill_estoque_semen_generico(session)
+    # Cria (se ainda não existir) os buckets do Supabase Storage usados pelo
+    # sistema — sem isso, um bucket novo (ex.: "fotos-campo") só existiria
+    # depois de alguém criar manualmente pelo painel do Supabase.
+    garantir_buckets()
     # Aponta o Telegram para o nosso webhook (só age se o bot estiver configurado).
     registrar_webhook_telegram()
     tarefa_backup = asyncio.create_task(_loop_backup_automatico())
@@ -360,6 +366,9 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+# Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
+# comercial próprio, só exige contrato ativo.
+app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)
 # Financeiro exige o módulo "financeiro" (usuário sem acesso recebe 403).
 # bloquear_escrita_contador vem por último: o vínculo `contador` (Painel do
 # Contador) já tem permissoes=["financeiro"] pelo cadastro normal do usuário

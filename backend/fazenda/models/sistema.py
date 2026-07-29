@@ -351,6 +351,31 @@ class PushSubscription(SQLModel, table=True):
     criado_em: datetime = Field(default_factory=datetime.utcnow)
 
 
+class PushTokenFcm(SQLModel, table=True):
+    """Token de registro do Firebase Cloud Messaging de UMA instalação do app
+    Android nativo (Capacitor). Canal IRMÃO de PushSubscription (Web Push do
+    navegador/PWA): o mesmo usuário pode ter os dois ao mesmo tempo e recebe
+    pelos dois — ver fazenda/api/routers/push.py::enviar_push. Tabela
+    separada (não uma coluna em PushSubscription) porque o token FCM não tem
+    endpoint/p256dh/auth (é uma string opaca do Firebase) e tem ciclo de
+    vida próprio (rotaciona sozinho; morre com UNREGISTERED, não 404/410)."""
+
+    __tablename__ = "push_token_fcm"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    usuario_id: int = Field(foreign_key="usuario.id", index=True)
+    # Único POR INSTALAÇÃO do app no aparelho — se outra pessoa logar no
+    # mesmo aparelho, o mesmo token volta e a linha TROCA de dono (nunca
+    # duplica), senão o funcionário anterior continuaria recebendo push no
+    # aparelho que não é mais dele.
+    token: str = Field(index=True, unique=True)
+    plataforma: str = "android"          # espaço para "ios" se um dia existir
+    modelo: Optional[str] = None         # ex.: "Xiaomi Redmi 12" — só diagnóstico
+    device_id: Optional[str] = None      # Device.getId().identifier — diagnóstico/suporte
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class PushNotificacaoEnviada(SQLModel, table=True):
     """Registro de deduplicação: evita reenviar o mesmo alerta (mesma
     `chave`) via push para o mesmo usuário mais de uma vez por dia — a

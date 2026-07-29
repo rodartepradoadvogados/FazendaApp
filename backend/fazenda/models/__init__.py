@@ -177,6 +177,9 @@ from .documentos import (
     DocumentoArquivado,
     Chamado,
 )
+from .fotos import (
+    FotoCampo,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -193,6 +196,7 @@ from .sistema import (
     NoticiaNews,
     NotaCapa,
     PushSubscription,
+    PushTokenFcm,
     PushNotificacaoEnviada,
     PortalMensagem,
     ParametroManualFazenda,
@@ -216,6 +220,7 @@ __all__ = [
     "RegistroImportado",
     "DocumentoArquivado",
     "Chamado",
+    "FotoCampo",
     "Animal",
     "Lote",
     "MovimentoLote",
@@ -337,6 +342,7 @@ __all__ = [
     "NoticiaNews",
     "NotaCapa",
     "PushSubscription",
+    "PushTokenFcm",
     "PushNotificacaoEnviada",
     "PortalMensagem",
     "ParametroManualFazenda",

@@ -39,3 +39,19 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# capacitor / android (android/ em si É commitado — ícone, splash,
+# AndroidManifest, versionCode e config de assinatura moram lá; só o que é
+# gerado/local fica de fora)
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties
+android/app/release/
+android/app/debug/
+*.keystore
+*.jks
+# Exceção: chave de DEBUG fixa e versionada de propósito (ver comentário em
+# android/app/build.gradle::signingConfigs.debug) — sem segredo real (senha
+# padrão "android", só usada para builds de teste, nunca release/produção).
+!android/app/debug.keystore

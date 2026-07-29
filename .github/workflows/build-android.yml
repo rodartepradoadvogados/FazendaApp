@@ -1,0 +1,58 @@
+name: Build Android APK
+
+# O sandbox onde o Capacitor foi configurado não tem acesso ao SDK do Android
+# (dl.google.com bloqueado por política de rede) — a compilação de verdade
+# acontece aqui, nos runners do GitHub, que não têm essa restrição.
+#
+# Por enquanto gera só o APK de debug (autoassinado pelas próprias
+# ferramentas do Android) — suficiente para instalar em celular de teste.
+# Quando existir keystore de release (ver docs do app Android), trocamos
+# para assembleRelease com assinatura de verdade.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/android/**"
+      - "frontend/capacitor.config.ts"
+      - "frontend/capacitor-www/**"
+      - "frontend/package.json"
+      - ".github/workflows/build-android.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Gerar .apk de debug
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22" # Capacitor CLI 8.x exige Node >=22
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: "temurin"
+          java-version: "21"
+
+      - uses: android-actions/setup-android@v3
+
+      - run: npm ci
+
+      - run: npx cap sync android
+
+      - name: Build APK de debug
+        working-directory: frontend/android
+        run: ./gradlew assembleDebug
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fazenda-app-debug
+          path: frontend/android/app/build/outputs/apk/debug/app-debug.apk
+          retention-days: 30

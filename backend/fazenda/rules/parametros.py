@@ -57,8 +57,12 @@ DEFINICOES: list[dict] = [
     # ---- Gestação e parto ---------------------------------------------------
     {"chave": "gestacao_dias_min", "grupo": "gestacao_parto", "label": "Gestação — dias mínimo", "valor": 280, "unidade": "dias"},
     {"chave": "gestacao_dias_max", "grupo": "gestacao_parto", "label": "Gestação — dias máximo", "valor": 295, "unidade": "dias"},
-    {"chave": "pre_parto_min", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias mínimo", "valor": 31, "unidade": "dias"},
-    {"chave": "pre_parto_max", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias máximo", "valor": 60, "unidade": "dias"},
+    # Pré-parto: últimos pre_parto_max dias antes do parto (padrão 30, até o
+    # parto). Vem DEPOIS do período seco/Secagem (periodo_seco_dias, acima —
+    # 60 dias antes do parto até o início do pré-parto) — não confundir as
+    # duas janelas (ver fazenda.rules.dry_off e agenda_engine.py).
+    {"chave": "pre_parto_min", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias mínimo", "valor": 0, "unidade": "dias"},
+    {"chave": "pre_parto_max", "grupo": "gestacao_parto", "label": "Janela de pré-parto — dias máximo", "valor": 30, "unidade": "dias"},
 
     # ---- BST -----------------------------------------------------------------
     {"chave": "del_minimo_bst", "grupo": "bst", "label": "DEL mínimo para BST", "valor": 60, "unidade": "dias"},
@@ -283,11 +287,11 @@ def gestacao_dias_referencia() -> int:
 
 
 def pre_parto_min() -> int:
-    return int(get_param("pre_parto_min", 31) or 31)
+    return int(get_param("pre_parto_min", 0) or 0)
 
 
 def pre_parto_max() -> int:
-    return int(get_param("pre_parto_max", 60) or 60)
+    return int(get_param("pre_parto_max", 30) or 30)
 
 
 def pev_dias() -> int:

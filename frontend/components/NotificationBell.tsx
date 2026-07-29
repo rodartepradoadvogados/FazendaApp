@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Bell, BellRing, X } from "lucide-react";
 import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin, fetchPushChavePublica, subscribePush, unsubscribePush } from "@/lib/api";
+import { ehApp } from "@/lib/nativo";
 
 type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string; ref?: string | null };
 
@@ -56,13 +57,22 @@ export function NotificationBell() {
 
   // Push só é oferecido onde já existe um service worker ativo (hoje, o
   // PWA em /app — ver frontend/public/sw.js). Fora dali, o botão nem aparece.
+  // Dentro do app Android nativo (Capacitor), NUNCA oferece Web Push — o
+  // PushManager existe no objeto window da WebView, mas não é confiável com
+  // o app fechado; lá quem entrega é o FCM (ver lib/nativo.ts::
+  // registrarPushNativo, registrado automaticamente no layout do app).
   useEffect(() => {
-    if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
-    if (Notification.permission === "denied") { setStatusPush("negado"); return; }
-    navigator.serviceWorker.getRegistration().then((reg) => {
-      if (!reg) return; // sem SW registrado nesta página — não oferece push aqui
-      reg.pushManager.getSubscription().then((sub) => setStatusPush(sub ? "ativado" : "podeAtivar"));
-    }).catch(() => {});
+    let cancelado = false;
+    ehApp().then((dentroDoApp) => {
+      if (cancelado || dentroDoApp) return;
+      if (!("serviceWorker" in navigator) || !("PushManager" in window)) return;
+      if (Notification.permission === "denied") { setStatusPush("negado"); return; }
+      navigator.serviceWorker.getRegistration().then((reg) => {
+        if (!reg) return; // sem SW registrado nesta página — não oferece push aqui
+        reg.pushManager.getSubscription().then((sub) => setStatusPush(sub ? "ativado" : "podeAtivar"));
+      }).catch(() => {});
+    });
+    return () => { cancelado = true; };
   }, []);
 
   const ativarPush = async () => {

@@ -1,6 +1,6 @@
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2 } from "lucide-react";
+import { Upload, FileText, X, Check, AlertTriangle, Loader2, Plus, Trash2, Camera } from "lucide-react";
 import {
   fetchOpcoesFinanceiro, fetchEstoque, fetchServicosCadastro, fetchFornecedores, fetchPlanoContas, criarLancamentoFinanceiro, importarXmlFinanceiro,
   lerDocumentoFinanceiro, formatBRL, fetchPedidos, fetchPossiveisDuplicados, anexarArquivoLancamento, type LancamentoParecido,
@@ -214,6 +214,8 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   // depois que o lançamento é criado (o anexo precisa do numero_lancamento).
   const [boletoFiles, setBoletoFiles] = useState<File[]>([]);
   const boletoInputRef = useRef<HTMLInputElement>(null);
+  const fotoBoletoInputRef = useRef<HTMLInputElement>(null);
+  const [avisoTipoDocumento, setAvisoTipoDocumento] = useState(false);
 
   const [jaPago, setJaPago] = useState(false);
   const [dataPagamento, setDataPagamento] = useState("");
@@ -774,7 +776,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           </select>
         </Campo>
         <Campo label="Tipo de documento">
-          <select style={inputStyle} value={tipoDocumento} onChange={(e) => setTipoDocumento(e.target.value)}>
+          <select style={inputStyle} value={tipoDocumento} onChange={(e) => { setTipoDocumento(e.target.value); if (e.target.value) setAvisoTipoDocumento(false); }}>
             <option value="">Selecione…</option>
             {(opcoes.tipos_documento.length ? opcoes.tipos_documento : ["Nota fiscal", "Recibo", "Folha de pagamento", "Fatura", "Contrato"]).map((t) => <option key={t}>{t}</option>)}
           </select>
@@ -877,9 +879,16 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
 
       {/* Anexar documento(s) a este lançamento — boleto, nota, comprovante etc.
           Sempre visível (não só quando parcelado): sobe junto ao salvar o
-          lançamento, chamando `anexarArquivoLancamento` uma vez por arquivo. */}
+          lançamento, chamando `anexarArquivoLancamento` uma vez por arquivo.
+          Exige "Tipo de documento" (campo acima) preenchido ANTES de anexar
+          — sem isso não dá pra saber depois se o arquivo anexado era nota
+          fiscal, recibo, boleto etc. (decisão do usuário). */}
       <div
-        onDrop={(e) => { e.preventDefault(); const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); }}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (!tipoDocumento) { setAvisoTipoDocumento(true); return; }
+          const fs = Array.from(e.dataTransfer.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]);
+        }}
         onDragOver={(e) => e.preventDefault()}
         className="card mt-3"
         style={{ border: "1px dashed var(--border)", background: "var(--surface-2)", padding: "0.7rem", textAlign: "center" }}
@@ -889,13 +898,30 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
           <span style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
             Arraste o(s) documento(s) deste lançamento aqui (boleto, nota, comprovante — PDF/JPEG/PNG), ou
           </span>
-          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }} onClick={() => boletoInputRef.current?.click()}>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }}
+            onClick={() => { if (!tipoDocumento) { setAvisoTipoDocumento(true); return; } boletoInputRef.current?.click(); }}>
             <Upload size={12} /> selecionar arquivo(s)
+          </button>
+          <button type="button" className="btn-ghost" style={{ fontSize: "0.76rem" }}
+            onClick={() => { if (!tipoDocumento) { setAvisoTipoDocumento(true); return; } fotoBoletoInputRef.current?.click(); }}>
+            <Camera size={12} /> tirar foto
           </button>
         </div>
         <input ref={boletoInputRef} type="file" multiple accept="application/pdf,image/jpeg,image/png"
           onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
           style={{ display: "none" }} />
+        {/* capture="environment" abre a câmera do celular direto (mesmo padrão do
+            app móvel — ver components/mobile/menu/FotosCampo.tsx); em desktop sem
+            câmera, cai de volta no seletor de arquivo normal. */}
+        <input ref={fotoBoletoInputRef} type="file" accept="image/*" capture="environment"
+          onChange={(e) => { const fs = Array.from(e.target.files || []); if (fs.length) setBoletoFiles((arr) => [...arr, ...fs]); e.target.value = ""; }}
+          style={{ display: "none" }} />
+        {avisoTipoDocumento && (
+          <p style={{ color: "var(--red)", fontSize: "0.74rem", marginTop: "0.4rem", fontWeight: 600 }}>
+            <AlertTriangle size={12} style={{ display: "inline", marginRight: "0.2rem" }} />
+            Selecione o &ldquo;Tipo de documento&rdquo; acima antes de anexar ou tirar foto.
+          </p>
+        )}
         {boletoFiles.length > 0 && (
           <ul style={{ marginTop: "0.5rem", textAlign: "left", fontSize: "0.76rem" }}>
             {boletoFiles.map((f, i) => (

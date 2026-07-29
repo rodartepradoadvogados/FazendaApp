@@ -19,6 +19,12 @@ export function getFazendaAtual(): FazendaAtual | null {
 }
 export function logout() {
   if (typeof window !== "undefined") {
+    // Best-effort, sem aguardar — dentro do app nativo, remove o token FCM
+    // deste aparelho (senão o próximo funcionário a usar o mesmo celular
+    // continuaria recebendo as notificações do usuário que saiu). Fora do
+    // app, removerPushNativo() não faz nada. Dispara antes do redirect pra
+    // dar a maior chance possível da requisição sair antes da navegação.
+    import("@/lib/nativo").then(({ removerPushNativo }) => removerPushNativo()).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
     location.href = "/login";
   }
@@ -3883,6 +3889,28 @@ export async function unsubscribePush(endpoint?: string) {
   return res.json();
 }
 
+// ── Push nativo (FCM, app Android Capacitor) ──
+// Canal irmão do Web Push acima — usado só dentro do app nativo (ver
+// lib/nativo.ts), que não confia no PushManager/service worker (não
+// funciona de forma confiável com o app fechado dentro da WebView).
+export async function registrarTokenFcm(dados: {
+  token: string; plataforma?: string; modelo?: string; device_id?: string;
+}): Promise<{ ok: boolean }> {
+  const res = await authFetch(`${API}/push/registrar-fcm`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao registrar notificações"); }
+  return res.json();
+}
+
+export async function removerTokenFcm(token?: string): Promise<{ ok: boolean }> {
+  const res = await authFetch(`${API}/push/registrar-fcm`, {
+    method: "DELETE", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token: token || null }),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover notificações"); }
+  return res.json();
+}
+
 // ── Aprovações de lançamentos vindos do Telegram (só admin) ──
 export type LancamentoPendente = {
   id: number; tipo: string; rotulo: string; resumo: string; dados: Record<string, any>;
@@ -4271,6 +4299,42 @@ export async function baixarDocumento(id: number, nomeArquivo: string): Promise<
 export async function excluirDocumento(id: number): Promise<void> {
   const res = await authFetch(`${API}/documentos/${id}`, { method: "DELETE" });
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir documento"); }
+}
+
+// ── Fotos do campo (app móvel) ──
+// Ver backend/fazenda/api/routers/fotos.py — foto tirada pela câmera do
+// celular, conteúdo vive no Supabase Storage (bucket próprio), aqui só os
+// metadados.
+export type FotoCampo = {
+  id: number; mime_type: string; tamanho_bytes: number;
+  descricao: string | null; identificacao_animal: string | null; data_captura: string;
+};
+
+export async function fetchFotosCampo(filtros?: {
+  identificacao_animal?: string; data_de?: string; data_ate?: string;
+}): Promise<FotoCampo[]> {
+  const params = new URLSearchParams();
+  if (filtros?.identificacao_animal) params.set("identificacao_animal", filtros.identificacao_animal);
+  if (filtros?.data_de) params.set("data_de", filtros.data_de);
+  if (filtros?.data_ate) params.set("data_ate", filtros.data_ate);
+  const qs = params.toString();
+  const res = await authFetch(`${API}/fotos${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error("Erro ao listar fotos");
+  return res.json();
+}
+
+// Busca via blob (não um <img src="..."> direto) — o endpoint exige o token
+// da sessão. Chamador é responsável por URL.revokeObjectURL quando descartar.
+export async function fetchFotoCampoUrl(id: number): Promise<string> {
+  const res = await authFetch(`${API}/fotos/${id}/arquivo`);
+  if (!res.ok) throw new Error("Erro ao carregar foto");
+  const blob = await res.blob();
+  return URL.createObjectURL(blob);
+}
+
+export async function excluirFotoCampo(id: number): Promise<void> {
+  const res = await authFetch(`${API}/fotos/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir foto"); }
 }
 
 // ── Cadeado do Painel do Contador ──

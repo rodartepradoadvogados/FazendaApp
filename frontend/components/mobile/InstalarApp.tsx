@@ -6,6 +6,7 @@
 // Some quando já está instalado (standalone) ou quando o usuário dispensa.
 import { useEffect, useState } from "react";
 import { Download, X, Share } from "lucide-react";
+import { ehApp } from "@/lib/nativo";
 
 type PromptEvent = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: string }> };
 
@@ -17,30 +18,43 @@ export function InstalarApp() {
   const [visivel, setVisivel] = useState(false);
 
   useEffect(() => {
-    // Já instalado (aberto em tela cheia) → nunca mostra.
-    const standalone = window.matchMedia("(display-mode: standalone)").matches
-      || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
-    if (standalone) return;
-    if (localStorage.getItem(CHAVE_DISPENSADO) === "1") return;
+    let limpar = () => {};
+    let cancelado = false;
 
-    const ua = window.navigator.userAgent || "";
-    const ios = /iphone|ipad|ipod/i.test(ua);
-    setEhIos(ios);
-    if (ios) { setVisivel(true); return; } // Safari não dispara beforeinstallprompt
+    ehApp().then((dentroDoApp) => {
+      if (cancelado) return;
+      // Já é o app nativo (Capacitor) — "instale o app" não faz sentido aqui,
+      // e display-mode:standalone abaixo não detecta esse caso (a WebView do
+      // Capacitor não seta essa media feature).
+      if (dentroDoApp) return;
 
-    const aoPrompt = (e: Event) => {
-      e.preventDefault();
-      setEvento(e as PromptEvent);
-      setVisivel(true);
-    };
-    window.addEventListener("beforeinstallprompt", aoPrompt);
-    // Se instalar por fora, esconde.
-    const aoInstalar = () => setVisivel(false);
-    window.addEventListener("appinstalled", aoInstalar);
-    return () => {
-      window.removeEventListener("beforeinstallprompt", aoPrompt);
-      window.removeEventListener("appinstalled", aoInstalar);
-    };
+      // Já instalado (aberto em tela cheia) → nunca mostra.
+      const standalone = window.matchMedia("(display-mode: standalone)").matches
+        || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+      if (standalone) return;
+      if (localStorage.getItem(CHAVE_DISPENSADO) === "1") return;
+
+      const ua = window.navigator.userAgent || "";
+      const ios = /iphone|ipad|ipod/i.test(ua);
+      setEhIos(ios);
+      if (ios) { setVisivel(true); return; } // Safari não dispara beforeinstallprompt
+
+      const aoPrompt = (e: Event) => {
+        e.preventDefault();
+        setEvento(e as PromptEvent);
+        setVisivel(true);
+      };
+      window.addEventListener("beforeinstallprompt", aoPrompt);
+      // Se instalar por fora, esconde.
+      const aoInstalar = () => setVisivel(false);
+      window.addEventListener("appinstalled", aoInstalar);
+      limpar = () => {
+        window.removeEventListener("beforeinstallprompt", aoPrompt);
+        window.removeEventListener("appinstalled", aoInstalar);
+      };
+    });
+
+    return () => { cancelado = true; limpar(); };
   }, []);
 
   function dispensar() {
