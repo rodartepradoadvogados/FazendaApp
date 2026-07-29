@@ -455,6 +455,26 @@ class ParametroManualFazenda(SQLModel, table=True):
     fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
 
 
+class AssistenteEnsinamento(SQLModel, table=True):
+    """Um "ensinamento" cadastrado pelo dono para o Assistente Virtual
+    (Configurações/app > Assistente > Ensinamentos) — texto livre concatenado
+    ao SYSTEM_PROMPT a cada pergunta (ver fazenda.rules.assistente.responder).
+    NÃO é fine-tuning: é só uma base de conhecimento em texto, editável a
+    qualquer momento, sem re-treinar nada. Isolado por fazenda_id, mesmo
+    padrão de SugestaoManualFazenda/PortalMensagem."""
+
+    __tablename__ = "assistente_ensinamento"
+
+    id: Optional[int] = Field(default=None, primary_key=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
+    usuario_id: int = Field(foreign_key="usuario.id")
+    titulo: str
+    texto: str
+    ativo: bool = True
+    criado_em: datetime = Field(default_factory=datetime.utcnow)
+    atualizado_em: datetime = Field(default_factory=datetime.utcnow)
+
+
 class SugestaoManualFazenda(SQLModel, table=True):
     """Uma sugestão customizada exibida na seção "Preditivo e sugestões" do
     Manual da Fazenda — além das sugestões automáticas calculadas a partir

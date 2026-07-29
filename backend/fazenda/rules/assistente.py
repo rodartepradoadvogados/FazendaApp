@@ -23,8 +23,8 @@ from sqlmodel import Session, select
 
 from fazenda.auth import tem_modulo
 from fazenda.models import (
-    Animal, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto, PesagemCorporal,
-    Servico, Usuario,
+    Animal, AssistenteEnsinamento, ContaGerencial, Estoque, EventoSanitario, ExameResultado, Fornecedor, Lote, Parto,
+    PesagemCorporal, Servico, Usuario,
 )
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.rules.indicadores import calcular_indicadores
@@ -189,6 +189,20 @@ def _client():
 def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
     """Só oferece à Claude as ferramentas cujo módulo o usuário tem liberado."""
     return [t["spec"] for t in _TOOLS_DISPONIVEIS if tem_modulo(usuario, t["modulo"])]
+
+
+def _system_prompt(session: Session, fazenda_id: int | None) -> str:
+    """SYSTEM_PROMPT fixo + o que o dono ensinou (AssistenteEnsinamento ativos
+    da fazenda) — sem nenhum ensinamento cadastrado, o prompt fica idêntico
+    ao de sempre (não mexe no texto original, só acrescenta uma seção)."""
+    query = select(AssistenteEnsinamento).where(AssistenteEnsinamento.ativo == True)  # noqa: E712
+    if fazenda_id is not None:
+        query = query.where(AssistenteEnsinamento.fazenda_id == fazenda_id)
+    ensinamentos = session.exec(query).all()
+    if not ensinamentos:
+        return SYSTEM_PROMPT
+    linhas = "\n".join(f"- {e.titulo}: {e.texto}" for e in ensinamentos)
+    return f"{SYSTEM_PROMPT}\n\n## O que o dono me ensinou sobre esta fazenda e este sistema\n{linhas}"
 
 
 def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None) -> dict:
@@ -412,13 +426,14 @@ def responder(mensagem: str, historico: list[dict], session: Session, usuario: U
     fazenda_id = fazenda_id_seguro(fazenda_id)
     client = _client()
     ferramentas = _ferramentas_do_usuario(usuario)
+    system = _system_prompt(session, fazenda_id)
     mensagens: list[dict] = [*historico, {"role": "user", "content": mensagem}]
 
     for _ in range(MAX_RODADAS_TOOL_USE):
         resposta = client.messages.create(
             model=MODEL,
             max_tokens=1536,
-            system=SYSTEM_PROMPT,
+            system=system,
             tools=ferramentas,
             messages=mensagens,
         )
