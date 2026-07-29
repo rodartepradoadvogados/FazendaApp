@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  # Guarda contra a quebra de deploy mais recorrente do projeto: dois PRs
+  # paralelos criam migracoes irmas, o historico fica com duas cabecas e
+  # `alembic upgrade head` aborta na subida da API.
+  #
+  # ATENCAO ao limite: no evento `pull_request` o check roda sobre o merge do
+  # PR com a base. Se o PR irmao JA foi mergeado no main, o conflito aparece e
+  # o check barra antes do merge. Mas se os dois PRs estao abertos ao mesmo
+  # tempo e nenhum foi mergeado, cada um tem uma cabeca so e os dois passam —
+  # o gatilho de `push: main` pega, porem ja depois da quebra.
+  # Para fechar essa janela e preciso ligar "Require branches to be up to date
+  # before merging" na branch protection do main: ai o segundo PR e obrigado a
+  # atualizar a base, o check roda de novo e barra antes do merge.
+  #
+  # So precisa do pacote `alembic`: o check le os arquivos de versao via
+  # ScriptDirectory, sem executar env.py nem abrir conexao com banco.
+  alembic-heads:
+    name: Migracoes com uma cabeca so
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "alembic>=1.14"
+      - run: python backend/scripts/check_alembic_heads.py

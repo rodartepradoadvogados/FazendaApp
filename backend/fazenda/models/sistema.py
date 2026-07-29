@@ -35,9 +35,16 @@ class ParametroFazenda(SQLModel, table=True):
     `rules/parametros.py`) faz a conversão na leitura."""
 
     __tablename__ = "parametro_fazenda"
+    # `chave` sozinha era única no sistema INTEIRO — todas as fazendas
+    # dividiam o mesmo PEV, mesma gestação, mesmas metas. Agora a chave real é
+    # (chave, fazenda_id): a linha com fazenda_id NULL é o padrão global
+    # (seed), e cada fazenda só ganha linha própria quando personaliza o
+    # parâmetro. Ver fazenda.rules.parametros._linha.
+    __table_args__ = (Index("uq_parametro_fazenda_chave_fazenda", "chave", "fazenda_id", unique=True),)
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    chave: str = Field(index=True, unique=True)
+    chave: str = Field(index=True)
+    fazenda_id: Optional[int] = Field(default=None, foreign_key="fazenda.id", index=True)
     grupo: str
     label: str
     valor: str
