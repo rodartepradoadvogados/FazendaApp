@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     supabase_url: str = ""                  # ex.: https://xxxxx.supabase.co
     supabase_service_key: str = ""          # service_role key (nunca a anon key)
     supabase_bucket: str = "documentos-fiscais"
+    # Fotos do campo (app móvel) — bucket separado do arquivo fiscal-contábil
+    # acima; mesma conta/chave de serviço do Supabase, ver fazenda/api/routers/fotos.py.
+    supabase_bucket_fotos: str = "fotos-campo"
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 

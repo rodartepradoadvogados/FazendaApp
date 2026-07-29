@@ -1,8 +1,11 @@
 """
-Cliente do Supabase Storage — arquivo fiscal-contábil integral (notas fiscais,
-CCIR, IRPF/IRPJ, inscrição estadual, matrículas, contratos...). Ver
-fazenda/models/documentos.py::DocumentoArquivado e
-fazenda/api/routers/documentos.py.
+Cliente do Supabase Storage — usado tanto pelo arquivo fiscal-contábil
+integral (notas fiscais, CCIR, IRPF/IRPJ, inscrição estadual, matrículas,
+contratos...; ver fazenda/models/documentos.py::DocumentoArquivado e
+fazenda/api/routers/documentos.py) quanto pelas fotos do campo tiradas no
+app móvel (ver fazenda/models/fotos.py::FotoCampo e
+fazenda/api/routers/fotos.py) — cada um no seu próprio bucket
+(settings.supabase_bucket vs settings.supabase_bucket_fotos).
 
 O conteúdo do arquivo nunca passa pelo Postgres — só o caminho dentro do
 bucket é guardado. O navegador do usuário nunca fala com o Supabase: todo
@@ -28,14 +31,13 @@ def habilitado() -> bool:
     return bool(settings.supabase_url and settings.supabase_service_key)
 
 
-def _exigir_config() -> tuple[str, str, str]:
+def _exigir_config(bucket: str | None) -> tuple[str, str, str]:
     if not habilitado():
         raise RuntimeError(
-            "Arquivo fiscal-contábil não configurado — defina SUPABASE_URL e "
-            "SUPABASE_SERVICE_KEY nas variáveis de ambiente (Supabase > Configurações "
-            "do projeto > API)."
+            "Arquivo não configurado — defina SUPABASE_URL e SUPABASE_SERVICE_KEY "
+            "nas variáveis de ambiente (Supabase > Configurações do projeto > API)."
         )
-    return settings.supabase_url.rstrip("/"), settings.supabase_service_key, settings.supabase_bucket
+    return settings.supabase_url.rstrip("/"), settings.supabase_service_key, bucket or settings.supabase_bucket
 
 
 def _headers(service_key: str, content_type: str | None = None) -> dict:
@@ -45,11 +47,11 @@ def _headers(service_key: str, content_type: str | None = None) -> dict:
     return headers
 
 
-def enviar_arquivo(caminho: str, conteudo: bytes, content_type: str) -> None:
-    """Sobe (ou sobrescreve) o arquivo em `caminho` dentro do bucket."""
-    url, service_key, bucket = _exigir_config()
+def enviar_arquivo(caminho: str, conteudo: bytes, content_type: str, *, bucket: str | None = None) -> None:
+    """Sobe (ou sobrescreve) o arquivo em `caminho` dentro do bucket (padrão: documentos fiscais)."""
+    url, service_key, bucket_alvo = _exigir_config(bucket)
     resp = httpx.post(
-        f"{url}/storage/v1/object/{bucket}/{caminho}",
+        f"{url}/storage/v1/object/{bucket_alvo}/{caminho}",
         headers={**_headers(service_key, content_type), "x-upsert": "true"},
         content=conteudo,
         timeout=60,
@@ -58,10 +60,10 @@ def enviar_arquivo(caminho: str, conteudo: bytes, content_type: str) -> None:
         raise RuntimeError(f"Falha ao enviar arquivo ao Supabase Storage: {resp.status_code} {resp.text}")
 
 
-def baixar_arquivo(caminho: str) -> bytes:
-    url, service_key, bucket = _exigir_config()
+def baixar_arquivo(caminho: str, *, bucket: str | None = None) -> bytes:
+    url, service_key, bucket_alvo = _exigir_config(bucket)
     resp = httpx.get(
-        f"{url}/storage/v1/object/{bucket}/{caminho}",
+        f"{url}/storage/v1/object/{bucket_alvo}/{caminho}",
         headers=_headers(service_key),
         timeout=60,
     )
@@ -70,10 +72,10 @@ def baixar_arquivo(caminho: str) -> bytes:
     return resp.content
 
 
-def excluir_arquivo(caminho: str) -> None:
-    url, service_key, bucket = _exigir_config()
+def excluir_arquivo(caminho: str, *, bucket: str | None = None) -> None:
+    url, service_key, bucket_alvo = _exigir_config(bucket)
     resp = httpx.delete(
-        f"{url}/storage/v1/object/{bucket}/{caminho}",
+        f"{url}/storage/v1/object/{bucket_alvo}/{caminho}",
         headers=_headers(service_key),
         timeout=30,
     )
