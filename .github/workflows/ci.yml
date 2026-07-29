@@ -19,8 +19,12 @@ jobs:
   # before merging" na branch protection do main: ai o segundo PR e obrigado a
   # atualizar a base, o check roda de novo e barra antes do merge.
   #
-  # So precisa do pacote `alembic`: o check le os arquivos de versao via
-  # ScriptDirectory, sem executar env.py nem abrir conexao com banco.
+  # O ScriptDirectory do Alembic EXECUTA cada arquivo de versao (load_module_py
+  # roda o modulo pra ler `revision`/`down_revision`), nao só faz parsing —
+  # entao qualquer import de nivel de modulo usado por uma migracao (ex.:
+  # `import sqlmodel`, comum em coluna autogerada) tem que estar instalado
+  # aqui, senao o check quebra com ModuleNotFoundError antes mesmo de chegar
+  # a checar heads. Continua sem abrir conexao com banco nem rodar env.py.
   alembic-heads:
     name: Migracoes com uma cabeca so
     runs-on: ubuntu-latest
@@ -29,5 +33,5 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "alembic>=1.14"
+      - run: pip install "alembic>=1.14" sqlmodel
       - run: python backend/scripts/check_alembic_heads.py
