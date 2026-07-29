@@ -401,14 +401,14 @@ class PortalMensagem(SQLModel, table=True):
 
     Regras de permanência na central de alertas (ver /notificacoes):
       - tipo "tarefa": some ao ser lida (não tem fluxo de resposta).
-      - tipo "mensagem" sem pede_retorno: some ao ser lida.
+      - tipo "mensagem" ou "foto" sem pede_retorno: some ao ser lida.
       - tipo "mensagem" com pede_retorno: só some quando resolvida (marcada
         "resolvido" OU respondida — responder já marca resolvida=True)."""
 
     __tablename__ = "portal_mensagem"
 
     id: Optional[int] = Field(default=None, primary_key=True)
-    tipo: str = "mensagem"  # "mensagem" | "tarefa"
+    tipo: str = "mensagem"  # "mensagem" | "tarefa" | "foto"
     remetente_usuario_id: int = Field(foreign_key="usuario.id")
     destinatario_usuario_id: int = Field(foreign_key="usuario.id", index=True)
     aba: Optional[str] = None  # sanidade|alimentacao|estoque|indicadores|financeiro|pedidos|listas|lancamentos|agenda
@@ -420,6 +420,8 @@ class PortalMensagem(SQLModel, table=True):
     resposta_de_id: Optional[int] = Field(default=None, foreign_key="portal_mensagem.id")
     # Quando tipo="tarefa", aponta para o evento correspondente na Agenda.
     agenda_manual_id: Optional[int] = Field(default=None, foreign_key="agenda_manual.id")
+    # Quando tipo="foto", aponta para a foto do campo correspondente.
+    foto_campo_id: Optional[int] = Field(default=None, foreign_key="foto_campo.id")
     criado_em: datetime = Field(default_factory=datetime.utcnow)
     # A qual fazenda este fio de comunicação pertence — Usuario pode estar
     # vinculado a mais de uma fazenda (UsuarioFazenda), então isso não é
