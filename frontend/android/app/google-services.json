@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "276140002877",
+    "project_id": "cowdata-fazenda",
+    "storage_bucket": "cowdata-fazenda.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:276140002877:android:c2546566b092e9d9f8a454",
+        "android_client_info": {
+          "package_name": "br.com.cowdata.fazenda"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBYpoYDCiZQxYcNqzyy7zvpfg27_1o6sMU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

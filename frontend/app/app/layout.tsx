@@ -4,13 +4,13 @@
 // (Agenda · Lançar · Rebanho · Menu). Registra o service worker (abre sem
 // internet) e liga a sincronização automática da fila offline.
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { PlusCircle, Sun, Moon, CloudUpload } from "lucide-react";
 import { aplicarTema } from "@/components/ThemeSwitcher";
 import { fetchAgenda, today } from "@/lib/api";
 import { iniciarSincronizacaoAutomatica, useOnline, usePendentes } from "@/lib/offline";
-import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar } from "@/lib/nativo";
+import { ajustarStatusBar, esconderSplash, registrarBotaoVoltar, registrarPushNativo } from "@/lib/nativo";
 import { InstalarApp } from "@/components/mobile/InstalarApp";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
 import { CowDataMark } from "@/components/brand/CowDataMark";
@@ -27,6 +27,7 @@ const ABAS = [
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const router = useRouter();
   const pathRef = useRef(path);
   pathRef.current = path;
   const online = useOnline();
@@ -82,6 +83,15 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     ajustarStatusBar(escuro);
   }, [escuro]);
+  // Push nativo (FCM) — pede permissão, registra o token no backend e
+  // navega pra rota certa se o usuário tocar numa notificação com o app já
+  // aberto. Não faz nada fora do app nativo (ver lib/nativo.ts).
+  useEffect(() => {
+    let ativo = true;
+    let remover = () => {};
+    registrarPushNativo((rota) => router.push(rota)).then((r) => { if (ativo) remover = r; else r(); });
+    return () => { ativo = false; remover(); };
+  }, [router]);
 
   // Bolinha no ícone do app instalado (Badging API) com a quantidade de
   // eventos da agenda de hoje — mesma contagem do push "Agenda do dia"

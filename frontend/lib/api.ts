@@ -19,6 +19,12 @@ export function getFazendaAtual(): FazendaAtual | null {
 }
 export function logout() {
   if (typeof window !== "undefined") {
+    // Best-effort, sem aguardar — dentro do app nativo, remove o token FCM
+    // deste aparelho (senão o próximo funcionário a usar o mesmo celular
+    // continuaria recebendo as notificações do usuário que saiu). Fora do
+    // app, removerPushNativo() não faz nada. Dispara antes do redirect pra
+    // dar a maior chance possível da requisição sair antes da navegação.
+    import("@/lib/nativo").then(({ removerPushNativo }) => removerPushNativo()).catch(() => {});
     localStorage.removeItem("token"); localStorage.removeItem("usuario"); localStorage.removeItem("fazenda_atual");
     location.href = "/login";
   }
