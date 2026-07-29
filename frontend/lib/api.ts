@@ -4401,3 +4401,46 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
   return res.json();
 }
+
+// ── Alertas de indicador por limite ──
+// Ver backend/fazenda/api/routers/alertas_indicador.py — "avise-me se o
+// indicador X passar de Y", disparado pela central de notificações/push.
+export type IndicadorCatalogo = { chave: string; label: string };
+export type AlertaIndicador = {
+  id: number; indicador_chave: string; indicador_label: string;
+  operador: "<" | "<=" | ">" | ">="; valor_limite: number; ativo: boolean;
+  valor_atual: number | null; disparado: boolean; criado_em: string;
+};
+
+export async function fetchCatalogoIndicadores(): Promise<IndicadorCatalogo[]> {
+  const res = await authFetch(`${API}/alertas-indicador/catalogo`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao listar catálogo de indicadores");
+  return res.json();
+}
+
+export async function fetchAlertasIndicador(): Promise<AlertaIndicador[]> {
+  const res = await authFetch(`${API}/alertas-indicador`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao listar alertas de indicador");
+  return res.json();
+}
+
+export async function criarAlertaIndicador(dados: { indicador_chave: string; operador: string; valor_limite: number }): Promise<AlertaIndicador> {
+  const res = await authFetch(`${API}/alertas-indicador`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar alerta"); }
+  return res.json();
+}
+
+export async function editarAlertaIndicador(id: number, dados: { operador?: string; valor_limite?: number; ativo?: boolean }): Promise<AlertaIndicador> {
+  const res = await authFetch(`${API}/alertas-indicador/${id}`, {
+    method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao editar alerta"); }
+  return res.json();
+}
+
+export async function excluirAlertaIndicador(id: number): Promise<void> {
+  const res = await authFetch(`${API}/alertas-indicador/${id}`, { method: "DELETE" });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao excluir alerta"); }
+}

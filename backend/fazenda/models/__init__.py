@@ -180,6 +180,9 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .alerta_indicador import (
+    AlertaIndicador,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -221,6 +224,7 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "AlertaIndicador",
     "Animal",
     "Lote",
     "MovimentoLote",

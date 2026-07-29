@@ -230,17 +230,11 @@ def _resumo_relatorio_personalizado(
     }
 
 
-@router.get("/")
-def obter_indicadores(
-    data: date = date.today(),
-    fazenda_id: int | None = Depends(get_fazenda_atual_id),
-    session: Session = Depends(get_session),
-) -> dict:
-    """
-    Indicadores consolidados do rebanho: composição, situação reprodutiva
-    (taxa de prenhez, concepção, IEP, partos previstos) e produção (DEL médio,
-    litros/dia). Calculado sobre os dados já carregados via upload.
-    """
+def calcular_indicadores_fazenda(session: Session, fazenda_id: int | None, data: date | None = None) -> dict:
+    """Mesma carga de dados e cálculo do endpoint GET /indicadores/, extraída
+    para função própria — reaproveitada por fazenda/api/routers/alertas_indicador.py
+    (que precisa do valor atual de um indicador sem passar pelo HTTP)."""
+    data = data or date.today()
     query_animais = select(Animal).where(Animal.ativo == True)
     query_servicos = select(Servico)
     query_partos = select(Parto)
@@ -282,6 +276,20 @@ def obter_indicadores(
         animais, servicos, partos, data_ref=data, peso_por_animal=peso_por_animal,
         lotes=lotes, aplicacoes_iatf=aplicacoes_iatf,
     )
+
+
+@router.get("/")
+def obter_indicadores(
+    data: date = date.today(),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    session: Session = Depends(get_session),
+) -> dict:
+    """
+    Indicadores consolidados do rebanho: composição, situação reprodutiva
+    (taxa de prenhez, concepção, IEP, partos previstos) e produção (DEL médio,
+    litros/dia). Calculado sobre os dados já carregados via upload.
+    """
+    return calcular_indicadores_fazenda(session, fazenda_id, data)
 
 
 @router.get("/estados-reprodutivos")

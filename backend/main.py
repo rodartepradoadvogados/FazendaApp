@@ -18,6 +18,7 @@ from fazenda.auth import (
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
+    alertas_indicador,
     alimentacao,
     animais,
     aprovacoes,
@@ -393,6 +394,9 @@ app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("finan
 # (abrir chamado) com o cadeado destravado.
 app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
+# Alertas de indicador — preferência pessoal do usuário (config de "avise-me
+# se X passar de Y"), sem gate de módulo contratado.
+app.include_router(alertas_indicador.router, dependencies=_protegido)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])

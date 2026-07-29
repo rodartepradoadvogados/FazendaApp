@@ -12,10 +12,12 @@ from fastapi import APIRouter, Depends
 from sqlmodel import Session, select
 
 from fazenda.api.routers.agenda import calcular_agenda
+from fazenda.api.routers.alertas_indicador import condicao_atendida, descricao_alerta, valor_indicador
+from fazenda.api.routers.indicadores import calcular_indicadores_fazenda
 from fazenda.api.routers.push import notificar_push_para_itens
 from fazenda.auth import get_current_user
 from fazenda.database import get_session
-from fazenda.models import PortalMensagem, SolicitacaoExclusao, Usuario
+from fazenda.models import AlertaIndicador, PortalMensagem, SolicitacaoExclusao, Usuario
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,28 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
             "cor": "var(--mob-vinho-fixo)" if m.tipo == "tarefa" else "var(--blue)",
             "portal_mensagem_id": m.id,
             "pede_retorno": m.pede_retorno,
+        })
+
+    # Alertas de indicador (Configurações > Indicadores > Meus alertas) —
+    # cada alerta guarda a fazenda em que foi criado; calcula-se o indicador
+    # daquela fazenda especificamente (não da fazenda "atual" da sessão, que
+    # pode ter mudado desde a criação do alerta).
+    alertas = session.exec(
+        select(AlertaIndicador).where(AlertaIndicador.usuario_id == user.id, AlertaIndicador.ativo == True)  # noqa: E712
+    ).all()
+    cache_resultados: dict[int | None, dict] = {}
+    for alerta in alertas:
+        if alerta.fazenda_id not in cache_resultados:
+            cache_resultados[alerta.fazenda_id] = calcular_indicadores_fazenda(session, alerta.fazenda_id)
+        valor = valor_indicador(cache_resultados[alerta.fazenda_id], alerta.indicador_chave)
+        if valor is None or not condicao_atendida(valor, alerta.operador, alerta.valor_limite):
+            continue
+        itens.append({
+            "tipo": "alerta_indicador",
+            "categoria": "Indicadores",
+            "descricao": descricao_alerta(alerta, valor),
+            "numero_animal": None,
+            "cor": "var(--amber)",
         })
 
     return itens
