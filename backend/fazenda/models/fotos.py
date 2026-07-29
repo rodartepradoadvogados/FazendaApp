@@ -30,3 +30,16 @@ class FotoCampo(SQLModel, table=True):
     identificacao_animal: Optional[str] = None
     data_captura: datetime = Field(default_factory=datetime.utcnow)
     enviado_por: Optional[int] = Field(default=None, foreign_key="usuario.id")
+    # Assunto opcional marcado no momento da captura — "animal" | "lote" | "outro".
+    # None = foto sem assunto marcado (comportamento de antes desta coluna existir).
+    tipo_assunto: Optional[str] = None
+    # tipo_assunto == "animal": FK resolvida a partir do número escolhido na lista
+    # fechada de animais. identificacao_animal continua gravado com o mesmo
+    # número (compatibilidade com o filtro de GET /fotos e o rótulo da galeria).
+    animal_id: Optional[int] = Field(default=None, foreign_key="animal.id", index=True)
+    # tipo_assunto == "lote": CSV de códigos de lote ("01,03") — mesmo formato de
+    # AgendaManual.lotes e Lote.categorias; a foto nunca é consultada "por lote"
+    # em JOIN, só exibida, então não há tabela de junção.
+    lotes: Optional[str] = None
+    # tipo_assunto == "outro": reproducao|producao|sanidade|alimentacao|estoque|outro
+    assunto_fixo: Optional[str] = None

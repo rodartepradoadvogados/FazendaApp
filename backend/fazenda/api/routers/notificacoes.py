@@ -77,16 +77,25 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
         remetente_nome = (remetente.nome or remetente.username) if remetente else "—"
         if m.tipo == "tarefa":
             descricao = f"Tarefa de {remetente_nome}: {m.corpo}"
+            cor = "var(--mob-vinho-fixo)"
+        elif m.tipo == "foto":
+            descricao = f"Foto de {remetente_nome}: {m.corpo}"
+            cor = "var(--verde)"
         else:
             descricao = f"Mensagem de {remetente_nome}" + (f" ({m.aba})" if m.aba else "") + f": {m.corpo}"
+            cor = "var(--blue)"
         itens.append({
+            # tipo continua "portal_mensagem" (não "foto") propositalmente:
+            # push.py::_categoria_push e url_destino já tratam esse tipo
+            # ("Comunicados" → /portal) sem precisar de nenhuma alteração lá.
             "tipo": "portal_mensagem",
             "categoria": "Portal",
             "descricao": descricao,
             "numero_animal": None,
-            "cor": "var(--mob-vinho-fixo)" if m.tipo == "tarefa" else "var(--blue)",
+            "cor": cor,
             "portal_mensagem_id": m.id,
             "pede_retorno": m.pede_retorno,
+            "foto_campo_id": m.foto_campo_id,
         })
 
     return itens

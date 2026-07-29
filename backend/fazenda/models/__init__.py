@@ -183,6 +183,9 @@ from .fotos import (
 from .onboarding import (
     OnboardingUsuario,
 )
+from .filtro_salvo import (
+    FiltroSalvo,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -225,6 +228,7 @@ __all__ = [
     "Chamado",
     "FotoCampo",
     "OnboardingUsuario",
+    "FiltroSalvo",
     "Animal",
     "Lote",
     "MovimentoLote",
