@@ -109,15 +109,12 @@ class TestGateAcesso:
     def test_usuario_liberado_via_parametro_acessa(self, client, monkeypatch):
         c, engine = client
         with Session(engine) as s:
-            # seed_parametros() já criou a linha (valor "") no startup do app
-            # — edita em vez de inserir de novo (chave, fazenda_id) é único.
-            row = s.exec(
-                select(ParametroFazenda).where(
-                    ParametroFazenda.chave == "assistente_usuarios_liberados", ParametroFazenda.fazenda_id == None,  # noqa: E711
-                )
-            ).first()
-            row.valor = "2"
-            s.add(row)
+            # FAZENDA_TESTING (conftest.py) pula os seeds do lifespan — a linha
+            # não existe de graça como no app real, então o teste cria a sua.
+            s.add(ParametroFazenda(
+                chave="assistente_usuarios_liberados", fazenda_id=None, grupo="agenda_sistema",
+                label="Assistente — usuários liberados", valor="2", tipo="texto",
+            ))
             s.commit()
         _como(2, 1)
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)

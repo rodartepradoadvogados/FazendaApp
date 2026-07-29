@@ -20,3 +20,8 @@ import os
 import tempfile
 
 os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
+# Pula os ~50 seeds de bootstrap do lifespan (main.py) — cada TestClient(main.app)
+# criado por um teste é um banco de produção vazio sendo semeado do zero; testes
+# que constroem seu próprio engine isolado já semeiam só o que usam. Ver o
+# comentário em main.py::lifespan para o que exatamente isso desliga.
+os.environ["FAZENDA_TESTING"] = "1"
