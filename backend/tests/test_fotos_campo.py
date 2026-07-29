@@ -12,10 +12,10 @@ os.environ["DATABASE_URL"] = f"sqlite:///{tempfile.mktemp(suffix='.db')}"
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import ContratoFazenda, ContratoFazendaModulo, Fazenda, Usuario, UsuarioFazenda
+from fazenda.models import Animal, ContratoFazenda, ContratoFazendaModulo, Fazenda, PortalMensagem, Usuario, UsuarioFazenda
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
 
@@ -38,6 +38,17 @@ def client(monkeypatch):
         s.add(Fazenda(id=2, nome="Outra Fazenda"))
         s.add(Usuario(id=7, username=_FakeUser.username, senha_hash="x", papel="operador", ativo=True, permissoes="rebanho"))
         s.add(UsuarioFazenda(usuario_id=7, fazenda_id=1))
+        # Destinatários possíveis do fan-out de avisos da foto: 8 e 9 na fazenda 1,
+        # 10 desativado, 11 numa fazenda diferente (não deve receber nada da 1).
+        s.add(Usuario(id=8, username="vet.teste", senha_hash="x", papel="operador", ativo=True, permissoes="rebanho"))
+        s.add(Usuario(id=9, username="gerente.teste", senha_hash="x", papel="operador", ativo=True, permissoes="rebanho"))
+        s.add(Usuario(id=10, username="desativado.teste", senha_hash="x", papel="operador", ativo=False, permissoes="rebanho"))
+        s.add(Usuario(id=11, username="outrafazenda.teste", senha_hash="x", papel="operador", ativo=True, permissoes="rebanho"))
+        s.add(UsuarioFazenda(usuario_id=8, fazenda_id=1))
+        s.add(UsuarioFazenda(usuario_id=9, fazenda_id=1))
+        s.add(UsuarioFazenda(usuario_id=10, fazenda_id=1))
+        s.add(UsuarioFazenda(usuario_id=11, fazenda_id=2))
+        s.add(Animal(id=1, numero="123", fazenda_id=1))
         for fid in (1, 2):
             s.add(ContratoFazenda(fazenda_id=fid, status="ativo"))
             for modulo in MODULOS_COMERCIAIS:
@@ -133,6 +144,79 @@ class TestListarBaixarExcluirFoto:
     def test_excluir_foto_inexistente_404(self, client):
         r = client.delete("/fotos/99999")
         assert r.status_code == 404
+
+
+class TestAssuntoEDestinatarios:
+    def _enviar(self, client, **extra):
+        r = client.post(
+            "/fotos/upload", files={"file": ("foto.jpg", b"conteudo", "image/jpeg")}, data=extra,
+        )
+        assert r.status_code == 201, r.text
+        return r.json()
+
+    def test_destinatarios_especificos(self, client, monkeypatch):
+        import fazenda.database as database
+        foto = self._enviar(client, destinatarios_usuario_id="8,9")
+        assert foto["notificados"] == 2
+        with Session(database.engine) as s:
+            avisos = s.exec(select(PortalMensagem).where(PortalMensagem.foto_campo_id == foto["id"])).all()
+        assert {a.destinatario_usuario_id for a in avisos} == {8, 9}
+        assert all(a.tipo == "foto" for a in avisos)
+
+    def test_sem_destinatarios_notifica_todos_da_fazenda_menos_remetente(self, client):
+        import fazenda.database as database
+        foto = self._enviar(client)
+        with Session(database.engine) as s:
+            avisos = s.exec(select(PortalMensagem).where(PortalMensagem.foto_campo_id == foto["id"])).all()
+        # 8 e 9 (ativos, fazenda 1); 7 é o remetente (excluído); 10 desativado; 11 outra fazenda.
+        assert {a.destinatario_usuario_id for a in avisos} == {8, 9}
+
+    def test_destinatario_inexistente_ou_desativado_e_ignorado(self, client):
+        import fazenda.database as database
+        foto = self._enviar(client, destinatarios_usuario_id="8,10,99999")
+        assert foto["notificados"] == 1
+        with Session(database.engine) as s:
+            avisos = s.exec(select(PortalMensagem).where(PortalMensagem.foto_campo_id == foto["id"])).all()
+        assert {a.destinatario_usuario_id for a in avisos} == {8}
+
+    def test_tipo_assunto_animal_resolve_animal_id(self, client):
+        foto = self._enviar(client, tipo_assunto="animal", identificacao_animal="123")
+        assert foto["tipo_assunto"] == "animal"
+        assert foto["animal_id"] == 1
+
+    def test_tipo_assunto_animal_numero_inexistente_so_grava_texto(self, client):
+        foto = self._enviar(client, tipo_assunto="animal", identificacao_animal="999")
+        assert foto["tipo_assunto"] == "animal"
+        assert foto["animal_id"] is None
+        assert foto["identificacao_animal"] == "999"
+
+    def test_tipo_assunto_lote_persiste_csv(self, client):
+        foto = self._enviar(client, tipo_assunto="lote", lotes="01,03")
+        assert foto["tipo_assunto"] == "lote"
+        assert foto["lotes"] == "01,03"
+
+    def test_assunto_fixo_invalido_400(self, client):
+        r = client.post(
+            "/fotos/upload", files={"file": ("foto.jpg", b"conteudo", "image/jpeg")},
+            data={"tipo_assunto": "outro", "assunto_fixo": "chutando"},
+        )
+        assert r.status_code == 400
+
+    def test_falha_no_storage_nao_cria_portal_mensagem(self, client, monkeypatch):
+        import fazenda.database as database
+        import fazenda.api.routers.fotos as fotos_mod
+
+        def _falha(*a, **k):
+            raise RuntimeError("Storage indisponível")
+
+        monkeypatch.setattr(fotos_mod, "enviar_arquivo", _falha)
+        r = client.post(
+            "/fotos/upload", files={"file": ("foto.jpg", b"conteudo", "image/jpeg")},
+            data={"destinatarios_usuario_id": "8"},
+        )
+        assert r.status_code == 502
+        with Session(database.engine) as s:
+            assert s.exec(select(PortalMensagem)).all() == []
 
 
 class TestIsolamentoPorFazenda:

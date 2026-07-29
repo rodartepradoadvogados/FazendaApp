@@ -6,29 +6,55 @@
 // sozinha quando a conexão voltar — igual a um lançamento de campo comum.
 import { useEffect, useRef, useState } from "react";
 import { Camera, Trash2, Upload, ImageOff, CloudUpload } from "lucide-react";
-import { MobVoltar } from "@/components/mobile/ui";
 import {
   useOnline, usePendentesDe, descartarPendente, lerArquivoPendente,
   enviarOuEnfileirarArquivo, ErroCotaOutbox, type ItemOutbox,
 } from "@/lib/offline";
-import { excluirFotoCampo, fetchFotosCampo, fetchFotoCampoUrl, type FotoCampo } from "@/lib/api";
+import {
+  excluirFotoCampo, fetchFotosCampo, fetchFotoCampoUrl, fetchAnimais, fetchLotes,
+  fetchPortalDestinatarios, type FotoCampo, type PortalDestinatario,
+} from "@/lib/api";
 import { Carregando, Vazio } from "@/components/mobile/menu/comum";
+import { useCache, SeletorAnimal, BotoesEscolha, MobPill, LinhaPills, type Animal as AnimalTipo } from "@/components/mobile/lancar/comum";
+import { PortalMencaoInput } from "@/components/PortalMencaoInput";
 import { redimensionarFoto } from "@/lib/imagem";
 
 const CAMINHO_UPLOAD = "/fotos/upload";
 
-export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
+type LoteRow = { codigo: string; nome?: string | null; rotulo?: string; qtd_animais?: number };
+type TipoAssunto = "" | "animal" | "lote" | "outro";
+
+const ASSUNTOS_FIXOS: { valor: string; label: string }[] = [
+  { valor: "reproducao", label: "Reprodução" },
+  { valor: "producao", label: "Produção" },
+  { valor: "sanidade", label: "Sanidade" },
+  { valor: "alimentacao", label: "Alimentação" },
+  { valor: "estoque", label: "Estoque" },
+  { valor: "outro", label: "Outro assunto" },
+];
+
+export default function FotosCampo() {
   const online = useOnline();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [arquivo, setArquivo] = useState<Blob | null>(null);
   const [nomeArquivo, setNomeArquivo] = useState("foto.jpg");
   const [preview, setPreview] = useState<string | null>(null);
-  const [identificacao, setIdentificacao] = useState("");
   const [descricao, setDescricao] = useState("");
   const [preparando, setPreparando] = useState(false);
   const [enviando, setEnviando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [aviso, setAviso] = useState<string | null>(null);
+
+  const [destinatarios, setDestinatarios] = useState<number[]>([]);
+  const [destinatariosOpcoes, setDestinatariosOpcoes] = useState<PortalDestinatario[]>([]);
+  const [tipoAssunto, setTipoAssunto] = useState<TipoAssunto>("");
+  const [numeroAnimal, setNumeroAnimal] = useState("");
+  const [lotesSel, setLotesSel] = useState<string[]>([]);
+  const [assuntoFixo, setAssuntoFixo] = useState("");
+
+  const animais = useCache<AnimalTipo[]>("animais", () => fetchAnimais() as Promise<AnimalTipo[]>, []);
+  const lotes = useCache<LoteRow[]>("lotes", () => fetchLotes() as Promise<LoteRow[]>, []);
+  useEffect(() => { fetchPortalDestinatarios().then(setDestinatariosOpcoes).catch(() => {}); }, []);
 
   const [fotos, setFotos] = useState<FotoCampo[] | null>(null);
   const [carregando, setCarregando] = useState(true);
@@ -75,18 +101,34 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
 
   function descartarPreview() {
     if (preview) URL.revokeObjectURL(preview);
-    setArquivo(null); setPreview(null); setIdentificacao(""); setDescricao(""); setErro(null); setAviso(null);
+    setArquivo(null); setPreview(null); setDescricao(""); setErro(null); setAviso(null);
+    setDestinatarios([]); setTipoAssunto(""); setNumeroAnimal(""); setLotesSel([]); setAssuntoFixo("");
+  }
+
+  function resumoAssunto(): string {
+    if (tipoAssunto === "animal" && numeroAnimal) return `Animal ${numeroAnimal}`;
+    if (tipoAssunto === "lote" && lotesSel.length) return `Lotes ${lotesSel.join(", ")}`;
+    if (tipoAssunto === "outro" && assuntoFixo) return ASSUNTOS_FIXOS.find((a) => a.valor === assuntoFixo)?.label || "";
+    return "";
   }
 
   async function enviar() {
     if (!arquivo) return;
     setEnviando(true); setErro(null); setAviso(null);
     try {
+      const resumo = resumoAssunto();
       const { enviado } = await enviarOuEnfileirarArquivo({
         caminho: CAMINHO_UPLOAD,
-        descricao: `Foto do campo${identificacao ? ` — nº ${identificacao}` : ""}`,
+        descricao: `Foto do campo${resumo ? ` — ${resumo}` : ""}`,
         arquivo, nomeArquivo,
-        campos: { descricao: descricao || undefined, identificacao_animal: identificacao || undefined },
+        campos: {
+          descricao: descricao || undefined,
+          tipo_assunto: tipoAssunto || undefined,
+          identificacao_animal: tipoAssunto === "animal" ? (numeroAnimal || undefined) : undefined,
+          lotes: tipoAssunto === "lote" && lotesSel.length ? lotesSel.join(",") : undefined,
+          assunto_fixo: tipoAssunto === "outro" ? (assuntoFixo || undefined) : undefined,
+          destinatarios_usuario_id: destinatarios.length ? destinatarios.join(",") : undefined,
+        },
       });
       descartarPreview();
       if (enviado) await recarregar();
@@ -101,10 +143,13 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
     }
   }
 
+  function alternarLote(codigo: string) {
+    setLotesSel((sel) => sel.includes(codigo) ? sel.filter((c) => c !== codigo) : [...sel, codigo]);
+  }
+  const todosLotesMarcados = lotes.dados.length > 0 && lotesSel.length === lotes.dados.length;
+
   return (
     <div>
-      <MobVoltar titulo="Fotos do campo" onVoltar={onVoltar} />
-
       <input ref={inputRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={aoEscolherArquivo} />
 
       {!preview ? (
@@ -115,8 +160,52 @@ export default function FotosCampo({ onVoltar }: { onVoltar: () => void }) {
         <div className="mob-card" style={{ padding: "0.9rem", marginBottom: "1.1rem" }}>
           {/* Preview local — ainda não subiu, por isso <img> direto (sem passar pelo backend). */}
           <img src={preview} alt="Prévia da foto" style={{ width: "100%", borderRadius: 10, display: "block", marginBottom: "0.7rem", maxHeight: 260, objectFit: "cover" }} />
-          <input type="text" placeholder="Identificação do animal (opcional)" value={identificacao} onChange={(e) => setIdentificacao(e.target.value)}
-            className="mob-input" style={{ marginBottom: "0.5rem" }} />
+
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.3rem", color: "var(--mob-muted)" }}>Para (opcional)</div>
+          <PortalMencaoInput opcoes={destinatariosOpcoes} selecionados={destinatarios} onChange={setDestinatarios} placeholder="Ninguém marcado = todos" />
+          <div style={{ fontSize: "0.72rem", color: "var(--mob-muted)", marginTop: "0.25rem", marginBottom: "0.8rem" }}>
+            Sem ninguém marcado, a foto vai para todos.
+          </div>
+
+          <div style={{ fontSize: "0.78rem", fontWeight: 600, marginBottom: "0.4rem", color: "var(--mob-muted)" }}>Sobre o quê? (opcional)</div>
+          <div style={{ marginBottom: "0.8rem" }}>
+            <BotoesEscolha
+              opcoes={[
+                { valor: "animal", label: "Animal" },
+                { valor: "lote", label: "Lote" },
+                { valor: "outro", label: "Outro assunto" },
+              ]}
+              valor={tipoAssunto}
+              onChange={(v) => setTipoAssunto(v === tipoAssunto ? "" : v)}
+            />
+          </div>
+
+          {tipoAssunto === "animal" && (
+            <div style={{ marginBottom: "0.8rem" }}>
+              <SeletorAnimal animais={animais.dados} valor={numeroAnimal} onChange={setNumeroAnimal} />
+            </div>
+          )}
+
+          {tipoAssunto === "lote" && (
+            <LinhaPills>
+              <MobPill ativa={todosLotesMarcados} onClick={() => setLotesSel(todosLotesMarcados ? [] : lotes.dados.map((l) => l.codigo))}>
+                Todos os lotes
+              </MobPill>
+              {lotes.dados.map((l) => (
+                <MobPill key={l.codigo} ativa={lotesSel.includes(l.codigo)} onClick={() => alternarLote(l.codigo)}>
+                  {l.rotulo || `${l.codigo} · ${l.nome || ""}`}
+                </MobPill>
+              ))}
+            </LinhaPills>
+          )}
+
+          {tipoAssunto === "outro" && (
+            <select className="mob-input" value={assuntoFixo} onChange={(e) => setAssuntoFixo(e.target.value)} style={{ marginBottom: "0.8rem" }}>
+              <option value="">Selecione o assunto…</option>
+              {ASSUNTOS_FIXOS.map((a) => <option key={a.valor} value={a.valor}>{a.label}</option>)}
+            </select>
+          )}
+
           <input type="text" placeholder="Descrição (opcional)" value={descricao} onChange={(e) => setDescricao(e.target.value)}
             className="mob-input" style={{ marginBottom: "0.7rem" }} />
           {erro && <div style={{ color: "var(--mob-vermelho)", fontSize: "0.82rem", fontWeight: 600, marginBottom: "0.6rem" }}>{erro}</div>}
