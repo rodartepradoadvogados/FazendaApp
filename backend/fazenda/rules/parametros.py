@@ -147,19 +147,47 @@ def seed_parametros(session: Session) -> None:
     session.commit()
 
 
+import contextvars
+
+# Fazenda do request em curso, para `get_param` saber de quem é o parâmetro
+# sem precisar receber fazenda_id em TODA função de regra (get_param é chamada
+# de dezenas de funções puras, sem contexto de request). O middleware em
+# main.py carimba isso no início de cada request; fora de request (testes de
+# regra puros, loops de fundo) fica None e vale o padrão global.
+fazenda_atual: contextvars.ContextVar[int | None] = contextvars.ContextVar("fazenda_atual", default=None)
+
+
 def _linha(chave: str):
-    """Busca a linha do parâmetro no banco. Cai em None (o chamador usa o
-    `padrao`) se a tabela ainda não existir — ex.: testes de regra "puros"
-    que chamam `avaliar_bst`/`dias_gestacao`/`calcular_indicadores` direto,
-    sem passar pelo startup da API (`create_db_and_tables`/`seed_parametros`)
-    — mantém essas funções utilizáveis sem depender de banco."""
+    """Busca a linha do parâmetro no banco, preferindo a personalização da
+    fazenda atual e caindo no padrão global (fazenda_id NULL) quando ela não
+    personalizou aquele parâmetro. Cai em None (o chamador usa o `padrao`) se
+    a tabela ainda não existir — ex.: testes de regra "puros" que chamam
+    `avaliar_bst`/`dias_gestacao`/`calcular_indicadores` direto, sem passar
+    pelo startup da API (`create_db_and_tables`/`seed_parametros`) — mantém
+    essas funções utilizáveis sem depender de banco."""
     from sqlalchemy.exc import OperationalError, ProgrammingError
 
     from fazenda.database import engine
     from fazenda.models import ParametroFazenda
+    fid = fazenda_atual.get()
     try:
         with Session(engine) as session:
-            return session.exec(select(ParametroFazenda).where(ParametroFazenda.chave == chave)).first()
+            if fid is not None:
+                especifica = session.exec(
+                    select(ParametroFazenda).where(
+                        ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == fid,
+                    )
+                ).first()
+                if especifica is not None:
+                    return especifica
+            # Padrão global: o seed continua criando as linhas com
+            # fazenda_id NULL, então uma fazenda que nunca personalizou nada
+            # enxerga exatamente os mesmos valores de antes.
+            return session.exec(
+                select(ParametroFazenda).where(
+                    ParametroFazenda.chave == chave, ParametroFazenda.fazenda_id == None,  # noqa: E711
+                )
+            ).first()
     except (OperationalError, ProgrammingError):
         return None
 

@@ -306,6 +306,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def _carimbar_fazenda_atual(request, call_next):
+    """Carimba a fazenda do token no contexto do request, para
+    `fazenda.rules.parametros.get_param` saber de quem é o parâmetro sem
+    receber fazenda_id em toda função de regra (ela é chamada de dezenas de
+    funções puras). SEMPRE define — inclusive como None — para nenhum request
+    herdar a fazenda de outro que rodou antes na mesma thread."""
+    from fazenda.auth import _validar_token_payload
+    from fazenda.rules.parametros import fazenda_atual
+
+    fid = None
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        dados = _validar_token_payload(auth.split(" ", 1)[1])
+        if dados:
+            fid = dados.get("fid")
+    token = fazenda_atual.set(fid)
+    try:
+        return await call_next(request)
+    finally:
+        fazenda_atual.reset(token)
+
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)
 # Fazendas: gerencia os próprios contratos/planos — não leva a trava de
