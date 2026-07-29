@@ -24,6 +24,7 @@ from . import (
     estoque,
     genetica,
     pessoas,
+    protocolos_customizados,
     protocolos_sanitarios,
     rh_contratos,
     rh_folha,
@@ -55,6 +56,7 @@ router.include_router(animais.router)
 router.include_router(genetica.router)
 router.include_router(sanitario.router)
 router.include_router(protocolos_sanitarios.router)
+router.include_router(protocolos_customizados.router)
 router.include_router(servicos.router)
 router.include_router(rh_folha.router)
 router.include_router(rh_contratos.router)
