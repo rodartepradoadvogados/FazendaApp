@@ -4401,3 +4401,27 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao criar lançamento"); }
   return res.json();
 }
+
+// ── Onboarding (checklist guiado de primeiro acesso) ──
+// Ver backend/fazenda/api/routers/onboarding.py — passos fixos no backend;
+// aqui só consumimos o estado (o que já foi concluído/dispensado).
+export type OnboardingPasso = { chave: string; label: string; rota: string; concluido: boolean };
+export type OnboardingEstado = { passos: OnboardingPasso[]; dispensado: boolean; tudo_concluido: boolean };
+
+export async function fetchOnboarding(): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao carregar onboarding");
+  return res.json();
+}
+
+export async function concluirPassoOnboarding(chave: string): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding/passos/${encodeURIComponent(chave)}/concluir`, { method: "POST" });
+  if (!res.ok) throw new Error("Erro ao concluir passo");
+  return res.json();
+}
+
+export async function dispensarOnboarding(): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding/dispensar`, { method: "POST" });
+  if (!res.ok) throw new Error("Erro ao dispensar onboarding");
+  return res.json();
+}

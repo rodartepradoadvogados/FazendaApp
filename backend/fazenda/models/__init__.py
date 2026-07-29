@@ -180,6 +180,9 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .onboarding import (
+    OnboardingUsuario,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -221,6 +224,7 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "OnboardingUsuario",
     "Animal",
     "Lote",
     "MovimentoLote",
