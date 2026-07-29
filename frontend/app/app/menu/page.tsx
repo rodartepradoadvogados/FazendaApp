@@ -16,9 +16,9 @@ import { useRouter } from "next/navigation";
 import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
-  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Camera, Monitor,
+  Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Camera, Monitor,
 } from "lucide-react";
-import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
+import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO, fetchAssistenteAcesso } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
 import { MobTitulo, MobVoltar } from "@/components/mobile/ui";
 import { GradeAcoes, type OpcaoAcao } from "@/components/mobile/lancar/comum";
@@ -43,6 +43,7 @@ import Recria from "@/components/mobile/menu/Recria";
 import ControleAcesso from "@/components/mobile/menu/ControleAcesso";
 import Portal from "@/components/mobile/menu/Portal";
 import News from "@/components/mobile/menu/News";
+import Assistente from "@/components/mobile/menu/Assistente";
 import FotosCampo from "@/components/mobile/menu/FotosCampo";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
@@ -100,13 +101,21 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
 export default function Pagina() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
-  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "fotos" | null>(null);
+  const [secaoAberta, setSecaoAberta] = useState<SecaoKey | "aparencia" | "estoque" | "recria" | "controleAcesso" | "portal" | "news" | "assistente" | "fotos" | null>(null);
   const [sub, setSub] = useState<SubKey | null>(null);
   const fila = usePendentes();
   const online = useOnline();
   const [sincronizando, setSincronizando] = useState(false);
+  // Item do menu só aparece para quem o backend confirma ter acesso (dono da
+  // fazenda ou liberado por ele — ver GET /assistente/acesso, que nunca dá
+  // 403 de propósito, só o booleano) — evita mostrar o item para quem ia
+  // tomar 403 ao abrir a tela.
+  const [assistenteLiberado, setAssistenteLiberado] = useState(false);
 
   useEffect(() => { setMontado(true); }, []);
+  useEffect(() => {
+    fetchAssistenteAcesso().then((r) => setAssistenteLiberado(r.liberado)).catch(() => setAssistenteLiberado(false));
+  }, []);
 
   // Botão News do cabeçalho (app/layout.tsx) navega para /app/menu#news —
   // como é a mesma rota, o Next não remonta a página, então escutamos o hash
@@ -164,6 +173,10 @@ export default function Pagina() {
     return <Portal onVoltar={() => setSecaoAberta(null)} />;
   }
 
+  if (secaoAberta === "assistente") {
+    return <Assistente onVoltar={() => setSecaoAberta(null)} />;
+  }
+
   // Fotos do campo — sem gate de módulo (mesmo padrão do Portal): qualquer
   // usuário logado com contrato ativo pode tirar/enviar fotos.
   if (secaoAberta === "fotos") {
@@ -200,6 +213,7 @@ export default function Pagina() {
     ...(montado && podeModulo("recria") ? [{ id: "recria", label: "Recria", icone: <Baby size={26} />, cor: "var(--cat-recria)" }] : []),
     ...(montado && ehDono() ? [{ id: "controleAcesso", label: "Controle de Acesso", icone: <Users size={26} />, cor: "var(--cat-acesso)" }] : []),
     ...(montado && ehDono() ? [{ id: "painelCowData", label: "Painel CowData", icone: <Building2 size={26} />, cor: "var(--mob-dourado)" }] : []),
+    ...(montado && assistenteLiberado ? [{ id: "assistente", label: "Assistente Virtual", icone: <Sparkles size={26} />, cor: "var(--mob-dourado)" }] : []),
     { id: "portal", label: "Portal", icone: <MessageSquare size={26} />, cor: "var(--mob-roxo)" },
     { id: "fotos", label: "Fotos do campo", icone: <Camera size={26} />, cor: "var(--mob-verde)" },
     { id: "aparencia", label: "Aparência", icone: <Palette size={26} />, cor: "var(--mob-dourado)" },

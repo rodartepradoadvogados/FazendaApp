@@ -201,6 +201,7 @@ from .sistema import (
     PortalMensagem,
     ParametroManualFazenda,
     SugestaoManualFazenda,
+    AssistenteEnsinamento,
 )
 
 __all__ = [
@@ -346,4 +347,5 @@ __all__ = [
     "PortalMensagem",
     "ParametroManualFazenda",
     "SugestaoManualFazenda",
+    "AssistenteEnsinamento",
 ]

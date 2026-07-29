@@ -1,9 +1,11 @@
 """
 Testes do protótipo do Assistente Claude — cobrem o que dá para testar sem
-uma chave real da API (aberto a qualquer usuário, permissões por ferramenta,
-mensagem vazia, ferramentas isoladas e o erro claro quando ANTHROPIC_API_KEY
-não está configurada). O laço de tool-use em si (que de fato chama a Claude)
-não é coberto aqui — é comportamento da API externa, não lógica nossa.
+uma chave real da API (gate de acesso ao dono da fazenda, permissões por
+ferramenta, mensagem vazia, ferramentas isoladas e o erro claro quando
+ANTHROPIC_API_KEY não está configurada). O laço de tool-use em si (que de
+fato chama a Claude) é coberto em TestSystemPromptComEnsinamentos com a API
+mockada; os testes de gate por usuário liberado + isolamento de ensinamentos
+entre fazendas ficam em test_assistente_ensinamentos.py (fixture própria).
 """
 from __future__ import annotations
 
@@ -14,7 +16,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
-from fazenda.models import Animal, ContaGerencial, Estoque, ExameResultado, Lote
+from fazenda.models import Animal, ContaGerencial, Estoque, ExameResultado, Fazenda, Lote, UsuarioFazenda
 from fazenda.models.sanidade import CalendarioSanitario, EventoSanitario
 from fazenda.rules.assistente import (
     _executar_tool,
@@ -57,6 +59,13 @@ def client():
 
     with Session(engine) as s:
         s.add(Animal(numero="500", nome="Estrela", sexo="F", raca="Girolando"))
+        # Usuário de teste (id=1, ver _Usuario acima) é o dono/contratante da
+        # fazenda #1 (FAZENDA_ID_PILOTO) — desde a restrição do Assistente ao
+        # dono da fazenda (ver fazenda/api/routers/assistente.py::_exigir_acesso),
+        # sem isto todo endpoint abaixo tomaria 403 antes mesmo de chegar na
+        # checagem de ANTHROPIC_API_KEY/mensagem vazia.
+        s.add(Fazenda(id=1, nome="Fazenda Teste"))
+        s.add(UsuarioFazenda(usuario_id=1, fazenda_id=1, contratante=True))
         s.commit()
 
     with TestClient(main.app) as c:
@@ -80,14 +89,17 @@ def test_sem_api_key_retorna_503(client, monkeypatch):
 
 
 def test_usuario_comum_tambem_acessa_o_endpoint(client, monkeypatch):
-    """Qualquer usuário logado pode falar com o assistente — não é mais admin-only."""
+    """Papel (admin/operador) não é o que decide o acesso ao Assistente — é
+    ser o dono/contratante da fazenda (ver fixture `client`, que já vincula o
+    usuário de teste como contratante da fazenda #1). Troca só o papel aqui e
+    confirma que continua passando pelo gate — ainda 503 (sem chave), não 403."""
     c, engine = client
     import main
     from fazenda.auth import get_current_user
     main.app.dependency_overrides[get_current_user] = lambda: _Usuario(papel="operador", permissoes="")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
-    # Ainda dá 503 (sem chave), não 403 — ou seja, passou pela autenticação normalmente.
+    # Ainda dá 503 (sem chave), não 403 — ou seja, passou pelo gate de acesso normalmente.
     assert r.status_code == 503
 
 
