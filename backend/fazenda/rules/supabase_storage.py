@@ -22,9 +22,13 @@ levanta RuntimeError com mensagem clara — não falha silenciosamente.
 """
 from __future__ import annotations
 
+import logging
+
 import httpx
 
 from fazenda.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 def habilitado() -> bool:
@@ -81,3 +85,41 @@ def excluir_arquivo(caminho: str, *, bucket: str | None = None) -> None:
     )
     if resp.status_code >= 300:
         raise RuntimeError(f"Falha ao excluir arquivo do Supabase Storage: {resp.status_code} {resp.text}")
+
+
+def garantir_buckets() -> None:
+    """Cria (idempotente) os buckets usados pelo sistema, se ainda não
+    existirem — chamado uma vez no startup (main.py::lifespan), igual aos
+    outros seeds idempotentes ali. Bucket do Supabase Storage não é criado
+    sozinho por nenhum código deste repo até aqui — dependia de alguém criar
+    manualmente pelo painel do Supabase (foi o que aconteceu com
+    "documentos-fiscais" no passado); sem isso, todo upload ao bucket novo
+    ("fotos-campo") falha com "bucket not found" e a foto fica para sempre
+    tentando de novo na fila offline do app (>=500 == "tenta depois" — ver
+    frontend/lib/offline.ts), nunca aparecendo como erro claro pro usuário.
+
+    Não derruba o startup do app se o Supabase estiver fora do ar ou mal
+    configurado — só loga o problema; o app deve subir mesmo assim (o
+    arquivo fiscal-contábil e as fotos do campo já lidam com
+    RuntimeError/502 nos próprios endpoints)."""
+    if not habilitado():
+        return
+    url = settings.supabase_url.rstrip("/")
+    service_key = settings.supabase_service_key
+    for bucket in {settings.supabase_bucket, settings.supabase_bucket_fotos}:
+        try:
+            resp = httpx.get(f"{url}/storage/v1/bucket/{bucket}", headers=_headers(service_key), timeout=15)
+            if resp.status_code == 200:
+                continue
+            resp = httpx.post(
+                f"{url}/storage/v1/bucket",
+                headers=_headers(service_key, "application/json"),
+                json={"id": bucket, "name": bucket, "public": False},
+                timeout=15,
+            )
+            if resp.status_code >= 300:
+                logger.warning("Não foi possível criar o bucket '%s' no Supabase Storage: %s %s", bucket, resp.status_code, resp.text)
+            else:
+                logger.warning("Bucket '%s' criado no Supabase Storage (não existia).", bucket)
+        except Exception:
+            logger.warning("Falha ao verificar/criar o bucket '%s' no Supabase Storage.", bucket, exc_info=True)
