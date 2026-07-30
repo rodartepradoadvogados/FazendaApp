@@ -54,6 +54,7 @@ from fazenda.api.routers import (
     planejamento,
     portal,
     producao,
+    protocolos_customizados,
     push,
     recria,
     relatorio_acasalamento,
@@ -376,6 +377,10 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+# Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
+# normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
+# exige o módulo "parametros", via cadastro.router.
+app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
 # Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
 # comercial próprio, só exige contrato ativo.
 app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)

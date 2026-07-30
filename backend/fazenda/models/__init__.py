@@ -183,6 +183,12 @@ from .fotos import (
 from .filtro_salvo import (
     FiltroSalvo,
 )
+from .protocolo_customizado import (
+    ProtocoloCustomizado,
+    ProtocoloCustomizadoEtapa,
+    ProtocoloCustomizadoLancamento,
+    ProtocoloCustomizadoAplicacao,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -225,6 +231,10 @@ __all__ = [
     "Chamado",
     "FotoCampo",
     "FiltroSalvo",
+    "ProtocoloCustomizado",
+    "ProtocoloCustomizadoEtapa",
+    "ProtocoloCustomizadoLancamento",
+    "ProtocoloCustomizadoAplicacao",
     "Animal",
     "Lote",
     "MovimentoLote",
