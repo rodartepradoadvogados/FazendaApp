@@ -161,6 +161,15 @@ async def _loop_manual_fazenda_semanal() -> None:
 async def lifespan(app: FastAPI):
     """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
     create_db_and_tables()
+    # A suíte de testes cria ~1500 TestClient(main.app) — um por teste, cada
+    # um disparando este lifespan inteiro. Os ~50 seeds abaixo bootstrapam um
+    # banco de PRODUÇÃO vazio; testes que constroem seu próprio engine isolado
+    # já semeiam exatamente as linhas que usam, então rodar os 50 de novo em
+    # cada teste é puro custo (o que fazia a suíte levar ~57s/teste). A tabela
+    # ainda é criada (create_db_and_tables acima) — só os SEEDS ficam de fora.
+    if os.environ.get("FAZENDA_TESTING"):
+        yield
+        return
     with Session(engine) as session:
         seed_admin(session)
         seed_email_dono_backfill(session)
