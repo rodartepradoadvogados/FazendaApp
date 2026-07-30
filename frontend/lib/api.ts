@@ -4406,6 +4406,30 @@ export async function criarLancamentoExtraordinario(dados: any, tokenDesbloqueio
   return res.json();
 }
 
+// ── Onboarding (checklist guiado de primeiro acesso) ──
+// Ver backend/fazenda/api/routers/onboarding.py — passos fixos no backend;
+// aqui só consumimos o estado (o que já foi concluído/dispensado).
+export type OnboardingPasso = { chave: string; label: string; rota: string; concluido: boolean };
+export type OnboardingEstado = { passos: OnboardingPasso[]; dispensado: boolean; tudo_concluido: boolean };
+
+export async function fetchOnboarding(): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding`, { cache: "no-store" });
+  if (!res.ok) throw new Error("Erro ao carregar onboarding");
+  return res.json();
+}
+
+export async function concluirPassoOnboarding(chave: string): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding/passos/${encodeURIComponent(chave)}/concluir`, { method: "POST" });
+  if (!res.ok) throw new Error("Erro ao concluir passo");
+  return res.json();
+}
+
+export async function dispensarOnboarding(): Promise<OnboardingEstado> {
+  const res = await authFetch(`${API}/onboarding/dispensar`, { method: "POST" });
+  if (!res.ok) throw new Error("Erro ao dispensar onboarding");
+  return res.json();
+}
+
 // ── Filtros salvos (genérico — qualquer tela de relatório pode adotar) ──
 // Ver backend/fazenda/api/routers/filtros_salvos.py. `tela` namespacia os
 // filtros salvos (ex.: "financeiro_extrato"); `filtros` é um objeto livre,

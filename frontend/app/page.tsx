@@ -7,6 +7,7 @@ import {
 } from "@/lib/api";
 import { AreaChart, Area, PieChart, Pie, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid } from "recharts";
 import { AnimalModal, AnimalRow } from "@/components/AnimalModal";
+import { OnboardingChecklist } from "@/components/OnboardingChecklist";
 import { Gauge } from "@/components/Gauge";
 import { Indicador, EstadoVazio } from "@/components/ui";
 
@@ -141,6 +142,8 @@ export default function Home() {
           </button>
         </div>
       </div>
+
+      <OnboardingChecklist />
 
       {nota && !notaFechada && (
         <div className="mb-4" style={{ background: "var(--surface-2)", border: "1px solid var(--dourado)", borderRadius: "8px", padding: "0.7rem 1rem", display: "flex", alignItems: "flex-start", gap: "0.7rem" }}>

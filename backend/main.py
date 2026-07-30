@@ -48,6 +48,7 @@ from fazenda.api.routers import (
     movimentacoes,
     news,
     notificacoes,
+    onboarding,
     painel_cowdata,
     parametros,
     pedidos,
@@ -446,6 +447,9 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(notificacoes.router, dependencies=_protegido + _contrato_ativo)
+# Onboarding — preferência pessoal do usuário (progresso do checklist),
+# sem gate de módulo contratado, mesmo padrão de filtros_salvos.
+app.include_router(onboarding.router, dependencies=_protegido)
 # Push (Web Push API): GET /push/chave-publica é pública (o frontend precisa
 # dela antes mesmo de terminar a inscrição); subscribe/unsubscribe exigem
 # login internamente (ver fazenda/api/routers/push.py) — por isso este

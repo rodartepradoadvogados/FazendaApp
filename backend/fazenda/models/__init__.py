@@ -180,6 +180,9 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .onboarding import (
+    OnboardingUsuario,
+)
 from .filtro_salvo import (
     FiltroSalvo,
 )
@@ -230,6 +233,7 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "OnboardingUsuario",
     "FiltroSalvo",
     "ProtocoloCustomizado",
     "ProtocoloCustomizadoEtapa",
