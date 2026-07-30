@@ -4,6 +4,7 @@ import { SlidersHorizontal, AlertTriangle, Info, Pencil, Check, Loader2, Milk, P
 import { API, authFetch, atualizarParametro, ehAdmin, fetchParametros } from "@/lib/api";
 import CadastroMotivosVenda from "@/components/CadastroMotivosVenda";
 import ManualFazendaParametros from "@/components/ManualFazendaParametros";
+import AlertasIndicador from "@/components/AlertasIndicador";
 
 type Item = { chave: string; label: string; valor: number | string | boolean | null; unidade: string | null; tipo?: string };
 type Grupo = { titulo: string; itens: Item[] };
@@ -138,6 +139,10 @@ export default function ParametrosPage() {
 
       <div className="mt-4">
         <CadastroFaixasBonificacaoQualidade podeEditar={podeEditar} />
+      </div>
+
+      <div className="mt-4">
+        <AlertasIndicador />
       </div>
     </div>
   );
