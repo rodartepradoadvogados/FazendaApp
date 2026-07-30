@@ -114,6 +114,103 @@ class TestServicoLote:
         assert dias == [0, 7, 9]  # D0/D7/D9 vencidos aparecem; D11 já foi resolvido
 
 
+class TestIatfNaoAbsorveAnimalDeOutroLancamento:
+    """Reproduz o diagnóstico "lista de IATF com mais animais do que o
+    implantado": confirmar uma inseminação com tipo=iatf vinculada a um
+    lançamento (protocolo_lancamento_id) para um animal que NUNCA passou pelo
+    D0 daquele lançamento não pode fabricar um histórico D0-D11 retroativo
+    para ela — tem que cair em incompatíveis, como quando não há protocolo
+    algum."""
+
+    def test_animal_fora_do_lancamento_vai_para_incompativeis_nao_e_absorvido(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        assert r.status_code == 200
+        lancamento_id = r.json()["lancamento_id"]
+
+        # 701 nunca entrou nesse lançamento — confirmar a inseminação dela
+        # vinculada a ele não pode criar D0-D11 fantasma.
+        r2 = c.post("/reproducao/servico-lote", json={
+            "animais": ["700", "701"], "data_servico": "2026-07-14", "tipo": "iatf",
+            "reprodutor": "Coors", "protocolo_lancamento_id": lancamento_id,
+        })
+        assert r2.status_code == 200
+        assert r2.json()["incompativeis"] == ["701"]
+        assert r2.json()["criados"] == 1
+
+        with Session(engine) as s:
+            aps_701 = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "701")).all()
+            assert aps_701 == []  # nenhuma etapa fabricada para ela
+            servicos_701 = s.exec(select(Servico).where(Servico.numero_matriz == "701")).all()
+            assert servicos_701 == []  # nem o próprio serviço, já que ficou incompatível
+
+    def test_animal_de_fato_no_lancamento_confirma_normalmente(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700", "701"], "data_d0": "2026-07-03"})
+        lancamento_id = r.json()["lancamento_id"]
+
+        r2 = c.post("/reproducao/servico-lote", json={
+            "animais": ["700", "701"], "data_servico": "2026-07-14", "tipo": "iatf",
+            "reprodutor": "Coors", "protocolo_lancamento_id": lancamento_id,
+        })
+        assert r2.json()["criados"] == 2 and r2.json()["incompativeis"] == []
+        with Session(engine) as s:
+            d11s = s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.dia == 11)).all()
+            assert all(d.realizada for d in d11s)
+
+
+class TestD0ConfirmadoNaListaAtivos:
+    def test_d0_confirmado_falso_ate_marcar_realizado_na_agenda(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        lancamento_id = r.json()["lancamento_id"]
+
+        ativos = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal = next(a for g in ativos for a in g["animais"] if a["numero_matriz"] == "700")
+        assert animal["d0_confirmado"] is False
+
+        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+        ativos2 = c.get("/reproducao/protocolo-iatf/ativos").json()
+        animal2 = next(a for g in ativos2 for a in g["animais"] if a["numero_matriz"] == "700")
+        assert animal2["d0_confirmado"] is True
+
+
+class TestRemoverAnimalIatf:
+    def test_remove_animal_ainda_nao_confirmado(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700", "701"], "data_d0": "2026-07-03"})
+        lancamento_id = r.json()["lancamento_id"]
+
+        rd = c.delete(f"/reproducao/protocolo-iatf/{lancamento_id}/animais/701")
+        assert rd.status_code == 200
+        with Session(engine) as s:
+            restantes = {a.numero_matriz for a in s.exec(select(ProtocoloIatfAplicacao)).all()}
+            assert restantes == {"700"}
+
+    def test_bloqueia_remocao_se_ja_confirmado(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        lancamento_id = r.json()["lancamento_id"]
+        c.post("/agenda/realizados", json={"evento_id": f"protocolo_iatf_{lancamento_id}_0"})
+
+        rd = c.delete(f"/reproducao/protocolo-iatf/{lancamento_id}/animais/700")
+        assert rd.status_code == 409
+        with Session(engine) as s:
+            assert len(s.exec(select(ProtocoloIatfAplicacao).where(ProtocoloIatfAplicacao.numero_matriz == "700")).all()) == 4
+
+    def test_404_animal_fora_do_lancamento(self, client):
+        c, engine = client
+        r = c.post("/reproducao/protocolo-iatf", json={"animais": ["700"], "data_d0": "2026-07-03"})
+        lancamento_id = r.json()["lancamento_id"]
+        rd = c.delete(f"/reproducao/protocolo-iatf/{lancamento_id}/animais/999")
+        assert rd.status_code == 404
+
+    def test_404_lancamento_inexistente(self, client):
+        c, engine = client
+        rd = c.delete("/reproducao/protocolo-iatf/99999/animais/700")
+        assert rd.status_code == 404
+
+
 class TestDescontoDoseSemen:
     def test_ia_cio_natural_desconta_uma_dose_por_animal(self, client):
         c, engine = client

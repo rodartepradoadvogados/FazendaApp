@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
-import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, formatDate } from "@/lib/api";
+import { ChevronDown, ChevronRight, Check, AlertTriangle, X } from "lucide-react";
+import { adicionarAnimaisIatf, criarProtocoloIatf, fetchLancamentosIatf, fetchProtocolosIatfAtivos, formatDate, removerAnimalIatf } from "@/lib/api";
 import type { HormonioIatf } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { SelecaoAnimaisTabela } from "@/components/SelecaoAnimaisTabela";
@@ -26,15 +26,30 @@ const HORMONIOS: Record<string, string[]> = {
 
 type ProtocoloIatfAtivo = {
   lancamento_id: number; nome_protocolo: string; data_d0: string;
-  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[];
+  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean }[];
 };
 
 function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableRefObject<() => void> }) {
   const [ativos, setAtivos] = useState<ProtocoloIatfAtivo[] | null>(null);
   const [abertos, setAbertos] = useState<Set<number>>(new Set());
+  const [removendo, setRemovendo] = useState<string | null>(null);
   const toggle = (id: number) => setAbertos((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n; });
   const carregar = () => fetchProtocolosIatfAtivos().then(setAtivos).catch(() => setAtivos([]));
   useEffect(() => { carregar(); recarregarRef.current = carregar; }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function remover(lancamentoId: number, numero: string) {
+    if (!window.confirm(`Remover ${numero} deste protocolo? Só é possível se nenhuma etapa dela já foi confirmada.`)) return;
+    const chave = `${lancamentoId}-${numero}`;
+    setRemovendo(chave);
+    try {
+      await removerAnimalIatf(lancamentoId, numero);
+      await carregar();
+    } catch (e: any) {
+      window.alert(e.message || "Não foi possível remover este animal.");
+    } finally {
+      setRemovendo(null);
+    }
+  }
 
   if (!ativos || !ativos.length) return null;
   return (
@@ -54,13 +69,34 @@ function ProtocolosIatfAtivos({ recarregarRef }: { recarregarRef: React.MutableR
               </button>
               {aberto && (
                 <table className="fazenda-table" style={{ margin: 0 }}>
-                  <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                  <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th><th>D0</th><th></th></tr></thead>
                   <tbody>
                     {p.animais.map((a) => (
                       <tr key={a.numero_matriz}>
                         <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                         <td>{a.etapa_atual}</td>
                         <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>{a.data_etapa_atual ? formatDate(a.data_etapa_atual) : "—"}</td>
+                        <td>
+                          {a.d0_confirmado ? (
+                            <span title="D0 confirmado na Agenda" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--green-light)" }}>
+                              <Check size={13} /> confirmado
+                            </span>
+                          ) : (
+                            <span title="D0 ainda não confirmado na Agenda — pode ter entrado no protocolo sem ter sido implantada" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", fontSize: "0.74rem", color: "var(--amber)" }}>
+                              <AlertTriangle size={13} /> não confirmado
+                            </span>
+                          )}
+                        </td>
+                        <td style={{ textAlign: "right" }}>
+                          <button
+                            type="button" className="btn-ghost" style={{ color: "var(--red)", fontSize: "0.72rem", display: "inline-flex", alignItems: "center", gap: "0.25rem" }}
+                            disabled={removendo === `${p.lancamento_id}-${a.numero_matriz}`}
+                            onClick={() => remover(p.lancamento_id, a.numero_matriz)}
+                            title="Remover este animal do protocolo (corrige inclusão por engano)"
+                          >
+                            <X size={12} /> Remover
+                          </button>
+                        </td>
                       </tr>
                     ))}
                   </tbody>

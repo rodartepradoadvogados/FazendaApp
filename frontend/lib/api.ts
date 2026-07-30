@@ -3173,6 +3173,14 @@ export async function adicionarAnimaisIatf(lancamentoId: number, animais: string
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao adicionar animais ao protocolo"); }
   return res.json();
 }
+// Corrige uma inclusão por engano num lançamento ativo — só permite remover
+// se nenhuma etapa do animal já foi confirmada (ver reproducao.py).
+export async function removerAnimalIatf(lancamentoId: number, numeroMatriz: string): Promise<void> {
+  const res = await authFetch(`${API}/reproducao/protocolo-iatf/${lancamentoId}/animais/${encodeURIComponent(numeroMatriz)}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao remover animal do protocolo"); }
+}
 export async function criarServico(dados: {
   numero_matriz: string; data_servico: string; tipo_servico?: string;
   protocolo?: string; reprodutor?: string; responsavel?: string;
