@@ -117,7 +117,7 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
   const [servicos, setServicos] = useState<{ id: number; nome: string; ativo: boolean }[]>([]);
   const carregarServicos = () => fetchServicosCadastro().then(setServicos).catch(() => {});
   useEffect(() => { carregarServicos(); }, []);
-  const sugestoesServico = useMemo(() => servicos.filter((s) => s.ativo).map((s) => s.nome).sort(), [servicos]);
+  const sugestoesServico = useMemo(() => servicos.filter((s) => s.ativo).map((s) => s.nome).sort((a, b) => a.localeCompare(b, "pt-BR")), [servicos]);
 
   // Modal "+ Adicionar" (novo produto de estoque, novo serviço ou nova conta
   // gerencial), aberto a partir de um item específico da nota — o item fica
@@ -674,8 +674,10 @@ export function FormFinanceiro({ tipo, responsaveis, onSujo, onSalvo, onArquivoP
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               {it.tipo_item === "servico" ? (
                 <Campo label="Serviço">
-                  <input list={`fin-servicos-${idx}`} style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })} placeholder="ex.: Frete" />
-                  <datalist id={`fin-servicos-${idx}`}>{sugestoesServico.map((s) => <option key={s} value={s} />)}</datalist>
+                  <select style={inputStyle} value={it.produto} onChange={(e) => atualizarItem(idx, { produto: e.target.value })}>
+                    <option value="">Selecione…</option>
+                    {sugestoesServico.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
                 </Campo>
               ) : (
                 <Campo label="Produto">
