@@ -255,6 +255,31 @@ export default function AgendaPage() {
     finally { setDesfazendo((p) => { const n = new Set(p); n.delete(id); return n; }); }
   };
 
+  // Deep-link do sino/push (ver NotificationBell.tsx::destino /
+  // push.py::url_destino): "?abrir_sugestao=<evento_id>" abre direto a
+  // janela "Ver sugestão" da sugestão de mudança de lote, em vez de só cair
+  // na lista genérica da Agenda sem achar o item pra tratar. Se a sugestão
+  // não existir mais nesse dia (ex.: o animal já não atende a nenhum
+  // critério), avisa com clareza em vez de ficar silenciosamente em branco.
+  const tratouAbrirSugestao = useRef(false);
+  useEffect(() => {
+    if (tratouAbrirSugestao.current || !agenda) return;
+    const idAlvo = new URLSearchParams(window.location.search).get("abrir_sugestao");
+    if (!idAlvo) return;
+    tratouAbrirSugestao.current = true;
+    const alvo = (agenda.eventos || []).find((e: any) => e.tipo === "sugestao_movimentacao" && e.id === idAlvo);
+    if (alvo) {
+      setDatasAbertas((p) => new Set(p).add(alvo.data));
+      abrirSugestaoMov(alvo);
+    } else {
+      mostrarFeedback("Esta sugestão não está mais disponível — o animal pode já ter mudado de lote, ou não atende mais a nenhum critério.", true);
+    }
+    const params = new URLSearchParams(window.location.search);
+    params.delete("abrir_sugestao");
+    const qs = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (qs ? `?${qs}` : ""));
+  }, [agenda]);
+
   const hoje = today();
   // Comunicados (ex.: aviso de nova dieta) são informativos, não atividades:
   // ficam fixos enquanto vigoram (hoje/amanhã), não têm ação de excluir/dar

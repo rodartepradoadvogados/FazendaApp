@@ -5,7 +5,10 @@ import { Bell, BellRing, X } from "lucide-react";
 import { fetchNotificacoes, fetchAprovacoesContagem, ehAdmin, fetchPushChavePublica, subscribePush, unsubscribePush } from "@/lib/api";
 import { ehApp } from "@/lib/nativo";
 
-type Item = { tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string; ref?: string | null };
+type Item = {
+  tipo: string; categoria: string; descricao: string; numero_animal: string | null; cor: string; ref?: string | null;
+  evento_id?: string | null; evento_tipo?: string | null;
+};
 
 // base64url (formato da chave VAPID) -> Uint8Array, exigido pela Push API.
 function urlBase64ToUint8Array(base64: string): Uint8Array {
@@ -20,6 +23,11 @@ type StatusPush = "indisponivel" | "podeAtivar" | "ativado" | "negado";
 // Decide para qual página levar o usuário para resolver a pendência,
 // a partir da categoria/tipo da notificação.
 function destino(i: Item): string {
+  // Sugestão de mudança de lote só se resolve dentro da janela "Ver sugestão"
+  // da própria Agenda — sem o evento_id, o clique caía na tela genérica da
+  // Agenda sem achar o item pra tratar (o usuário via o alerta mas não
+  // conseguia agir nele).
+  if (i.evento_tipo === "sugestao_movimentacao" && i.evento_id) return `/agenda?abrir_sugestao=${encodeURIComponent(i.evento_id)}`;
   const chave = `${i.categoria || ""} ${i.tipo || ""}`.toLowerCase();
   if (chave.includes("aprova")) return "/aprovacoes";
   if (chave.includes("portal")) return "/portal";
