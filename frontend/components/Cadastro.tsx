@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import { onPedidoCadastroDeEstoque, onPedidoCadastroDeAlimento } from "@/lib/alimentoEstoqueBridge";
-import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby, Sprout } from "lucide-react";
+import { Layers, Beef, Truck, Package, ArrowRightLeft, Users, HeartPulse, HeartCrack, Wrench, Trash2, Dna, GitBranch, Wheat, Pill, Scale, Baby, Sprout, ClipboardList } from "lucide-react";
 import CadastroLotes from "./CadastroLotes";
 import CadastroSafra from "./CadastroSafra";
 import CadastroAlimentacao from "./CadastroAlimentacao";
@@ -17,6 +17,7 @@ import CadastroRacas from "./CadastroRacas";
 import CadastroServicos from "./CadastroServicos";
 import CadastroTiposMetodosServico from "./CadastroTiposMetodosServico";
 import CadastroPessoas from "./CadastroPessoas";
+import CadastroProtocolosCustomizados from "./CadastroProtocolosCustomizados";
 import CadastroSanitario, { type AbaCadastroSanitario } from "./CadastroSanitario";
 import CentralSemen, { type AbaCentralSemen } from "./CentralSemen";
 import { FormExclusao } from "./FormExclusao";
@@ -39,6 +40,7 @@ export const ABAS_CADASTRO = [
   ["motivos", "Motivos de movimentação", ArrowRightLeft],
   ["pesagem", "Pesagem do rebanho", Scale],
   ["pessoas", "Pessoas", Users],
+  ["protocolos-customizados", "Protocolos personalizados", ClipboardList],
   ["racas", "Raças e grau de sangue", GitBranch],
   ["safra", "Safra", Sprout],
   ["sanitario", "Sanitário", HeartPulse],
@@ -104,6 +106,7 @@ export default function Cadastro({
       {aba === "servicos" && <CadastroServicos />}
       {aba === "tipos-metodos-servico" && <CadastroTiposMetodosServico />}
       {aba === "pessoas" && <CadastroPessoas />}
+      {aba === "protocolos-customizados" && <CadastroProtocolosCustomizados />}
       {aba === "sanitario" && <CadastroSanitario abaControlada={abaSanitario} onAbaChange={setAbaSanitario} />}
       {aba === "pesagem" && <CadastroPesagem />}
       {aba === "recria" && <CadastroRecria />}

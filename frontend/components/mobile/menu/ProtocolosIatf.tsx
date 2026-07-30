@@ -5,11 +5,12 @@
 // um ciclo — mas a preocupação muda: mostra a data do próximo serviço
 // (D11 + intervalo de visita reprodutiva) e as candidatas herd-wide ao
 // próximo repasse (mesmo critério da Agenda) — ver tarefa #369.
+import { AlertTriangle, Check } from "lucide-react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchProtocolosIatfAtivos, formatDate } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, NumAnimal } from "@/components/mobile/menu/comum";
 
-type AnimalStatus = { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null };
+type AnimalStatus = { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean };
 type Candidata = { numero_matriz: string; sit_rep: string | null; del_dias: number | null; motivo: string };
 type Protocolo = {
   lancamento_id: number; nome_protocolo: string; data_d0: string; animais: AnimalStatus[];
@@ -63,7 +64,18 @@ export default function ProtocolosIatf({ onVoltar }: { onVoltar: () => void }) {
             ) : (
               p.animais.map((a) => (
                 <div key={a.numero_matriz} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "0.6rem", padding: "0.5rem 0", borderTop: "1px solid var(--mob-border)" }}>
-                  <NumAnimal>Nº {a.numero_matriz}</NumAnimal>
+                  <div>
+                    <NumAnimal>Nº {a.numero_matriz}</NumAnimal>
+                    {a.d0_confirmado ? (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.2rem", fontSize: "0.7rem", color: "var(--mob-verde)", marginTop: "0.1rem" }}>
+                        <Check size={11} /> D0 confirmado
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", alignItems: "center", gap: "0.2rem", fontSize: "0.7rem", color: "var(--mob-ambar)", marginTop: "0.1rem" }}>
+                        <AlertTriangle size={11} /> D0 não confirmado
+                      </div>
+                    )}
+                  </div>
                   <span style={{ fontSize: "0.85rem", color: "var(--mob-muted)", textAlign: "right" }}>
                     <span style={{ fontWeight: 800, color: "var(--mob-acao)" }}>{a.etapa_atual}</span>
                     {a.data_etapa_atual ? ` · ${formatDate(a.data_etapa_atual)}` : ""}

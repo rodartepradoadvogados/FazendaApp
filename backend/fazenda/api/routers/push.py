@@ -334,6 +334,8 @@ def url_destino(item: dict) -> str:
         return "/financeiro"
     if "estoque" in chave:
         return "/estoque"
+    if "indicador" in chave:
+        return "/indicadores"
     return "/agenda"
 
 

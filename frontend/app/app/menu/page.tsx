@@ -17,6 +17,7 @@ import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
+  Milk, FlaskConical, Droplet, Droplets,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -31,6 +32,10 @@ import PlanoAlimentacao from "@/components/mobile/menu/PlanoAlimentacao";
 import LancarDieta from "@/components/mobile/menu/LancarDieta";
 import ConsultarDietas from "@/components/mobile/menu/ConsultarDietas";
 import NecessidadeMensal from "@/components/mobile/menu/NecessidadeMensal";
+import UltimosControles from "@/components/mobile/menu/UltimosControles";
+import QualidadeLeite from "@/components/mobile/menu/QualidadeLeite";
+import Secagens from "@/components/mobile/menu/Secagens";
+import BstHistorico from "@/components/mobile/menu/BstHistorico";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
 import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
@@ -46,8 +51,8 @@ import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
-  | "fluxoCaixa" | "dre" | "rmca" | "extrato";
-type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "gestao" | "financeiro";
+  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico";
+type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
 
@@ -65,6 +70,12 @@ const GRUPOS: Grupo[] = [
     { chave: "lancarDieta", titulo: "Lançar nova dieta", subtitulo: "Cadastrar dieta do lote (produtos, datas)", rota: "/alimentacao", icone: <NotebookPen size={26} />, cor: "var(--mob-verde)" },
     { chave: "consultarDietas", titulo: "Consultar dietas", subtitulo: "Dietas por lote, com datas de início e fim", rota: "/alimentacao", icone: <ClipboardList size={26} />, cor: "var(--mob-azul)" },
     { chave: "necessidadeMensal", titulo: "Necessidade Mensal", subtitulo: "Consumo do mês em quilos e em sacas", rota: "/alimentacao", icone: <CalendarClock size={26} />, cor: "var(--mob-roxo)" },
+  ] },
+  { secao: "producao", titulo: "Produção", cor: "var(--mob-azul)", iconeSecao: <Milk size={26} />, itens: [
+    { chave: "ultimosControles", titulo: "Últimos controles leiteiros", subtitulo: "Produção por controle, mais recente primeiro", rota: "/producao", icone: <Milk size={26} /> },
+    { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={26} /> },
+    { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={26} /> },
+    { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Histórico de aplicações de BST", rota: "/producao", icone: <Droplets size={26} /> },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
@@ -88,6 +99,10 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   lancarDieta: LancarDieta,
   consultarDietas: ConsultarDietas,
   necessidadeMensal: NecessidadeMensal,
+  ultimosControles: UltimosControles,
+  qualidadeLeite: QualidadeLeite,
+  secagens: Secagens,
+  bstHistorico: BstHistorico,
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
   aprovacoes: Aprovacoes,

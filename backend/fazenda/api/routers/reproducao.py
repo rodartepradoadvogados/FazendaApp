@@ -1013,12 +1013,25 @@ def listar_protocolos_iatf_ativos(
             proxima_visita = data_d11 + timedelta(days=intervalo)
             if hoje > proxima_visita + timedelta(days=7):
                 continue  # já passou da janela útil — não mostra mais
-            animais_concluidos = sorted({ap.numero_matriz for ap in aps}, key=chave_numero)
+            aps_por_animal_concluido: dict[str, list[ProtocoloIatfAplicacao]] = {}
+            for ap in aps:
+                aps_por_animal_concluido.setdefault(ap.numero_matriz, []).append(ap)
+            animais_concluidos = sorted(aps_por_animal_concluido.keys(), key=chave_numero)
             ativos.append({
                 "lancamento_id": lanc.id,
                 "nome_protocolo": lanc.nome_protocolo,
                 "data_d0": lanc.data_d0.isoformat(),
-                "animais": [{"numero_matriz": n, "etapa_atual": "Concluído", "data_etapa_atual": None} for n in animais_concluidos],
+                "animais": [
+                    {
+                        "numero_matriz": n, "etapa_atual": "Concluído", "data_etapa_atual": None,
+                        # Se o D0 nunca foi marcado "realizado" para este animal,
+                        # ela pode ter entrado no lançamento sem ter sido de fato
+                        # implantada (ver diagnóstico "mais animais do que o
+                        # implantado") — sinaliza para o usuário conferir.
+                        "d0_confirmado": any(a.dia == 0 and a.realizada for a in aps_por_animal_concluido[n]),
+                    }
+                    for n in animais_concluidos
+                ],
                 "concluido": True,
                 "data_d11": data_d11.isoformat(),
                 "proxima_visita": proxima_visita.isoformat(),
@@ -1033,7 +1046,7 @@ def listar_protocolos_iatf_ativos(
         for numero, aps_animal in sorted(por_animal.items(), key=lambda item: chave_numero(item[0])):
             pendentes_animal = [a for a in aps_animal if not a.realizada]
             if not pendentes_animal:
-                animais_status.append({"numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None})
+                animais_status.append({"numero_matriz": numero, "etapa_atual": "Concluído", "data_etapa_atual": None, "d0_confirmado": True})
                 continue
             # Próxima etapa é sempre calculada pela DATA, não por qual etapa
             # foi marcada "realizada" — do contrário, uma etapa nunca
@@ -1056,6 +1069,7 @@ def listar_protocolos_iatf_ativos(
                 "numero_matriz": numero,
                 "etapa_atual": f"D{proxima.dia}",
                 "data_etapa_atual": proxima.data_prevista.isoformat(),
+                "d0_confirmado": bool(d0 and d0.realizada),
             })
         ativos.append({
             "lancamento_id": lanc.id,
@@ -1207,6 +1221,43 @@ def adicionar_animais_iatf(
 
     session.commit()
     return {"adicionados": novos, "lancamento_id": lancamento_id, "nome_protocolo": lancamento.nome_protocolo}
+
+
+@router.delete("/protocolo-iatf/{lancamento_id}/animais/{numero_matriz}")
+def remover_animal_iatf(
+    lancamento_id: int, numero_matriz: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Remove um animal de um lançamento IATF ativo — corrige uma inclusão por
+    engano (seleção em lote na hora de lançar, ou vínculo indevido numa
+    inseminação avulsa) sem precisar apagar o lançamento inteiro (a única
+    ferramenta disponível até então). Só permite remover se NENHUMA etapa
+    desse animal já foi confirmada — se já foi (e já gerou baixa de
+    estoque/Sanidade), desmarque "Realizado" na Agenda primeiro.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    lancamento = session.get(ProtocoloIatfLancamento, lancamento_id)
+    if not lancamento or (fazenda_id is not None and lancamento.fazenda_id not in (None, fazenda_id)):
+        raise HTTPException(status_code=404, detail="Protocolo IATF não encontrado")
+
+    aplicacoes = session.exec(
+        select(ProtocoloIatfAplicacao).where(
+            ProtocoloIatfAplicacao.lancamento_id == lancamento_id,
+            ProtocoloIatfAplicacao.numero_matriz == numero_matriz,
+        )
+    ).all()
+    if not aplicacoes:
+        raise HTTPException(status_code=404, detail="Este animal não está neste protocolo")
+    if any(a.realizada for a in aplicacoes):
+        raise HTTPException(
+            status_code=409,
+            detail="Este animal já tem etapa(s) confirmada(s) neste protocolo — desmarque \"Realizado\" na Agenda antes de remover.",
+        )
+    for a in aplicacoes:
+        session.delete(a)
+    session.commit()
+    return {"removido": True, "lancamento_id": lancamento_id, "numero_matriz": numero_matriz}
 
 
 def _mapa_tipo_semen_por_touro(session: Session) -> dict[str, str]:
@@ -1482,12 +1533,15 @@ def registrar_servico_lote(
                     )
                 ).first()
                 if not ja:
-                    for dias, descricao in PASSOS_PROTOCOLO_IATF:
-                        session.add(ProtocoloIatfAplicacao(
-                            lancamento_id=alvo.id, numero_matriz=numero, dia=dias,
-                            descricao=descricao, data_prevista=alvo.data_d0 + timedelta(days=dias),
-                            fazenda_id=fazenda_id,
-                        ))
+                    # O animal não foi de fato implantado neste lançamento —
+                    # nunca fabrica um histórico D0-D11 retroativo por engano de
+                    # seleção (ex.: "Inseminação avulsa" com um lote inteiro,
+                    # tipo IATF, vinculado a um protocolo que não é dela). Sem
+                    # isso, o lançamento ganhava animal(is) a mais na lista de
+                    # "Protocolos IATF em andamento" sem nunca ter passado pelo
+                    # D0 — a Agenda inteira do protocolo é inventada aqui.
+                    # Cai em incompatíveis, igual a "nenhum protocolo encontrado".
+                    alvo = None
             if alvo is None:
                 incompativeis.append(numero)
                 continue

@@ -180,8 +180,20 @@ from .documentos import (
 from .fotos import (
     FotoCampo,
 )
+from .alerta_indicador import (
+    AlertaIndicador,
+)
+from .onboarding import (
+    OnboardingUsuario,
+)
 from .filtro_salvo import (
     FiltroSalvo,
+)
+from .protocolo_customizado import (
+    ProtocoloCustomizado,
+    ProtocoloCustomizadoEtapa,
+    ProtocoloCustomizadoLancamento,
+    ProtocoloCustomizadoAplicacao,
 )
 from .sistema import (
     SeedFlag,
@@ -224,7 +236,13 @@ __all__ = [
     "DocumentoArquivado",
     "Chamado",
     "FotoCampo",
+    "AlertaIndicador",
+    "OnboardingUsuario",
     "FiltroSalvo",
+    "ProtocoloCustomizado",
+    "ProtocoloCustomizadoEtapa",
+    "ProtocoloCustomizadoLancamento",
+    "ProtocoloCustomizadoAplicacao",
     "Animal",
     "Lote",
     "MovimentoLote",

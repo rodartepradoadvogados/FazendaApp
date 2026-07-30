@@ -18,6 +18,7 @@ from fazenda.auth import (
 from fazenda.database import create_db_and_tables, engine
 from fazenda.api.routers import (
     agenda,
+    alertas_indicador,
     alimentacao,
     animais,
     aprovacoes,
@@ -48,12 +49,14 @@ from fazenda.api.routers import (
     movimentacoes,
     news,
     notificacoes,
+    onboarding,
     painel_cowdata,
     parametros,
     pedidos,
     planejamento,
     portal,
     producao,
+    protocolos_customizados,
     push,
     recria,
     relatorio_acasalamento,
@@ -376,6 +379,10 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+# Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
+# normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
+# exige o módulo "parametros", via cadastro.router.
+app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
 # Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
 # comercial próprio, só exige contrato ativo.
 app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)
@@ -406,6 +413,9 @@ app.include_router(documentos.router, dependencies=[Depends(exigir_modulo("finan
 # (abrir chamado) com o cadeado destravado.
 app.include_router(chamados.router, dependencies=[Depends(exigir_modulo("financeiro")), Depends(exigir_modulo_contratado("financeiro")), Depends(bloquear_escrita_contador())])
 app.include_router(indicadores.router, dependencies=_protegido + _contrato_ativo)
+# Alertas de indicador — preferência pessoal do usuário (config de "avise-me
+# se X passar de Y"), sem gate de módulo contratado.
+app.include_router(alertas_indicador.router, dependencies=_protegido)
 app.include_router(parametros.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(manual_fazenda.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(alimentacao.router, dependencies=_protegido + [Depends(exigir_modulo_contratado("alimentacao"))])
@@ -441,6 +451,9 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(notificacoes.router, dependencies=_protegido + _contrato_ativo)
+# Onboarding — preferência pessoal do usuário (progresso do checklist),
+# sem gate de módulo contratado, mesmo padrão de filtros_salvos.
+app.include_router(onboarding.router, dependencies=_protegido)
 # Push (Web Push API): GET /push/chave-publica é pública (o frontend precisa
 # dela antes mesmo de terminar a inscrição); subscribe/unsubscribe exigem
 # login internamente (ver fazenda/api/routers/push.py) — por isso este
