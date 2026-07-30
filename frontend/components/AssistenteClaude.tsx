@@ -10,16 +10,17 @@ type Mensagem = { autor: "usuario" | "assistente" | "erro"; texto: string };
 type Aba = "conversa" | "ensinamentos";
 
 /**
- * Botão flutuante do Assistente Virtual (protótipo) — abre um painel com duas
- * abas: Conversa (chat com tool-use nos dados reais, /assistente/perguntar) e
- * Ensinamentos (base de conhecimento em texto que o dono mantém — mesmos
- * endpoints /assistente/ensinamentos que o app usa, ver
- * components/mobile/menu/Assistente.tsx). Restrito ao dono da fazenda (ou
- * usuário liberado por ele — ver GET /assistente/acesso) — some da tela para
- * quem não tem acesso, em vez de aparecer e devolver 403 ao tentar usar.
+ * Botão flutuante do Assistente Virtual (protótipo) — abre um painel de chat
+ * (tool-use nos dados reais, /assistente/perguntar), aberto a qualquer
+ * usuário logado da fazenda piloto. Quem é admin ganha também a aba
+ * Ensinamentos (base de conhecimento em texto — mesmos endpoints
+ * /assistente/ensinamentos que o app usa, ver
+ * components/mobile/menu/Assistente.tsx). Ver GET /assistente/acesso —
+ * `liberado` decide se o botão aparece, `pode_treinar` se a aba aparece.
  */
 export default function AssistenteClaude() {
   const [liberado, setLiberado] = useState(false);
+  const [podeTreinar, setPodeTreinar] = useState(false);
   const [aberto, setAberto] = useState(false);
   const [aba, setAba] = useState<Aba>("conversa");
   const [mensagens, setMensagens] = useState<Mensagem[]>([]);
@@ -29,7 +30,9 @@ export default function AssistenteClaude() {
   const fimRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    fetchAssistenteAcesso().then((r) => setLiberado(r.liberado)).catch(() => setLiberado(false));
+    fetchAssistenteAcesso()
+      .then((r) => { setLiberado(r.liberado); setPodeTreinar(r.pode_treinar); })
+      .catch(() => { setLiberado(false); setPodeTreinar(false); });
   }, []);
 
   useEffect(() => {
@@ -85,13 +88,15 @@ export default function AssistenteClaude() {
               <span style={{ fontWeight: 700, fontSize: "0.85rem" }}>Assistente Virtual</span>
               <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginLeft: "auto" }}>protótipo</span>
             </div>
-            <div style={{ display: "flex", gap: "0.4rem" }}>
-              <AbaBotao ativa={aba === "conversa"} onClick={() => setAba("conversa")} icone={<MessageCircle size={13} />} label="Conversa" />
-              <AbaBotao ativa={aba === "ensinamentos"} onClick={() => setAba("ensinamentos")} icone={<BookOpen size={13} />} label="Ensinamentos" />
-            </div>
+            {podeTreinar && (
+              <div style={{ display: "flex", gap: "0.4rem" }}>
+                <AbaBotao ativa={aba === "conversa"} onClick={() => setAba("conversa")} icone={<MessageCircle size={13} />} label="Conversa" />
+                <AbaBotao ativa={aba === "ensinamentos"} onClick={() => setAba("ensinamentos")} icone={<BookOpen size={13} />} label="Ensinamentos" />
+              </div>
+            )}
           </div>
 
-          {aba === "conversa" ? (
+          {aba === "conversa" || !podeTreinar ? (
             <>
               <div style={{ flex: 1, overflowY: "auto", padding: "0.75rem", display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                 {!mensagens.length && (

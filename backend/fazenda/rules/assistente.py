@@ -192,9 +192,11 @@ def _ferramentas_do_usuario(usuario: Usuario) -> list[dict]:
 
 
 def _system_prompt(session: Session, fazenda_id: int | None) -> str:
-    """SYSTEM_PROMPT fixo + o que o dono ensinou (AssistenteEnsinamento ativos
-    da fazenda) — sem nenhum ensinamento cadastrado, o prompt fica idêntico
-    ao de sempre (não mexe no texto original, só acrescenta uma seção)."""
+    """SYSTEM_PROMPT fixo + o que um admin ensinou (AssistenteEnsinamento
+    ativos da fazenda — cadastro restrito a admin, ver
+    fazenda.api.routers.assistente._exigir_admin) — sem nenhum ensinamento
+    cadastrado, o prompt fica idêntico ao de sempre (não mexe no texto
+    original, só acrescenta uma seção)."""
     query = select(AssistenteEnsinamento).where(AssistenteEnsinamento.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(AssistenteEnsinamento.fazenda_id == fazenda_id)
@@ -202,7 +204,7 @@ def _system_prompt(session: Session, fazenda_id: int | None) -> str:
     if not ensinamentos:
         return SYSTEM_PROMPT
     linhas = "\n".join(f"- {e.titulo}: {e.texto}" for e in ensinamentos)
-    return f"{SYSTEM_PROMPT}\n\n## O que o dono me ensinou sobre esta fazenda e este sistema\n{linhas}"
+    return f"{SYSTEM_PROMPT}\n\n## O que foi ensinado sobre esta fazenda e este sistema\n{linhas}"
 
 
 def _tool_consultar_indicadores(session: Session, fazenda_id: int | None = None) -> dict:
