@@ -8,9 +8,9 @@ import HistoricoPartos from "@/components/reproducao/HistoricoPartos";
 import HistoricoSecagens from "@/components/reproducao/HistoricoSecagens";
 import HistoricoCiclosIatf from "@/components/reproducao/HistoricoCiclosIatf";
 import { ABAS_VISAO, type AbaVisao } from "@/app/reproducao/page";
-import { ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView } from "@/app/producao/page";
+import { ABAS_PRODUCAO, ProducaoLeiteira, RelatoriosBstView, RelatoriosPesagemView } from "@/app/producao/page";
 
-type AbaProducao = "leiteira" | "bst";
+type AbaProducao = "leiteira" | "bst" | "pesagens";
 type Aba = "reproducao" | "producao";
 
 export default function HistoricoPage() {
@@ -34,7 +34,7 @@ export default function HistoricoPage() {
   useSubNavRegister(useMemo(() => ({ tree: subNavTree, activeId, onSelect }), [subNavTree, activeId, onSelect]));
 
   if (aba === "producao") {
-    return abaProducao === "bst" ? <RelatoriosBstView /> : <ProducaoLeiteira />;
+    return abaProducao === "bst" ? <RelatoriosBstView /> : abaProducao === "pesagens" ? <RelatoriosPesagemView /> : <ProducaoLeiteira />;
   }
 
   const visaoAtiva = ABAS_VISAO.find((v) => v.id === abaVisao) ?? ABAS_VISAO[0];

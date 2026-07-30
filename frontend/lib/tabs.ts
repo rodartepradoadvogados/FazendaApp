@@ -7,10 +7,20 @@ import { useRef } from "react";
 // window.top (a janela de cima trata a abertura), nunca tenta abrir por
 // conta própria — evita duas barras de abas aninhadas.
 export const MENSAGEM_ABRIR_ABA = "fazenda:abrir-aba";
+// Uma aba (iframe) avisa a janela de cima sempre que seu próprio título muda
+// (nova página, nova sub-aba dentro dela) — sem isso, o rótulo da aba ficava
+// congelado no que era no momento em que ela foi aberta, mesmo navegando bem
+// mais adiante lá dentro.
+export const MENSAGEM_TITULO_ABA = "fazenda:titulo-aba";
 
 export function abrirNovaAba(url: string, titulo: string): void {
   if (typeof window === "undefined") return;
   window.top?.postMessage({ tipo: MENSAGEM_ABRIR_ABA, url, titulo }, window.location.origin);
+}
+
+export function avisarTituloAba(titulo: string): void {
+  if (typeof window === "undefined" || window.top === window.self) return;
+  window.top?.postMessage({ tipo: MENSAGEM_TITULO_ABA, titulo }, window.location.origin);
 }
 
 export function estaDentroDeAba(): boolean {

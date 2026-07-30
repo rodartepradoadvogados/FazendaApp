@@ -17,7 +17,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { usePathname } from "next/navigation";
 import { X, Plus } from "lucide-react";
-import { MENSAGEM_ABRIR_ABA, estaDentroDeAba } from "@/lib/tabs";
+import { MENSAGEM_ABRIR_ABA, MENSAGEM_TITULO_ABA, avisarTituloAba, estaDentroDeAba } from "@/lib/tabs";
 import { rotuloDaPagina, caminhoLabels } from "@/components/Sidebar";
 import { useSubNav } from "@/components/SubNavContext";
 
@@ -43,6 +43,11 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   const [menu, setMenu] = useState<MenuContexto | null>(null);
   const [escolhendoParceiro, setEscolhendoParceiro] = useState(false);
   const proximoId = useRef(1);
+  // Referências aos elementos <iframe> de cada aba extra — usadas para casar
+  // o `event.source` de uma MENSAGEM_TITULO_ABA com o id da aba que a enviou
+  // (o postMessage não carrega o id da aba, só o titulo; quem sabe reconhecer
+  // "quem" mandou é o contentWindow do próprio iframe).
+  const iframeRefs = useRef<Map<string, HTMLIFrameElement>>(new Map());
   const path = usePathname();
   const subNav = useSubNav();
   // Rótulo da 1ª aba (a página real, sem iframe): página + sub-aba(s) atuais
@@ -59,16 +64,42 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (dentroDeAba) return; // só a janela de cima escuta pedidos de abertura
+    if (dentroDeAba) return; // só a janela de cima escuta pedidos de abertura/título
     function aoReceberMensagem(e: MessageEvent) {
       if (e.origin !== window.location.origin) return;
-      if (e.data?.tipo !== MENSAGEM_ABRIR_ABA) return;
-      abrirAba(e.data.url as string, e.data.titulo as string);
+      if (e.data?.tipo === MENSAGEM_ABRIR_ABA) {
+        abrirAba(e.data.url as string, e.data.titulo as string);
+        return;
+      }
+      if (e.data?.tipo === MENSAGEM_TITULO_ABA) {
+        const novoTitulo = e.data.titulo as string;
+        setAbas((atuais) => atuais.map((a) => {
+          const el = iframeRefs.current.get(a.id);
+          return el?.contentWindow === e.source && a.titulo !== novoTitulo ? { ...a, titulo: novoTitulo } : a;
+        }));
+      }
     }
     window.addEventListener("message", aoReceberMensagem);
     return () => window.removeEventListener("message", aoReceberMensagem);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dentroDeAba, abas.length]);
+
+  // Repassa o próprio rótulo (página + sub-aba atuais) para a janela de cima
+  // quando esta instância está rodando DENTRO de uma aba extra (iframe) — é o
+  // que mantém o nome da aba em sincronia ao navegar lá dentro, em vez de
+  // ficar congelado no título de quando a aba foi aberta.
+  useEffect(() => {
+    if (dentroDeAba) avisarTituloAba(labelNativa);
+  }, [dentroDeAba, labelNativa]);
+
+  // Título real da guia do navegador (não o rótulo da barra de abas interna)
+  // — reflete a aba/painel em uso no momento: nativa ou uma das abas extras,
+  // cujo título agora chega atualizado pela mensagem acima.
+  useEffect(() => {
+    if (dentroDeAba) return; // dentro de um iframe de aba não há guia própria do navegador
+    const tituloAtivo = ativaId === "nativa" ? labelNativa : (abas.find((a) => a.id === ativaId)?.titulo ?? labelNativa);
+    document.title = `${tituloAtivo} · Fazenda`;
+  }, [dentroDeAba, ativaId, labelNativa, abas]);
 
   function abrirAba(url: string, titulo: string) {
     // Decide fora do updater do setAbas — nunca gerar o id nem chamar outro
@@ -155,6 +186,7 @@ export function TabsShell({ children }: { children: React.ReactNode }) {
         {abas.map((aba) => (
           <iframe
             key={aba.id}
+            ref={(el) => { if (el) iframeRefs.current.set(aba.id, el); else iframeRefs.current.delete(aba.id); }}
             src={aba.url}
             title={aba.titulo}
             style={estiloPainel(aba.id)}
