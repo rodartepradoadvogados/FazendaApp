@@ -4,7 +4,7 @@
 // candidatas à próxima IATF com projeção de aptidão na data do próximo
 // serviço (ver GET /reproducao/protocolo-iatf/candidatas).
 import { useEffect, useState } from "react";
-import { AlertTriangle, CalendarClock, CheckCircle2, History, Syringe } from "lucide-react";
+import { AlertTriangle, CalendarClock, Check, CheckCircle2, History, Syringe } from "lucide-react";
 import { fetchProtocolosIatfAtivos, fetchCandidatasIatfProjetadas, type CandidataIatfProjetada } from "@/lib/api";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
 
@@ -12,7 +12,7 @@ type GrupoIatf = {
   lancamento_id: number;
   nome_protocolo: string;
   data_d0: string;
-  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null }[];
+  animais: { numero_matriz: string; etapa_atual: string; data_etapa_atual: string | null; d0_confirmado?: boolean }[];
   concluido: boolean;
   data_d11?: string;
   proxima_visita?: string;
@@ -49,13 +49,20 @@ export default function HistoricoCiclosIatf() {
             </p>
             <div className="overflow-x-auto">
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th></tr></thead>
+                <thead><tr><th>Nº</th><th>Etapa atual</th><th>Data</th><th>D0</th></tr></thead>
                 <tbody>
                   {g.animais.map((a) => (
                     <tr key={a.numero_matriz}>
                       <td style={{ fontWeight: 700 }}>{a.numero_matriz}</td>
                       <td style={{ fontSize: "0.8rem" }}>{a.etapa_atual}</td>
                       <td style={{ fontSize: "0.8rem" }}>{fmtDia(a.data_etapa_atual)}</td>
+                      <td style={{ fontSize: "0.78rem" }}>
+                        {a.d0_confirmado ? (
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--green-light)" }}><Check size={13} /> confirmado</span>
+                        ) : (
+                          <span title="Pode ter entrado no protocolo sem ter sido implantada de fato — ver Lançamentos › Reprodutivo › Protocolo IATF" style={{ display: "inline-flex", alignItems: "center", gap: "0.25rem", color: "var(--amber)" }}><AlertTriangle size={13} /> não confirmado</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
