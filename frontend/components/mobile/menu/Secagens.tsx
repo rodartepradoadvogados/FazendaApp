@@ -39,7 +39,7 @@ export default function Secagens({ onVoltar }: { onVoltar: () => void }) {
         <Vazio>Nenhuma secagem no período.</Vazio>
       ) : (
         <>
-          <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>{filtrados.length} secagem{filtrados.length !== 1 ? "ns" : ""}</p>
+          <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>{filtrados.length} {filtrados.length !== 1 ? "secagens" : "secagem"}</p>
           {filtrados.map((r, i) => (
             <MobCard key={`${r.numero}-${r.data}-${i}`} alt={(i % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "0.6rem" }}>

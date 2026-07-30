@@ -17,7 +17,7 @@ import {
   Stethoscope, Syringe, CalendarDays, Wheat, FileBarChart, Gauge,
   LogOut, CloudUpload, Trash2, CheckCheck, Heart, ShieldPlus, Landmark,
   Wallet, FileText, BarChart3, Receipt, Palette, Boxes, NotebookPen, ClipboardList, Baby, Users, CalendarClock, MessageSquare, Building2, Sparkles, Monitor,
-  Milk, FlaskConical, Droplet, Droplets,
+  Milk, FlaskConical, Droplet, Droplets, Scale,
 } from "lucide-react";
 import { getUsuario, logout, podeModulo, ehAdmin, ehDono, ROTA_MODULO } from "@/lib/api";
 import { usePendentes, useOnline, sincronizar, descartarPendente } from "@/lib/offline";
@@ -36,6 +36,7 @@ import UltimosControles from "@/components/mobile/menu/UltimosControles";
 import QualidadeLeite from "@/components/mobile/menu/QualidadeLeite";
 import Secagens from "@/components/mobile/menu/Secagens";
 import BstHistorico from "@/components/mobile/menu/BstHistorico";
+import PesagemHistorico from "@/components/mobile/menu/PesagemHistorico";
 import RelatoriosManejo from "@/components/mobile/menu/RelatoriosManejo";
 import Indicadores from "@/components/mobile/menu/Indicadores";
 import Aprovacoes from "@/components/mobile/menu/Aprovacoes";
@@ -51,7 +52,7 @@ import News from "@/components/mobile/menu/News";
 import Assistente from "@/components/mobile/menu/Assistente";
 
 type SubKey = "agendaVet" | "iatf" | "calendario" | "aplicacoes" | "plano" | "lancarDieta" | "consultarDietas" | "necessidadeMensal" | "manejo" | "indicadores" | "aprovacoes"
-  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico";
+  | "fluxoCaixa" | "dre" | "rmca" | "extrato" | "ultimosControles" | "qualidadeLeite" | "secagens" | "bstHistorico" | "pesagemHistorico";
 type SecaoKey = "reproducao" | "sanidade" | "alimentacao" | "producao" | "gestao" | "financeiro";
 type Item = { chave: SubKey; titulo: string; subtitulo: string; rota: string; icone: React.ReactNode; soAdmin?: boolean; cor?: string };
 type Grupo = { secao: SecaoKey; titulo: string; cor: string; iconeSecao: React.ReactNode; itens: Item[] };
@@ -76,6 +77,7 @@ const GRUPOS: Grupo[] = [
     { chave: "qualidadeLeite", titulo: "Qualidade do leite", subtitulo: "CCS, CBT, gordura, proteína — por período", rota: "/producao", icone: <FlaskConical size={26} /> },
     { chave: "secagens", titulo: "Secagens", subtitulo: "Histórico de secagens, motivo e ECC", rota: "/reproducao", icone: <Droplet size={26} /> },
     { chave: "bstHistorico", titulo: "BST — aplicações", subtitulo: "Histórico de aplicações de BST", rota: "/producao", icone: <Droplets size={26} /> },
+    { chave: "pesagemHistorico", titulo: "Pesagens", subtitulo: "Crescimento (GMD/GPD) por animal, lote ou rebanho", rota: "/producao", icone: <Scale size={26} /> },
   ] },
   { secao: "gestao", titulo: "Gestão", cor: "var(--cat-gestao)", iconeSecao: <FileBarChart size={26} />, itens: [
     { chave: "manejo", titulo: "Relatórios de Manejo", subtitulo: "Listas do que fazer, por semáforo", rota: "/relatorios", icone: <FileBarChart size={26} /> },
@@ -103,6 +105,7 @@ const SUBTELAS: Record<SubKey, (props: { onVoltar: () => void }) => React.ReactN
   qualidadeLeite: QualidadeLeite,
   secagens: Secagens,
   bstHistorico: BstHistorico,
+  pesagemHistorico: PesagemHistorico,
   manejo: RelatoriosManejo,
   indicadores: Indicadores,
   aprovacoes: Aprovacoes,

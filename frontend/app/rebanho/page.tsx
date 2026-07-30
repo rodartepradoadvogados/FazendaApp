@@ -502,7 +502,7 @@ function RebanhoVisaoGeral() {
                       <button onClick={() => toggle(grupo)} style={{ width: "100%", display: "flex", alignItems: "center", gap: "0.75rem", padding: "0.55rem 0.9rem", background: "var(--surface-2)", border: "none", color: "var(--text)", cursor: "pointer", textAlign: "left" }}>
                         {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
                         <span style={{ flex: 1, fontSize: "0.85rem" }}>{grupo}</span>
-                        <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} {femeasApenas ? "fêmea" : "animal"}{lista.length !== 1 ? "s" : ""}</span>
+                        <span style={{ fontSize: "0.8rem", color: "var(--dourado-light)" }}>{lista.length} {femeasApenas ? (lista.length !== 1 ? "fêmeas" : "fêmea") : (lista.length !== 1 ? "animais" : "animal")}</span>
                       </button>
                       {aberto && (
                         <div className="overflow-x-auto">

@@ -42,7 +42,7 @@ export default function BstHistorico({ onVoltar }: { onVoltar: () => void }) {
       ) : (
         <>
           <MobCard style={{ marginBottom: "0.8rem", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <span style={{ fontSize: "0.85rem", color: "var(--mob-muted)", fontWeight: 700 }}>{filtrados.length} aplicação{filtrados.length !== 1 ? "ões" : ""}</span>
+            <span style={{ fontSize: "0.85rem", color: "var(--mob-muted)", fontWeight: 700 }}>{filtrados.length} {filtrados.length !== 1 ? "aplicações" : "aplicação"}</span>
             <span style={{ fontSize: "0.85rem", color: "var(--mob-muted)", fontWeight: 700 }}>{vacasDistintas} vaca{vacasDistintas !== 1 ? "s" : ""}</span>
           </MobCard>
           {filtrados.map((r, i) => (

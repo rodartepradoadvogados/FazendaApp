@@ -119,7 +119,7 @@ function catInfo(categoria: string): { chave: string; rotulo: string } {
 function linhas(e: Evento): { principal: string; detalhe: string | null } {
   if (e.numero_animal) return { principal: `Nº ${e.numero_animal}`, detalhe: e.descricao || e.observacao || null };
   if (e.tipo === "protocolo_iatf" && e.animais?.length) {
-    return { principal: e.descricao, detalhe: `${e.animais.length} animal${e.animais.length !== 1 ? "is" : ""}` };
+    return { principal: e.descricao, detalhe: `${e.animais.length} ${e.animais.length !== 1 ? "animais" : "animal"}` };
   }
   if (e.lote) return { principal: `Lote ${e.lote}`, detalhe: e.descricao || e.observacao || null };
   // calendario_sanitario/evento_sanitario sem animal específico sempre trazem
@@ -597,7 +597,7 @@ export default function AgendaMovel() {
             <RotuloCategoria chave={chave} rotulo={rotulo} />
             <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: tudoFeito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: tudoFeito ? "line-through" : "none" }}>{g.titulo}</div>
             <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
-              {g.itens.length} animal{g.itens.length !== 1 ? "is" : ""}{g.produto ? ` · ${g.produto}` : ""}{feitasCount ? ` · ${feitasCount} feito(s)` : ""}
+              {g.itens.length} {g.itens.length !== 1 ? "animais" : "animal"}{g.produto ? ` · ${g.produto}` : ""}{feitasCount ? ` · ${feitasCount} feito(s)` : ""}
             </div>
           </div>
           <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
@@ -675,7 +675,7 @@ export default function AgendaMovel() {
               <RotuloCategoria chave={chave} rotulo={rotulo} />
               <div style={{ fontSize: "1.1rem", fontWeight: 800, lineHeight: 1.2, color: feito ? "var(--mob-muted)" : "var(--mob-text)", textDecoration: feito ? "line-through" : "none" }}>{e.descricao}</div>
               <div style={{ fontSize: "0.82rem", color: "var(--mob-muted)", marginTop: "0.15rem" }}>
-                {e.animais!.length} animal{e.animais!.length !== 1 ? "is" : ""}{e.hormonio ? ` · ${e.hormonio}` : ""}
+                {e.animais!.length} {e.animais!.length !== 1 ? "animais" : "animal"}{e.hormonio ? ` · ${e.hormonio}` : ""}
               </div>
             </div>
             <ChevronRight size={20} style={{ color: "var(--mob-muted)", transform: aberto ? "rotate(90deg)" : "none", transition: "transform .15s", flexShrink: 0 }} />
