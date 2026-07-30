@@ -26,6 +26,12 @@ from fazenda.models import (
 SECRET = os.environ.get("AUTH_SECRET", "fazenda-estreito-ponte-de-pedra-troque-em-producao")
 PBKDF2_ITER = 120_000
 TOKEN_VALIDADE_S = 60 * 60 * 12  # 12 horas
+# "Manter conectado" (checkbox no login, marcada por padrão dentro do app
+# Capacitor — ver app/login/page.tsx): token de validade bem mais longa, para
+# o funcionário não precisar logar de novo a cada 12h no celular pessoal dele.
+# Só volta a pedir login se ele sair (logout), desinstalar o app (limpa o
+# localStorage da WebView) ou desmarcar essa opção.
+TOKEN_VALIDADE_LONGA_S = 60 * 60 * 24 * 90  # 90 dias
 # Cadeado do Painel do Contador — reautenticação por senha que destrava,
 # por um tempo curto, a escrita normalmente bloqueada em bloquear_escrita_contador
 # (lançamentos extraordinários de guia/imposto/multa, recálculo de juros,
@@ -69,16 +75,23 @@ def _unb64(s: str) -> bytes:
     return base64.urlsafe_b64decode(s + "=" * (-len(s) % 4))
 
 
-def criar_token(username: str, fazenda_id: int | None = None) -> str:
+def criar_token(username: str, fazenda_id: int | None = None, manter_conectado: bool = False) -> str:
     """`fazenda_id` (piloto conservador de multi-fazenda, ver
     fazenda/models/multitenant.py) só é gravado quando já foi selecionado —
     login com um usuário vinculado a uma única fazenda auto-seleciona; um
     usuário sem nenhuma fazenda vinculada (todo mundo antes desta mudança,
     até rodar o backfill) gera token sem "fid", e o resto do sistema continua
-    se comportando exatamente como antes (ver get_fazenda_atual_id)."""
-    payload_dict = {"sub": username, "exp": int(time.time()) + TOKEN_VALIDADE_S}
+    se comportando exatamente como antes (ver get_fazenda_atual_id).
+
+    `manter_conectado` estende a validade para TOKEN_VALIDADE_LONGA_S e grava
+    "lembrar" no payload — assim /auth/selecionar-fazenda (que reemite o
+    token já com a fazenda escolhida) consegue preservar a mesma validade
+    longa em vez de voltar para as 12h padrão (ver token_manter_conectado)."""
+    payload_dict = {"sub": username, "exp": int(time.time()) + (TOKEN_VALIDADE_LONGA_S if manter_conectado else TOKEN_VALIDADE_S)}
     if fazenda_id is not None:
         payload_dict["fid"] = fazenda_id
+    if manter_conectado:
+        payload_dict["lembrar"] = True
     payload = _b64(json.dumps(payload_dict).encode())
     sig = _b64(hmac.new(SECRET.encode(), payload.encode(), hashlib.sha256).digest())
     return f"{payload}.{sig}"
@@ -150,6 +163,18 @@ def get_fazenda_atual_id(
         return None
     dados = _validar_token_payload(authorization.split(" ", 1)[1])
     return dados.get("fid") if dados else None
+
+
+def token_manter_conectado(
+    authorization: str | None = Header(default=None),
+) -> bool:
+    """Lê "lembrar" do token atual — usado por /auth/selecionar-fazenda para
+    reemitir o token (já com a fazenda escolhida) preservando a validade
+    longa quando o login original marcou "Manter conectado"."""
+    if not authorization or not authorization.lower().startswith("bearer "):
+        return False
+    dados = _validar_token_payload(authorization.split(" ", 1)[1])
+    return bool(dados and dados.get("lembrar"))
 
 
 def get_current_user_opcional(

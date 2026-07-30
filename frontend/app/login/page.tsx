@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
 import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
+import { ehApp } from "@/lib/nativo";
 import { Building2 } from "lucide-react";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
@@ -114,6 +115,13 @@ function Hero() {
   const [mostrarSenha, setMostrarSenha] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  // "Manter conectado neste aparelho": token de validade longa (90 dias) em
+  // vez das 12h padrão — só pede login de novo se sair (logout), desinstalar
+  // o app (limpa o localStorage) ou desmarcar isso. Marcada por padrão
+  // dentro do app Capacitor (celular pessoal do funcionário); desmarcada por
+  // padrão no site (pode ser um computador compartilhado da fazenda).
+  const [manterConectado, setManterConectado] = useState(false);
+  useEffect(() => { ehApp().then(setManterConectado); }, []);
   // Piloto conservador de multi-fazenda: só aparece quando o login devolve
   // mais de uma fazenda vinculada ao mesmo usuário (ver POST /auth/login).
   const [fazendasParaEscolher, setFazendasParaEscolher] = useState<FazendaAtual[] | null>(null);
@@ -138,7 +146,7 @@ function Hero() {
     e.preventDefault();
     setErro(null); setCarregando(true);
     try {
-      const data = await login(username.trim(), senha);
+      const data = await login(username.trim(), senha, manterConectado);
       if (data.selecao_fazenda_necessaria) {
         setFazendasParaEscolher(data.fazendas_disponiveis || []);
         return;
@@ -280,6 +288,10 @@ function Hero() {
                     Esqueci minha senha
                   </button>
                 </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", color: "var(--text-muted)", cursor: "pointer" }}>
+                  <input type="checkbox" checked={manterConectado} onChange={(e) => setManterConectado(e.target.checked)} />
+                  Manter conectado neste aparelho
+                </label>
                 {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}
                 <button type="submit" className="btn-primary" style={{ width: "100%", justifyContent: "center" }} disabled={carregando || !username || !senha}>
                   {carregando ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Entrar

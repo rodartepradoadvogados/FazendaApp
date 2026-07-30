@@ -15,7 +15,7 @@ from datetime import datetime, timedelta
 
 from fazenda.auth import (
     DESBLOQUEIO_VALIDADE_S, EMAIL_DONO, MODULOS, criar_token, criar_token_desbloqueio, exigir_dono, get_current_user,
-    get_fazenda_atual_id, hash_senha, verificar_senha,
+    get_fazenda_atual_id, hash_senha, token_manter_conectado, verificar_senha,
 )
 from fazenda.config import settings
 from fazenda.database import get_session
@@ -41,6 +41,9 @@ def _mascarar_email(email: str) -> str:
 class LoginIn(BaseModel):
     username: str
     senha: str
+    # Checkbox "Manter conectado neste aparelho" — marcada por padrão no app
+    # Capacitor, desmarcada por padrão no site (ver app/login/page.tsx).
+    manter_conectado: bool = False
 
 
 class NovoUsuario(BaseModel):
@@ -154,7 +157,7 @@ def login(dados: LoginIn, session: Session = Depends(get_session)) -> dict:
     fazendas = _fazendas_vinculadas(session, user.id)
     fazenda_auto = fazendas[0] if len(fazendas) == 1 else None
     resposta = {
-        "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None),
+        "token": criar_token(user.username, fazenda_id=fazenda_auto.id if fazenda_auto else None, manter_conectado=dados.manter_conectado),
         "usuario": _publico(user, session),
     }
     if fazenda_auto:
@@ -186,11 +189,15 @@ class SelecionarFazendaIn(BaseModel):
 
 @router.post("/selecionar-fazenda")
 def selecionar_fazenda(
-    dados: SelecionarFazendaIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session)
+    dados: SelecionarFazendaIn, user: Usuario = Depends(get_current_user), session: Session = Depends(get_session),
+    manter_conectado: bool = Depends(token_manter_conectado),
 ) -> dict:
     """Completa o login quando o usuário está vinculado a mais de uma
     fazenda — emite um novo token já com a fazenda escolhida (ver
-    get_fazenda_atual_id, usado pelos endpoints que já filtram por fazenda)."""
+    get_fazenda_atual_id, usado pelos endpoints que já filtram por fazenda).
+    Preserva a validade longa do "Manter conectado" do login original —
+    senão quem marcou a opção era jogado de volta para as 12h padrão assim
+    que escolhia a fazenda."""
     vinculo = session.exec(
         select(UsuarioFazenda).where(UsuarioFazenda.usuario_id == user.id, UsuarioFazenda.fazenda_id == dados.fazenda_id)
     ).first()
@@ -199,7 +206,10 @@ def selecionar_fazenda(
     fazenda = session.get(Fazenda, dados.fazenda_id)
     if not fazenda or not fazenda.ativa:
         raise HTTPException(status_code=404, detail="Fazenda não encontrada")
-    return {"token": criar_token(user.username, fazenda_id=fazenda.id), "fazenda_atual": _fazenda_publica(fazenda, vinculo)}
+    return {
+        "token": criar_token(user.username, fazenda_id=fazenda.id, manter_conectado=manter_conectado),
+        "fazenda_atual": _fazenda_publica(fazenda, vinculo),
+    }
 
 
 class EsqueciSenhaVerificarIn(BaseModel):
