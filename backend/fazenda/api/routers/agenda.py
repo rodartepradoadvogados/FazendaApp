@@ -25,6 +25,12 @@ from fazenda.api.routers.lotes import coletar_dados_criterios
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_engine import AgendaEngine, AgendaItem
 from fazenda.rules.eventos_sanitarios import eventos_agenda as _eventos_sanitarios_agenda
+from fazenda.rules.protocolo_customizado import (
+    eventos_agenda as _eventos_protocolo_custom_agenda,
+    marcar_realizado as _marcar_protocolo_custom_realizado,
+    desmarcar_realizado as _desmarcar_protocolo_custom_realizado,
+    PREFIXO_EVENTO as PREFIXO_PROTOCOLO_CUSTOM,
+)
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
 from fazenda.rules.unidades import pode_dar_baixa_direta
 from fazenda.rules.farmacia import pode_baixar_estoque
@@ -522,6 +528,13 @@ def calcular_agenda(
     # já traz o medicamento padrão para pré-preencher a Aplicação ao dar baixa.
     eventos_sanitarios = _eventos_sanitarios_agenda(session, data, realizados)
 
+    # Protocolos personalizados (Configurações > Cadastro > Protocolos
+    # personalizados) — fonte ADITIVA de tarefas: o cronograma que o próprio
+    # produtor cadastrou, lançado contra animais/lote/fazenda, agrupado por
+    # (lançamento, dia). Fora do AgendaEngine de propósito, para não mexer no
+    # cálculo já testado dele.
+    eventos_protocolo_custom = _eventos_protocolo_custom_agenda(session, data, realizados, fazenda_id)
+
     # Aplicações programadas ("aplicado? não" / data futura) ainda não baixadas.
     # Dar baixa aqui gera a aplicação de verdade e a saída de estoque.
     aplic_agendadas = session.exec(
@@ -831,7 +844,7 @@ def calcular_agenda(
             "link": getattr(e, "link", None),
         }
         for e in eventos
-    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim
+    ] + eventos_dieta + eventos_protocolo + eventos_iatf + eventos_inducao + eventos_sanitarios + eventos_aplic_agendada + eventos_vacina_pre_parto + eventos_semen + eventos_colostro + eventos_cura + eventos_nova_dieta + eventos_pesagem + eventos_patrimonio + eventos_movimentacao + eventos_bst + eventos_diaria_fim + eventos_protocolo_custom
     eh_admin = usuario.papel == "admin"
     eventos_visiveis = [
         e for e in eventos_visiveis
@@ -1277,6 +1290,9 @@ def marcar_realizado(
     if dados.evento_id.startswith("protocolo_inducao_"):
         _marcar_protocolo_inducao_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
+    if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
+        _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais)
+        return {"marcado": True}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == dados.evento_id)
     if fazenda_id is not None:
@@ -1489,6 +1505,9 @@ def desmarcar_realizado(
         return {"desmarcado": True}
     if evento_id.startswith("protocolo_inducao_"):
         _desmarcar_protocolo_inducao_realizado(session, evento_id)
+        return {"desmarcado": True}
+    if evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
+        _desmarcar_protocolo_custom_realizado(session, evento_id)
         return {"desmarcado": True}
 
     query_existe = select(EventoRealizado).where(EventoRealizado.evento_id == evento_id)

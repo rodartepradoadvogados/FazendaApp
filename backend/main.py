@@ -49,12 +49,14 @@ from fazenda.api.routers import (
     movimentacoes,
     news,
     notificacoes,
+    onboarding,
     painel_cowdata,
     parametros,
     pedidos,
     planejamento,
     portal,
     producao,
+    protocolos_customizados,
     push,
     recria,
     relatorio_acasalamento,
@@ -162,6 +164,15 @@ async def _loop_manual_fazenda_semanal() -> None:
 async def lifespan(app: FastAPI):
     """Cria tabelas e garante o admin inicial e os dados padrão (idempotente)."""
     create_db_and_tables()
+    # A suíte de testes cria ~1500 TestClient(main.app) — um por teste, cada
+    # um disparando este lifespan inteiro. Os ~50 seeds abaixo bootstrapam um
+    # banco de PRODUÇÃO vazio; testes que constroem seu próprio engine isolado
+    # já semeiam exatamente as linhas que usam, então rodar os 50 de novo em
+    # cada teste é puro custo (o que fazia a suíte levar ~57s/teste). A tabela
+    # ainda é criada (create_db_and_tables acima) — só os SEEDS ficam de fora.
+    if os.environ.get("FAZENDA_TESTING"):
+        yield
+        return
     with Session(engine) as session:
         seed_admin(session)
         seed_email_dono_backfill(session)
@@ -368,6 +379,10 @@ app.include_router(upload.router, dependencies=_protegido + _contrato_ativo)
 # Importar dados (Configurações) reaproveita a mesma permissão do Upload CSV.
 app.include_router(importar.router, dependencies=[Depends(exigir_modulo("upload"))] + _contrato_ativo)
 app.include_router(agenda.router, dependencies=_protegido + _contrato_ativo)
+# Protocolos customizados: lançar/listar ativos/cancelar exige só acesso
+# normal ao sistema (mesma regra da Agenda) — editar o MOLDE do protocolo
+# exige o módulo "parametros", via cadastro.router.
+app.include_router(protocolos_customizados.router, dependencies=_protegido + _contrato_ativo)
 # Fotos do campo (app móvel) — mesma regra do Upload CSV: não é módulo
 # comercial próprio, só exige contrato ativo.
 app.include_router(fotos.router, dependencies=_protegido + _contrato_ativo)
@@ -436,6 +451,9 @@ app.include_router(relatorio_compra_venda_animal.router, dependencies=[Depends(e
 # do próprio router — ver exclusoes.py).
 app.include_router(exclusoes.router, dependencies=_protegido + _contrato_ativo)
 app.include_router(notificacoes.router, dependencies=_protegido + _contrato_ativo)
+# Onboarding — preferência pessoal do usuário (progresso do checklist),
+# sem gate de módulo contratado, mesmo padrão de filtros_salvos.
+app.include_router(onboarding.router, dependencies=_protegido)
 # Push (Web Push API): GET /push/chave-publica é pública (o frontend precisa
 # dela antes mesmo de terminar a inscrição); subscribe/unsubscribe exigem
 # login internamente (ver fazenda/api/routers/push.py) — por isso este
