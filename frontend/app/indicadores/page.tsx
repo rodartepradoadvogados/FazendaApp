@@ -193,7 +193,7 @@ export function IndicadoresGerais() {
           {ultimoControle && (
             <>
               <p style={{ fontSize: "0.8rem", color: "var(--text-muted)", marginBottom: "0.6rem" }}>
-                {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} animal{ultimoControle.linhas.length !== 1 ? "is" : ""}
+                {new Date(ultimoControle.data + "T00:00:00").toLocaleDateString("pt-BR")} — {ultimoControle.linhas.length} {ultimoControle.linhas.length !== 1 ? "animais" : "animal"}
               </p>
               <table className="fazenda-table">
                 <thead><tr><th>Nº</th><th>Lote</th><th style={{ textAlign: "right" }}>Produção (kg)</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>

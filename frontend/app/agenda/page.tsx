@@ -1026,7 +1026,7 @@ export default function AgendaPage() {
                           <td>—</td>
                           <td style={{ fontSize: "0.83rem" }} title="Gestão/Financeiro">
                             {abertoGrupo ? <ChevronDown size={12} style={{ display: "inline", marginRight: "0.3rem" }} /> : <ChevronRight size={12} style={{ display: "inline", marginRight: "0.3rem" }} />}
-                            Nota/lançamento <strong>{ref}</strong> — {itens.length} item{itens.length !== 1 ? "s" : ""} — R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}{mostrarAtraso && pillAtraso(itens[0]?.data || d)}
+                            Nota/lançamento <strong>{ref}</strong> — {itens.length} {itens.length !== 1 ? "itens" : "item"} — R$ {total.toLocaleString("pt-BR", { minimumFractionDigits: 2 })}{mostrarAtraso && pillAtraso(itens[0]?.data || d)}
                           </td>
                           <td>—</td>
                           <td style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>auto</td>

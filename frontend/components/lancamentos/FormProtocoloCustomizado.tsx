@@ -257,7 +257,7 @@ export function FormProtocoloCustomizado({ animais }: { animais: AnimalRow[] }) 
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando || !podeSalvar}>
-          {salvando ? "Salvando…" : vinculo === "fazenda" ? "Salvar (tarefa da fazenda)" : `Salvar (${numerosAlvo.size || 0} animal${numerosAlvo.size !== 1 ? "is" : ""})`}
+          {salvando ? "Salvando…" : vinculo === "fazenda" ? "Salvar (tarefa da fazenda)" : `Salvar (${numerosAlvo.size || 0} ${numerosAlvo.size !== 1 ? "animais" : "animal"})`}
         </button>
       </div>
     </>
