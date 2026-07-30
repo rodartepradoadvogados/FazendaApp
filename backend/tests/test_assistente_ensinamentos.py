@@ -1,15 +1,11 @@
 """
-Testes do gate por usuário (dono da fazenda + parâmetro
-`assistente_usuarios_liberados`) e da base de conhecimento
+Testes do gate de acesso (conversa aberta a todo usuário logado da fazenda
+piloto; treino restrito a administradores) e da base de conhecimento
 (AssistenteEnsinamento) do Assistente — ver fazenda/api/routers/assistente.py
 e fazenda/rules/assistente.py::_system_prompt.
 
 Fixture própria (mesmo padrão de test_isolamento_sanidade.py): engine
-isolado, com `database.engine`/`main.engine` monkeypatchados, porque o gate
-por usuário lê o parâmetro `assistente_usuarios_liberados` via
-`get_param_texto` (fazenda/rules/parametros.py), que abre a própria Session
-direto de `fazenda.database.engine` — sem o monkeypatch, o teste enxergaria o
-banco de verdade em vez do banco de teste.
+isolado, com `database.engine`/`main.engine` monkeypatchados.
 """
 from __future__ import annotations
 
@@ -18,15 +14,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlmodel import Session, SQLModel, create_engine, select
+from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import AssistenteEnsinamento, ContratoFazenda, Fazenda, ParametroFazenda, UsuarioFazenda
+from fazenda.models import AssistenteEnsinamento, ContratoFazenda, Fazenda
 from fazenda.rules.assistente import SYSTEM_PROMPT
 
 
 class _Usuario:
-    def __init__(self, id=1, papel="operador", permissoes=""):
+    def __init__(self, id=1, papel="admin", permissoes=""):
         self.id = id
         self.papel = papel
         self.permissoes = permissoes
@@ -59,10 +55,6 @@ def client(monkeypatch):
         # arquivo testa, então libera as duas fazendas.
         s.add(ContratoFazenda(fazenda_id=1, status="ativo"))
         s.add(ContratoFazenda(fazenda_id=2, status="ativo"))
-        # Usuário 1 é o dono/contratante da fazenda 1; usuário 3, da fazenda
-        # 2. Usuário 2 não tem vínculo nenhum (nem liberado por parâmetro).
-        s.add(UsuarioFazenda(usuario_id=1, fazenda_id=1, contratante=True))
-        s.add(UsuarioFazenda(usuario_id=3, fazenda_id=2, contratante=True))
         s.commit()
 
     def _get_session_override():
@@ -73,7 +65,8 @@ def client(monkeypatch):
     from fazenda.auth import get_current_user, get_fazenda_atual_id
     monkeypatch.setattr(main, "engine", engine)
     main.app.dependency_overrides[database.get_session] = _get_session_override
-    main.app.dependency_overrides[get_current_user] = lambda: _Usuario(id=1)
+    # Usuário 1 = admin da fazenda 1 (mesmo papel da conta real de produção).
+    main.app.dependency_overrides[get_current_user] = lambda: _Usuario(id=1, papel="admin")
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: 1
 
     with TestClient(main.app) as c:
@@ -82,64 +75,61 @@ def client(monkeypatch):
     main.app.dependency_overrides.clear()
 
 
-def _como(usuario_id: int, fazenda_id: int):
+def _como(usuario_id: int, fazenda_id: int, papel: str = "operador"):
     import main
     from fazenda.auth import get_current_user, get_fazenda_atual_id
-    main.app.dependency_overrides[get_current_user] = lambda: _Usuario(id=usuario_id)
+    main.app.dependency_overrides[get_current_user] = lambda: _Usuario(id=usuario_id, papel=papel)
     main.app.dependency_overrides[get_fazenda_atual_id] = lambda: fazenda_id
 
 
 # ---------------------------------------------------------------------------
-# Gate de acesso — dono da fazenda OU usuário liberado por parâmetro.
+# Gate de acesso — conversa aberta a qualquer logado da fazenda piloto;
+# treino (ensinamentos) restrito a administradores.
 # ---------------------------------------------------------------------------
 class TestGateAcesso:
-    def test_dono_da_fazenda_acessa_perguntar(self, client, monkeypatch):
+    def test_qualquer_usuario_logado_acessa_perguntar(self, client, monkeypatch):
         c, engine = client
+        _como(2, 1, papel="operador")
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
         # Passou do gate — só falta a chave (503), não 403.
         assert r.status_code == 503
 
-    def test_usuario_nao_liberado_toma_403_no_perguntar(self, client):
+    def test_outra_fazenda_toma_403_no_perguntar(self, client):
         c, engine = client
-        _como(2, 1)
+        _como(2, 2, papel="admin")
         r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
         assert r.status_code == 403
 
-    def test_usuario_liberado_via_parametro_acessa(self, client, monkeypatch):
+    def test_operador_toma_403_nos_ensinamentos(self, client):
         c, engine = client
-        with Session(engine) as s:
-            # FAZENDA_TESTING (conftest.py) pula os seeds do lifespan — a linha
-            # não existe de graça como no app real, então o teste cria a sua.
-            s.add(ParametroFazenda(
-                chave="assistente_usuarios_liberados", fazenda_id=None, grupo="agenda_sistema",
-                label="Assistente — usuários liberados", valor="2", tipo="texto",
-            ))
-            s.commit()
-        _como(2, 1)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-        r = c.post("/assistente/perguntar", json={"mensagem": "oi"})
-        assert r.status_code == 503
-
-    def test_usuario_nao_liberado_toma_403_nos_ensinamentos(self, client):
-        c, engine = client
-        _como(2, 1)
+        _como(2, 1, papel="operador")
         assert c.get("/assistente/ensinamentos").status_code == 403
         assert c.post("/assistente/ensinamentos", json={"titulo": "x", "texto": "y"}).status_code == 403
         assert c.put("/assistente/ensinamentos/1", json={"titulo": "x", "texto": "y", "ativo": True}).status_code == 403
         assert c.delete("/assistente/ensinamentos/1").status_code == 403
 
+    def test_admin_acessa_ensinamentos(self, client):
+        c, engine = client
+        _como(2, 1, papel="admin")
+        assert c.get("/assistente/ensinamentos").status_code == 200
+
     def test_endpoint_acesso_nunca_da_403(self, client):
         c, engine = client
-        _como(2, 1)
+        _como(2, 1, papel="operador")
         r = c.get("/assistente/acesso")
         assert r.status_code == 200
-        assert r.json() == {"liberado": False}
+        assert r.json() == {"liberado": True, "pode_treinar": False}
 
-        _como(1, 1)
+        _como(2, 1, papel="admin")
         r = c.get("/assistente/acesso")
         assert r.status_code == 200
-        assert r.json() == {"liberado": True}
+        assert r.json() == {"liberado": True, "pode_treinar": True}
+
+        _como(2, 2, papel="admin")
+        r = c.get("/assistente/acesso")
+        assert r.status_code == 200
+        assert r.json() == {"liberado": False, "pode_treinar": False}
 
 
 # ---------------------------------------------------------------------------
@@ -162,7 +152,7 @@ class TestSystemPromptComEnsinamentos:
             assert r.status_code == 200, r.text
             kwargs = MockAnthropic.return_value.messages.create.call_args.kwargs
 
-        assert "## O que o dono me ensinou sobre esta fazenda e este sistema" in kwargs["system"]
+        assert "## O que foi ensinado sobre esta fazenda e este sistema" in kwargs["system"]
         assert "Nome da fazenda: O nome oficial é Fazenda Estreito Ponte de Pedra II." in kwargs["system"]
         assert kwargs["system"].startswith(SYSTEM_PROMPT)
 
@@ -209,7 +199,7 @@ class TestIsolamentoEnsinamentos:
             ensinamento_id = e.id
 
         monkeypatch.setattr(assistente_router, "FAZENDA_ID_PILOTO", 2)
-        _como(3, 2)  # dono da fazenda 2
+        _como(3, 2, papel="admin")  # admin da fazenda 2
 
         r = c.get("/assistente/ensinamentos")
         assert r.status_code == 200
@@ -226,9 +216,9 @@ class TestIsolamentoEnsinamentos:
             assert ainda_existe is not None
             assert ainda_existe.titulo == "Só da fazenda 1"
 
-        # O dono de verdade (fazenda 1) continua vendo e conseguindo mexer.
+        # O admin de verdade (fazenda 1) continua vendo e conseguindo mexer.
         monkeypatch.setattr(assistente_router, "FAZENDA_ID_PILOTO", 1)
-        _como(1, 1)
+        _como(1, 1, papel="admin")
         r = c.get("/assistente/ensinamentos")
         assert ensinamento_id in {x["id"] for x in r.json()}
         r = c.delete(f"/assistente/ensinamentos/{ensinamento_id}")
