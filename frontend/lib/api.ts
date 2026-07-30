@@ -117,10 +117,10 @@ export async function atualizarUsuario(id: number, dados: any) {
   return res.json();
 }
 
-export async function login(username: string, senha: string) {
+export async function login(username: string, senha: string, manterConectado = false) {
   const res = await fetch(`${API}/auth/login`, {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, senha }),
+    body: JSON.stringify({ username, senha, manter_conectado: manterConectado }),
   });
   if (!res.ok) {
     const d = await res.json().catch(() => ({}));
