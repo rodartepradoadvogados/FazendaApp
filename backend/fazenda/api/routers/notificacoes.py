@@ -49,6 +49,14 @@ def montar_itens_notificacoes(user: Usuario, session: Session) -> list[dict]:
             # leva direto pra ele em vez de só abrir a tela genérica do módulo
             # (mesmo "ref" que a Agenda já usa no link "Ir para Financeiro").
             "ref": e.get("ref"),
+            # id/tipo do evento de agenda por trás deste item — "tipo" acima
+            # fica fixo em "agenda" de propósito (título do push por canal,
+            # ver push.py::_categoria_push); estes dois campos são o que
+            # permite ao sino/push abrir a AÇÃO certa (ex.: a janela de
+            # "Ver sugestão" de mudança de lote), em vez de só cair na tela
+            # genérica do módulo sem achar o item — ver #sugestão-de-lote-presa.
+            "evento_id": e.get("id"),
+            "evento_tipo": e.get("tipo"),
         })
 
     if user.papel == "admin":

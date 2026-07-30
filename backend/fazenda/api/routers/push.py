@@ -27,6 +27,7 @@ import json
 import logging
 import os
 from datetime import date, datetime
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -325,6 +326,12 @@ def _chave_item(item: dict) -> str:
 # (frontend/components/NotificationBell.tsx:destino) — mantém os dois lados
 # sincronizados quanto a "clicar neste alerta leva a qual página".
 def url_destino(item: dict) -> str:
+    # Sugestão de mudança de lote só se resolve dentro da janela "Ver
+    # sugestão" da própria Agenda — sem o evento_id, o toque na notificação
+    # caía na tela genérica da Agenda sem achar o item pra tratar (ver
+    # #sugestão-de-lote-presa: usuário via o alerta mas não conseguia agir).
+    if item.get("evento_tipo") == "sugestao_movimentacao" and item.get("evento_id"):
+        return f"/agenda?abrir_sugestao={quote(str(item['evento_id']))}"
     chave = f"{item.get('categoria') or ''} {item.get('tipo') or ''}".lower()
     if "aprova" in chave:
         return "/aprovacoes"
