@@ -175,6 +175,86 @@ class TestRegistrarReconfirmacao:
             assert aberto.data_reconfirmacao is None  # preservado — não foi tocado
 
 
+class TestTerceiroLancamentoViraAborto:
+    """3º lançamento sobre a mesma prenhez (toque + retoque já confirmados
+    POSITIVO) não sobrescreve o toque — é interpretado como aborto."""
+
+    def test_terceiro_lancamento_registra_aborto(self, client_com_engine):
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 3, 1),
+                data_diagnostico=date(2026, 4, 1), diagnostico="POSITIVO",
+                data_reconfirmacao=date(2026, 5, 1), diagnostico_reconfirmacao="POSITIVO",
+            ))
+            s.commit()
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
+        })
+        assert r.status_code == 200
+        corpo = r.json()
+        assert corpo["aborto_detectado"] is True
+        assert corpo["data_perda_prenhez"] == "2026-07-01"
+        assert corpo["motivo_perda_prenhez"] == "aborto"
+        # o toque original não foi sobrescrito pelo 3º lançamento
+        assert corpo["data_diagnostico"] == "2026-04-01"
+        assert corpo["diagnostico"] == "POSITIVO"
+
+    def test_ja_com_perda_registrada_nao_reaborta(self, client_com_engine):
+        """Reeditar um serviço que já tem perda de prenhez lançada não deve
+        entrar de novo no ramo de aborto (evita loop de reescrita)."""
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            s.add(Servico(
+                numero_matriz="401", data_servico=date(2026, 3, 1),
+                data_diagnostico=date(2026, 4, 1), diagnostico="POSITIVO",
+                data_reconfirmacao=date(2026, 5, 1), diagnostico_reconfirmacao="POSITIVO",
+                data_perda_prenhez=date(2026, 6, 1), motivo_perda_prenhez="aborto",
+            ))
+            s.commit()
+
+        r = c.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "negativo",
+        })
+        assert r.status_code == 200
+        assert "aborto_detectado" not in r.json() or r.json()["aborto_detectado"] is not True
+
+    def test_apenas_toque_sem_retoque_nao_vira_aborto(self, client):
+        """Só o toque feito (sem retoque) — o 2º lançamento é o retoque normal,
+        não um 3º lançamento; não deve virar aborto."""
+        client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-01", "resultado": "retoque",
+        })
+        r = client.post("/reproducao/diagnostico", json={
+            "numero_matriz": "401", "data_diagnostico": "2026-07-20", "resultado": "reconfirmada",
+        })
+        assert r.status_code == 200
+        assert not r.json().get("aborto_detectado")
+
+
+class TestAbrirLactacao:
+    def test_abre_lactacao_zera_del_dias(self, client_com_engine):
+        c, engine = client_com_engine
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "401")).first()
+            animal.del_dias = 200
+            s.add(animal)
+            s.commit()
+
+        r = c.post("/reproducao/animais/401/abrir-lactacao")
+        assert r.status_code == 200
+        assert r.json()["aberto"] is True
+
+        with Session(engine) as s:
+            animal = s.exec(select(Animal).where(Animal.numero == "401")).first()
+            assert animal.del_dias == 0
+
+    def test_animal_inexistente_da_404(self, client):
+        r = client.post("/reproducao/animais/999/abrir-lactacao")
+        assert r.status_code == 404
+
+
 class TestRetoqueNaAgenda:
     def test_entra_na_agenda_no_dia_do_proximo_servico(self, client):
         client.post("/reproducao/diagnostico", json={

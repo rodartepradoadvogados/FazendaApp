@@ -1,11 +1,12 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
-import { criarMovimentacao, criarParto, fetchLotes, previewCriteriosLote, registrarColostragem, sugestaoLoteEvento } from "@/lib/api";
+import { criarMovimentacao, criarParto, fetchLotes, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, CATEGORIAS_ANIMAIS } from "@/components/lancamentos/_shared";
+import { PopupAborto } from "@/components/lancamentos/PopupAborto";
 
 const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo_formas%20de%20utiliza%C3%A7%C3%A3o%20colostro_site.pdf";
 /* ───────────────────────── Manual do colostro (modal em tela) ───────────────────────── */
@@ -125,6 +126,16 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
   const [salvando, setSalvando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
+  // Aborto: não é um parto de verdade — some com o bloco de cria/colostro/IgG
+  // e, ao salvar, segue o mesmo procedimento do 3º diagnóstico de gestação
+  // (perda de prenhez + popup "abrir lactação?"), sem criar Parto nem cria.
+  const ehAborto = tipoParto === "Aborto";
+  const [abortoPendente, setAbortoPendente] = useState<string | null>(null);
+  // Natimorto: nasceu, mas não entra no rebanho — baixa automática, sexo
+  // continua sendo perguntado (relatório de % de machos/fêmeas).
+  useEffect(() => {
+    if (tipoParto === "Natimorto") { setCriaBaixada(true); setCria2Baixada(true); }
+  }, [tipoParto]);
 
   const [tomouColostro, setTomou] = useState("");
   const [litros, setLitros] = useState("");
@@ -257,7 +268,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     for (const numero of alvo) {
       const d = campoBatch(numero);
       try {
-        const crias = d.criaNumero ? [{ numero: d.criaNumero, sexo: d.criaSexo === "Macho" ? "M" : "F", nasceu_viva: !d.criaBaixada }] : [];
+        const crias = d.criaNumero ? [{ numero: d.criaNumero, sexo: d.criaSexo === "Macho" ? "M" : "F", nasceu_viva: !(d.criaBaixada || tipoParto === "Natimorto") }] : [];
         const r = await criarParto({
           numero_matriz: numero, data_parto: dataParto, tipo_parto: tipoParto || undefined,
           crias, retencao_placenta: d.retencaoPlacenta, gemelar: false,
@@ -298,9 +309,34 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     return null;
   }
 
+  function limparFormulario() {
+    setMatriz(""); setTipoParto(""); setGemelar(false); setGemelarSexo("");
+    setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
+    setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
+    setRetencaoPlacenta(false);
+    setTomou(""); setLitros(""); setBrix(""); setSoro(""); setProteinaSerica("");
+    setHoraParto(""); setHoraColostro(""); setPesoNascer(""); setApenasColostroPo(false);
+  }
+
   async function salvar() {
     setErro(null); setSucesso(null);
     if (!matriz) { setErro("Selecione a matriz que pariu."); return; }
+    if (ehAborto) {
+      // Aborto não é um parto de verdade — mesmo procedimento do 3º
+      // diagnóstico de gestação: perda de prenhez, sem Parto nem cria.
+      setSalvando(true);
+      try {
+        await registrarPerdaPrenhez({ numero_matriz: matriz, data_perda_prenhez: dataParto, motivo: "aborto" });
+        setSucesso(`Aborto registrado para a matriz ${matriz}.`);
+        setAbortoPendente(matriz);
+        limparFormulario();
+      } catch (e: any) {
+        setErro(e.message || "Erro ao registrar aborto");
+      } finally {
+        setSalvando(false);
+      }
+      return;
+    }
     const crias = [
       ...(criaNumero ? [{ numero: criaNumero, sexo: criaSexo === "Macho" ? "M" : "F", nasceu_viva: !criaBaixada }] : []),
       ...(gemelar && cria2Numero ? [{ numero: cria2Numero, sexo: cria2Sexo === "Macho" ? "M" : "F", nasceu_viva: !cria2Baixada }] : []),
@@ -349,12 +385,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
         }
       }
       setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
-      setMatriz(""); setTipoParto(""); setGemelar(false); setGemelarSexo("");
-      setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
-      setCria2Numero(""); setCria2Sexo(""); setCria2Baixada(false);
-      setRetencaoPlacenta(false);
-      setTomou(""); setLitros(""); setBrix(""); setSoro(""); setProteinaSerica("");
-      setHoraParto(""); setHoraColostro(""); setPesoNascer(""); setApenasColostroPo(false);
+      limparFormulario();
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
     } finally {
@@ -405,7 +436,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
               <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
                 <option value="">Selecione…</option><option>Normal</option>
                 <option>Distócico moderado</option><option>Distócico severo</option>
-                <option>Cesariana</option>
+                <option>Cesariana</option><option>Natimorto</option>
               </select>
             </Campo>
           </div>
@@ -476,23 +507,34 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           <select style={inputStyle} value={tipoParto} onChange={(e) => setTipoParto(e.target.value)}>
             <option value="">Selecione…</option><option>Normal</option>
             <option>Distócico moderado</option><option>Distócico severo</option>
-            <option>Cesariana</option>
+            <option>Cesariana</option><option>Natimorto</option><option>Aborto</option>
           </select>
         </Campo>
-        <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim (gera item na Agenda)</label></Campo>
-        <Campo label="Parto gemelar (2 crias)"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={gemelar} onChange={(e) => setGemelar(e.target.checked)} /> Sim</label></Campo>
-        {gemelar && (
-          <Campo label="Sexos do parto gemelar">
-            <select style={inputStyle} value={gemelarSexo} onChange={(e) => setGemelarSexo(e.target.value)}>
-              <option value="">Selecione… (ou deriva dos sexos)</option>
-              <option value="FF">FF — duas fêmeas</option>
-              <option value="FM">FM — fêmea e macho (fêmea pode ser freemartin)</option>
-              <option value="MM">MM — dois machos</option>
-            </select>
-          </Campo>
+        {!ehAborto && (
+          <>
+            <Campo label="Retenção de placenta"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={retencaoPlacenta} onChange={(e) => setRetencaoPlacenta(e.target.checked)} /> Sim (gera item na Agenda)</label></Campo>
+            <Campo label="Parto gemelar (2 crias)"><label className="flex items-center gap-2" style={{ fontSize: "0.85rem", padding: "0.45rem 0" }}><input type="checkbox" checked={gemelar} onChange={(e) => setGemelar(e.target.checked)} /> Sim</label></Campo>
+            {gemelar && (
+              <Campo label="Sexos do parto gemelar">
+                <select style={inputStyle} value={gemelarSexo} onChange={(e) => setGemelarSexo(e.target.value)}>
+                  <option value="">Selecione… (ou deriva dos sexos)</option>
+                  <option value="FF">FF — duas fêmeas</option>
+                  <option value="FM">FM — fêmea e macho (fêmea pode ser freemartin)</option>
+                  <option value="MM">MM — dois machos</option>
+                </select>
+              </Campo>
+            )}
+          </>
         )}
       </div>
 
+      {ehAborto ? (
+        <p style={nota}>
+          Aborto não é um parto — nenhuma cria é cadastrada. Ao salvar, registra a perda de prenhez da matriz (mesmo
+          efeito de Histórico → Reprodução → Perda de prenhez, motivo "aborto") e pergunta se deseja abrir lactação.
+        </p>
+      ) : (
+      <>
       <div className="card mt-3" style={{ background: "var(--surface-2)" }}>
         <div className="card-header mb-2 flex items-center gap-2" style={{ background: "none", color: "var(--dourado-light)", padding: "0 0 0.3rem" }}>
           <Baby size={14} /> Cadastro da cria (prole)
@@ -501,7 +543,8 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           <Campo label="Número da cria (vazio = baixa automática)"><input style={inputStyle} value={criaNumero} onChange={(e) => setCriaNumero(e.target.value)} placeholder="ex.: 483 — em branco, natimorto/baixa" /></Campo>
           <Campo label="Sexo da cria"><select style={inputStyle} value={criaSexo} onChange={(e) => setCriaSexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
           <Campo label="Cria baixada? (não entra no rebanho)">
-            <select style={inputStyle} value={criaBaixada ? "Sim" : "Não"} onChange={(e) => setCriaBaixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
+            <select style={inputStyle} value={criaBaixada ? "Sim" : "Não"} disabled={tipoParto === "Natimorto"} onChange={(e) => setCriaBaixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
+            {tipoParto === "Natimorto" && <p style={{ fontSize: "0.72rem", color: "var(--text-muted)", marginTop: "0.2rem" }}>Automático — natimorto.</p>}
           </Campo>
         </div>
         {gemelar && (
@@ -509,7 +552,7 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
             <Campo label="Número da 2ª cria"><input style={inputStyle} value={cria2Numero} onChange={(e) => setCria2Numero(e.target.value)} placeholder="ex.: 484" /></Campo>
             <Campo label="Sexo da 2ª cria"><select style={inputStyle} value={cria2Sexo} onChange={(e) => setCria2Sexo(e.target.value)}><option value="" disabled>Selecione…</option><option>Fêmea</option><option>Macho</option></select></Campo>
             <Campo label="2ª cria baixada?">
-              <select style={inputStyle} value={cria2Baixada ? "Sim" : "Não"} onChange={(e) => setCria2Baixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
+              <select style={inputStyle} value={cria2Baixada ? "Sim" : "Não"} disabled={tipoParto === "Natimorto"} onChange={(e) => setCria2Baixada(e.target.value === "Sim")}><option>Não</option><option>Sim</option></select>
             </Campo>
           </div>
         )}
@@ -606,12 +649,18 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
         mãe e de cada cria (confirmação antes de mover). Colostragem e IgG da 1ª cria também são gravadas — o
         histórico completo aparece em Sanidade → Relatório sanitário de bezerras.
       </p>
+      </>
+      )}
       {erro && <p style={{ color: "var(--red)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{erro}</p>}
       {sucesso && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginTop: "0.6rem" }}>{sucesso}</p>}
       <div className="flex items-center gap-3 mt-4">
         <button className="btn-primary" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       </div>
         </>
+      )}
+
+      {abortoPendente && (
+        <PopupAborto numeroMatriz={abortoPendente} onFechar={() => setAbortoPendente(null)} />
       )}
     </>
   );

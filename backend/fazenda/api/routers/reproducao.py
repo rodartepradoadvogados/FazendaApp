@@ -253,6 +253,32 @@ def enviar_ultimo_diagnostico(
     return {"enviado": True}
 
 
+@router.post("/animais/{numero_matriz}/abrir-lactacao")
+def abrir_lactacao(
+    numero_matriz: str,
+    session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> dict:
+    """
+    Abre lactação de um animal sem um parto associado — usado no popup de
+    aborto (perda de prenhez tardia), quando a vaca segue produzindo leite
+    mesmo sem ter parido. Mesmo efeito colateral que um parto normal já causa
+    na mãe (del_dias = 0, ver registrar_parto), só que sem Parto nem cria.
+    """
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Animal).where(Animal.numero == numero_matriz)
+    if fazenda_id is not None:
+        query = query.where(Animal.fazenda_id == fazenda_id)
+    animal = session.exec(query).first()
+    if not animal:
+        raise HTTPException(status_code=404, detail="Animal não encontrado")
+    animal.del_dias = 0
+    animal.atualizado_em = datetime.utcnow()
+    session.add(animal)
+    session.commit()
+    return {"aberto": True, "numero": numero_matriz}
+
+
 @router.get("/servicos")
 def listar_servicos_analise(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -458,6 +484,20 @@ def registrar_diagnostico(
     ).first()
     if not servico:
         raise HTTPException(status_code=404, detail=f"Nenhum serviço encontrado para a matriz {dados.numero_matriz}")
+
+    # 3º lançamento sobre a mesma prenhez: toque (data_diagnostico) e retoque
+    # (data_reconfirmacao) já confirmados POSITIVO, sem perda registrada ainda.
+    # Não sobra slot de diagnóstico livre — é interpretado como aborto (perda
+    # de prenhez), não como um novo toque sobrescrevendo o anterior.
+    if servico.diagnostico_reconfirmacao is not None and servico.data_perda_prenhez is None:
+        servico.data_perda_prenhez = dados.data_diagnostico
+        servico.motivo_perda_prenhez = "aborto"
+        session.add(servico)
+        session.commit()
+        session.refresh(servico)
+        resultado = servico.model_dump()
+        resultado["aborto_detectado"] = True
+        return resultado
 
     servico.data_diagnostico = dados.data_diagnostico
     servico.metodo_diagnostico = dados.metodo

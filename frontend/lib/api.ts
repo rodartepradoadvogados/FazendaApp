@@ -1087,6 +1087,16 @@ export async function registrarPerdaPrenhez(dados: {
   return res.json();
 }
 
+// Abre lactação de um animal sem parto associado (popup pós-aborto — "deseja
+// abrir lactação para o animal X?").
+export async function abrirLactacao(numeroMatriz: string) {
+  const res = await authFetch(`${API}/reproducao/animais/${encodeURIComponent(numeroMatriz)}/abrir-lactacao`, {
+    method: "POST",
+  });
+  if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao abrir lactação"); }
+  return res.json();
+}
+
 export async function fetchFornecedores() {
   const res = await authFetch(`${API}/cadastro/fornecedores`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Fornecedores error: ${res.status}`);

@@ -1,7 +1,7 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { AlertTriangle } from "lucide-react";
-import { fetchAgendaVeterinario, salvarDiagnostico, LISTAS_AGENDA_VETERINARIO } from "@/lib/api";
+import { fetchAgendaVeterinario, fetchUltimoDiagnostico, salvarDiagnostico, LISTAS_AGENDA_VETERINARIO } from "@/lib/api";
 import type { AgendaVetResposta } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { AnimalPickerModal } from "@/components/AnimalPickerModal";
@@ -9,7 +9,27 @@ import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, codigoGrupo } from "@/components/lancamentos/comumForms";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
+import { PopupAborto } from "@/components/lancamentos/PopupAborto";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+
+const fmtDiaBr = (iso: string | null | undefined) => (iso ? new Date(iso + "T00:00:00").toLocaleDateString("pt-BR") : "—");
+
+// Resumo do último diagnóstico da matriz selecionada — toque, retoque
+// (reconfirmação) ou perda de prenhez, o que tiver acontecido por último.
+function resumoUltimoDiagnostico(s: any): string {
+  if (!s) return "Sem diagnóstico anterior registrado.";
+  if (s.data_perda_prenhez) {
+    const motivo = s.motivo_perda_prenhez === "aborto" ? "Aborto" : s.motivo_perda_prenhez === "natimorto" ? "Natimorto" : "Perda de prenhez";
+    return `Última perda de prenhez: ${motivo}, em ${fmtDiaBr(s.data_perda_prenhez)}.`;
+  }
+  if (s.data_reconfirmacao) {
+    return `Último diagnóstico: retoque (reconfirmação) em ${fmtDiaBr(s.data_reconfirmacao)} — resultado ${s.diagnostico_reconfirmacao || "—"}.`;
+  }
+  if (s.data_diagnostico) {
+    return `Último diagnóstico: toque em ${fmtDiaBr(s.data_diagnostico)} — resultado ${s.diagnostico || "—"}.`;
+  }
+  return "Sem diagnóstico anterior registrado.";
+}
 
 export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[]; ultServico: Record<string, string> }) {
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
@@ -80,6 +100,23 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
     [vinculo, selLote, selAgenda, selecionados]
   );
 
+  // Ao selecionar exatamente uma matriz, mostra o resumo do diagnóstico
+  // anterior dela (data, resultado e se foi toque/retoque/perda) — em seleção
+  // múltipla (lote/agenda) não há um único "último diagnóstico" para mostrar.
+  const [numeroUltimo, setNumeroUltimo] = useState<string | null>(null);
+  const [ultimoServicoAnimal, setUltimoServicoAnimal] = useState<any | null>(null);
+  useEffect(() => {
+    if (numerosAlvo.size !== 1) { setNumeroUltimo(null); setUltimoServicoAnimal(null); return; }
+    const numero = Array.from(numerosAlvo)[0];
+    setNumeroUltimo(numero);
+    fetchUltimoDiagnostico(numero).then(setUltimoServicoAnimal).catch(() => setUltimoServicoAnimal(null));
+  }, [Array.from(numerosAlvo).sort().join("|")]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fila de popups de aborto — o backend detecta quando o lançamento é o 3º
+  // diagnóstico sobre a mesma prenhez (toque + retoque já confirmados) e
+  // devolve aborto_detectado: true em vez de sobrescrever o toque anterior.
+  const [abortosPendentes, setAbortosPendentes] = useState<string[]>([]);
+
   const [data, setData] = useState("");
   const [metodo, setMetodo] = useState("");
   const [resultado, setResultado] = useState("");
@@ -129,6 +166,10 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
     const salvos: string[] = [];
     const falhados: string[] = [];
     const servicoIds: number[] = [];
+    // Animais em que o backend detectou o 3º lançamento sobre a mesma
+    // prenhez (toque + retoque já confirmados) — não é um novo toque, é
+    // interpretado como aborto (ver registrar_diagnostico no backend).
+    const abortos: string[] = [];
     // Guardados para restaurar a tela caso o usuário cancele no popup de
     // vínculo financeiro (ver onCancelarDiagnostico) — o resto do fluxo já
     // limpa esses campos assim que salva com sucesso.
@@ -140,13 +181,19 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
       for (const numero of numerosAlvo) {
         try {
           const r = await salvarDiagnostico({ numero_matriz: numero, data_diagnostico: data, resultado: resultado as any, metodo: metodo || undefined });
-          if (r?.id) servicoIds.push(r.id);
+          if (r?.aborto_detectado) {
+            abortos.push(numero);
+          } else if (r?.id) {
+            servicoIds.push(r.id);
+          }
           salvos.push(numero);
         } catch {
           falhados.push(numero);
         }
       }
-      if (!falhados.length && servicoIds.length) {
+      if (abortos.length) {
+        setAbortosPendentes((p) => [...p, ...abortos]);
+      } else if (!falhados.length && servicoIds.length) {
         setPopupOrigem({ tipo: "servico", ids: servicoIds, produto: "Diagnóstico de gestação — visita reprodutiva", data, responsavel: null });
         setDadosParaCancelar({ numeros: numerosSalvos, data: dataSalva, metodo: metodoSalvo, resultado: resultadoSalvo });
       }
@@ -161,7 +208,9 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
         }
       } else {
         setSucesso(
-          resultado === "retoque"
+          abortos.length
+            ? `${abortos.length} animal(is) já tinham prenhez confirmada duas vezes (toque + retoque) — lançamento registrado como aborto (perda de prenhez): ${abortos.join(", ")}.`
+            : resultado === "retoque"
             ? `Diagnóstico salvo para ${salvos.length} animal(is). Entraram na agenda para retoque.`
             : `Diagnóstico salvo para ${salvos.length} animal(is).`
         );
@@ -272,6 +321,12 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
         )}
       </Campo>
 
+      {numeroUltimo && (
+        <p style={{ fontSize: "0.78rem", color: "var(--text-muted)", marginTop: "0.4rem" }}>
+          <strong>{numeroUltimo}:</strong> {resumoUltimoDiagnostico(ultimoServicoAnimal)}
+        </p>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-3">
         <Campo label="Data do diagnóstico"><input type="date" style={inputStyle} value={data} onChange={(e) => setData(e.target.value)} /></Campo>
         <Campo label="Método">
@@ -329,6 +384,13 @@ export function FormDiagnostico({ animais, ultServico }: { animais: AnimalRow[];
           origem={popupOrigem}
           onFechar={() => { setPopupOrigem(null); setDadosParaCancelar(null); }}
           onCancelar={cancelarDiagnostico}
+        />
+      )}
+
+      {abortosPendentes.length > 0 && (
+        <PopupAborto
+          numeroMatriz={abortosPendentes[0]}
+          onFechar={() => setAbortosPendentes((p) => p.slice(1))}
         />
       )}
     </>
