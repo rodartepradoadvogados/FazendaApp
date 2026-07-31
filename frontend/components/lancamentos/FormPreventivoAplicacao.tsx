@@ -2,7 +2,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { Check } from "lucide-react";
 import {
-  cadastrarPreventivo, fetchCalendarioSanitario, fetchEventosSanitarios, fetchExames, fetchMedicamentos, fetchPessoas, formatDate,
+  cadastrarPreventivo, fetchCalendarioSanitario, fetchEventosSanitarios, fetchExames, fetchPessoas, formatDate,
   marcarEventoRealizado, previewCriteriosLote,
 } from "@/lib/api";
 import { PopupVinculoFinanceiro, type OrigemPopupVinculo } from "@/components/lancamentos/PopupVinculoFinanceiro";
@@ -11,7 +11,7 @@ import { AnimalPickerModal } from "@/components/AnimalPickerModal";
 import { LotePicker, opcoesLoteDeAnimais } from "@/components/LotePicker";
 import { EstoquePicker } from "@/components/EstoquePicker";
 import { TabBar } from "@/components/ui";
-import { Campo, inputStyle, nota, type EstoqueItem, codigoGrupo } from "@/components/lancamentos/comumForms";
+import { Campo, inputStyle, nota, type EstoqueItem, codigoGrupo, unidadesCompativeis } from "@/components/lancamentos/comumForms";
 import { CATEGORIAS_ANIMAIS, FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
 import { SeletorEventoPreventivo } from "@/components/lancamentos/FormCalendarioSanitario";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
@@ -137,24 +137,29 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
   const exameDef = evento?.exame_definicao_id ? exames.find((x) => x.id === evento.exame_definicao_id) : undefined;
   const modoNumerico = ehExame && exameDef?.tipo_resultado === "numerico";
 
-  // Produto padrão do evento zerado/negativo/no mínimo — oferece a opção de
-  // escolher um medicamento substituto na hora do lançamento.
+  // Medicamento aplicado — sempre perguntado para vacina/tratamento (não para
+  // exame). Pré-preenche com o produto/dose/unidade padrão do evento quando
+  // existirem; o usuário pode trocar (é o fluxo normal, não uma exceção).
   const estoquePorNome = useMemo(() => new Map(estoque.map((e) => [e.nome, e])), [estoque]);
   const itemPadrao = evento?.produto_padrao ? estoquePorNome.get(evento.produto_padrao) : undefined;
   const produtoPadraoBaixo = !!itemPadrao && ((itemPadrao.quantidade ?? 0) <= 0 || (itemPadrao.estoque_minimo != null && (itemPadrao.quantidade ?? 0) < itemPadrao.estoque_minimo));
-  const [usarSubstituto, setUsarSubstituto] = useState(false);
-  const [produtoSubstituto, setProdutoSubstituto] = useState("");
-  const [opcoesSubstituto, setOpcoesSubstituto] = useState<{ nome: string; quantidade?: number | null; unidade?: string | null }[]>([]);
+  const [produto, setProduto] = useState("");
+  const [dose, setDose] = useState("");
+  const [unidade, setUnidade] = useState("");
   useEffect(() => {
-    setUsarSubstituto(false); setProdutoSubstituto(""); setOpcoesSubstituto([]);
-  }, [eventoId]);
-  useEffect(() => {
-    if (!usarSubstituto) return;
-    const filtro = itemPadrao?.classificacao_medicamento ? { classificacao: itemPadrao.classificacao_medicamento }
-      : itemPadrao?.principio_ativo ? { principio_ativo: itemPadrao.principio_ativo } : {};
-    fetchMedicamentos(filtro).then((m: any[]) => setOpcoesSubstituto(m)).catch(() => setOpcoesSubstituto([]));
+    const nomePadrao = evento?.produto_padrao || "";
+    const compativeis = unidadesCompativeis(nomePadrao ? estoquePorNome.get(nomePadrao)?.unidade : undefined);
+    setProduto(nomePadrao);
+    setDose(evento?.dose_padrao != null ? String(evento.dose_padrao) : "");
+    setUnidade(evento?.unidade_padrao && compativeis.includes(evento.unidade_padrao) ? evento.unidade_padrao : (compativeis[0] || ""));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [usarSubstituto]);
+  }, [eventoId]);
+  const compativeisProduto = useMemo(() => unidadesCompativeis(produto ? estoquePorNome.get(produto)?.unidade : undefined), [produto, estoquePorNome]);
+  const escolherProduto = (nome: string) => {
+    setProduto(nome);
+    const compativeis = unidadesCompativeis(estoquePorNome.get(nome)?.unidade);
+    setUnidade((u) => (compativeis.includes(u) ? u : (compativeis[0] || "")));
+  };
 
   const numeros = useMemo(() => {
     if (vinculo === "animal") return Array.from(animaisSel);
@@ -208,13 +213,15 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
     setMsg(null);
     if (!eventoId) { setMsg({ tipo: "erro", txt: "Escolha o evento preventivo." }); return; }
     if (!dataEvento) { setMsg({ tipo: "erro", txt: "Informe a data de referência." }); return; }
+    if (!ehExame && (!produto || dose.trim() === "" || !(Number(dose) > 0) || !unidade)) {
+      setMsg({ tipo: "erro", txt: "Escolha o medicamento aplicado, a dose e a unidade." }); return;
+    }
     // "Repetir a cada" aceita 0 — 0 significa "não repetir", isto é, um
     // lançamento avulso que não entra no calendário sanitário (cadastrar-
     // Preventivo do backend já cuida disso quando frequencia_valor == 0).
     const freqValorNum = freqValor.trim() === "" ? 1 : Number(freqValor);
     setSalvando(true);
     try {
-      const substituto = usarSubstituto && produtoSubstituto ? estoquePorNome.get(produtoSubstituto) : undefined;
       // "Já existe uma regra agendada" → Realizar/aplicar o próximo evento: é a
       // baixa de UMA OCORRÊNCIA da regra existente, não um novo cadastro — não
       // se redefine frequência agora (calendario_id faz o backend ignorar
@@ -225,7 +232,7 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
         evento_sanitario_id: Number(eventoId), categoria_alvo: alvoLabel || null, data_evento: dataEvento,
         frequencia_valor: freqValorNum, frequencia_unidade: freqUnidade,
         animais: numeros, aplicar: !ehExame, aplicado, veterinario: veterinario || null,
-        produto: substituto?.nome, unidade: substituto?.unidade,
+        produto: !ehExame ? produto : undefined, dose: !ehExame ? Number(dose) : undefined, unidade: !ehExame ? unidade : undefined,
         resultado_exame: ehExame && !modoNumerico && diagnostico ? diagnostico : undefined,
         resultado_numerico: ehExame && modoNumerico && resultadoNumerico !== "" ? Number(resultadoNumerico) : undefined,
         calendario_id: regraEscolhida,
@@ -302,25 +309,31 @@ export function FormPreventivoAplicacao({ animais, lotes, estoque }: { animais: 
         )}
       </div>
 
-      {evento && (evento.doenca_nome || evento.produto_padrao) && (
+      {evento && evento.doenca_nome && (
         <p style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: "0.5rem" }}>
-          {evento.doenca_nome && <>Previne: <strong>{evento.doenca_nome}</strong>. </>}
-          {!ehExame && evento.produto_padrao && <>Produto padrão: <strong>{evento.produto_padrao}</strong>{evento.dose_padrao != null ? ` (${evento.dose_padrao}${evento.unidade_padrao ? " " + evento.unidade_padrao : ""})` : ""}.</>}
+          Previne: <strong>{evento.doenca_nome}</strong>.
           {ehExame && <span style={{ color: "var(--blue)" }}> Exame — sem baixa de estoque, só agendamento.</span>}
         </p>
       )}
-      {!ehExame && produtoPadraoBaixo && (
-        <div style={{ marginTop: "0.4rem" }}>
-          <p style={{ fontSize: "0.72rem", color: "var(--amber)", margin: 0 }}>⚠ Estoque de "{evento?.produto_padrao}" zerado, negativo ou no mínimo.</p>
-          <label className="flex items-center gap-2" style={{ fontSize: "0.75rem", color: "var(--text-muted)", cursor: "pointer" }}>
-            <input type="checkbox" checked={usarSubstituto} onChange={(e) => { setUsarSubstituto(e.target.checked); setProdutoSubstituto(""); }} />
-            Selecionar medicamento substituto
-          </label>
-          {usarSubstituto && (
-            <div style={{ marginTop: "0.25rem", maxWidth: 320 }}>
-              <EstoquePicker itens={opcoesSubstituto} value={produtoSubstituto} onChange={setProdutoSubstituto} placeholder="Selecione o substituto…" />
-            </div>
-          )}
+      {ehExame && !evento?.doenca_nome && (
+        <p style={{ fontSize: "0.75rem", color: "var(--blue)", marginTop: "0.5rem" }}>Exame — sem baixa de estoque, só agendamento.</p>
+      )}
+
+      {!ehExame && (
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mt-2">
+          <Campo label="Medicamento aplicado">
+            <EstoquePicker itens={estoque} value={produto} onChange={escolherProduto} placeholder="Selecionar produto…" />
+            {produtoPadraoBaixo && produto === evento?.produto_padrao && (
+              <p style={{ fontSize: "0.72rem", color: "var(--amber)", marginTop: "0.3rem" }}>⚠ Estoque de "{evento?.produto_padrao}" zerado, negativo ou no mínimo — considere trocar o produto.</p>
+            )}
+          </Campo>
+          <Campo label="Dose"><input type="number" inputMode="decimal" style={inputStyle} value={dose} onChange={(e) => setDose(e.target.value)} /></Campo>
+          <Campo label="Unidade">
+            <select style={inputStyle} value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+              <option value="">Selecione…</option>
+              {compativeisProduto.map((u) => <option key={u}>{u}</option>)}
+            </select>
+          </Campo>
         </div>
       )}
 

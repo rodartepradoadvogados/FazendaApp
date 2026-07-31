@@ -289,3 +289,123 @@ class TestPreventivoAplicadoSimNao:
         })
         assert r.status_code == 200, r.text
         assert r.json()["aplicacao"]["programado"] is False
+
+
+class TestPreventivoFalhaExplicita:
+    """Antes, evento sem produto/dose/unidade padrão fazia a aplicação ser
+    pulada em silêncio (200 com aplicacao: null, nada gravado/baixado). Agora
+    é 400 explícito — só quando aplicar=True e há animais marcados."""
+
+    def _criar_evento_sem_padrao(self, client) -> int:
+        r = client.post("/cadastro/eventos-sanitarios", json={
+            "nome": "Vermífugo", "categoria_preventiva": "vermifugacao",
+        })
+        assert r.status_code == 200, r.text
+        return r.json()["id"]
+
+    def test_aplicar_sem_produto_padrao_da_400_citando_o_que_falta(self, client):
+        from datetime import date
+        ev_id = self._criar_evento_sem_padrao(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "aplicar": True,
+        })
+        assert r.status_code == 400, r.text
+        detalhe = r.json()["detail"]
+        assert "medicamento" in detalhe and "dose" in detalhe and "unidade" in detalhe
+        assert "Vermífugo" in detalhe
+        # Nada foi gravado (nem a regra do calendário, nem a aplicação).
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
+        assert client.get("/sanidade/calendario").json() == []
+
+    def test_produto_dose_unidade_informados_no_request_grava_e_baixa(self, client):
+        from datetime import date
+        ev_id = self._criar_evento_sem_padrao(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "aplicar": True, "produto": "Vacina X", "dose": 3, "unidade": "unidade",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["aplicacao"]["programado"] is False
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Vacina X")
+        assert item["quantidade"] == 17  # 20 - 3
+
+    def test_aplicar_falso_nao_exige_produto_e_so_grava_regra(self, client):
+        """Regressão: aplicar=False continua só cadastrando/atualizando a regra
+        do calendário, mesmo sem produto/dose/unidade — não deve dar erro."""
+        from datetime import date
+        ev_id = self._criar_evento_sem_padrao(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": ["101"],
+            "aplicar": False,
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["aplicacao"] is None
+        assert r.json()["regra"] is not None
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 0
+
+    def test_sem_animais_nao_exige_produto(self, client):
+        """Cadastro só da regra (sem animal marcado) também não deve exigir
+        produto padrão, mesmo com aplicar=True."""
+        from datetime import date
+        ev_id = self._criar_evento_sem_padrao(client)
+        r = client.post("/sanidade/calendario/cadastrar-preventivo", json={
+            "evento_sanitario_id": ev_id, "data_evento": date.today().isoformat(), "animais": [],
+            "aplicar": True,
+        })
+        assert r.status_code == 200, r.text
+
+
+class TestAvisoSaldoNegativo:
+    def test_baixa_alem_do_saldo_avisa_e_baixa_mesmo_assim(self, client):
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 1500, "unidade": "ml"}],
+        })
+        assert r.status_code == 200, r.text
+        avisos = r.json()["avisos"]
+        assert len(avisos) == 1
+        assert "negativo" in avisos[0] and "Borgal 50ml" in avisos[0]
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == -500  # 1000 - 1500, a baixa acontece de qualquer forma
+
+
+class TestEstornoEdicaoExclusao:
+    def _criar(self, client, produto="Borgal 50ml", dose=10, unidade="ml"):
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": produto, "quantidade": dose, "unidade": unidade}],
+        })
+        return client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]["id"]
+
+    def test_editar_dose_ajusta_estoque_pela_diferenca(self, client):
+        aid = self._criar(client, dose=10)
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 990  # 1000 - 10
+
+        r = client.put(f"/sanidade/aplicacoes/{aid}", json={"dose": 30})
+        assert r.status_code == 200, r.text
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 970  # 1000 - 30 (estorna 10, baixa 30)
+
+    def test_excluir_devolve_quantidade_ao_estoque(self, client):
+        aid = self._criar(client, dose=10)
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 990
+
+        r = client.delete(f"/sanidade/aplicacoes/{aid}")
+        assert r.status_code == 200, r.text
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")
+        assert item["quantidade"] == 1000  # devolvido
+
+    def test_excluir_item_nunca_baixado_nao_cria_estoque_fantasma(self, client):
+        # "Serviço veterinário" é estocavel=False — nunca deu baixa ao ser
+        # aplicado (ver test_item_nao_estocavel_nao_da_baixa).
+        aid = self._criar(client, produto="Serviço veterinário", dose=1, unidade="unidade")
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Serviço veterinário")
+        assert item["quantidade"] == 0
+
+        r = client.delete(f"/sanidade/aplicacoes/{aid}")
+        assert r.status_code == 200, r.text
+        item = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Serviço veterinário")
+        assert item["quantidade"] == 0  # continua 0, não virou 1
