@@ -138,15 +138,49 @@ class TestRegistrarAplicacao:
     def test_baixa_direta_gera_movimento_de_estoque(self, client):
         # Antes, a baixa direta mexia em Estoque.quantidade sem deixar rastro
         # em MovimentoEstoque — ficava invisível no histórico/RMCA físico.
+        # Baixa é POR ANIMAL (não uma agregada pro lote inteiro) — ver
+        # test_lote_gera_um_movimento_por_animal_rastreavel_individualmente,
+        # que confere o motivo (exclusão individual dentro de um lote).
         client.post("/sanidade/aplicacoes", json={
             "data_aplicacao": "2026-07-08", "animais": ["101", "102"],
             "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
         })
         r = client.get("/estoque/movimentos")
         movimentos = [m for m in r.json()["movimentos"] if m["nome_item"] == "Borgal 50ml"]
-        assert len(movimentos) == 1
-        assert movimentos[0]["movimento"] == "Aplicação"
-        assert movimentos[0]["quantidade"] == 20  # 10ml * 2 animais
+        assert len(movimentos) == 2  # um por animal, não um agregado do lote
+        assert all(m["movimento"] == "Aplicação" for m in movimentos)
+        assert all(m["quantidade"] == 10 for m in movimentos)
+        assert sum(m["quantidade"] for m in movimentos) == 20  # 10ml * 2 animais — mesmo total de antes
+
+    def test_lote_gera_um_movimento_por_animal_rastreavel_individualmente(self, client):
+        """Regressão do risco documentado: lançar sanidade em lote (N animais,
+        mesmo produto) baixava tudo numa única MovimentoEstoque presa ao id
+        do ÚLTIMO animal — excluir a aplicação de qualquer um dos outros N-1
+        não achava o que estornar (o estorno genérico de /exclusoes busca por
+        origem_id). Agora cada animal tem sua própria movimentação, e excluir
+        um deles reverte só a dose DELE, deixando os outros intactos."""
+        r = client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101", "102", "103"],
+            "itens": [{"produto": "Borgal 50ml", "quantidade": 10, "unidade": "ml"}],
+        })
+        sanidade_ids = r.json()["sanidade_ids"]
+        assert len(sanidade_ids) == 3
+
+        saldo_antes = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")["quantidade"]
+        assert saldo_antes == 970  # 1000 - 10*3
+
+        # Exclui só a aplicação do animal do MEIO do lote (não a última) pelo
+        # fluxo central e auditado de exclusão — é ali que o bug se manifestava.
+        r = client.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_ids[1])})
+        assert r.status_code == 200
+        assert r.json()["avisos"] == []  # achou e reverteu sem aviso de "não encontrado"
+
+        saldo_depois = next(i for i in client.get("/estoque/").json()["itens"] if i["nome"] == "Borgal 50ml")["quantidade"]
+        assert saldo_depois == 980  # devolveu só os 10ml deste animal — 970 + 10
+
+        aplicacoes_restantes = client.get("/sanidade/aplicacoes").json()["aplicacoes"]
+        assert len(aplicacoes_restantes) == 2
+        assert sanidade_ids[1] not in [a["id"] for a in aplicacoes_restantes]
 
 
 class TestEditarExcluirAplicacao:
