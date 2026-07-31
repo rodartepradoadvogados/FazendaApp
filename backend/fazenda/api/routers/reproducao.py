@@ -19,6 +19,7 @@ from fazenda.models import (
 from fazenda.ordenacao import chave_numero
 from fazenda.rules.agenda_veterinario import classificar_rebanho
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
+from fazenda.rules import estoque_baixa
 from fazenda.rules.email import enviar_email
 from fazenda.rules.genetica import calcular_grau_sangue_cria
 from fazenda.rules.reproducao_analise import agregar_mensal, analisar_servicos
@@ -1311,19 +1312,32 @@ def _mapa_tipo_semen_por_touro(session: Session) -> dict[str, str]:
     return mapa
 
 
-def _baixar_dose_semen(session: Session, reprodutor: str | None, tipo_semen: str | None, quantidade: int) -> None:
+def _baixar_dose_semen(
+    session: Session, reprodutor: str | None, tipo_semen: str | None, quantidade: int,
+    fazenda_id: int | None = None, usuario_id: int | None = None, data: date | None = None,
+    origem_id: int | None = None,
+) -> list[str]:
     """Desconta `quantidade` doses do Estoque de Sêmen do touro usado, casando
-    por nome, NAAB ou código. Quando o tipo (sexado/convencional/fazenda) é
-    conhecido, restringe o casamento a esse tipo primeiro — o mesmo touro pode
-    ter linhas de estoque separadas por modalidade, e usar a errada bagunçaria
-    o saldo de quem realmente tem doses. Sem casamento por tipo (ou tipo
-    desconhecido), cai no casamento antigo por nome/NAAB/código, para não
-    quebrar compras/lançamentos que ainda não informam o tipo."""
+    por nome, NAAB ou código — filtrado pela fazenda atual, para nunca casar
+    com o touro de outra fazenda com nome igual. Quando o tipo
+    (sexado/convencional/fazenda) é conhecido, restringe o casamento a esse
+    tipo primeiro — o mesmo touro pode ter linhas de estoque separadas por
+    modalidade, e usar a errada bagunçaria o saldo de quem realmente tem
+    doses. Sem casamento por tipo (ou tipo desconhecido), cai no casamento
+    antigo por nome/NAAB/código, para não quebrar compras/lançamentos que
+    ainda não informam o tipo.
+
+    Diferente do comportamento antigo, agora grava um MovimentoEstoque (ver
+    fazenda.rules.estoque_baixa.baixar_dose_semen) — a baixa deixava saldo
+    cair sem rastro nenhum no histórico."""
     if not reprodutor:
-        return
+        return []
     alvo = reprodutor.strip().lower()
+    query = select(EstoqueSemen)
+    if fazenda_id is not None:
+        query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
     candidatos = [
-        t for t in session.exec(select(EstoqueSemen)).all()
+        t for t in session.exec(query).all()
         if (t.touro_nome or "").strip().lower() == alvo
         or (t.naab or "").strip().lower() == alvo
         or (t.codigo or "").strip().lower() == alvo
@@ -1333,10 +1347,13 @@ def _baixar_dose_semen(session: Session, reprodutor: str | None, tipo_semen: str
         if por_tipo:
             candidatos = por_tipo
     touro = candidatos[0] if candidatos else None
-    if touro:
-        touro.doses = touro.doses - quantidade
-        touro.atualizado_em = datetime.utcnow()
-        session.add(touro)
+    if not touro:
+        return []
+    return estoque_baixa.baixar_dose_semen(
+        session, touro=touro, doses=quantidade, data=data or date.today(), fazenda_id=fazenda_id,
+        usuario_id=usuario_id, observacao=f"Inseminação — {quantidade} dose(s) — {reprodutor}",
+        origem_tipo="ia_semen", origem_id=origem_id,
+    )
 
 
 class ServicoIn(BaseModel):
@@ -1400,11 +1417,15 @@ def registrar_servico(
         fazenda_id=fazenda_id,
     )
     session.add(servico)
+    session.flush()
     # Desconta 1 dose do Estoque de Sêmen (mesma regra do lançamento em lote,
     # ver registrar_servico_lote) — não se aplica a monta natural, que não usa
     # sêmen estocado.
     if dados.tipo_servico != "Monta natural":
-        _baixar_dose_semen(session, dados.reprodutor, dados.tipo_semen, 1)
+        _baixar_dose_semen(
+            session, dados.reprodutor, dados.tipo_semen, 1, fazenda_id=fazenda_id,
+            usuario_id=usuario_id_seguro(user), data=dados.data_servico, origem_id=servico.id,
+        )
 
     # Veio de um protocolo IATF: resolve automaticamente a aplicação D11 em
     # aberto correspondente — a Agenda para de lembrar essa etapa sozinha,
@@ -1602,7 +1623,10 @@ def registrar_servico_lote(
     # informado — mantém o Estoque de Sêmen em dia com o uso real sem exigir
     # baixa manual a cada inseminação.
     if criados and dados.tipo != "monta_natural" and dados.reprodutor:
-        _baixar_dose_semen(session, dados.reprodutor, dados.tipo_semen, criados)
+        _baixar_dose_semen(
+            session, dados.reprodutor, dados.tipo_semen, criados, fazenda_id=fazenda_id,
+            usuario_id=usuario_id_seguro(user), data=dados.data_servico,
+        )
 
     session.commit()
     return {"criados": criados, "incompativeis": incompativeis, "tipo": dados.tipo}

@@ -393,12 +393,27 @@ def seed_admin(session: Session) -> None:
     """Cria o admin inicial se ainda não houver nenhum usuário. Já nasce com
     e-mail = EMAIL_DONO — é o próprio proprietário — para que `exigir_dono`/
     `eh_dono` (relatório de Acessos e Auditoria) funcionem desde o primeiro
-    login, sem precisar de um passo manual de cadastro depois."""
+    login, sem precisar de um passo manual de cadastro depois.
+
+    A senha vem de ADMIN_PASS. Sem essa variável, sorteia uma senha aleatória e
+    a imprime UMA vez no log — nunca cai numa senha fixa. Até aqui havia um
+    valor padrão escrito no código, que é público no repositório: qualquer
+    instalação que subisse sem ADMIN_PASS ficava com a senha do dono conhecida
+    por quem lesse o fonte.
+    """
     existe = session.exec(select(Usuario)).first()
     if existe:
         return
     username = os.environ.get("ADMIN_USER", "AlexandreRodarte")
-    senha = os.environ.get("ADMIN_PASS", "820908")
+    senha = os.environ.get("ADMIN_PASS")
+    if not senha:
+        senha = secrets.token_urlsafe(12)
+        print(
+            f"[seed_admin] ADMIN_PASS nao definida. Admin inicial '{username}' criado com senha "
+            f"aleatoria: {senha}\n"
+            f"[seed_admin] Anote agora e troque no primeiro acesso — ela nao sera exibida de novo.",
+            flush=True,
+        )
     session.add(Usuario(
         username=username, nome="Alexandre Rodarte", senha_hash=hash_senha(senha),
         papel="admin", email=EMAIL_DONO,

@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lote, Parto, Sanidade, Secagem, Servico
+from fazenda.models import Animal, AplicacaoAgendada, Estoque, Lote, MovimentoEstoque, Parto, Sanidade, Secagem, Servico
 from fazenda.api.routers.movimentacoes import seed_motivos_movimentacao
 
 
@@ -156,6 +156,91 @@ class TestRegistrarSecagem:
             "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina", "escore_condicao_corporal": 6,
         })
         assert r.status_code == 400
+
+    def test_baixa_do_medicamento_grava_movimento_de_estoque(self, client):
+        # Antes, o medicamento de secagem baixava Estoque.quantidade sem gravar
+        # MovimentoEstoque nenhum (ver auditoria em fazenda.rules.estoque_baixa).
+        c, engine = client
+        with Session(engine) as s:
+            from sqlmodel import select
+            s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Estoque(nome="Tetradelta", quantidade=20, unidade="dose"))
+            s.commit()
+
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "produtos": [{"produto": "Tetradelta", "quantidade": 4, "unidade": "dose"}],
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            item = s.exec(select(Estoque).where(Estoque.nome == "Tetradelta")).first()
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Tetradelta")).first()
+            assert mov is not None
+            assert mov.quantidade == 4
+            assert mov.estoque_id == item.id
+            assert mov.origem_tipo == "secagem"
+
+
+class TestVacinaPreParto:
+    """Mesmo evento (vacina pré-parto), dois caminhos de confirmação — pela
+    Secagem (vacina_pre_parto_aplicada_agora=True) ou depois pela Agenda
+    (POST /agenda/realizados). Antes, só o caminho da Secagem baixava o
+    estoque; o da Agenda só marcava a pendência como feita (ver auditoria)."""
+
+    def test_aplicada_na_hora_pela_secagem_baixa_estoque(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            from sqlmodel import select
+            s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
+            s.commit()
+
+        r = c.post("/producao/secagem", json={
+            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "vacinas_pre_parto": ["Bovilis"], "vacina_pre_parto_aplicada_agora": True,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            item = s.exec(select(Estoque).where(Estoque.nome == "Bovilis")).first()
+            assert item.quantidade == 9
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first()
+            assert mov is not None
+            assert mov.origem_tipo == "vacina_pre_parto"
+            assert mov.estoque_id == item.id
+
+    def test_confirmada_depois_pela_agenda_tambem_baixa_estoque(self, client):
+        # Regressão do bug mais grave da auditoria: confirmar pela Agenda tinha
+        # que baixar igual ao caminho da Secagem — antes não baixava nada.
+        c, engine = client
+        with Session(engine) as s:
+            from sqlmodel import select
+            s.add(Animal(numero="500", raca="Girolando", del_dias=220, ativo=True))
+            s.add(Estoque(nome="Bovilis", quantidade=10, unidade="dose"))
+            s.commit()
+
+        c.post("/producao/secagem", json={
+            "numero_matriz": "500", "data_secagem": "2026-07-08", "motivo": "rotina",
+            "vacinas_pre_parto": ["Bovilis"], "vacina_pre_parto_aplicada_agora": False,
+        })
+        data_vacina = date(2026, 7, 8) + timedelta(days=1)
+        evento_id = f"vacina_pre_parto_500_{data_vacina.isoformat()}"
+
+        r = c.post("/agenda/realizados", json={"evento_id": evento_id})
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            from sqlmodel import select
+            item = s.exec(select(Estoque).where(Estoque.nome == "Bovilis")).first()
+            assert item.quantidade == 9  # baixou igual ao caminho da Secagem
+            sanidade = s.exec(select(Sanidade).where(Sanidade.numero_matriz == "500", Sanidade.produto == "Bovilis")).first()
+            assert sanidade is not None
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Bovilis")).first()
+            assert mov is not None
+            assert mov.origem_tipo == "vacina_pre_parto"
 
 
 class TestSugestaoLoteEvento:

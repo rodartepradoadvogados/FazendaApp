@@ -15,7 +15,7 @@ from fazenda.auth import Usuario, get_current_user, get_fazenda_atual_id, tem_mo
 from fazenda.database import get_session
 from fazenda.models import (
     AgendaManual, AgendamentoPesagem, Animal, AplicacaoAgendada, ColostragemBezerra, ContaGerencial, DietaLancamento, Diaria,
-    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, MovimentoEstoque, ParametroSugestaoMovimentacao, Parto,
+    DiariaAuditoria, Estoque, EstoqueSemen, EventoRealizado, Lote, ParametroSugestaoMovimentacao, Parto,
     Patrimonio, Pessoa, ProtocoloIatfAplicacao, ProtocoloIatfHormonio, ProtocoloIatfLancamento,
     ProtocoloInducaoAplicacao, ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento,
     ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa, ProtocoloSanitarioLancamento, Sanidade,
@@ -32,8 +32,7 @@ from fazenda.rules.protocolo_customizado import (
     PREFIXO_EVENTO as PREFIXO_PROTOCOLO_CUSTOM,
 )
 from fazenda.rules.lote_criterios import lote_tem_criterio, sugerir_movimentacoes
-from fazenda.rules.unidades import pode_dar_baixa_direta
-from fazenda.rules.farmacia import pode_baixar_estoque
+from fazenda.rules import estoque_baixa
 from fazenda.rules.pesagem_agenda import ocorrencias_pesagem, idade_dias
 from fazenda.rules.auditoria import fazenda_id_seguro, usuario_id_seguro
 from fazenda.rules.parametros import bst_ajuste_ancora_data, intervalo_bst, minimos_semen_por_tipo
@@ -954,7 +953,9 @@ class RealizadoIn(BaseModel):
     via: str | None = None
 
 
-def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
+def _baixar_protocolo_sanitario(
+    session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
+) -> list[str]:
     """
     Ao marcar "realizado" um evento de protocolo sanitário: registra a
     aplicação em Sanidade e dá baixa automática do produto no Estoque (quando
@@ -963,11 +964,11 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
     aplicacao_id = int(evento_id.removeprefix("protocolo_sanitario_"))
     aplicacao = session.get(ProtocoloSanitarioAplicacao, aplicacao_id)
     if not aplicacao or aplicacao.realizada:
-        return
+        return []
     etapa = session.get(ProtocoloSanitarioEtapa, aplicacao.etapa_id)
     lancamento = session.get(ProtocoloSanitarioLancamento, aplicacao.lancamento_id)
     if not etapa or not lancamento:
-        return
+        return []
 
     hoje = date.today()
     aplicacao.realizada = True
@@ -985,25 +986,21 @@ def _baixar_protocolo_sanitario(session: Session, evento_id: str) -> None:
         protocolo_sanitario_lancamento_id=lancamento.id,
     ))
 
-    estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
-    if estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(etapa.unidade, estoque_item.unidade):
-        estoque_item.quantidade = (estoque_item.quantidade or 0) - etapa.dosagem
-        if estoque_item.estoque_minimo is not None:
-            estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-        estoque_item.atualizado_em = datetime.utcnow()
-        session.add(estoque_item)
-        session.add(MovimentoEstoque(
-            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=etapa.dosagem,
-            unidade=estoque_item.unidade, data_movimento=hoje,
-            observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
-        ))
+    estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto)
+    avisos = estoque_baixa.baixar(
+        session, item=estoque_item, quantidade=etapa.dosagem, unidade=etapa.unidade, data=hoje,
+        fazenda_id=fazenda_id, observacao=f"Protocolo sanitário — matriz {lancamento.numero_matriz} — D{etapa.dia}",
+        usuario_id=usuario_id, origem_tipo="protocolo_sanitario", origem_id=aplicacao.id, produto=produto,
+    )
     session.commit()
+    return avisos
 
 
 def _baixar_aplicacao_agendada(
     session: Session, evento_id: str,
     produto: str | None = None, dose: float | None = None, unidade: str | None = None, via: str | None = None,
-) -> None:
+    fazenda_id: int | None = None, usuario_id: int | None = None,
+) -> list[str]:
     """Confirma uma aplicação programada: cria o registro de Sanidade e dá a
     baixa de estoque (quando a unidade bate com a do estoque). Os overrides
     (produto/dose/unidade/via) vêm do painel de "dar baixa" do app/site — o
@@ -1012,7 +1009,7 @@ def _baixar_aplicacao_agendada(
     aid = int(evento_id.removeprefix("aplic_agendada_"))
     ag = session.get(AplicacaoAgendada, aid)
     if not ag or ag.aplicado:
-        return
+        return []
     hoje = date.today()
     produto_final = produto or ag.produto
     dose_final = dose if dose is not None else ag.dose
@@ -1040,24 +1037,28 @@ def _baixar_aplicacao_agendada(
             animal.aguardando_nova_aplicacao_bst = False
             session.add(animal)
 
-    estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto_final)).first()
-    if dose_final and estoque_item and estoque_item.estocavel is not False and pode_baixar_estoque(estoque_item) and pode_dar_baixa_direta(unidade_final, estoque_item.unidade):
-        estoque_item.quantidade = (estoque_item.quantidade or 0) - dose_final
-        if estoque_item.estoque_minimo is not None:
-            estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-        estoque_item.atualizado_em = datetime.utcnow()
-        session.add(estoque_item)
-        session.add(MovimentoEstoque(
-            nome_item=estoque_item.nome, movimento="Aplicação", quantidade=dose_final,
-            unidade=estoque_item.unidade, data_movimento=hoje,
-            observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
-        ))
+    avisos: list[str] = []
+    if dose_final:
+        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=produto_final)
+        avisos = estoque_baixa.baixar(
+            session, item=estoque_item, quantidade=dose_final, unidade=unidade_final, data=hoje,
+            fazenda_id=fazenda_id, observacao=f"Aplicação programada — matriz {ag.numero_matriz}",
+            usuario_id=usuario_id, origem_tipo="aplicacao_agendada", origem_id=ag.id, produto=produto_final,
+        )
     session.commit()
+    return avisos
 
 
-def _baixar_vacina_pre_parto(session: Session, evento_id: str) -> None:
+def _baixar_vacina_pre_parto(
+    session: Session, evento_id: str, fazenda_id: int | None = None, usuario_id: int | None = None,
+) -> list[str]:
     """Confirma TODAS as vacinas pré-parto pendentes daquele cartão (mesmo
-    animal + mesma data) de uma vez — cada uma vira um registro de Sanidade."""
+    animal + mesma data) de uma vez — cada uma vira um registro de Sanidade e
+    dá baixa de estoque (dose=1, unidade="dose"), igualando o comportamento ao
+    caminho da Secagem (ver registrar_secagem em producao.py) — antes esta
+    função só marcava a AplicacaoAgendada e criava a Sanidade, sem tocar o
+    Estoque: o mesmo evento tinha dois comportamentos diferentes conforme
+    fosse confirmado por aqui ou pela Secagem."""
     resto = evento_id.removeprefix("vacina_pre_parto_")
     numero_matriz, data_str = resto.rsplit("_", 1)
     data_evt = date.fromisoformat(data_str)
@@ -1070,21 +1071,32 @@ def _baixar_vacina_pre_parto(session: Session, evento_id: str) -> None:
         )
     ).all()
     hoje = date.today()
+    avisos: list[str] = []
     for ag in rows:
         ag.aplicado = True
         ag.data_aplicacao = hoje
         session.add(ag)
-        session.add(Sanidade(
+        sanidade = Sanidade(
             numero_matriz=ag.numero_matriz, data_aplicacao=hoje, produto=ag.produto,
             via=ag.via, responsavel=ag.responsavel, obs=ag.observacao,
+        )
+        session.add(sanidade)
+        session.flush()
+        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=ag.produto)
+        avisos.extend(estoque_baixa.baixar(
+            session, item=estoque_item, quantidade=1, unidade="dose", data=hoje, fazenda_id=fazenda_id,
+            observacao=f"Vacina pré-parto — matriz {ag.numero_matriz}", usuario_id=usuario_id,
+            origem_tipo="vacina_pre_parto", origem_id=sanidade.id, produto=ag.produto,
         ))
     session.commit()
+    return avisos
 
 
 def _marcar_protocolo_iatf_realizado(
     session: Session, evento_id: str, animais: list[str] | None,
     medicamentos: list["MedicamentoIatfIn"] | None = None,
-) -> None:
+    fazenda_id: int | None = None, usuario_id: int | None = None,
+) -> list[str]:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) do protocolo IATF
     como realizadas. Sem `animais`, marca o grupo inteiro; com `animais`,
@@ -1148,37 +1160,29 @@ def _marcar_protocolo_iatf_realizado(
 
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas.
     # Abate do frasco escolhido (estoque_id) ou, na falta, do item pelo nome.
+    avisos: list[str] = []
     n_vacas = len(aplicacoes)
     if n_vacas:
         for m in aplicados:
             if not m["dose"]:
                 continue
-            estoque_item = None
-            if m["estoque_id"] is not None:
-                estoque_item = session.get(Estoque, m["estoque_id"])
-            if estoque_item is None:
-                estoque_item = session.exec(select(Estoque).where(Estoque.nome == m["produto"])).first()
-            if not estoque_item or estoque_item.estocavel is False:
-                continue
-            if not pode_baixar_estoque(estoque_item):
-                continue
-            if not pode_dar_baixa_direta(m["unidade"], estoque_item.unidade):
-                continue
+            estoque_item = estoque_baixa.resolver_item(
+                session, fazenda_id=fazenda_id, produto=m["produto"], estoque_id=m["estoque_id"],
+            )
             total = m["dose"] * n_vacas
-            estoque_item.quantidade = (estoque_item.quantidade or 0) - total
-            if estoque_item.estoque_minimo is not None:
-                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-            estoque_item.atualizado_em = datetime.utcnow()
-            session.add(estoque_item)
-            session.add(MovimentoEstoque(
-                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
-                unidade=estoque_item.unidade, data_movimento=hoje,
-                observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=total, unidade=m["unidade"], data=hoje,
+                fazenda_id=fazenda_id, observacao=f"Protocolo IATF — D{dia} — {n_vacas} vaca(s)",
+                usuario_id=usuario_id, origem_tipo="iatf", origem_id=lancamento_id, produto=m["produto"],
             ))
     session.commit()
+    return avisos
 
 
-def _marcar_protocolo_inducao_realizado(session: Session, evento_id: str, animais: list[str] | None) -> None:
+def _marcar_protocolo_inducao_realizado(
+    session: Session, evento_id: str, animais: list[str] | None,
+    fazenda_id: int | None = None, usuario_id: int | None = None,
+) -> list[str]:
     """
     Marca a(s) aplicação(ões) de um grupo (lançamento, dia) da indução de
     lactação como realizadas. Sem `animais`, marca o grupo inteiro; com
@@ -1225,30 +1229,21 @@ def _marcar_protocolo_inducao_realizado(session: Session, evento_id: str, animai
     # Baixa de estoque: uma vez por medicamento, dose × nº de vacas confirmadas
     # (item cadastrado por nome exato — combina automaticamente quando o
     # princípio do protocolo já é um item de estoque real).
+    avisos: list[str] = []
     n_vacas = len(aplicacoes)
     if n_vacas:
         for m in medicamentos:
             if not m.dose:
                 continue
-            estoque_item = session.exec(select(Estoque).where(Estoque.nome == m.produto)).first()
-            if not estoque_item or estoque_item.estocavel is False:
-                continue
-            if not pode_baixar_estoque(estoque_item):
-                continue
-            if not pode_dar_baixa_direta(m.unidade, estoque_item.unidade):
-                continue
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=m.produto)
             total = m.dose * n_vacas
-            estoque_item.quantidade = (estoque_item.quantidade or 0) - total
-            if estoque_item.estoque_minimo is not None:
-                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-            estoque_item.atualizado_em = datetime.utcnow()
-            session.add(estoque_item)
-            session.add(MovimentoEstoque(
-                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
-                unidade=estoque_item.unidade, data_movimento=hoje,
-                observacao=f"Indução de lactação — D{dia} — {n_vacas} vaca(s)",
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=total, unidade=m.unidade, data=hoje,
+                fazenda_id=fazenda_id, observacao=f"Indução de lactação — D{dia} — {n_vacas} vaca(s)",
+                usuario_id=usuario_id, origem_tipo="inducao", origem_id=lancamento_id, produto=m.produto,
             ))
     session.commit()
+    return avisos
 
 
 def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> None:
@@ -1275,9 +1270,11 @@ def _desmarcar_protocolo_inducao_realizado(session: Session, evento_id: str) -> 
 def marcar_realizado(
     dados: RealizadoIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
+    user: Usuario = Depends(get_current_user),
 ) -> dict:
     """Marca um evento como realizado — ele sai da agenda (pendentes e futuros)."""
     fazenda_id = fazenda_id_seguro(fazenda_id)
+    usuario_id = usuario_id_seguro(user)
     if dados.evento_id.startswith(COMUNICADO_PREFIXOS):
         raise HTTPException(status_code=400, detail="Comunicados não podem ser marcados como realizados — eles somem sozinhos no dia seguinte.")
     if dados.evento_id.startswith("colostragem_pendente_") or dados.evento_id.startswith("igg_pendente_"):
@@ -1285,11 +1282,15 @@ def marcar_realizado(
     if dados.evento_id.startswith("patrimonio_manutencao_"):
         raise HTTPException(status_code=400, detail="Esta pendência não pode ser dispensada — registre a manutenção no item de patrimônio (isso atualiza a próxima data sozinho).")
     if dados.evento_id.startswith("protocolo_iatf_"):
-        _marcar_protocolo_iatf_realizado(session, dados.evento_id, dados.animais, dados.medicamentos)
-        return {"marcado": True}
+        avisos = _marcar_protocolo_iatf_realizado(
+            session, dados.evento_id, dados.animais, dados.medicamentos, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        )
+        return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith("protocolo_inducao_"):
-        _marcar_protocolo_inducao_realizado(session, dados.evento_id, dados.animais)
-        return {"marcado": True}
+        avisos = _marcar_protocolo_inducao_realizado(
+            session, dados.evento_id, dados.animais, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        )
+        return {"marcado": True, "avisos": avisos}
     if dados.evento_id.startswith(PREFIXO_PROTOCOLO_CUSTOM):
         _marcar_protocolo_custom_realizado(session, dados.evento_id, dados.animais)
         return {"marcado": True}
@@ -1298,16 +1299,20 @@ def marcar_realizado(
     if fazenda_id is not None:
         query_existe = query_existe.where(EventoRealizado.fazenda_id.in_((fazenda_id, None)))
     existe = session.exec(query_existe).first()
+    avisos: list[str] = []
     if not existe:
         session.add(EventoRealizado(evento_id=dados.evento_id, fazenda_id=fazenda_id))
         session.commit()
         if dados.evento_id.startswith("protocolo_sanitario_"):
-            _baixar_protocolo_sanitario(session, dados.evento_id)
+            avisos = _baixar_protocolo_sanitario(session, dados.evento_id, fazenda_id=fazenda_id, usuario_id=usuario_id)
         elif dados.evento_id.startswith("aplic_agendada_"):
-            _baixar_aplicacao_agendada(session, dados.evento_id, dados.produto, dados.dose, dados.unidade, dados.via)
+            avisos = _baixar_aplicacao_agendada(
+                session, dados.evento_id, dados.produto, dados.dose, dados.unidade, dados.via,
+                fazenda_id=fazenda_id, usuario_id=usuario_id,
+            )
         elif dados.evento_id.startswith("vacina_pre_parto_"):
-            _baixar_vacina_pre_parto(session, dados.evento_id)
-    return {"marcado": True}
+            avisos = _baixar_vacina_pre_parto(session, dados.evento_id, fazenda_id=fazenda_id, usuario_id=usuario_id)
+    return {"marcado": True, "avisos": avisos}
 
 
 class AplicarBstIn(BaseModel):
@@ -1326,6 +1331,7 @@ class AplicarBstIn(BaseModel):
 @router.post("/bst/aplicar")
 def aplicar_bst_lote(
     dados: AplicarBstIn, session: Session = Depends(get_session), user: Usuario = Depends(get_current_user),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Confirma (ou agenda) a aplicação de BST (Lactotropin/Boostin) para os
     animais informados. Data retroativa/hoje + aplicado=True materializa na
@@ -1336,6 +1342,8 @@ def aplicar_bst_lote(
     recalcula sozinha a partir da data de aplicação mais recente."""
     from fazenda.rules.parametros import get_param
 
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    usuario_id = usuario_id_seguro(user)
     materializar = dados.aplicado and dados.data_aplicacao <= date.today()
 
     if not materializar:
@@ -1343,26 +1351,30 @@ def aplicar_bst_lote(
             session.add(AplicacaoAgendada(
                 numero_matriz=numero, data=dados.data_aplicacao, produto=dados.produto,
                 dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel,
-                usuario_id=usuario_id_seguro(user), natureza="preventivo",
+                usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
             ))
         session.commit()
         intervalo = get_param("intervalo_bst", 12)
         return {"aplicados": 0, "agendados": len(dados.numeros_matriz), "programado": True, "intervalo_dias": intervalo}
 
+    avisos: list[str] = []
     for numero in dados.numeros_matriz:
-        session.add(Sanidade(
+        sanidade = Sanidade(
             numero_matriz=numero, data_aplicacao=dados.data_aplicacao, produto=dados.produto,
             dose=dados.dose, unidade=dados.unidade, responsavel=dados.responsavel, atividade="BST",
-            usuario_id=usuario_id_seguro(user), natureza="preventivo",
-        ))
-        if dados.dose:
-            estoque_item = session.exec(select(Estoque).where(Estoque.nome == dados.produto)).first()
-            if estoque_item and estoque_item.estocavel is not False and dados.unidade and pode_dar_baixa_direta(dados.unidade, estoque_item.unidade):
-                estoque_item.quantidade = (estoque_item.quantidade or 0) - dados.dose
-                if estoque_item.estoque_minimo is not None:
-                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-                estoque_item.atualizado_em = datetime.utcnow()
-                session.add(estoque_item)
+            usuario_id=usuario_id, natureza="preventivo", fazenda_id=fazenda_id,
+        )
+        session.add(sanidade)
+        session.flush()
+        if dados.dose and dados.unidade:
+            # Antes esta baixa não gravava MovimentoEstoque nenhum — saldo caía
+            # sem deixar rastro no histórico/RMCA (ver auditoria).
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=dados.produto)
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=dados.dose, unidade=dados.unidade, data=dados.data_aplicacao,
+                fazenda_id=fazenda_id, observacao=f"BST — matriz {numero}", usuario_id=usuario_id,
+                origem_tipo="bst", origem_id=sanidade.id, produto=dados.produto,
+            ))
         # Nova aplicação de fato lançada — fecha o ciclo de "Reverter (voltar
         # a apta)": o animal deixa de ficar em bst_reanalise e volta a contar
         # normalmente pela avaliação de elegibilidade (ver agenda_engine.py).
@@ -1379,6 +1391,7 @@ def aplicar_bst_lote(
         "programado": False,
         "intervalo_dias": intervalo,
         "proxima_aplicacao_calculada": (dados.data_aplicacao + timedelta(days=intervalo)).isoformat(),
+        "avisos": avisos,
     }
 
 

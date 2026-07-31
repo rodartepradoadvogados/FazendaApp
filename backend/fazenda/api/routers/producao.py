@@ -17,7 +17,7 @@ from fazenda.api.routers.lotes import _codigo_do_grupo, _mesmo_codigo, coletar_d
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal, Estoque,
+    Animal, AplicacaoAgendada, ContaGerencial, ControleLeiteiro, Dieta, DietaLancamento, EntregaLeiteMensal,
     FaixaBonificacaoQualidade, LancamentoItem, Lote, ParametroFazenda,
     Parto, PesagemCorporal, ProtocoloInducaoAplicacao, ProtocoloInducaoLactacao, ProtocoloInducaoLactacaoEtapa,
     ProtocoloInducaoLancamento, ProtocoloInducaoMedicamento, QualidadeLeite, Sanidade, Secagem, Servico, Usuario,
@@ -28,11 +28,12 @@ from fazenda.rules.alimentacao import calcular_consumo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcular_bonificacao
 from fazenda.rules.dry_off import calcular_secagem
+from fazenda.rules import estoque_baixa
 from fazenda.rules.gestation import calcular_parto_provavel
 from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
-from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
+from fazenda.rules.unidades import unidades_compativeis
 
 router = APIRouter(prefix="/producao", tags=["producao"])
 
@@ -1029,10 +1030,7 @@ def registrar_secagem(
 
     avisos: list[str] = []
     for item in dados.produtos:
-        estoque_item_query = select(Estoque).where(Estoque.nome == item.produto)
-        if fazenda_id is not None:
-            estoque_item_query = estoque_item_query.where(Estoque.fazenda_id == fazenda_id)
-        estoque_item = session.exec(estoque_item_query).first()
+        estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item.produto)
         compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
         if item.unidade not in compativeis:
             raise HTTPException(
@@ -1047,7 +1045,7 @@ def registrar_secagem(
                 observacao="Secagem", aplicado=False,
             ))
             continue
-        session.add(Sanidade(
+        sanidade = Sanidade(
             fazenda_id=fazenda_id,
             numero_matriz=dados.numero_matriz,
             data_aplicacao=dados.data_secagem,
@@ -1057,18 +1055,17 @@ def registrar_secagem(
             via=item.via,
             responsavel=dados.responsavel,
             atividade="Secagem",
+        )
+        session.add(sanidade)
+        session.flush()
+        # Antes, o medicamento de secagem baixava o estoque sem gravar
+        # MovimentoEstoque nenhum (ver auditoria) — o saldo caía sem deixar
+        # rastro no histórico/RMCA.
+        avisos.extend(estoque_baixa.baixar(
+            session, item=estoque_item, quantidade=item.quantidade, unidade=item.unidade, data=dados.data_secagem,
+            fazenda_id=fazenda_id, observacao=f"Secagem — matriz {dados.numero_matriz}",
+            usuario_id=_usuario_id_seguro(user), origem_tipo="secagem", origem_id=sanidade.id, produto=item.produto,
         ))
-        if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
-            estoque_item.quantidade = (estoque_item.quantidade or 0) - item.quantidade
-            if estoque_item.estoque_minimo is not None:
-                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-            estoque_item.atualizado_em = datetime.utcnow()
-            session.add(estoque_item)
-        elif estoque_item and estoque_item.unidade and estoque_item.unidade != item.unidade:
-            avisos.append(
-                f'Baixa de estoque de "{item.produto}" não aplicada — cadastre a equivalência entre '
-                f'"{item.unidade}" e "{estoque_item.unidade}" (unidade de estoque do produto).'
-            )
 
     if dados.produtos and not materializar:
         avisos.append("Produto(s) de secagem programado(s) na Agenda — o estoque baixa quando você confirmar a aplicação.")
@@ -1078,21 +1075,20 @@ def registrar_secagem(
     # direto em Sanidade e dá baixa de estoque — sem duplicar na Agenda.
     if dados.vacinas_pre_parto and dados.vacina_pre_parto_aplicada_agora:
         for vacina in dados.vacinas_pre_parto:
-            session.add(Sanidade(
+            sanidade_vacina = Sanidade(
                 fazenda_id=fazenda_id,
                 numero_matriz=dados.numero_matriz, data_aplicacao=dados.data_secagem, produto=vacina,
                 dose=1, unidade="dose", responsavel=dados.responsavel, atividade="Vacina pré-parto",
+            )
+            session.add(sanidade_vacina)
+            session.flush()
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=vacina)
+            avisos.extend(estoque_baixa.baixar(
+                session, item=estoque_item, quantidade=1, unidade="dose", data=dados.data_secagem,
+                fazenda_id=fazenda_id, observacao=f"Vacina pré-parto — matriz {dados.numero_matriz}",
+                usuario_id=_usuario_id_seguro(user), origem_tipo="vacina_pre_parto", origem_id=sanidade_vacina.id,
+                produto=vacina,
             ))
-            estoque_item_query = select(Estoque).where(Estoque.nome == vacina)
-            if fazenda_id is not None:
-                estoque_item_query = estoque_item_query.where(Estoque.fazenda_id == fazenda_id)
-            estoque_item = session.exec(estoque_item_query).first()
-            if estoque_item and estoque_item.estocavel is not False and pode_dar_baixa_direta("dose", estoque_item.unidade):
-                estoque_item.quantidade = (estoque_item.quantidade or 0) - 1
-                if estoque_item.estoque_minimo is not None:
-                    estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-                estoque_item.atualizado_em = datetime.utcnow()
-                session.add(estoque_item)
         avisos.append("Vacina(s) pré-parto registrada(s) em Sanidade e baixada(s) do estoque.")
     elif dados.vacinas_pre_parto:
         data_vacina = dados.data_secagem + timedelta(days=1)
