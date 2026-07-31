@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, PesagemCorporal, Sanidade, Secagem, Servico
+from fazenda.models import Animal, Lote, PesagemCorporal, Sanidade, Secagem, Servico
 
 
 @pytest.fixture
@@ -157,3 +157,82 @@ class TestPreviewCriterios(object):
         # gestação de 283 dias, serviço há 100 dias -> faltam 183 dias
         r = c.post("/lotes/preview", json={"codigo": "?", "nome": "?", "dias_para_parto_min": 170, "dias_para_parto_max": 190})
         assert r.json()["animais"] == ["3"]
+
+
+class TestCamposGeradoresVsRestritivos(object):
+    """Só os campos "geradores" (faixas numéricas, situação produtiva/reprodutiva)
+    fazem um lote entrar na sugestão automática (`GET /movimentacoes/sugestoes`).
+    Campos "restritivos" (categoria, pré-parto, em tratamento, novilhas
+    inseminadas/gestantes, categoria de manejo) continuam filtrando quando
+    combinados com um gerador, mas sozinhos não geram sugestão nenhuma —
+    evita sugerir o rebanho inteiro pra um lote que só tem "categoria: vaca"."""
+
+    def _seed_vaca_fora_do_lote(self, engine):
+        with Session(engine) as s:
+            s.add(Animal(numero="900", categoria_completa="Vaca em lactação", categoria_abrev="Vaca",
+                         del_dias=50, ult_cl_kg=25, sexo="F", grupo_primario="01 - Recém-chegadas", ativo=True))
+            s.commit()
+
+    def test_lote_so_com_categoria_nao_gera_sugestao(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="Vacas", categorias="vaca"))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.json()["sugestoes"] == []
+        assert r.json()["lotes_com_criterio"] == 0
+
+    def test_lote_so_com_flags_restritivas_nao_gera_sugestao(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="Em tratamento", em_tratamento=True))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.json()["sugestoes"] == []
+        assert r.json()["lotes_com_criterio"] == 0
+
+    def test_lote_so_com_categoria_manejo_nao_gera_sugestao(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="Vinculado", categoria_manejo_ids="1"))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.json()["sugestoes"] == []
+        assert r.json()["lotes_com_criterio"] == 0
+
+    def test_lote_com_gerador_gera_sugestao(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="DEL alto", del_min=30))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.json()["lotes_com_criterio"] == 1
+        assert len(r.json()["sugestoes"]) == 1
+        assert r.json()["sugestoes"][0]["numero_matriz"] == "900"
+
+    def test_gerador_combinado_com_restritivo_continua_filtrando(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            # gera sugestão (del_min) mas exige categoria "novilha" — a vaca
+            # semeada não atende, então não deve gerar sugestão nenhuma.
+            s.add(Lote(codigo="02", nome="DEL alto novilhas", del_min=30, categorias="novilha"))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.json()["lotes_com_criterio"] == 1
+        assert r.json()["sugestoes"] == []
+
+    def test_motivo_nao_menciona_campo_restritivo(self, client):
+        c, engine = client
+        self._seed_vaca_fora_do_lote(engine)
+        with Session(engine) as s:
+            s.add(Lote(codigo="02", nome="DEL alto vacas", del_min=30, categorias="vaca"))
+            s.commit()
+        r = c.get("/movimentacoes/sugestoes")
+        motivo = r.json()["sugestoes"][0]["motivo"]
+        assert "Dias pós-parto" in motivo
+        assert "Categoria" not in motivo

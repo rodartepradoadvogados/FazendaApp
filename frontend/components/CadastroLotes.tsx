@@ -439,7 +439,7 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
               </label>
             ))}
           </div>
-          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Bezerro macho conta junto de "bezerra" até a venda.</p>
+          <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "0.15rem" }}>Bezerro macho conta junto de "bezerra" até a venda. Só restringe — sozinha não gera sugestão automática.</p>
         </div>
         <div><label style={labelStyle}>Faltando p/ parto — de (dias)</label>
           <input type="number" style={inputStyle} value={form.dias_para_parto_min} onChange={(e) => setForm({ ...form, dias_para_parto_min: e.target.value })} /></div>
@@ -470,6 +470,9 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
         <div className="flex items-end"><label className="flex items-center gap-2" style={{ fontSize: "0.78rem" }}>
           <input type="checkbox" checked={form.novilhas_gestantes} onChange={(e) => setForm({ ...form, novilhas_gestantes: e.target.checked })} /> Novilhas gestantes</label></div>
       </div>
+      <p style={{ fontSize: "0.68rem", color: "var(--text-muted)", marginTop: "-0.5rem" }}>
+        Pré-parto, Em tratamento, Novilhas inseminadas e Novilhas gestantes só restringem — sozinhas não geram sugestão automática.
+      </p>
 
       <div className="mb-3">
         <label className="flex items-center gap-2" style={{ fontSize: "0.8rem", cursor: "pointer" }}
@@ -480,7 +483,7 @@ function FormLote({ form, setForm, onSalvar, onCancelar, salvando, msg, categori
       </div>
 
       <div className="mb-3">
-        <label style={labelStyle}>Categoria(s) de manejo vinculada(s) (Configurações &gt; Cadastro &gt; Categorias) — refina ainda mais a busca</label>
+        <label style={labelStyle}>Categoria(s) de manejo vinculada(s) (Configurações &gt; Cadastro &gt; Categorias) — inclui só as marcadas; se nenhuma marcada, não restringe. Só restringe — sozinha não gera sugestão automática.</label>
         <button type="button" onClick={() => setCategoriasAbertas(true)} style={{ ...inputStyle, textAlign: "left", cursor: "pointer", color: nomesCategoriaManejo ? "var(--text)" : "var(--text-muted)" }}>
           {nomesCategoriaManejo || "Selecionar categoria(s)…"}
         </button>

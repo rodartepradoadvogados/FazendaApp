@@ -209,34 +209,38 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
     return True
 
 
-# Campos que definem um critério de fato — um lote sem NENHUM desses
-# preenchido "atende" qualquer animal (não filtra nada), então não entra na
-# sugestão automática de movimentação (evitaria sugerir o rebanho inteiro
-# para um lote sem critério nenhum configurado).
-_CAMPOS_CRITERIO = [
-    "status_lactacao", "situacao_reprodutiva", "categorias", "pre_parto", "peso_min", "peso_max",
+# Campos GERADORES — só eles decidem se o lote "tem critério" o bastante pra
+# entrar na sugestão automática de movimentação. Os demais campos aceitos em
+# `animal_atende_criterios` (categorias, pre_parto, em_tratamento,
+# novilhas_inseminadas, novilhas_gestantes, categoria_manejo_ids) são
+# RESTRITIVOS: continuam filtrando em E lógico quando preenchidos, mas
+# sozinhos não fazem o lote gerar sugestão — evita, por exemplo, marcar só a
+# categoria "vaca" e o sistema sugerir o rebanho inteiro de vacas pra lá.
+_CAMPOS_GERADORES_SUGESTAO = [
+    "status_lactacao", "situacao_reprodutiva", "peso_min", "peso_max",
     "del_min", "del_max", "producao_min", "producao_max",
     "dias_para_parto_min", "dias_para_parto_max", "dias_gestacao_min", "dias_gestacao_max",
-    "dias_desde_servico_min", "dias_desde_servico_max", "em_tratamento",
-    "idade_dias_min", "idade_dias_max", "novilhas_inseminadas", "novilhas_gestantes",
-    "categoria_manejo_ids",
+    "dias_desde_servico_min", "dias_desde_servico_max",
+    "idade_dias_min", "idade_dias_max",
 ]
 
 
 def lote_tem_criterio(lote) -> bool:
     if getattr(lote, "excluir_da_sugestao", False):
         return False
-    return any(getattr(lote, campo, None) for campo in _CAMPOS_CRITERIO)
+    return any(getattr(lote, campo, None) for campo in _CAMPOS_GERADORES_SUGESTAO)
 
 
 def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[str]:
-    """Descreve, em texto, os critérios do `lote` que o animal atende — chamado só
-    depois que `animal_atende_criterios` já confirmou o atendimento, então cada
-    critério preenchido abaixo necessariamente já passou."""
+    """Descreve, em texto, os critérios GERADORES do `lote` que o animal atende —
+    chamado só depois que `animal_atende_criterios` já confirmou o atendimento,
+    então cada critério preenchido abaixo necessariamente já passou. Campos
+    restritivos (categorias, pre_parto, em_tratamento, novilhas_inseminadas,
+    novilhas_gestantes, categoria_manejo_ids — ver `_CAMPOS_GERADORES_SUGESTAO`)
+    não entram aqui: eles filtram o resultado, mas não são o motivo da sugestão."""
     numero = animal["numero"]
     servicos_por_animal = dados["servicos_por_animal"]
     peso_por_animal = dados["peso_por_animal"]
-    categoria = _categoria_normalizada(animal)
     ctx = _contexto_animal(animal, hoje, dados)
     dpp = dias_para_parto(numero, servicos_por_animal, hoje)
     motivos = []
@@ -246,12 +250,6 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
 
     if lote.situacao_reprodutiva:
         motivos.append(f"Situação reprodutiva: {lote.situacao_reprodutiva}")
-
-    if lote.categorias and categoria:
-        motivos.append(f"Categoria: {categoria}")
-
-    if lote.pre_parto and dpp is not None:
-        motivos.append(f"Pré-parto: faltam {dpp} dia(s) para o parto")
 
     peso = peso_por_animal.get(numero)
     if (lote.peso_min is not None or lote.peso_max is not None) and peso is not None:
@@ -274,21 +272,9 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
     if (lote.dias_desde_servico_min is not None or lote.dias_desde_servico_max is not None) and ctx["dias_desde_servico"] is not None:
         motivos.append(f"Dias desde o último serviço: {ctx['dias_desde_servico']}")
 
-    if lote.em_tratamento:
-        motivos.append("Em tratamento")
-
     idade_dias = ctx["dias"]
     if (lote.idade_dias_min is not None or lote.idade_dias_max is not None) and idade_dias is not None:
         motivos.append(f"Idade: {idade_dias} dia(s)")
-
-    gestante = (animal.get("sit_rep") or "") == "Ges." or (animal.get("diagnostico") or "").strip().upper() == "POSITIVO"
-    if lote.novilhas_inseminadas:
-        motivos.append("Novilha inseminada (não gestante)")
-    if lote.novilhas_gestantes:
-        motivos.append("Novilha gestante")
-
-    if lote.categoria_manejo_ids:
-        motivos.append(f"Categoria de manejo: {classificar_categoria(ctx, dados['categorias_ativas'])}")
 
     return motivos
 
