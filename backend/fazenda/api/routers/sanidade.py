@@ -203,13 +203,20 @@ def registrar_aplicacao(
             sanidade_ids.append(sanidade.id)
             criados += 1
 
-        total = item.quantidade * len(dados.animais)
-        avisos.extend(_estoque_baixar(
-            session, item=estoque_item, quantidade=total, unidade=item.unidade, data=dados.data_aplicacao,
-            fazenda_id=fazenda_id, observacao=f"Aplicação em {len(dados.animais)} animal(is) — Sanidade",
-            usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade_ids[-1] if sanidade_ids else None,
-            produto=item.produto,
-        ))
+            # Baixa POR ANIMAL, não uma só agregada pro lote inteiro — cada
+            # MovimentoEstoque fica com origem_id=sanidade.id (a linha DESTE
+            # animal). Antes, um lote de N animais baixava tudo numa
+            # movimentação só, presa ao id do último animal — excluir a
+            # aplicação de qualquer um dos outros N-1 não achava o que
+            # estornar (o estorno genérico de exclusoes.py busca por
+            # origem_id, não recalcula a dose). Mesmo saldo final de estoque,
+            # só que rastreável e reversível linha a linha.
+            avisos.extend(_estoque_baixar(
+                session, item=estoque_item, quantidade=item.quantidade, unidade=item.unidade, data=dados.data_aplicacao,
+                fazenda_id=fazenda_id, observacao=f"Aplicação em {numero} — Sanidade",
+                usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade.id,
+                produto=item.produto,
+            ))
 
     session.commit()
     return {"criados": criados, "agendadas": 0, "avisos": avisos, "programado": False, "sanidade_ids": sanidade_ids}
