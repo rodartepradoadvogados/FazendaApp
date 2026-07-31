@@ -183,6 +183,63 @@ class TestRegistrarAplicacao:
         assert sanidade_ids[1] not in [a["id"] for a in aplicacoes_restantes]
 
 
+class TestPermissaoDireta:
+    """PUT/DELETE /sanidade/aplicacoes/{id} são a exclusão/edição "de baixo
+    nível" — o site não chama mais DELETE diretamente (usa o fluxo central
+    /exclusoes/confirmar, que só deleta na hora se for admin), mas os dois
+    endpoints continuam expostos pra quem chamar a API direto. Sem trava
+    própria, um operador conseguia editar/excluir sem passar pela tela
+    (que já só mostra os botões pra admin) — este teste tranca esse desvio."""
+
+    def _como_operador(self, client):
+        import main
+        from fazenda.auth import get_current_user
+
+        class _FakeOperador:
+            id = 2
+            papel = "operador"
+            ativo = True
+            username = "operador1"
+
+        anterior = main.app.dependency_overrides[get_current_user]
+        main.app.dependency_overrides[get_current_user] = lambda: _FakeOperador()
+        return anterior
+
+    def test_operador_nao_edita_direto(self, client):
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Vacina X", "quantidade": 1, "unidade": "unidade"}],
+        })
+        aid = client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]["id"]
+
+        import main
+        from fazenda.auth import get_current_user
+        anterior = self._como_operador(client)
+        try:
+            r = client.put(f"/sanidade/aplicacoes/{aid}", json={"dose": 5})
+            assert r.status_code == 403
+        finally:
+            main.app.dependency_overrides[get_current_user] = anterior
+
+    def test_operador_nao_exclui_direto(self, client):
+        client.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-07-08", "animais": ["101"],
+            "itens": [{"produto": "Vacina X", "quantidade": 1, "unidade": "unidade"}],
+        })
+        aid = client.get("/sanidade/aplicacoes").json()["aplicacoes"][0]["id"]
+
+        import main
+        from fazenda.auth import get_current_user
+        anterior = self._como_operador(client)
+        try:
+            r = client.delete(f"/sanidade/aplicacoes/{aid}")
+            assert r.status_code == 403
+        finally:
+            main.app.dependency_overrides[get_current_user] = anterior
+        # nada foi apagado — segue existindo pra quem tem permissão
+        assert client.get("/sanidade/aplicacoes").json()["total"] == 1
+
+
 class TestEditarExcluirAplicacao:
     def _criar(self, client):
         client.post("/sanidade/aplicacoes", json={

@@ -11,7 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlmodel import Session, select
 
-from fazenda.auth import get_current_user, get_fazenda_atual_id
+from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
@@ -256,7 +256,7 @@ class EditarAplicacaoIn(BaseModel):
     obs: str | None = None
 
 
-@router.put("/aplicacoes/{aplicacao_id}")
+@router.put("/aplicacoes/{aplicacao_id}", dependencies=[Depends(exigir_admin)])
 def editar_aplicacao(
     aplicacao_id: int, dados: EditarAplicacaoIn, session: Session = Depends(get_session),
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -264,7 +264,10 @@ def editar_aplicacao(
     """Corrige uma aplicação diretamente na lista (produto, dose, unidade, via,
     responsável, data, observação). Se produto, dose ou unidade mudarem, o
     estoque é ajustado: estorna a baixa antiga (valores atuais do registro) e
-    aplica a baixa com os valores novos — ver _ajustar_estoque_por_aplicacao."""
+    aplica a baixa com os valores novos — ver _ajustar_estoque_por_aplicacao.
+
+    Restrito a admin — o front já só mostra "Editar" pra admin; a trava aqui
+    fecha o desvio óbvio de chamar o endpoint direto sem passar pela tela."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
@@ -314,12 +317,17 @@ def editar_aplicacao(
     }
 
 
-@router.delete("/aplicacoes/{aplicacao_id}")
+@router.delete("/aplicacoes/{aplicacao_id}", dependencies=[Depends(exigir_admin)])
 def excluir_aplicacao(
     aplicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Exclui uma aplicação da lista de Sanidade e devolve a dose ao estoque
-    (mesmas condições da baixa original — ver _ajustar_estoque_por_aplicacao)."""
+    """Exclusão direta (hard delete), restrita a admin. O site não chama mais
+    este endpoint — usa o fluxo central e auditado (POST /exclusoes/confirmar,
+    tipo="sanidade"), que admin também exclui na hora mas operador só solicita
+    (ver exclusoes.py). Mantido para chamadas diretas à API.
+
+    Devolve a dose ao estoque nas mesmas condições da baixa original — ver
+    _ajustar_estoque_por_aplicacao."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):

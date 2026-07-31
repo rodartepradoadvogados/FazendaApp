@@ -2,7 +2,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Syringe, AlertTriangle, Filter, Search, CalendarClock, ClipboardList, Pencil, Trash2, Check, X, Shield, HeartPulse, Activity, ChevronDown, ChevronRight, ListChecks, Percent, Route, History } from "lucide-react";
 import {
-  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, excluirAplicacaoSanidade, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
+  fetchSanidade, fetchCalendarioSanitario, fetchEventosSanitarios, fetchLancamentosProtocolo, editarAplicacaoSanidade, confirmarExclusao, excluirCalendarioSanitario, ehAdmin, formatDate, fetchTaxaCura, type CasoTaxaCura,
   fetchEventosVidaVocabulario, fetchRelatorioEventosVida,
   fetchResultadosExame, type ExameResultado,
   fetchMedicamentos,
@@ -449,6 +449,7 @@ const UNIDADES_APLIC = ["ml", "L", "unidade", "dose", "kg", "saca 30kg", "saca 6
 function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { natureza?: "curativo" | "preventivo"; autoEditarId?: number | null }) {
   const [regs, setRegs] = useState<Aplic[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [avisoExclusao, setAvisoExclusao] = useState<string | null>(null);
   const [fCat, setFCat] = useState("");
   const [ini, setIni] = useState("");
   const [fim, setFim] = useState("");
@@ -538,12 +539,26 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
     finally { setOcupado(null); }
   };
 
+  // Passa pelo fluxo central e auditado de exclusão (POST /exclusoes/confirmar)
+  // em vez do DELETE direto — admin ainda exclui na hora, mas agora QUALQUER
+  // usuário logado pode pedir (operador vira uma SolicitacaoExclusao pendente
+  // de aprovação, igual a qualquer outra exclusão do sistema). Isso também
+  // conecta com o mesmo estorno de estoque e a mesma trilha de auditoria que
+  // o painel de Exclusões já usa — antes o botão (só visível pra admin) batia
+  // direto em DELETE /sanidade/aplicacoes/{id}, sem gerar esse rastro.
   const excluir = async (a: Aplic) => {
-    if (!window.confirm(`Excluir a aplicação de "${a.produto}" no animal ${a.numero}? Isso não pode ser desfeito.`)) return;
-    setOcupado(a.id); setError(null);
+    const msg = admin
+      ? `Excluir a aplicação de "${a.produto}" no animal ${a.numero}? Isso não pode ser desfeito.`
+      : `Solicitar a exclusão da aplicação de "${a.produto}" no animal ${a.numero}? Um administrador precisa aprovar antes de ser excluída de fato.`;
+    if (!window.confirm(msg)) return;
+    setOcupado(a.id); setError(null); setAvisoExclusao(null);
     try {
-      await excluirAplicacaoSanidade(a.id);
-      await carregar();
+      const r = await confirmarExclusao("sanidade", String(a.id));
+      if (r.status === "excluido") {
+        await carregar();
+      } else {
+        setAvisoExclusao(`Solicitação de exclusão enviada — aguardando aprovação de um administrador.`);
+      }
     } catch (e: any) { setError(e.message); }
     finally { setOcupado(null); }
   };
@@ -761,13 +776,14 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
 
         <SecaoRecolhivel titulo="Aplicações" badge={<span style={{ fontSize: "0.8rem", color: "var(--dourado-light)", fontWeight: 400 }}>{filtrados.length} registro(s)</span>}
           descricao="Lista completa das aplicações que atendem aos filtros acima">
+          {avisoExclusao && <p style={{ color: "var(--green-light)", fontSize: "0.8rem", marginBottom: "0.6rem" }}>{avisoExclusao}</p>}
           <div className="flex justify-end mb-2">
             <ExportarBotoes titulo="Sanidade — Aplicações" nomeArquivoBase="sanidade" colunas={COLUNAS_SANIDADE} linhas={filtrados} />
           </div>
           <div>
             <div className="overflow-x-auto" style={{ maxHeight: "420px" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}{admin && <th style={{ textAlign: "right" }}>Ações</th>}</tr></thead>
+                <thead><tr><th>Data</th><th>Animal</th><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Dose</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}<th style={{ textAlign: "right" }}>Ações</th></tr></thead>
                 <tbody>
                   {pagAplicacoes.linhasPagina.map((a) => {
                     const editando = editId === a.id;
@@ -781,20 +797,18 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                         <td style={{ fontSize: "0.72rem", color: "var(--text-muted)" }}>{a.categoria}</td>
                         <td style={{ textAlign: "right" }}>{a.dose ?? "—"}{a.unidade ? ` ${a.unidade}` : ""}</td>
                         {admin && <td style={{ fontSize: "0.75rem", color: "var(--text-muted)" }}>{a.usuario_nome ?? "—"}</td>}
-                        {admin && (
-                          <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
-                            {!editando && (
-                              <span style={{ display: "inline-flex", gap: "0.3rem" }}>
-                                <button title="Editar" onClick={() => iniciarEdicao(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>
-                                <button title="Excluir" disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
-                              </span>
-                            )}
-                          </td>
-                        )}
+                        <td style={{ textAlign: "right", whiteSpace: "nowrap" }}>
+                          {!editando && (
+                            <span style={{ display: "inline-flex", gap: "0.3rem" }}>
+                              {admin && <button title="Editar" onClick={() => iniciarEdicao(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--text-muted)", padding: 2 }}><Pencil size={14} /></button>}
+                              <button title={admin ? "Excluir" : "Solicitar exclusão"} disabled={ocupado === a.id} onClick={() => excluir(a)} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--red)", padding: 2 }}><Trash2 size={14} /></button>
+                            </span>
+                          )}
+                        </td>
                       </tr>
                       {editando && (
                         <tr>
-                          <td colSpan={admin ? 7 : 5} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
+                          <td colSpan={admin ? 7 : 6} style={{ background: "var(--surface-2)", padding: "0.6rem" }}>
                             <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Data</label>
                                 <input type="date" style={inp} value={editVals.data} onChange={(e) => setEditVals((s) => ({ ...s, data: e.target.value }))} /></div>
