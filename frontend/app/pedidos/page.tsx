@@ -10,6 +10,7 @@ import { Modal } from "@/components/Modal";
 import { SeletorContaGerencial } from "@/components/SeletorContaGerencial";
 import type { ContaPlano } from "@/lib/contaGerencial";
 import { Indicador } from "@/components/ui";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type PedidoItemRow = PedidoItemPayload & { id: number; valor_atendido: number };
 type PedidoRow = {
@@ -89,6 +90,8 @@ export default function PedidosPage() {
   const totalEstimado = (pedidos ?? []).reduce((a, p) => a + p.valor_total_estimado, 0);
   const totalAtendido = (pedidos ?? []).reduce((a, p) => a + p.valor_atendido, 0);
 
+  const ord = useOrdenacao(pedidos ?? []);
+
   return (
     <div className="p-6 animate-in">
       <div className="mb-4">
@@ -138,12 +141,20 @@ export default function PedidosPage() {
           <table className="fazenda-table">
             <thead>
               <tr>
-                <th></th><th>Nº pedido</th><th>Tipo</th><th>Fornecedor/Cliente</th><th>Centro custo</th>
-                <th>Data</th><th>Status</th><th style={{ textAlign: "right" }}>Estimado</th><th style={{ textAlign: "right" }}>Atendido</th><th></th>
+                <th></th>
+                <ThOrdenavel label="Nº pedido" campo="numero_pedido" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Fornecedor/Cliente" campo="fornecedor_cliente" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Centro custo" campo="centro_custo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Data" campo="data_pedido" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Status" campo="status" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Estimado" campo="valor_total_estimado" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="Atendido" campo="valor_atendido" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {(pedidos ?? []).map((p) => (
+              {ord.linhasOrdenadas.map((p) => (
                 <PedidoLinha key={p.id} pedido={p}
                   expandido={expandido === p.id} onToggle={() => setExpandido(expandido === p.id ? null : p.id)}
                   onEditar={() => setEditando(p)} onExcluir={() => excluir(p.id)} onMudarStatus={(s) => mudarStatus(p.id, s)} />

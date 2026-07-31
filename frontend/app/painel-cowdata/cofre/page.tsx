@@ -7,6 +7,7 @@ import {
   atualizarFazenda,
   type FazendaCofre, type SessaoAcessoSuporte, type PedidoAcessoSuporte, type AuditoriaAcessoSuporte,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = {
   cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", texto: "#e8ecf5",
@@ -95,6 +96,10 @@ export default function CofreAcessoCowData() {
   async function negar(id: number) { await negarPedidoCofre(id); carregarTudo(); }
   async function encerrar(id: number) { await encerrarSessaoCofre(id); carregarTudo(); }
 
+  const ordSessoes = useOrdenacao(sessoes);
+  const ordPedidos = useOrdenacao(pedidos);
+  const ordAuditoria = useOrdenacao(auditoria);
+
   return (
     <div className="animate-in">
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.2rem" }}>
@@ -152,10 +157,19 @@ export default function CofreAcessoCowData() {
       <div style={{ marginTop: "1.4rem" }}>
         <Cartao titulo="Sessões ativas agora" subtitulo={`${sessoes.length} sessão(ões) em andamento`}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><Th>Fazenda</Th><Th>Membro</Th><Th>Motivo</Th><Th>Iniciada</Th><Th>Expira</Th><Th></Th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                <ThOrdenavel label="Membro" campo="membro_nome" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                <ThOrdenavel label="Motivo" campo="motivo" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                <ThOrdenavel label="Iniciada" campo="iniciada_em" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                <ThOrdenavel label="Expira" campo="segundos_restantes" coluna={ordSessoes.coluna} dir={ordSessoes.dir} ordenar={ordSessoes.ordenar} />
+                <Th></Th>
+              </tr>
+            </thead>
             <tbody>
               {sessoes.length === 0 && <Vazio colSpan={6} texto="Nenhuma sessão ativa no momento." />}
-              {sessoes.map((s) => (
+              {ordSessoes.linhasOrdenadas.map((s) => (
                 <tr key={s.id}>
                   <Td style={{ fontWeight: 600 }}>{s.fazenda_nome}</Td>
                   <Td>{s.membro_nome ?? "—"}</Td>
@@ -178,10 +192,20 @@ export default function CofreAcessoCowData() {
 
         <Cartao titulo="Pedidos recentes" subtitulo={`Últimos ${pedidos.length} pedido(s), todos os status`}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><Th>Fazenda</Th><Th>Solicitante</Th><Th>Motivo</Th><Th>Status</Th><Th>Aprovador</Th><Th>Pedido em</Th><Th></Th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <ThOrdenavel label="Solicitante" campo="solicitante_nome" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <ThOrdenavel label="Motivo" campo="motivo" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <ThOrdenavel label="Status" campo="status" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <ThOrdenavel label="Aprovador" campo="aprovador_nome" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <ThOrdenavel label="Pedido em" campo="pedido_em" coluna={ordPedidos.coluna} dir={ordPedidos.dir} ordenar={ordPedidos.ordenar} />
+                <Th></Th>
+              </tr>
+            </thead>
             <tbody>
               {pedidos.length === 0 && <Vazio colSpan={7} texto="Nenhum pedido ainda." />}
-              {pedidos.map((p) => (
+              {ordPedidos.linhasOrdenadas.map((p) => (
                 <tr key={p.id}>
                   <Td style={{ fontWeight: 600 }}>{p.fazenda_nome}</Td>
                   <Td>{p.solicitante_nome ?? "—"}</Td>
@@ -214,10 +238,17 @@ export default function CofreAcessoCowData() {
 
         <Cartao titulo="Auditoria recente" subtitulo={`Últimas ${auditoria.length} entrada(s), todas as fazendas`}>
           <table style={{ width: "100%", borderCollapse: "collapse" }}>
-            <thead><tr><Th>Quando</Th><Th>Fazenda</Th><Th>Membro</Th><Th>Ação</Th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Quando" campo="quando" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
+                <ThOrdenavel label="Fazenda" campo="fazenda_nome" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
+                <ThOrdenavel label="Membro" campo="membro_nome" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
+                <ThOrdenavel label="Ação" campo="acao" coluna={ordAuditoria.coluna} dir={ordAuditoria.dir} ordenar={ordAuditoria.ordenar} />
+              </tr>
+            </thead>
             <tbody>
               {auditoria.length === 0 && <Vazio colSpan={4} texto="Nenhuma entrada de auditoria ainda." />}
-              {auditoria.map((a) => (
+              {ordAuditoria.linhasOrdenadas.map((a) => (
                 <tr key={a.id}>
                   <Td style={{ color: COR.mudo }}>{formatarData(a.quando)}</Td>
                   <Td style={{ fontWeight: 600 }}>{a.fazenda_nome}</Td>

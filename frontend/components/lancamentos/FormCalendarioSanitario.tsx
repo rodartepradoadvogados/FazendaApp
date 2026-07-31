@@ -12,6 +12,7 @@ import { Modal } from "@/components/Modal";
 import { SecaoRecolhivel, MultiFiltro } from "@/components/ui";
 import { Campo, inputStyle, nota, type EstoqueItem, unidadesCompativeis } from "@/components/lancamentos/comumForms";
 import { FREQUENCIA_UNIDADES, type ExameDef } from "@/components/lancamentos/_shared";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 const CadastroEventosSanitarios = dynamic(() => import("@/components/CadastroSanitario").then((m) => m.CadastroEventosSanitarios), { ssr: false });
 
 type OpcaoNomeAtivo = { id: number; nome: string; ativo: boolean };
@@ -145,6 +146,11 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
   const [tipoFiltroRegras, setTipoFiltroRegras] = useState<"todos" | "vacina" | "exame" | "avulso">("todos");
+  const regrasFiltradas = useMemo(
+    () => (regras ?? []).filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras),
+    [regras, tipoFiltroRegras]
+  );
+  const ordRegras = useOrdenacao(regrasFiltradas);
 
   const [pessoas, setPessoas] = useState<any[]>([]);
   useEffect(() => { fetchPessoas().then(setPessoas).catch(() => setPessoas([])); }, []);
@@ -429,9 +435,17 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
           </div>
           <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Evento</th><th>Tipo</th><th>Responsável</th><th>Categoria alvo</th><th>Frequência</th><th>Próxima ocorrência</th><th></th></tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Evento" campo="evento_sanitario_nome" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                <ThOrdenavel label="Tipo" campo="categoria_preventiva" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                <ThOrdenavel label="Responsável" campo="responsavel" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                <ThOrdenavel label="Categoria alvo" campo="categoria_alvo" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                <ThOrdenavel label="Frequência" campo="frequencia_valor" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} alinhar="right" />
+                <ThOrdenavel label="Próxima ocorrência" campo="proxima_ocorrencia" coluna={ordRegras.coluna} dir={ordRegras.dir} ordenar={ordRegras.ordenar} />
+                <th></th>
+              </tr></thead>
               <tbody>
-                {regras.filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras).map((r) => (
+                {ordRegras.linhasOrdenadas.map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.evento_sanitario_nome}</td>
                     <td style={{ fontSize: "0.78rem", color: "var(--text-muted)" }}>
@@ -447,7 +461,7 @@ export function FormCalendarioSanitario({ estoque }: { estoque: EstoqueItem[] })
                     </td>
                   </tr>
                 ))}
-                {!regras.filter((r) => tipoFiltroRegras === "todos" || tipoRegra(r) === tipoFiltroRegras).length && (
+                {!regrasFiltradas.length && (
                   <tr><td colSpan={7} style={{ color: "var(--text-muted)", fontSize: "0.85rem", textAlign: "center", padding: "1rem" }}>Nenhuma regra cadastrada ainda.</td></tr>
                 )}
               </tbody>

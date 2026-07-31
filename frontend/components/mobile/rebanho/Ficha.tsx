@@ -9,6 +9,17 @@ import { fetchComCache, cacheEm, enviarOuEnfileirar } from "@/lib/offline";
 import { MobCard, MobVoltar, MobLinha, MobCampo, MobAviso } from "@/components/mobile/ui";
 import { estiloSexado } from "@/lib/constants";
 import { BuscaAnimal, subtituloAnimal, type AnimalMob } from "./comum";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+// Campos ordenáveis da lista "Todos os animais" (Rebanho › Ficha do animal).
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "numero", rotulo: "Brinco" },
+  { chave: "nome", rotulo: "Nome" },
+  { chave: "grupo_primario", rotulo: "Lote" },
+  { chave: "categoria_abrev", rotulo: "Categoria" },
+  { chave: "del_dias", rotulo: "DEL" },
+];
 
 type Ficha = {
   animal: Record<string, unknown>;
@@ -372,18 +383,24 @@ export default function Ficha({ numeroInicial, destacarInicial }: { numeroInicia
 
   const destacar = destacarInicial === "colostragem" || destacarInicial === "igg" ? destacarInicial : null;
 
-  if (aberto) return <FichaDetalhe numero={aberto} onVoltar={() => setAberto(null)} destacarInicial={aberto === numeroInicial ? destacar : null} />;
+  // Ordem padrão (nenhum campo escolhido no seletor): por brinco, como sempre
+  // foi — o useOrdenacao só assume o controle depois que o usuário escolhe um
+  // campo em SeletorOrdenacao. Precisa vir ANTES do "if (aberto) return" — hooks
+  // não podem ser condicionais.
+  const porNumero = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+  const ord = useOrdenacao(porNumero);
 
-  const ordenados = [...animais].sort((a, b) => a.numero.localeCompare(b.numero, "pt-BR", { numeric: true }));
+  if (aberto) return <FichaDetalhe numero={aberto} onVoltar={() => setAberto(null)} destacarInicial={aberto === numeroInicial ? destacar : null} />;
 
   return (
     <div>
       <BuscaAnimal valor="" onEscolher={(n) => { if (n) setAberto(n); }} />
 
-      <div className="mob-secao">Todos os animais{ordenados.length ? ` (${ordenados.length})` : ""}</div>
+      <div className="mob-secao">Todos os animais{ord.linhasOrdenadas.length ? ` (${ord.linhasOrdenadas.length})` : ""}</div>
+      <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
       {carregando && <p style={{ color: "var(--mob-muted)" }}>Carregando…</p>}
-      {!carregando && !ordenados.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>}
-      {ordenados.map((r, i) => (
+      {!carregando && !ord.linhasOrdenadas.length && <p style={{ color: "var(--mob-muted)", fontSize: "0.85rem" }}>Nenhum animal encontrado.</p>}
+      {ord.linhasOrdenadas.map((r, i) => (
         <MobLinha key={r.numero} alt={(i % 2) as 0 | 1} titulo={`Brinco ${r.numero}${r.nome ? ` · ${r.nome}` : ""}`} subtitulo={subtituloAnimal(r)} onClick={() => setAberto(r.numero)} />
       ))}
     </div>

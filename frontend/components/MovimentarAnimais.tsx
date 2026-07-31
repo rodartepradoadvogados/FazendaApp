@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ArrowRightLeft, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchLotes, criarMovimentacao, fetchMotivosMovimentacao } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; del_dias: number | null };
 type Lote = { id: number; codigo: string; nome: string; rotulo: string };
@@ -51,6 +52,7 @@ export default function MovimentarAnimais() {
       (!filtroLote || a.grupo_primario === filtroLoteRotulo)
     );
   }, [animais, busca, filtroLote, filtroLoteRotulo]);
+  const ord = useOrdenacao(candidatos);
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
@@ -119,9 +121,15 @@ export default function MovimentarAnimais() {
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "360px" }}>
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th></th><th>Nº</th><th>Lote atual</th><th>Categoria</th><th style={{ textAlign: "right" }}>DEL</th></tr></thead>
+                <thead><tr>
+                  <th></th>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Lote atual" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                </tr></thead>
                 <tbody>
-                  {candidatos.map((a) => (
+                  {ord.linhasOrdenadas.map((a) => (
                     <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
                       <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>

@@ -4,6 +4,7 @@ import { Skull, AlertTriangle, Check, Search } from "lucide-react";
 import { fetchAnimais, fetchOpcoesBaixa, criarBaixaAnimal, fetchFornecedores, marcarADescartar, fetchBaixas, ehAdmin } from "@/lib/api";
 import { RESPONSAVEIS } from "@/lib/constants";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Animal = { numero: string; grupo_primario: string | null; categoria_abrev: string | null; ativo?: boolean };
 type Fornecedor = { id: number; nome: string; tipo: string; ativo: boolean };
@@ -84,6 +85,8 @@ export default function BaixarAnimal() {
       return !busca || a.numero.toLowerCase().includes(busca.toLowerCase());
     });
   }, [animais, busca, filtroLote]);
+  const ord = useOrdenacao(candidatos);
+  const ordHistorico = useOrdenacao(historico || []);
 
   const toggleAnimal = (numero: string) => setSelecionados((p) => {
     const n = new Set(p); n.has(numero) ? n.delete(numero) : n.add(numero); return n;
@@ -202,9 +205,14 @@ export default function BaixarAnimal() {
             </div>
             <div className="overflow-x-auto" style={{ maxHeight: "320px" }}>
               <table className="fazenda-table" style={{ margin: 0 }}>
-                <thead><tr><th></th><th>Nº</th><th>Lote atual</th><th>Categoria</th></tr></thead>
+                <thead><tr>
+                  <th></th>
+                  <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Lote atual" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                  <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                </tr></thead>
                 <tbody>
-                  {candidatos.map((a) => (
+                  {ord.linhasOrdenadas.map((a) => (
                     <tr key={a.numero} style={{ cursor: "pointer" }} onClick={() => toggleAnimal(a.numero)}>
                       <td><input type="checkbox" checked={selecionados.has(a.numero)} onChange={() => toggleAnimal(a.numero)} onClick={(e) => e.stopPropagation()} /></td>
                       <td style={{ fontWeight: 700 }}>{a.numero}</td>
@@ -333,9 +341,18 @@ export default function BaixarAnimal() {
           <div className="card-header mb-3">Baixas registradas</div>
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
-              <thead><tr><th>Nº</th><th>Tipo</th><th>Motivo</th><th>Data</th><th style={{ textAlign: "right" }}>Valor</th><th>Cliente</th><th>Lançamento</th>{admin && <th style={{ textAlign: "left" }}>Usuário</th>}</tr></thead>
+              <thead><tr>
+                <ThOrdenavel label="Nº" campo="numero_animal" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Tipo" campo="tipo_baixa" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Motivo" campo="motivo" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Data" campo="data_baixa" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Valor" campo="valor" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} alinhar="right" />
+                <ThOrdenavel label="Cliente" campo="cliente" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Lançamento" campo="numero_lancamento_gerado" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                {admin && <ThOrdenavel label="Usuário" campo="usuario_nome" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />}
+              </tr></thead>
               <tbody>
-                {historico.map((b) => (
+                {ordHistorico.linhasOrdenadas.map((b) => (
                   <tr key={b.id}>
                     <td style={{ fontWeight: 700 }}>{b.numero_animal}</td>
                     <td style={{ fontSize: "0.8rem" }}>{LABEL_TIPO_BAIXA[b.tipo_baixa] || b.tipo_baixa}</td>

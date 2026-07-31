@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useState } from "react";
 import { Sprout, Plus, Pencil, AlertTriangle, Check, X } from "lucide-react";
 import { fetchSafras, criarSafra, atualizarSafra } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Safra = {
   id: number; nome: string; centro_custo: string;
@@ -49,6 +50,7 @@ export default function CadastroSafra() {
 
   const carregar = () => fetchSafras().then(setSafras).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(safras ?? []);
 
   const abrirNovo = () => { setForm(formVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (s: Safra) => {
@@ -111,13 +113,17 @@ export default function CadastroSafra() {
             <table className="fazenda-table">
               <thead>
                 <tr>
-                  <th>Nome</th><th>Centro de custo</th><th>Período</th>
-                  <th style={{ textAlign: "right" }}>Hectares</th><th style={{ textAlign: "right" }}>Toneladas</th>
-                  <th>Ativa</th><th></th>
+                  <ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdenavel label="Centro de custo" campo="centro_custo" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdenavel label="Período" campo="data_inicio" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <ThOrdenavel label="Hectares" campo="hectares" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+                  <ThOrdenavel label="Toneladas" campo="toneladas_produzidas" coluna={coluna} dir={dir} ordenar={ordenar} alinhar="right" />
+                  <ThOrdenavel label="Ativa" campo="ativo" coluna={coluna} dir={dir} ordenar={ordenar} />
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {safras.map((s) => (
+                {linhasOrdenadas.map((s) => (
                   <Fragment key={s.id}>
                     <tr>
                       <td style={{ fontWeight: 700 }}>{s.nome}</td>

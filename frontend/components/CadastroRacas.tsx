@@ -5,6 +5,7 @@ import {
   fetchRacas, criarRaca, atualizarRaca,
   fetchGrausSangue, criarGrauSangue, atualizarGrauSangue,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Raca = { id: number; nome: string; ativo: boolean };
 type RacaForm = { nome: string; ativo: boolean };
@@ -48,6 +49,7 @@ function RacasTab() {
 
   const carregar = () => fetchRacas().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(racaFormVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (r: Raca) => { setForm({ nome: r.nome, ativo: r.ativo }); setEditando(r.id); setMsg(null); };
@@ -82,9 +84,9 @@ function RacasTab() {
       {itens && (
         <div className="overflow-x-auto">
         <table className="fazenda-table">
-          <thead><tr><th>Nome</th><th></th></tr></thead>
+          <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
           <tbody>
-            {itens.map((r) => (
+            {linhasOrdenadas.map((r) => (
               <Fragment key={r.id}>
                 <tr>
                   <td style={{ fontWeight: 700 }}>{r.nome}{!r.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>
@@ -143,6 +145,7 @@ function GrausTab() {
 
   const carregar = () => fetchGrausSangue().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(itens ?? []);
 
   const abrirNovo = () => { setForm(grauFormVazio); setEditando("novo"); setMsg(null); };
   const abrirEdicao = (g: Grau) => { setForm({ nome: g.nome, fracao_holandes: g.fracao_holandes == null ? "" : String(g.fracao_holandes), ativo: g.ativo }); setEditando(g.id); setMsg(null); };
@@ -179,9 +182,9 @@ function GrausTab() {
       {itens && (
         <div className="overflow-x-auto">
         <table className="fazenda-table">
-          <thead><tr><th>Nome</th><th>Fração de sangue Holandês</th><th></th></tr></thead>
+          <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><ThOrdenavel label="Fração de sangue Holandês" campo="fracao_holandes" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
           <tbody>
-            {itens.map((g) => (
+            {linhasOrdenadas.map((g) => (
               <Fragment key={g.id}>
                 <tr>
                   <td style={{ fontWeight: 700 }}>{g.nome}{!g.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

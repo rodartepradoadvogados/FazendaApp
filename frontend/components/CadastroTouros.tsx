@@ -2,6 +2,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { Dna, Trash2, Search, RefreshCw, Plus, Pencil, ChevronDown, ChevronRight, X } from "lucide-react";
 import { fetchTouros, criarTouro, atualizarTouro, excluirTouro, recarregarCatalogoTouros, type Touro, type TouroIn } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const fmt = (v?: number | null, dec = 0) =>
   v === null || v === undefined || Number.isNaN(v) ? "—" : v.toLocaleString("pt-BR", { minimumFractionDigits: dec, maximumFractionDigits: dec });
@@ -200,6 +201,7 @@ export default function CadastroTouros() {
       (t.central || "").toLowerCase().includes(q) ||
       (t.raca || "").toLowerCase().includes(q));
   }, [touros, busca]);
+  const ord = useOrdenacao(filtrados);
 
   async function remover(t: Touro) {
     if (!t.id) return;
@@ -273,23 +275,23 @@ export default function CadastroTouros() {
             <thead>
               <tr>
                 <th style={th}></th>
-                <th style={th}>NAAB</th>
-                <th style={th}>Nome</th>
-                <th style={th}>Central</th>
-                <th style={th}>Raça</th>
-                <th style={{ ...th, textAlign: "right" }}>Leite (kg)</th>
-                <th style={{ ...th, textAlign: "right" }}>Gord.</th>
-                <th style={{ ...th, textAlign: "right" }}>Prot.</th>
-                <th style={{ ...th, textAlign: "right" }}>TPI</th>
-                <th style={{ ...th, textAlign: "right" }}>NM$</th>
-                <th style={{ ...th, textAlign: "right" }}>Fert. filhas</th>
-                <th style={{ ...th, textAlign: "right" }}>Fac. parto</th>
+                <ThOrdenavel label="NAAB" campo="naab" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Nome" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Central" campo="central" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Raça" campo="raca" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Leite (kg)" campo="leite_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="Gord." campo="gordura_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="Prot." campo="proteina_kg" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="TPI" campo="tpi" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="NM$" campo="nm_dolar" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="Fert. filhas" campo="fertilidade_filhas" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                <ThOrdenavel label="Fac. parto" campo="facilidade_parto" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 <th style={th}>Fonte / rodada</th>
                 <th style={th}></th>
               </tr>
             </thead>
             <tbody>
-              {filtrados.map((t) => {
+              {ord.linhasOrdenadas.map((t) => {
                 const extra = parseDadosExtra(t.dados_extra);
                 const aberto = expandido === t.id;
                 return (

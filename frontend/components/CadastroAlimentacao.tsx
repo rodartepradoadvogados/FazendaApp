@@ -26,6 +26,7 @@ import { RESPONSAVEIS } from "@/lib/constants";
 import { TabelaNutricionalBotao, TabelaNutricionalCadastroInline } from "./TabelaNutricional";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { pedirCadastroDeEstoque, onPedidoCadastroDeAlimento, type PrefillNovoAlimento } from "@/lib/alimentoEstoqueBridge";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const NUM_TRATOS = 2;
 const UNIDADES = ["kg", "g", "L", "ml", "unidade", "dose", "saca 30kg", "saca 60kg"];
@@ -260,6 +261,13 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
     (e.finalidade == null || e.finalidade === "Ração/Alimento") && (!termoEstoque || e.nome.toLowerCase().includes(termoEstoque))
   );
 
+  // Colunas derivadas (nome da categoria/estoque vinculado) só para permitir
+  // ordenar por clique no cabeçalho — mesmo padrão de CadastroPessoas.tsx.
+  const linhasOrdenaveis = useMemo(() => (itens ?? []).map((a) => ({
+    ...a, categoriaOrdenacao: nomeCategoria(a.categoria_alimento_id), estoqueOrdenacao: a.estoque_vinculado?.length ? a.estoque_vinculado.map((e: any) => e.nome).join(", ") : "",
+  })), [itens, categorias]);
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(linhasOrdenaveis);
+
   return (
     <div className="card">
       <div className="card-header mb-2 flex items-center justify-between">
@@ -327,9 +335,16 @@ function AlimentosTab({ prefill, onPrefillConsumido, onIrParaTabelaNutricional, 
       {itens && (
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Alimento</th><th>Categoria</th><th>Estoque vinculado</th><th></th></tr></thead>
+            <thead>
+              <tr>
+                <ThOrdenavel label="Alimento" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Categoria" campo="categoriaOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <ThOrdenavel label="Estoque vinculado" campo="estoqueOrdenacao" coluna={coluna} dir={dir} ordenar={ordenar} />
+                <th></th>
+              </tr>
+            </thead>
             <tbody>
-              {itens.map((a) => (
+              {linhasOrdenadas.map((a) => (
                 <tr key={a.id}>
                   <td style={{ fontWeight: 700 }}>{a.nome}</td>
                   <td style={{ fontSize: "0.78rem" }}>{nomeCategoria(a.categoria_alimento_id)}</td>

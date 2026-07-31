@@ -1,6 +1,7 @@
 "use client";
 import { useMemo, useState } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
+import { useOrdenacao, ThOrdenavel } from "./Ordenavel";
 
 export type EstoqueItemPicker = { nome: string; categoria?: string | null; quantidade?: number | null; unidade?: string | null; estocavel?: boolean | null; finalidade?: string | null; alimento_id?: number | null; estoque_semen_id?: number | null };
 
@@ -45,6 +46,8 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
     return disponiveis.filter((i) => `${i.nome} ${i.categoria || ""}`.toLowerCase().includes(q));
   }, [disponiveis, busca]);
 
+  const ord = useOrdenacao(filtrados);
+
   const btn: React.CSSProperties = {
     width: "100%", background: "var(--surface-2)", color: sel ? "var(--text)" : "var(--text-muted)",
     border: "1px solid var(--border)", borderRadius: "6px", padding: "0.45rem 0.6rem", fontSize: "0.85rem",
@@ -75,9 +78,15 @@ export function EstoquePicker({ itens, value, onChange, placeholder = "Seleciona
             </div>
             <div style={{ overflowY: "auto" }}>
               <table className="fazenda-table">
-                <thead><tr><th>Produto</th><th>Categoria</th><th style={{ textAlign: "right" }}>Estoque atual</th></tr></thead>
+                <thead>
+                  <tr>
+                    <ThOrdenavel label="Produto" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                    <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                    <ThOrdenavel label="Estoque atual" campo="quantidade" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
+                  </tr>
+                </thead>
                 <tbody>
-                  {filtrados.map((i) => (
+                  {ord.linhasOrdenadas.map((i) => (
                     <tr key={i.nome} onClick={() => { onChange(i.nome); setAberto(false); }} style={{ cursor: "pointer", background: i.nome === value ? "rgba(94,26,46,0.35)" : undefined }} className="row-clickable">
                       <td style={{ fontWeight: 700 }}>{i.nome}</td>
                       <td style={{ fontSize: "0.75rem" }}>{i.categoria || "—"}</td>

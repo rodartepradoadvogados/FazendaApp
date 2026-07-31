@@ -13,6 +13,7 @@ import {
   type ProtocoloEtapa, type EventoSanitarioPayload, type ExameDefinicaoPayload, type PrincipioFarmacia, type MarcaComercial,
 } from "@/lib/api";
 import { exportarExcel } from "@/lib/export";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 import { EstoquePicker, type EstoqueItemPicker } from "./EstoquePicker";
 import { VIAS_APLICACAO } from "@/lib/constants";
 import { CLASSIFICACOES_MEDICAMENTO } from "@/lib/api";
@@ -202,6 +203,7 @@ export function CadastroProtocolosSanitarios() {
   const filtrados = (itens ?? []).filter((p) =>
     !termoBusca || normalizar(`${p.nome} ${p.doenca_nome ?? ""}`).includes(termoBusca)
   );
+  const ordProtocolos = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -256,9 +258,14 @@ export function CadastroProtocolosSanitarios() {
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th>Doença</th><th>Mastite</th><th>Etapas</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrdenavel label="Nome" campo="nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+              <ThOrdenavel label="Doença" campo="doenca_nome" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+              <ThOrdenavel label="Mastite" campo="eh_mastite" coluna={ordProtocolos.coluna} dir={ordProtocolos.dir} ordenar={ordProtocolos.ordenar} />
+              <th>Etapas</th><th></th>
+            </tr></thead>
             <tbody>
-              {filtrados.map((p) => (
+              {ordProtocolos.linhasOrdenadas.map((p) => (
                 <Fragment key={p.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{p.nome}{!p.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

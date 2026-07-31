@@ -12,6 +12,15 @@ import {
 import { EstoquePicker, type EstoqueItemPicker } from "@/components/EstoquePicker";
 import { useCarregar, AvisoCopia, Carregando, Vazio, usePaginacao, PaginacaoMob } from "@/components/mobile/menu/comum";
 import { RESPONSAVEIS, VIAS_APLICACAO } from "@/lib/constants";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "data", rotulo: "Data" },
+  { chave: "numero", rotulo: "Animal" },
+  { chave: "produto", rotulo: "Produto" },
+  { chave: "dose", rotulo: "Dose" },
+];
 
 type Aplic = {
   id: number; numero: string; produto: string; categoria: string | null;
@@ -54,7 +63,10 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
       : todas;
     return filt;
   }, [dados, busca]);
-  const pagLista = usePaginacao(lista);
+  // useOrdenacao assume o controle só depois que o usuário escolhe um campo em
+  // SeletorOrdenacao; até lá, `lista` já vem em ordem (mais recentes primeiro).
+  const ord = useOrdenacao(lista);
+  const pagLista = usePaginacao(ord.linhasOrdenadas);
 
   const iniciar = (a: Aplic) => {
     setEditId(a.id);
@@ -108,6 +120,8 @@ export default function AplicacoesSanidade({ onVoltar }: { onVoltar: () => void 
             <Search size={16} style={{ position: "absolute", left: 12, top: 13, color: "var(--mob-muted)" }} />
             <input style={{ ...inp, paddingLeft: "2.2rem" }} value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Buscar por animal ou produto" />
           </div>
+
+          <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
 
           {erro && <p style={{ color: "var(--mob-vermelho)", fontSize: "0.85rem", marginBottom: "0.6rem", fontWeight: 600 }}>{erro}</p>}
 

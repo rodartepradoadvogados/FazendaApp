@@ -10,6 +10,7 @@ import {
 } from "@/lib/api";
 import { SecaoRecolhivel } from "@/components/ui";
 import { Modal } from "@/components/Modal";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /*
  * Férias e 13º salário — controle DENTRO do app (cálculo, lançamento e
@@ -58,6 +59,8 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [pagandoId, setPagandoId] = useState<number | null>(null);
   const [dataPagamento, setDataPagamento] = useState(hoje());
   const [pagoErro, setPagoErro] = useState<string | null>(null);
+
+  const ordFerias = useOrdenacao(itens ?? []);
 
   const carregar = () => fetchFerias().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -199,12 +202,17 @@ function FeriasSection({ pessoas }: { pessoas: Pessoa[] }) {
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Funcionário</th><th>Gozo</th><th>Dias</th><th>Abono</th>
-                  <th>Valor total</th><th>Status</th><th></th>
+                  <ThOrdenavel label="Funcionário" campo="pessoa_nome" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} />
+                  <ThOrdenavel label="Gozo" campo="data_inicio_gozo" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} />
+                  <ThOrdenavel label="Dias" campo="dias_gozados" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} />
+                  <ThOrdenavel label="Abono" campo="abono_pecuniario_dias" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} />
+                  <ThOrdenavel label="Valor total" campo="valor_total" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="status" coluna={ordFerias.coluna} dir={ordFerias.dir} ordenar={ordFerias.ordenar} />
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {itens.map((r) => (
+                {ordFerias.linhasOrdenadas.map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
                     <td>{r.data_inicio_gozo} a {r.data_fim_gozo}</td>
@@ -265,6 +273,8 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
   const [pagandoId, setPagandoId] = useState<number | null>(null);
   const [dataPagamento, setDataPagamento] = useState(hoje());
   const [pagoErro, setPagoErro] = useState<string | null>(null);
+
+  const ordDecimo = useOrdenacao(itens ?? []);
 
   const carregar = () => fetchDecimoTerceiro().then(setItens).catch((e) => setError(e.message));
   useEffect(() => { carregar(); }, []);
@@ -394,12 +404,17 @@ function DecimoTerceiroSection({ pessoas }: { pessoas: Pessoa[] }) {
             <table className="fazenda-table" style={{ fontSize: "0.8rem" }}>
               <thead>
                 <tr>
-                  <th>Funcionário</th><th>Ano</th><th>Parcela</th><th>Meses</th>
-                  <th>Valor líquido</th><th>Status</th><th></th>
+                  <ThOrdenavel label="Funcionário" campo="pessoa_nome" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} />
+                  <ThOrdenavel label="Ano" campo="ano" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} />
+                  <ThOrdenavel label="Parcela" campo="parcela" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} />
+                  <ThOrdenavel label="Meses" campo="meses_trabalhados" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} />
+                  <ThOrdenavel label="Valor líquido" campo="valor_liquido" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} alinhar="right" />
+                  <ThOrdenavel label="Status" campo="status" coluna={ordDecimo.coluna} dir={ordDecimo.dir} ordenar={ordDecimo.ordenar} />
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
-                {itens.map((r) => (
+                {ordDecimo.linhasOrdenadas.map((r) => (
                   <tr key={r.id}>
                     <td style={{ fontWeight: 700 }}>{r.pessoa_nome}</td>
                     <td>{r.ano}</td>

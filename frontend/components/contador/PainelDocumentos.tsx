@@ -10,6 +10,7 @@ import {
   type DocumentoArquivado,
 } from "@/lib/api";
 import { CORES_CONTADOR } from "@/app/contador/layout";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const C = CORES_CONTADOR;
 const estiloCard: React.CSSProperties = { background: C.painel, border: `1px solid ${C.borda}`, borderRadius: "4px", padding: "1.3rem" };
@@ -50,6 +51,8 @@ export function PainelDocumentos() {
     fetchDocumentos(filtroCategoria ? { categoria: filtroCategoria } : undefined)
       .then(setDocumentos).catch((e) => setErro(e.message)).finally(() => setCarregando(false));
   };
+
+  const ord = useOrdenacao(documentos);
 
   useEffect(() => { fetchCategoriasDocumento().then(setCategorias).catch(() => setCategorias([])); }, []);
   useEffect(recarregar, [filtroCategoria]);
@@ -136,15 +139,19 @@ export function PainelDocumentos() {
           </select>
         </div>
         {carregando ? <p style={{ color: C.mudo, fontSize: "0.82rem" }}>Carregando…</p> : (
-          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <table className="contador-th" style={{ width: "100%", borderCollapse: "collapse" }}>
             <thead>
               <tr>
-                <th style={estiloTh}>Arquivo</th><th style={estiloTh}>Categoria</th><th style={estiloTh}>Tamanho</th>
-                <th style={estiloTh}>Enviado em</th><th style={estiloTh}>Balanço</th><th style={estiloTh}></th>
+                <ThOrdenavel label="Arquivo" campo="nome_original" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Categoria" campo="categoria" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Tamanho" campo="tamanho_bytes" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Enviado em" campo="data_upload" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Balanço" campo="inserir_no_balanco" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <th style={estiloTh}></th>
               </tr>
             </thead>
             <tbody>
-              {documentos.map((d) => (
+              {ord.linhasOrdenadas.map((d) => (
                 <tr key={d.id}>
                   <td style={estiloTd}>{d.nome_original}{d.descricao && <span style={{ color: C.mudo }}> — {d.descricao}</span>}</td>
                   <td style={estiloTd}>{d.categoria}</td>

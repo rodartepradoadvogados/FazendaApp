@@ -494,7 +494,16 @@ export default function FinanceiroPage() {
       return { data: r.data_pagamento, descricao: r.descricao, fornecedor: r.fornecedor, entrada, saida, saldo: Math.round(acc) };
     });
   }, [filtrados]);
-  const pagLivro = usePaginacao(livro);
+  // Ordenação do Livro Caixa — "Saldo" fica de fora de propósito: é acumulado
+  // na ordem cronológica original, então ordenar por ele não faz sentido.
+  const { ordenados: livroOrdenado, sortKey: sortKeyLivro, sortDir: sortDirLivro, ordenar: ordenarLivro } = useOrdenacao(livro, {
+    data: (r) => r.data || "",
+    descricao: (r) => (r.descricao || "").toLowerCase(),
+    fornecedor: (r) => (r.fornecedor || "").toLowerCase(),
+    entrada: (r) => r.entrada,
+    saida: (r) => r.saida,
+  });
+  const pagLivro = usePaginacao(livroOrdenado);
 
   const inputStyle: React.CSSProperties = { background: "var(--surface-2)", color: "var(--text)", border: "1px solid var(--border)", borderRadius: "6px", padding: "0.35rem 0.5rem", fontSize: "0.8rem" };
 
@@ -808,7 +817,14 @@ export default function FinanceiroPage() {
             </>)}
             {rel === "livro" && (
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor/Cliente</th><th style={{ textAlign: "right" }}>Entrada</th><th style={{ textAlign: "right" }}>Saída</th><th style={{ textAlign: "right" }}>Saldo</th></tr></thead>
+                <thead><tr>
+                  <ThOrd rotulo="Data" chave="data" sortKey={sortKeyLivro} sortDir={sortDirLivro} onSort={ordenarLivro} />
+                  <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKeyLivro} sortDir={sortDirLivro} onSort={ordenarLivro} />
+                  <ThOrd rotulo="Fornecedor/Cliente" chave="fornecedor" sortKey={sortKeyLivro} sortDir={sortDirLivro} onSort={ordenarLivro} />
+                  <ThOrd rotulo="Entrada" chave="entrada" sortKey={sortKeyLivro} sortDir={sortDirLivro} onSort={ordenarLivro} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Saída" chave="saida" sortKey={sortKeyLivro} sortDir={sortDirLivro} onSort={ordenarLivro} style={{ textAlign: "right" }} />
+                  <th style={{ textAlign: "right" }} title="Saldo acumulado na ordem cronológica — não ordenável">Saldo</th>
+                </tr></thead>
                 <tbody>{pagLivro.linhasPagina.map((l, i) => (
                   <tr key={i}>
                     <td style={{ whiteSpace: "nowrap", fontSize: "0.75rem" }}>{formatDate(l.data || "")}</td>
@@ -1278,6 +1294,22 @@ function PatrimonioView() {
   const carregar = () => { fetchPatrimonio().then(setDados).catch((e) => setErro(e.message)); };
   useEffect(carregar, []);
 
+  // Hook chamado incondicionalmente (antes dos "return" abaixo) — usa a
+  // vida útil em anos (numérica) já calculada pelo backend como valor bruto
+  // de ordenação, em vez do texto livre exibido na coluna "Vida útil".
+  const { ordenados: bensOrdenados, sortKey: sortKeyBens, sortDir: sortDirBens, ordenar: ordenarBens } = useOrdenacao(dados?.itens ?? [], {
+    tipo: (i) => (i.tipo || "").toLowerCase(),
+    nome: (i) => (i.nome || "").toLowerCase(),
+    numero: (i) => (i.numero || "").toLowerCase(),
+    vidaUtil: (i) => i.vida_util_anos ?? -1,
+    valorResidual: (i) => i.valor_residual ?? -1,
+    quantidade: (i) => i.quantidade ?? -1,
+    valorTotal: (i) => i.valor_total ?? -1,
+    depreciacaoAcumulada: (i) => i.depreciacao_acumulada ?? -1,
+    valorAtual: (i) => i.valor_atual ?? -1,
+    proximaManutencao: (i) => i.data_proxima_manutencao || "",
+  });
+
   if (erro) return <div className="alert-critico"><span>Sem dados: {erro}. <a href="/upload" style={{ color: "var(--dourado-light)", textDecoration: "underline" }}>Suba o LISTA_DE_PATRIMONIO.csv</a>.</span></div>;
   if (!dados) return <p style={{ color: "var(--text-muted)" }}>Carregando…</p>;
   if (!dados.itens.length) {
@@ -1330,15 +1362,24 @@ function PatrimonioView() {
           <table className="fazenda-table">
             <thead>
               <tr>
-                <th>Tipo</th><th>Nome</th><th>Nº</th><th>Imobilização</th>
-                <th>Método</th><th>Vida útil</th><th style={{ textAlign: "right" }}>Vlr. residual</th>
-                <th style={{ textAlign: "right" }}>Qtd.</th><th style={{ textAlign: "right" }}>Vlr. total</th>
-                <th style={{ textAlign: "right" }}>Depreciação acum.</th><th style={{ textAlign: "right" }}>Valor atual</th>
-                <th>Baixa</th><th>Próxima manutenção</th><th></th>
+                <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
+                <ThOrd rotulo="Nome" chave="nome" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
+                <ThOrd rotulo="Nº" chave="numero" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
+                <th>Imobilização</th>
+                <th>Método</th>
+                <ThOrd rotulo="Vida útil" chave="vidaUtil" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
+                <ThOrd rotulo="Vlr. residual" chave="valorResidual" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Qtd." chave="quantidade" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Vlr. total" chave="valorTotal" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Depreciação acum." chave="depreciacaoAcumulada" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Valor atual" chave="valorAtual" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} style={{ textAlign: "right" }} />
+                <th>Baixa</th>
+                <ThOrd rotulo="Próxima manutenção" chave="proximaManutencao" sortKey={sortKeyBens} sortDir={sortDirBens} onSort={ordenarBens} />
+                <th></th>
               </tr>
             </thead>
             <tbody>
-              {dados.itens.map((i) => (
+              {bensOrdenados.map((i) => (
                 <tr key={i.id} style={i.data_baixa ? { opacity: 0.55 } : undefined}>
                   <td style={{ fontSize: "0.78rem" }}>{i.tipo || "—"}</td>
                   <td style={{ fontWeight: 600, fontSize: "0.83rem" }}>{i.nome}</td>
@@ -1390,6 +1431,13 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
 
   const [historico, setHistorico] = useState<any[] | null>(null);
   useEffect(() => { fetchManutencoesPatrimonio(item.id).then(setHistorico).catch(() => setHistorico([])); }, [item.id]);
+  const { ordenados: historicoOrdenado, sortKey: sortKeyHist, sortDir: sortDirHist, ordenar: ordenarHist } = useOrdenacao(historico ?? [], {
+    data: (h) => h.data_realizacao || "",
+    descricao: (h) => (h.descricao || "").toLowerCase(),
+    fornecedor: (h) => (h.fornecedor || "").toLowerCase(),
+    valor: (h) => h.valor ?? -1,
+    status: (h) => h.status || "",
+  });
 
   const [mostrarRegistro, setMostrarRegistro] = useState(false);
   const [dataRealizacao, setDataRealizacao] = useState(new Date().toISOString().slice(0, 10));
@@ -1518,9 +1566,16 @@ function ModalManutencaoPatrimonio({ item, onClose, onSalvo }: { item: ItemPatri
           ) : (
             <div className="overflow-x-auto">
               <table className="fazenda-table">
-                <thead><tr><th>Data</th><th>Descrição</th><th>Fornecedor</th><th style={{ textAlign: "right" }}>Valor</th><th>Status</th><th>Lançamento</th></tr></thead>
+                <thead><tr>
+                  <ThOrd rotulo="Data" chave="data" sortKey={sortKeyHist} sortDir={sortDirHist} onSort={ordenarHist} />
+                  <ThOrd rotulo="Descrição" chave="descricao" sortKey={sortKeyHist} sortDir={sortDirHist} onSort={ordenarHist} />
+                  <ThOrd rotulo="Fornecedor" chave="fornecedor" sortKey={sortKeyHist} sortDir={sortDirHist} onSort={ordenarHist} />
+                  <ThOrd rotulo="Valor" chave="valor" sortKey={sortKeyHist} sortDir={sortDirHist} onSort={ordenarHist} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="Status" chave="status" sortKey={sortKeyHist} sortDir={sortDirHist} onSort={ordenarHist} />
+                  <th>Lançamento</th>
+                </tr></thead>
                 <tbody>
-                  {historico.map((h) => (
+                  {historicoOrdenado.map((h) => (
                     <tr key={h.id}>
                       <td style={{ fontSize: "0.78rem" }}>{formatDate(h.data_realizacao)}</td>
                       <td style={{ fontSize: "0.78rem" }}>{h.descricao || "—"}</td>
@@ -1579,6 +1634,17 @@ function RelatorioCompraVendaAnimaisView() {
   const totalCompra = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "compra").reduce((a, l) => a + l.valor, 0), [linhas]);
   const totalVenda = useMemo(() => (linhas ?? []).filter((l) => l.tipo === "venda").reduce((a, l) => a + l.valor, 0), [linhas]);
   const linhasExport = useMemo(() => (linhas ?? []).map((l) => ({ ...l, tipoLabel: l.tipo === "compra" ? "Compra" : "Venda" })), [linhas]);
+  const { ordenados: linhasOrdenadas, sortKey: sortKeyAnimais, sortDir: sortDirAnimais, ordenar: ordenarAnimais } = useOrdenacao(linhas ?? [], {
+    tipo: (l) => l.tipo,
+    numero_animal: (l) => l.numero_animal || "",
+    contraparte: (l) => (l.contraparte || "").toLowerCase(),
+    data: (l) => l.data || "",
+    valor: (l) => l.valor,
+    gta: (l) => l.gta || "",
+    numero_documento: (l) => l.numero_documento || "",
+    numero_lancamento: (l) => l.numero_lancamento || "",
+    centro_custo: (l) => l.centro_custo || "",
+  });
 
   return (
     <>
@@ -1618,11 +1684,18 @@ function RelatorioCompraVendaAnimaisView() {
             <div className="overflow-x-auto">
               <table className="fazenda-table">
                 <thead><tr>
-                  <th>Tipo</th><th>Nº animal</th><th>Contraparte</th><th>Data</th>
-                  <th style={{ textAlign: "right" }}>Valor (por animal)</th><th>GTA</th><th>Documento</th><th>Lançamento</th><th>Centro de custo</th>
+                  <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Nº animal" chave="numero_animal" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Contraparte" chave="contraparte" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Data" chave="data" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Valor (por animal)" chave="valor" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} style={{ textAlign: "right" }} />
+                  <ThOrd rotulo="GTA" chave="gta" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Documento" chave="numero_documento" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Lançamento" chave="numero_lancamento" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
+                  <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeyAnimais} sortDir={sortDirAnimais} onSort={ordenarAnimais} />
                 </tr></thead>
                 <tbody>
-                  {linhas.map((l, i) => (
+                  {linhasOrdenadas.map((l, i) => (
                     <tr key={i}>
                       <td>
                         <span style={{
@@ -2698,6 +2771,22 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
     recarregar();
   }
 
+  const { ordenados: comparativoOrdenado, sortKey: sortKeyComparativo, sortDir: sortDirComparativo, ordenar: ordenarComparativo } = useOrdenacao(comparativo?.linhas ?? [], {
+    conta: (l) => (l.nome_conta_gerencial || "").toLowerCase(),
+    tipo: (l) => l.tipo,
+    orcado: (l) => l.orcado,
+    realizado: (l) => l.realizado,
+    desvio: (l) => l.desvio,
+    desvioPct: (l) => l.desvio_pct ?? 0,
+  });
+  const { ordenados: itensOrdenados, sortKey: sortKeyItensOrc, sortDir: sortDirItensOrc, ordenar: ordenarItensOrc } = useOrdenacao(itens ?? [], {
+    mes: (i) => i.mes,
+    conta: (i) => (i.nome_conta_gerencial || "").toLowerCase(),
+    centro_custo: (i) => (i.centro_custo || "").toLowerCase(),
+    tipo: (i) => i.tipo,
+    valor_orcado: (i) => i.valor_orcado,
+  });
+
   return (
     <div>
       <div className="card mb-4">
@@ -2739,9 +2828,16 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
           </div>
           <div className="overflow-x-auto">
             <table className="fazenda-table">
-              <thead><tr><th>Conta gerencial</th><th>Tipo</th><th style={{ textAlign: "right" }}>Orçado</th><th style={{ textAlign: "right" }}>Realizado</th><th style={{ textAlign: "right" }}>Desvio</th><th style={{ textAlign: "right" }}>Desvio %</th></tr></thead>
+              <thead><tr>
+                <ThOrd rotulo="Conta gerencial" chave="conta" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} />
+                <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} />
+                <ThOrd rotulo="Orçado" chave="orcado" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Realizado" chave="realizado" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Desvio" chave="desvio" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} style={{ textAlign: "right" }} />
+                <ThOrd rotulo="Desvio %" chave="desvioPct" sortKey={sortKeyComparativo} sortDir={sortDirComparativo} onSort={ordenarComparativo} style={{ textAlign: "right" }} />
+              </tr></thead>
               <tbody>
-                {comparativo.linhas.map((l) => (
+                {comparativoOrdenado.map((l) => (
                   <tr key={l.codigo_conta_gerencial}>
                     <td style={{ fontSize: "0.82rem" }}>{l.nome_conta_gerencial}</td>
                     <td style={{ fontSize: "0.78rem", color: l.tipo === "receita" ? "var(--green-light)" : "var(--red)" }}>{l.tipo === "receita" ? "Receita" : "Despesa"}</td>
@@ -2751,7 +2847,7 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
                     <td style={{ textAlign: "right", fontSize: "0.78rem", color: "var(--text-muted)" }}>{l.desvio_pct != null ? `${l.desvio_pct}%` : "—"}</td>
                   </tr>
                 ))}
-                {!comparativo.linhas.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum item de orçamento cadastrado neste período.</td></tr>}
+                {!comparativoOrdenado.length && <tr><td colSpan={6} style={{ textAlign: "center", color: "var(--text-muted)", padding: "1rem" }}>Nenhum item de orçamento cadastrado neste período.</td></tr>}
               </tbody>
             </table>
           </div>
@@ -2762,9 +2858,16 @@ function OrcamentoView({ planoContas, fornecedores }: { planoContas: ContaPlano[
         <div className="card-header mb-3">Itens de orçamento — {ano}</div>
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Mês</th><th>Conta gerencial</th><th>Centro de custo</th><th>Tipo</th><th style={{ textAlign: "right" }}>Valor orçado</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrd rotulo="Mês" chave="mes" sortKey={sortKeyItensOrc} sortDir={sortDirItensOrc} onSort={ordenarItensOrc} />
+              <ThOrd rotulo="Conta gerencial" chave="conta" sortKey={sortKeyItensOrc} sortDir={sortDirItensOrc} onSort={ordenarItensOrc} />
+              <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeyItensOrc} sortDir={sortDirItensOrc} onSort={ordenarItensOrc} />
+              <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyItensOrc} sortDir={sortDirItensOrc} onSort={ordenarItensOrc} />
+              <ThOrd rotulo="Valor orçado" chave="valor_orcado" sortKey={sortKeyItensOrc} sortDir={sortDirItensOrc} onSort={ordenarItensOrc} style={{ textAlign: "right" }} />
+              <th></th>
+            </tr></thead>
             <tbody>
-              {(itens ?? []).map((i) => (
+              {itensOrdenados.map((i) => (
                 <tr key={i.id}>
                   <td style={{ fontSize: "0.82rem" }}>{MESES_NOMES[i.mes - 1]}</td>
                   <td style={{ fontSize: "0.82rem" }}>{i.nome_conta_gerencial}</td>
@@ -3083,6 +3186,16 @@ function CenarioDetalheView({ cenario, planoContas, centros, fornecedores, onEdi
     recarregar();
   }
 
+  // "Mês" ordena pelo próprio mes_competencia ("AAAA-MM") — já é uma string
+  // que ordena cronologicamente sozinha, sem precisar de índice à parte.
+  const { ordenados: itensCenarioOrdenados, sortKey: sortKeyItensCen, sortDir: sortDirItensCen, ordenar: ordenarItensCen } = useOrdenacao(itens ?? [], {
+    mes: (i) => i.mes_competencia || "",
+    conta: (i) => (i.nome_conta_gerencial || "").toLowerCase(),
+    centro_custo: (i) => (i.centro_custo || "").toLowerCase(),
+    tipo: (i) => i.tipo,
+    valor_previsto: (i) => i.valor_previsto,
+  });
+
   return (
     <>
       <div className="card mb-4">
@@ -3122,9 +3235,16 @@ function CenarioDetalheView({ cenario, planoContas, centros, fornecedores, onEdi
         {erro && <div className="alert-critico mb-3"><span>{erro}</span></div>}
         <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Mês</th><th>Conta gerencial</th><th>Centro de custo</th><th>Tipo</th><th style={{ textAlign: "right" }}>Valor previsto</th><th></th></tr></thead>
+            <thead><tr>
+              <ThOrd rotulo="Mês" chave="mes" sortKey={sortKeyItensCen} sortDir={sortDirItensCen} onSort={ordenarItensCen} />
+              <ThOrd rotulo="Conta gerencial" chave="conta" sortKey={sortKeyItensCen} sortDir={sortDirItensCen} onSort={ordenarItensCen} />
+              <ThOrd rotulo="Centro de custo" chave="centro_custo" sortKey={sortKeyItensCen} sortDir={sortDirItensCen} onSort={ordenarItensCen} />
+              <ThOrd rotulo="Tipo" chave="tipo" sortKey={sortKeyItensCen} sortDir={sortDirItensCen} onSort={ordenarItensCen} />
+              <ThOrd rotulo="Valor previsto" chave="valor_previsto" sortKey={sortKeyItensCen} sortDir={sortDirItensCen} onSort={ordenarItensCen} style={{ textAlign: "right" }} />
+              <th></th>
+            </tr></thead>
             <tbody>
-              {(itens ?? []).map((i) => (
+              {itensCenarioOrdenados.map((i) => (
                 <tr key={i.id}>
                   <td style={{ fontSize: "0.82rem" }}>{mesCompLabel(i.mes_competencia)}</td>
                   <td style={{ fontSize: "0.82rem" }}>{i.nome_conta_gerencial}</td>

@@ -1,6 +1,7 @@
 "use client";
 import { X } from "lucide-react";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 export type AnimalRow = {
   numero: string;
@@ -50,6 +51,7 @@ function repro(a: AnimalRow, estado: string | undefined) {
 export function AnimalModal({ title, animais, onClose }: { title: string; animais: AnimalRow[]; onClose: () => void }) {
   const temRepro = animais.some((a) => a.data_ult_servico_pos || a.data_ult_parto);
   const { porNumero, rotuloDe } = useEstadosReprodutivos();
+  const ord = useOrdenacao(animais);
   return (
     <div
       onClick={onClose}
@@ -64,11 +66,15 @@ export function AnimalModal({ title, animais, onClose }: { title: string; animai
           {animais.length ? (
             <table className="fazenda-table">
               <thead><tr>
-                <th>Nº</th><th>Grupo</th><th>Categoria</th><th>Sit. Rep.</th><th style={{ textAlign: "right" }}>DEL</th>
+                <ThOrdenavel label="Nº" campo="numero" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Grupo" campo="grupo_primario" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <ThOrdenavel label="Categoria" campo="categoria_abrev" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+                <th>Sit. Rep.</th>
+                <ThOrdenavel label="DEL" campo="del_dias" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} alinhar="right" />
                 {temRepro && <><th style={{ textAlign: "right" }}>Gest.</th><th style={{ textAlign: "right" }}>P/ parto</th><th>Parto prov.</th><th style={{ textAlign: "right" }}>PEV</th></>}
               </tr></thead>
               <tbody>
-                {animais.map((a) => {
+                {ord.linhasOrdenadas.map((a) => {
                   const r = repro(a, porNumero.get(a.numero)?.estado);
                   return (
                     <tr key={a.numero}>

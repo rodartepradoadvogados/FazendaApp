@@ -6,6 +6,7 @@ import {
   fetchFolhaMembroCowData, lancarFolhaMembroCowData, excluirFolhaCowData,
   type PessoaCowData, type FolhaCowData,
 } from "@/lib/api";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const COR = { cartao: "#0d1220", borda: "#1c2438", mudo: "#7c8aa8", dourado: "#e8c256", verde: "#3ecf8e", vermelho: "#e05c5c", texto: "#e8ecf5" };
 const inputStyle: React.CSSProperties = {
@@ -66,6 +67,8 @@ export default function EquipeCowData() {
     if (!confirm("Excluir este membro da equipe? Isso não pode ser desfeito.")) return;
     try { await excluirMembroEquipeCowData(id); carregar(); } catch (e: any) { setErro(e.message); }
   }
+
+  const ord = useOrdenacao(equipe ?? []);
 
   return (
     <div className="animate-in">
@@ -130,17 +133,17 @@ export default function EquipeCowData() {
           <thead>
             <tr style={{ borderBottom: `1px solid ${COR.borda}`, color: COR.mudo, textAlign: "left" }}>
               <th style={{ padding: "0.6rem 1rem", width: "1.5rem" }}></th>
-              <th style={{ padding: "0.6rem 1rem" }}>Nome</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Cargo</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Salário base</th>
-              <th style={{ padding: "0.6rem 1rem" }}>Status</th>
+              <ThOrdenavel label="Nome" campo="nome" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Cargo" campo="cargo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Salário base" campo="salario_base" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
+              <ThOrdenavel label="Status" campo="ativo" coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
               <th style={{ padding: "0.6rem 1rem" }}></th>
             </tr>
           </thead>
           <tbody>
             {equipe === null && <tr><td colSpan={6} style={{ padding: "1rem", color: COR.mudo }}>Carregando…</td></tr>}
             {equipe?.length === 0 && <tr><td colSpan={6} style={{ padding: "1rem", color: COR.mudo }}>Nenhum membro cadastrado ainda.</td></tr>}
-            {equipe?.map((p) => (
+            {equipe && ord.linhasOrdenadas.map((p) => (
               <FichaLinha key={p.id} pessoa={p} expandido={expandidoId === p.id}
                 onToggle={() => setExpandidoId(expandidoId === p.id ? null : p.id)}
                 onAlternarAtivo={() => alternarAtivo(p)} onExcluir={() => excluir(p.id)} />
@@ -176,6 +179,8 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
   async function excluirFolha(id: number) {
     try { await excluirFolhaCowData(id); setFolhas(await fetchFolhaMembroCowData(pessoa.id)); } catch (e: any) { setErro(e.message); }
   }
+
+  const ordFolhas = useOrdenacao(folhas ?? []);
 
   return (
     <>
@@ -234,18 +239,18 @@ function FichaLinha({ pessoa, expandido, onToggle, onAlternarAtivo, onExcluir }:
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: "0.78rem" }}>
               <thead>
                 <tr style={{ color: COR.mudo, textAlign: "left" }}>
-                  <th style={{ padding: "0.3rem 0.5rem" }}>Competência</th>
-                  <th style={{ padding: "0.3rem 0.5rem" }}>Bruto</th>
-                  <th style={{ padding: "0.3rem 0.5rem" }}>Descontos</th>
-                  <th style={{ padding: "0.3rem 0.5rem" }}>Líquido</th>
-                  <th style={{ padding: "0.3rem 0.5rem" }}>Status</th>
+                  <ThOrdenavel label="Competência" campo="competencia" coluna={ordFolhas.coluna} dir={ordFolhas.dir} ordenar={ordFolhas.ordenar} />
+                  <ThOrdenavel label="Bruto" campo="valor_bruto" coluna={ordFolhas.coluna} dir={ordFolhas.dir} ordenar={ordFolhas.ordenar} />
+                  <ThOrdenavel label="Descontos" campo="descontos" coluna={ordFolhas.coluna} dir={ordFolhas.dir} ordenar={ordFolhas.ordenar} />
+                  <ThOrdenavel label="Líquido" campo="valor_liquido" coluna={ordFolhas.coluna} dir={ordFolhas.dir} ordenar={ordFolhas.ordenar} />
+                  <ThOrdenavel label="Status" campo="status" coluna={ordFolhas.coluna} dir={ordFolhas.dir} ordenar={ordFolhas.ordenar} />
                   <th style={{ padding: "0.3rem 0.5rem" }}></th>
                 </tr>
               </thead>
               <tbody>
                 {folhas === null && <tr><td colSpan={6} style={{ padding: "0.5rem", color: COR.mudo }}>Carregando…</td></tr>}
                 {folhas?.length === 0 && <tr><td colSpan={6} style={{ padding: "0.5rem", color: COR.mudo }}>Nenhum lançamento ainda.</td></tr>}
-                {folhas?.map((f) => (
+                {folhas && ordFolhas.linhasOrdenadas.map((f) => (
                   <tr key={f.id} style={{ borderTop: `1px solid ${COR.borda}` }}>
                     <td style={{ padding: "0.4rem 0.5rem" }}>{f.competencia}</td>
                     <td style={{ padding: "0.4rem 0.5rem", fontVariantNumeric: "tabular-nums" }}>R$ {f.valor_bruto.toFixed(2)}</td>

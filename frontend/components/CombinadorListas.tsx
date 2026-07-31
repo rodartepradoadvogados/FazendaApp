@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Combine, RefreshCw, Droplets } from "lucide-react";
 import { fetchRelatoriosManejo, fetchAgenda, fetchRelatorioBst } from "@/lib/api";
 import { ExportarBotoes } from "@/components/ExportarBotoes";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 /**
  * Listas Gerenciais — a "Lista de BST" (quem está apta,
@@ -96,6 +97,7 @@ export default function CombinadorListas() {
     }));
     return { escolhidas, linhas };
   }, [selecionadas, operacao, listas]);
+  const ordResultado = useOrdenacao(resultado?.linhas ?? []);
 
   const bstAptas = agenda?.bst_elegiveis || [];
   const bstIncluir = agenda?.bst_nunca_aplicados || [];
@@ -199,9 +201,12 @@ export default function CombinadorListas() {
             ) : (
               <div style={{ overflowX: "auto", maxHeight: 360, overflowY: "auto" }}>
                 <table className="fazenda-table">
-                  <thead><tr><th>Número</th><th>Presente em</th></tr></thead>
+                  <thead><tr>
+                    <ThOrdenavel label="Número" campo="numero" coluna={ordResultado.coluna} dir={ordResultado.dir} ordenar={ordResultado.ordenar} />
+                    <ThOrdenavel label="Presente em" campo="presente_em" coluna={ordResultado.coluna} dir={ordResultado.dir} ordenar={ordResultado.ordenar} />
+                  </tr></thead>
                   <tbody>
-                    {resultado.linhas.map((r) => (
+                    {ordResultado.linhasOrdenadas.map((r) => (
                       <tr key={r.numero}><td>{r.numero}</td><td style={{ color: "var(--text-muted)", fontSize: "0.8rem" }}>{r.presente_em}</td></tr>
                     ))}
                   </tbody>

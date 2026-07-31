@@ -1,6 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import { Plus, Pencil, AlertTriangle, Check, X, Search } from "lucide-react";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 type Motivo = { id: number; nome: string; ativo: boolean };
 type Form = { nome: string; ativo: boolean };
@@ -57,6 +58,7 @@ export default function CadastroMotivosGenerico({
 
   const termoBusca = normalizar(busca.trim());
   const filtrados = (itens ?? []).filter((m) => !termoBusca || normalizar(m.nome).includes(termoBusca));
+  const { linhasOrdenadas, coluna, dir, ordenar } = useOrdenacao(filtrados);
 
   return (
     <div className="card">
@@ -81,9 +83,9 @@ export default function CadastroMotivosGenerico({
           </div>
           <div className="overflow-x-auto">
           <table className="fazenda-table">
-            <thead><tr><th>Nome</th><th></th></tr></thead>
+            <thead><tr><ThOrdenavel label="Nome" campo="nome" coluna={coluna} dir={dir} ordenar={ordenar} /><th></th></tr></thead>
             <tbody>
-              {filtrados.map((m) => (
+              {linhasOrdenadas.map((m) => (
                 <Fragment key={m.id}>
                   <tr>
                     <td style={{ fontWeight: 700 }}>{m.nome}{!m.ativo && <span style={{ color: "var(--text-muted)", fontWeight: 400, fontSize: "0.72rem" }}> (inativo)</span>}</td>

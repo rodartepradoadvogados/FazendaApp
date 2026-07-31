@@ -6,6 +6,15 @@ import { useMemo, useState } from "react";
 import { MobVoltar, MobCard } from "@/components/mobile/ui";
 import { fetchControles, formatDate, firstDayOfMonth, today } from "@/lib/api";
 import { useCarregar, AvisoCopia, Carregando, Vazio, FiltroPeriodo } from "@/components/mobile/menu/comum";
+import { useOrdenacao } from "@/components/Ordenavel";
+import { SeletorOrdenacao, type CampoOrdenacao } from "@/components/mobile/SeletorOrdenacao";
+
+const CAMPOS_ORDENACAO: CampoOrdenacao[] = [
+  { chave: "data", rotulo: "Data" },
+  { chave: "numero", rotulo: "Animal" },
+  { chave: "producao_kg", rotulo: "Produção (kg)" },
+  { chave: "del", rotulo: "DEL" },
+];
 
 type ControleRow = {
   numero: string; data: string | null; producao_kg: number | null; del: number | null;
@@ -31,6 +40,9 @@ export default function UltimosControles({ onVoltar }: { onVoltar: () => void })
       .filter((r) => !termo || r.numero.toLowerCase().includes(termo))
       .sort((a, b) => (a.data || "") < (b.data || "") ? 1 : -1);
   }, [regs, inicio, fim, busca]);
+  // useOrdenacao assume o controle só depois que o usuário escolhe um campo em
+  // SeletorOrdenacao; até lá, `filtrados` já vem em ordem (data desc).
+  const ord = useOrdenacao(filtrados);
 
   return (
     <div>
@@ -48,8 +60,9 @@ export default function UltimosControles({ onVoltar }: { onVoltar: () => void })
         <Vazio>Nenhum controle no período/filtro.</Vazio>
       ) : (
         <>
+          <SeletorOrdenacao campos={CAMPOS_ORDENACAO} coluna={ord.coluna} dir={ord.dir} ordenar={ord.ordenar} />
           <p style={{ fontSize: "0.8rem", color: "var(--mob-muted)", marginBottom: "0.6rem" }}>{filtrados.length} controle{filtrados.length !== 1 ? "s" : ""}</p>
-          {filtrados.map((r, i) => {
+          {ord.linhasOrdenadas.map((r, i) => {
             const ordenhas = [r.ordenha1_kg, r.ordenha2_kg, r.ordenha3_kg].filter((v) => v != null);
             return (
               <MobCard key={`${r.numero}-${r.data}-${i}`} alt={(i % 2) as 0 | 1} style={{ marginBottom: "0.5rem" }}>

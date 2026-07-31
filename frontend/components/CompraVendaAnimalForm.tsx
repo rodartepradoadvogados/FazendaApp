@@ -13,6 +13,7 @@ import { AnimalPickerModal } from "./AnimalPickerModal";
 import type { AnimalRow } from "./AnimalModal";
 import ComissaoCorretagemForm from "./ComissaoCorretagemForm";
 import { ParcelasEditor, CampoQtdParcelas, dividirParcelas, type Parcela } from "./ParcelasEditor";
+import { useOrdenacao, ThOrdenavel } from "@/components/Ordenavel";
 
 const inputStyle: React.CSSProperties = {
   width: "100%", background: "var(--surface-2)", color: "var(--text)",
@@ -124,6 +125,8 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
   const admin = ehAdmin();
+
+  const ordHistorico = useOrdenacao(historico ?? []);
 
   const carregar = () => {
     fetchFornecedores().then(setFornecedores).catch(() => {});
@@ -462,12 +465,16 @@ export default function CompraVendaAnimalForm({ modo, animais }: { modo: "compra
           <div className="overflow-x-auto">
             <table className="fazenda-table" style={{ margin: 0 }}>
               <thead><tr>
-                <th>Nº</th><th>{rotuloContraparte}</th><th>Data</th>
-                <th style={{ textAlign: "right" }}>Valor (por animal)</th><th>GTA</th><th>Lançamento</th>
+                <ThOrdenavel label="Nº" campo="numero_animal" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label={rotuloContraparte} campo={ehCompra ? "vendedor" : "comprador"} coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Data" campo={ehCompra ? "data_compra" : "data_venda"} coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Valor (por animal)" campo="valor" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} alinhar="right" />
+                <ThOrdenavel label="GTA" campo="gta" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
+                <ThOrdenavel label="Lançamento" campo="numero_lancamento_gerado" coluna={ordHistorico.coluna} dir={ordHistorico.dir} ordenar={ordHistorico.ordenar} />
                 {admin && <th style={{ textAlign: "left" }}>Usuário</th>}
               </tr></thead>
               <tbody>
-                {historico.map((c) => (
+                {ordHistorico.linhasOrdenadas.map((c) => (
                   <tr key={c.id}>
                     <td style={{ fontWeight: 700 }}>{c.numero_animal}</td>
                     <td style={{ fontSize: "0.8rem" }}>{ehCompra ? c.vendedor : c.comprador}</td>
