@@ -16,6 +16,7 @@ from sqlmodel import Session, select
 
 from fazenda.auth import exigir_admin, get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
+from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro
 from fazenda.models import (
     AgendaManual,
@@ -35,6 +36,7 @@ from fazenda.models import (
     LancamentoItem,
     Lote,
     MotivoMovimentacao,
+    MovimentoEstoque,
     Parto,
     Pessoa,
     PrincipioAtivo,
@@ -811,6 +813,93 @@ def _alvos(tipo: str, id_: str, session: Session, fazenda_id: int | None = None)
     raise HTTPException(status_code=400, detail=f"Tipo inválido: {tipo}")
 
 
+# Mapeia a classe de um objeto que será apagado para o(s) `origem_tipo` que
+# ELE PRÓPRIO pode ter gravado em MovimentoEstoque (origem_id == obj.id) — ver
+# rules/estoque_baixa.py e os pontos de baixa em agenda.py/sanidade.py/
+# reproducao.py. Só entram aqui classes cujo MovimentoEstoque referencia o
+# próprio id do objeto; ex.: ProtocoloIatfAplicacao NÃO entra porque a baixa
+# do protocolo IATF é gravada com origem_id=lancamento_id (ver
+# agenda.py::_marcar_protocolo_iatf_realizado), não o id de cada aplicação —
+# por isso é ProtocoloIatfLancamento quem entra no mapa. Isso também evita
+# duplo estorno "de graça": ao excluir protocolo_sanitario_lancamento, os
+# registros de Sanidade espelhados (mirror) vêm junto na lista de alvos, mas
+# a baixa real está presa ao id da ProtocoloSanitarioAplicacao (origem_tipo=
+# "protocolo_sanitario") — o mirror de Sanidade nunca tem MovimentoEstoque
+# com origem_id igual ao seu próprio id, então a busca abaixo não acha nada
+# pra ele e não reverte a mesma baixa duas vezes.
+_ORIGENS_POR_CLASSE: dict[type, list[str]] = {
+    # Aplicação avulsa em Sanidade + os três fluxos que também geram uma
+    # Sanidade 1-para-1 com a baixa (vacina pré-parto, BST, secagem) — todos
+    # gravam origem_id=sanidade.id. (Exceção conhecida: quando a mesma
+    # Sanidade "avulsa" nasce de POST /sanidade/aplicacoes para VÁRIOS
+    # animais de uma vez, só a última linha do lote carrega o origem_id —
+    # limitação preexistente do registro em lote, não introduzida aqui.)
+    Sanidade: ["sanidade", "vacina_pre_parto", "bst", "secagem"],
+    ProtocoloSanitarioAplicacao: ["protocolo_sanitario"],
+    ProtocoloIatfLancamento: ["iatf"],
+    Servico: ["ia_semen"],
+}
+
+
+def _devolver_dose_semen_do_movimento(
+    session: Session, mov: MovimentoEstoque, fazenda_id: int | None, observacao: str,
+) -> list[str]:
+    """Localiza o EstoqueSemen que a baixa de `mov` (origem_tipo="ia_semen")
+    descontou e devolve a dose — MovimentoEstoque não guarda o id do touro
+    diretamente, só o nome (`nome_item`) e, quando existe um item de Estoque
+    espelhado, o `estoque_id` dele (ver estoque_baixa.baixar_dose_semen)."""
+    touro = None
+    if mov.estoque_id is not None:
+        item_espelho = session.get(Estoque, mov.estoque_id)
+        if item_espelho is not None and item_espelho.estoque_semen_id is not None:
+            touro = session.get(EstoqueSemen, item_espelho.estoque_semen_id)
+    if touro is None:
+        query = select(EstoqueSemen).where(EstoqueSemen.touro_nome == mov.nome_item)
+        if fazenda_id is not None:
+            query = query.where(EstoqueSemen.fazenda_id == fazenda_id)
+        touro = session.exec(query).first()
+    if touro is None:
+        return [f'Não foi possível localizar o estoque de sêmen de "{mov.nome_item}" para devolver {mov.quantidade:g} dose(s).']
+    return estoque_baixa.devolver_dose_semen(
+        session, touro=touro, doses=mov.quantidade, data=date.today(), fazenda_id=fazenda_id,
+        observacao=observacao, origem_tipo=f"estorno_{mov.origem_tipo}", origem_id=mov.origem_id,
+    )
+
+
+def _estornar_estoque_dos_alvos(session: Session, alvos: list, fazenda_id: int | None, tipo_exclusao: str) -> list[str]:
+    """Antes de excluir, devolve ao estoque tudo que os objetos em `alvos`
+    consumiram — resolvido pelos MovimentoEstoque que apontam pra eles via
+    origem_tipo/origem_id (ver rules/estoque_baixa.py e o mapa
+    `_ORIGENS_POR_CLASSE` acima). Genérico: funciona pra qualquer tipo de
+    exclusão que tenha causado baixa, sem reimplementar a lógica de devolução
+    tipo a tipo. Nunca bloqueia a exclusão — só avisa quando algo não pôde
+    ser revertido."""
+    avisos: list[str] = []
+    for obj in alvos:
+        origens = _ORIGENS_POR_CLASSE.get(type(obj))
+        if not origens or getattr(obj, "id", None) is None:
+            continue
+        query = select(MovimentoEstoque).where(
+            MovimentoEstoque.origem_tipo.in_(origens),
+            MovimentoEstoque.origem_id == obj.id,
+            MovimentoEstoque.movimento == "Aplicação",
+        )
+        if fazenda_id is not None:
+            query = query.where(MovimentoEstoque.fazenda_id == fazenda_id)
+        for mov in session.exec(query).all():
+            observacao = f"Estorno por exclusão ({tipo_exclusao}) — mov #{mov.id}"
+            if mov.origem_tipo == "ia_semen":
+                avisos.extend(_devolver_dose_semen_do_movimento(session, mov, fazenda_id, observacao))
+                continue
+            item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=mov.nome_item, estoque_id=mov.estoque_id)
+            avisos.extend(estoque_baixa.devolver(
+                session, item=item, quantidade=mov.quantidade, unidade=mov.unidade, data=date.today(),
+                fazenda_id=fazenda_id, observacao=observacao,
+                origem_tipo=f"estorno_{tipo_exclusao}", origem_id=obj.id, produto=mov.nome_item,
+            ))
+    return avisos
+
+
 class ExclusaoIn(BaseModel):
     tipo: str
     id: str
@@ -837,10 +926,11 @@ def confirmar(
     itens, alvos = _alvos(dados.tipo, dados.id, session, fazenda_id=fazenda_id)
 
     if user.papel == "admin":
+        avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, dados.tipo)
         for obj in alvos:
             session.delete(obj)
         session.commit()
-        return {"status": "excluido", "itens": itens}
+        return {"status": "excluido", "itens": itens, "avisos": avisos}
 
     solicitacao = SolicitacaoExclusao(
         tipo=dados.tipo,
@@ -881,6 +971,7 @@ def aprovar_pendente(
         raise HTTPException(status_code=404, detail="Solicitação não encontrada ou já decidida")
 
     _, alvos = _alvos(sol.tipo, sol.id_alvo, session, fazenda_id=fazenda_id)
+    avisos = _estornar_estoque_dos_alvos(session, alvos, fazenda_id, sol.tipo)
     for obj in alvos:
         session.delete(obj)
     sol.status = "aprovada"
@@ -888,7 +979,7 @@ def aprovar_pendente(
     sol.decidido_em = datetime.utcnow()
     session.add(sol)
     session.commit()
-    return {"aprovado": True}
+    return {"aprovado": True, "avisos": avisos}
 
 
 class RejeitarIn(BaseModel):

@@ -6,16 +6,18 @@ import asyncio
 import contextlib
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
-from sqlmodel import Session
+from sqlalchemy.exc import IntegrityError
+from sqlmodel import Session, select
 
 from fazenda.auth import (
     bloquear_escrita_contador, exigir_contrato_ativo, exigir_modulo, exigir_modulo_contratado, exigir_modulo_qualquer,
     get_current_user, seed_admin, seed_email_dono_backfill, seed_email_dono_correcao_202607c,
     seed_permissao_publicar_dono,
 )
-from fazenda.database import create_db_and_tables, engine
+from fazenda.database import create_db_and_tables, engine, get_session
+from fazenda.models import IdempotenciaChave
 from fazenda.api.routers import (
     agenda,
     alertas_indicador,
@@ -347,6 +349,109 @@ async def _carimbar_fazenda_atual(request, call_next):
         return await call_next(request)
     finally:
         fazenda_atual.reset(token)
+
+
+@contextlib.contextmanager
+def _sessao_idempotencia(request):
+    """Sessão de banco pro middleware de idempotência abaixo — respeita
+    app.dependency_overrides[get_session] em vez de abrir direto contra o
+    `engine` de produção. Sem isso, a suíte de testes (que roda cada teste
+    contra um engine SQLite isolado em memória, sobrescrevendo só a
+    dependency get_session — ver tests/test_alimentacao.py) acabaria
+    gravando a chave de idempotência no banco de desenvolvimento de verdade
+    por baixo do pano, em vez do banco isolado do teste."""
+    fabrica = request.app.dependency_overrides.get(get_session, get_session)
+    gerador = fabrica()
+    session = next(gerador)
+    try:
+        yield session
+    finally:
+        with contextlib.suppress(StopIteration):
+            next(gerador)
+
+
+@app.middleware("http")
+async def _idempotencia(request, call_next):
+    """Evita duplicar um lançamento quando a fila offline do app de campo
+    (frontend/lib/offline.ts) reenvia um POST/PUT/PATCH cuja resposta se
+    perdeu por queda de conexão — o pedido já tinha sido processado com
+    sucesso no servidor, mas o cliente viu erro de rede e reenfileirou.
+
+    Sem o header `Idempotency-Key`, é um no-op completo (comportamento igual
+    a antes deste middleware existir). Com o header: se já existe uma
+    resposta salva para (chave, método, caminho), devolve ela direto, sem
+    chamar a rota de novo. Se não existe, deixa seguir e só grava a resposta
+    se o resultado for 2xx — um erro de validação (4xx) não fica em cache,
+    pra reenviar com o payload corrigido processar normalmente."""
+    chave = request.headers.get("idempotency-key")
+    if not chave or request.method not in ("POST", "PUT", "PATCH"):
+        return await call_next(request)
+
+    metodo = request.method
+    caminho = request.url.path
+    with _sessao_idempotencia(request) as session:
+        existente = session.exec(
+            select(IdempotenciaChave).where(
+                IdempotenciaChave.chave == chave,
+                IdempotenciaChave.metodo == metodo,
+                IdempotenciaChave.caminho == caminho,
+            )
+        ).first()
+        if existente:
+            # Devolver o cache pula toda a auth/permissão da rota (call_next
+            # nem é chamado) — trava mínima pra não virar um jeito de ler a
+            # resposta de outra fazenda sem token, ou de outro tenant, só
+            # "adivinhando" uma chave: só serve se quem pede tem um token
+            # válido da MESMA fazenda que gravou (ou nenhuma das duas tem
+            # fazenda, ex.: endpoint sem token/legado). Não bateu → ignora o
+            # cache e segue pro fluxo normal (roda a rota com a auth de sempre).
+            fid_requisitante = None
+            auth = request.headers.get("authorization") or ""
+            if auth.lower().startswith("bearer "):
+                from fazenda.auth import _validar_token_payload
+                dados = _validar_token_payload(auth.split(" ", 1)[1])
+                if dados:
+                    fid_requisitante = dados.get("fid")
+            if existente.fazenda_id is None or existente.fazenda_id == fid_requisitante:
+                return Response(
+                    content=existente.resposta_json,
+                    status_code=existente.status_code,
+                    media_type="application/json",
+                )
+
+    response = await call_next(request)
+    if not (200 <= response.status_code < 300):
+        return response  # erro de validação etc. — não grava, deixa a resposta original seguir intacta (streaming)
+
+    # Reconstrói o corpo (StreamingResponse só permite ler uma vez) — junta os
+    # chunks e devolve num Response novo, senão o corpo já foi consumido e o
+    # cliente não recebe nada.
+    corpo = b"".join([chunk async for chunk in response.body_iterator])
+
+    fid = None
+    auth = request.headers.get("authorization") or ""
+    if auth.lower().startswith("bearer "):
+        from fazenda.auth import _validar_token_payload
+        dados = _validar_token_payload(auth.split(" ", 1)[1])
+        if dados:
+            fid = dados.get("fid")
+    try:
+        texto = corpo.decode("utf-8")
+    except UnicodeDecodeError:
+        texto = None  # resposta binária (ex.: PDF) — fora do que este cache assume; segue sem gravar
+
+    if texto is not None:
+        try:
+            with _sessao_idempotencia(request) as session:
+                session.add(IdempotenciaChave(
+                    chave=chave, metodo=metodo, caminho=caminho, fazenda_id=fid,
+                    status_code=response.status_code, resposta_json=texto,
+                ))
+                session.commit()
+        except IntegrityError:
+            pass  # corrida rara entre duas tentativas concorrentes com a mesma chave — a primeira grava, esta é descartada
+
+    return Response(content=corpo, status_code=response.status_code, media_type=response.headers.get("content-type"))
 
 # Auth (aberto) + rotas de dados (exigem login).
 app.include_router(auth.router)

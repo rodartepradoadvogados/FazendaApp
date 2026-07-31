@@ -217,8 +217,15 @@ function proximaTentativa(tentativas: number): string {
  */
 export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descricao: string, metodo: "POST" | "PUT" | "DELETE" = "POST"): Promise<{ enviado: boolean }> {
   await iniciar();
+  // Gerado ANTES da tentativa (não só ao enfileirar) — vira o header
+  // Idempotency-Key tanto na 1ª tentativa quanto em qualquer reenvio pela
+  // fila. Isso cobre o caso em que o POST chegou e foi processado no
+  // servidor, mas a resposta se perdeu na volta (queda de conexão): o
+  // cliente vê erro de rede e enfileira, porém o reenvio usa a MESMA chave,
+  // então o servidor devolve a resposta já salva em vez de duplicar.
+  const id = gerarId();
   if (!navigator.onLine) {
-    await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
+    await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
     await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
     return { enviado: false };
   }
@@ -226,7 +233,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
   try {
     const res = await authFetch(`${API}${caminho}`, {
       method: metodo,
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "Idempotency-Key": id },
       body: JSON.stringify(corpo),
       signal: AbortSignal.timeout(TIMEOUT_ENVIO_MS),
     });
@@ -239,7 +246,7 @@ export async function enviarOuEnfileirar(caminho: string, corpo: unknown, descri
     // TypeError = falha de REDE (não chegou ao servidor); timeout também
     // aborta como erro de rede, não de validação → nos dois casos, enfileira.
     if (e instanceof TypeError || (e instanceof DOMException && e.name === "AbortError")) {
-      await inserirItem({ id: gerarId(), criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
+      await inserirItem({ id, criadoEm: new Date().toISOString(), caminho, metodo, corpo, descricao, tipo: "json", status: "pendente", fazendaId: getFazendaAtual()?.id ?? null });
       await recarregarEspelho().catch(() => {}); // notificação best-effort — a operação em si já terminou
       return { enviado: false };
     }
@@ -329,14 +336,17 @@ export async function enviarOuEnfileirarArquivo(opcoes: {
 // o envio interativo (enviarOuEnfileirar*, com o app em primeiro plano)
 // continua usando authFetch de propósito — se o token caiu ali, faz sentido
 // mandar pro login na hora, é uma ação que o usuário está vendo acontecer.
-async function fetchCru(caminho: string, metodo: string, corpo: unknown): Promise<Response> {
+async function fetchCru(caminho: string, metodo: string, corpo: unknown, id: string): Promise<Response> {
   const token = getToken();
   const controlador = new AbortController();
   const timeoutId = setTimeout(() => controlador.abort(), TIMEOUT_ENVIO_MS);
   try {
     return await fetch(`${API}${caminho}`, {
       method: metodo,
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      // Idempotency-Key = o próprio id do item da fila — reusado em toda
+      // tentativa de reenvio (nunca gerado de novo aqui), pra bater com a
+      // chave da 1ª tentativa em enviarOuEnfileirar.
+      headers: { "Content-Type": "application/json", "Idempotency-Key": id, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: JSON.stringify(corpo),
       cache: "no-store",
       signal: controlador.signal,
@@ -402,7 +412,7 @@ export async function sincronizar(): Promise<{ enviados: number; restantes: numb
         // antes deste campo existir) — sincroniza normalmente.
         if (atual.fazendaId !== undefined && atual.fazendaId !== (getFazendaAtual()?.id ?? null)) continue;
         try {
-          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo);
+          const res = atual.tipo === "form" ? await fetchCruArquivo(atual) : await fetchCru(atual.caminho, atual.metodo, atual.corpo, atual.id);
           if (res.ok) {
             await removerItem(atual.id);
             enviados++;
