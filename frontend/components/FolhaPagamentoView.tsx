@@ -8,6 +8,7 @@ import {
   fetchVales, criarVale, atualizarVale, atualizarParcelaVale, excluirVale, ehAdmin, formatBRL,
   fetchValesAvulsos, atualizarValeAvulso, excluirValeAvulso,
   fetchPreviewGuiasFgtsDctf, gerarGuiasFgtsDctf, type PreviewGuiasFgtsDctf,
+  fetchContasCorrentes, type ContaCorrenteCadastro,
 } from "@/lib/api";
 import { ModalDivergenciaVale, ModalResultadoDivergenciaVale, ModalConfirmarDivergenciaTotal } from "@/components/ModalDivergenciaVale";
 import { Modal } from "@/components/Modal";
@@ -168,6 +169,11 @@ export default function FolhaPagamentoView() {
   const [excluindoChave, setExcluindoChave] = useState<string | null>(null);
   const [excluirErro, setExcluirErro] = useState<string | null>(null);
 
+  // Contas correntes (id + rótulo) — para o campo "Conta bancária" dos vales,
+  // que precisa gravar o id (o backend agora espera conta_corrente_id, não
+  // mais o rótulo em texto usado no Financeiro).
+  const [contasCorrentes, setContasCorrentes] = useState<ContaCorrenteCadastro[]>([]);
+
   // Relatório de vales e descontos (vale de funcionário).
   const [vales, setVales] = useState<any[] | null>(null);
   const [fValeDe, setFValeDe] = useState("");
@@ -183,6 +189,7 @@ export default function FolhaPagamentoView() {
   const [editValeCompetenciaInicio, setEditValeCompetenciaInicio] = useState("");
   const [editValeObservacao, setEditValeObservacao] = useState("");
   const [editValeNumeroDocumento, setEditValeNumeroDocumento] = useState("");
+  const [editValeContaCorrenteId, setEditValeContaCorrenteId] = useState("");
   const [editValeSalvando, setEditValeSalvando] = useState(false);
   const [editValeMsg, setEditValeMsg] = useState<string | null>(null);
   const [excluindoValeId, setExcluindoValeId] = useState<number | null>(null);
@@ -213,6 +220,7 @@ export default function FolhaPagamentoView() {
   const [editValeAvulsoValor, setEditValeAvulsoValor] = useState("");
   const [editValeAvulsoFormaPagamento, setEditValeAvulsoFormaPagamento] = useState("dinheiro");
   const [editValeAvulsoDataPagamento, setEditValeAvulsoDataPagamento] = useState("");
+  const [editValeAvulsoContaCorrenteId, setEditValeAvulsoContaCorrenteId] = useState("");
   const [editValeAvulsoObservacao, setEditValeAvulsoObservacao] = useState("");
   const [editValeAvulsoSalvando, setEditValeAvulsoSalvando] = useState(false);
   const [editValeAvulsoMsg, setEditValeAvulsoMsg] = useState<string | null>(null);
@@ -226,7 +234,17 @@ export default function FolhaPagamentoView() {
   const carregarUnificada = () => fetchFolhaPagamentoUnificada().then(setUnificada).catch((e) => setErroUnificada(e.message));
   const carregarVales = () => fetchVales().then(setVales).catch(() => {});
   const carregarValesAvulsos = () => fetchValesAvulsos().then(setValesAvulsos).catch(() => {});
-  useEffect(() => { carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos(); fetchPessoas().then(setPessoas).catch(() => {}); }, []);
+  useEffect(() => {
+    carregar(); carregarUnificada(); carregarVales(); carregarValesAvulsos();
+    fetchPessoas().then(setPessoas).catch(() => {});
+    fetchContasCorrentes().then(setContasCorrentes).catch(() => {});
+  }, []);
+
+  // Rótulo da conta bancária de um vale, a partir do conta_corrente_id salvo
+  // — "—" tanto para vale sem conta (desconto integral/próximo pagamento)
+  // quanto para uma conta que não foi encontrada na lista carregada.
+  const rotuloContaVale = (contaCorrenteId: number | null | undefined) =>
+    contasCorrentes.find((c) => c.id === contaCorrenteId)?.rotulo || "—";
 
   async function excluirLinha(linha: LinhaFolhaUnificada) {
     const chave = `${linha.tipo}-${linha.origem_subtipo}-${linha.origem_id}`;
@@ -320,6 +338,7 @@ export default function FolhaPagamentoView() {
     setEditValeCompetenciaInicio(v.competencia_inicio);
     setEditValeObservacao(v.observacao || "");
     setEditValeNumeroDocumento(v.numero_documento_pagamento || "");
+    setEditValeContaCorrenteId(v.conta_corrente_id ? String(v.conta_corrente_id) : "");
     setEditValeMsg(null);
   }
 
@@ -328,12 +347,17 @@ export default function FolhaPagamentoView() {
     if (!editValePessoaId) { setEditValeMsg("Selecione a pessoa."); return; }
     if (!editValeValorTotal || parseFloat(editValeValorTotal) <= 0) { setEditValeMsg("Informe o valor do vale."); return; }
     if (!editValeParcelas || Number(editValeParcelas) < 1) { setEditValeMsg("Informe ao menos 1 parcela."); return; }
+    if (contaObrigatoriaVale(editValeFormaPagamento) && !editValeContaCorrenteId) {
+      setEditValeMsg("Selecione a conta bancária de onde sai o vale."); return;
+    }
     setEditValeSalvando(true);
     try {
       await atualizarVale(valeId, {
         pessoa_id: Number(editValePessoaId), valor_total: parseFloat(editValeValorTotal), forma_pagamento: editValeFormaPagamento,
         data_pagamento: editValeDataPagamento, parcelas: Number(editValeParcelas), competencia_inicio: editValeCompetenciaInicio,
-        observacao: editValeObservacao || undefined, numero_documento_pagamento: editValeNumeroDocumento || undefined, confirmar,
+        observacao: editValeObservacao || undefined, numero_documento_pagamento: editValeNumeroDocumento || undefined,
+        conta_corrente_id: contaObrigatoriaVale(editValeFormaPagamento) && editValeContaCorrenteId ? Number(editValeContaCorrenteId) : undefined,
+        confirmar,
       });
       setEditingValeId(null);
       setExpandedValeId(null);
@@ -427,6 +451,7 @@ export default function FolhaPagamentoView() {
     setEditValeAvulsoValor(String(v.valor));
     setEditValeAvulsoFormaPagamento(v.forma_pagamento);
     setEditValeAvulsoDataPagamento(v.data_pagamento);
+    setEditValeAvulsoContaCorrenteId(v.conta_corrente_id ? String(v.conta_corrente_id) : "");
     setEditValeAvulsoObservacao(v.observacao || "");
     setEditValeAvulsoMsg(null);
   }
@@ -436,11 +461,16 @@ export default function FolhaPagamentoView() {
   ) {
     setEditValeAvulsoMsg(null);
     if (!editValeAvulsoValor || parseFloat(editValeAvulsoValor) <= 0) { setEditValeAvulsoMsg("Informe o valor do vale."); return; }
+    if (contaObrigatoriaValeAvulso(editValeAvulsoFormaPagamento) && !editValeAvulsoContaCorrenteId) {
+      setEditValeAvulsoMsg("Selecione a conta bancária de onde sai o vale."); return;
+    }
     setEditValeAvulsoSalvando(true);
     try {
       await atualizarValeAvulso(v.id, {
         origem_tipo: v.origem_tipo, origem_id: v.origem_id, valor: parseFloat(editValeAvulsoValor),
         forma_pagamento: editValeAvulsoFormaPagamento, data_pagamento: editValeAvulsoDataPagamento,
+        conta_corrente_id: contaObrigatoriaValeAvulso(editValeAvulsoFormaPagamento) && editValeAvulsoContaCorrenteId
+          ? Number(editValeAvulsoContaCorrenteId) : undefined,
         observacao: editValeAvulsoObservacao || undefined, acao, valores_itens: valoresItens, confirmar: !!acao,
       });
       setEditingValeAvulsoId(null);
@@ -797,7 +827,7 @@ export default function FolhaPagamentoView() {
 
       {/* 2) Vale de funcionário */}
       <SecaoRecolhivel titulo="Vale de funcionário" icon={Plus} defaultAberta={false} descricao="Adiantamento pago à parte, descontado da folha">
-        <ValeFuncionarioSection pessoas={pessoas} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
+        <ValeFuncionarioSection pessoas={pessoas} contasCorrentes={contasCorrentes} onLancado={() => { carregar(); carregarUnificada(); carregarVales(); }} />
       </SecaoRecolhivel>
 
       {/* 3) Guias consolidadas de FGTS/DCTF — projeção de contas a pagar somando o
@@ -1185,6 +1215,7 @@ export default function FolhaPagamentoView() {
               <ThOrdenavel label="Status" campo="status_desconto" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} />
               <ThOrdenavel label="Valor pago" campo="valor_pago" coluna={valeColuna} dir={valeDir} ordenar={valeOrdenar} alinhar="right" />
               <th>Documento</th>
+              <th>Conta bancária</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1200,6 +1231,7 @@ export default function FolhaPagamentoView() {
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.status_desconto}</td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor_pago)}</td>
                   <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{v.numero_documento_pagamento || "—"}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeId === v.id}
@@ -1210,7 +1242,7 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeId === v.id && (
                   <tr>
-                    <td colSpan={10} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={11} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1237,6 +1269,15 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editValeObservacao} onChange={(e) => setEditValeObservacao(e.target.value)} /></div>
                           </div>
+                          {contaObrigatoriaVale(editValeFormaPagamento) && (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                              <div><label style={labelStyleLote}>Conta bancária</label>
+                                <select style={selStyleLote} value={editValeContaCorrenteId} onChange={(e) => setEditValeContaCorrenteId(e.target.value)}>
+                                  <option value="">Selecione…</option>
+                                  {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+                                </select></div>
+                            </div>
+                          )}
                           {editValeMsg && <p style={{ color: "var(--red)", fontSize: "0.82rem", marginBottom: "0.5rem" }}>{editValeMsg}</p>}
                           <div style={{ display: "flex", gap: "0.5rem" }}>
                             <button className="btn-primary" disabled={editValeSalvando} onClick={() => salvarEdicaoVale(v.id)}>
@@ -1297,7 +1338,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {vales && !valesOrdenados.length && <tr><td colSpan={10} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
+              {vales && !valesOrdenados.length && <tr><td colSpan={11} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{vales.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1314,6 +1355,7 @@ export default function FolhaPagamentoView() {
               <th>Parcela</th>
               <ThOrdenavel label="Valor" campo="valor" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} alinhar="right" />
               <ThOrdenavel label="Forma de pagamento" campo="forma_pagamento" coluna={valeAvulsoColuna} dir={valeAvulsoDir} ordenar={valeAvulsoOrdenar} />
+              <th>Conta bancária</th>
               <th>Ações</th>
             </tr></thead>
             <tbody>
@@ -1332,6 +1374,7 @@ export default function FolhaPagamentoView() {
                   </td>
                   <td style={{ textAlign: "right", fontSize: "0.78rem", fontWeight: 600 }}>{formatBRL(v.valor)}</td>
                   <td style={{ fontSize: "0.78rem" }}>{FORMAS_VALE_AVULSO.find((f) => f.value === v.forma_pagamento)?.label || v.forma_pagamento}</td>
+                  <td style={{ fontSize: "0.76rem", color: "var(--text-muted)" }}>{rotuloContaVale(v.conta_corrente_id)}</td>
                   <td>
                     <button className="btn-ghost" title="Excluir este vale" style={{ fontSize: "0.72rem", color: "var(--red)" }}
                       disabled={excluindoValeAvulsoId === v.id}
@@ -1342,7 +1385,7 @@ export default function FolhaPagamentoView() {
                 </tr>
                 {expandedValeAvulsoId === v.id && (
                   <tr>
-                    <td colSpan={8} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
+                    <td colSpan={9} style={{ background: "var(--surface-2)", padding: "0.75rem 1rem" }}>
                       {editingValeAvulsoId === v.id ? (
                         <div>
                           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
@@ -1357,6 +1400,15 @@ export default function FolhaPagamentoView() {
                             <div><label style={labelStyleLote}>Data do pagamento</label>
                               <input type="date" style={selStyleLote} value={editValeAvulsoDataPagamento} onChange={(e) => setEditValeAvulsoDataPagamento(e.target.value)} /></div>
                           </div>
+                          {contaObrigatoriaValeAvulso(editValeAvulsoFormaPagamento) && (
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+                              <div><label style={labelStyleLote}>Conta bancária</label>
+                                <select style={selStyleLote} value={editValeAvulsoContaCorrenteId} onChange={(e) => setEditValeAvulsoContaCorrenteId(e.target.value)}>
+                                  <option value="">Selecione…</option>
+                                  {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+                                </select></div>
+                            </div>
+                          )}
                           <div className="grid grid-cols-1 gap-3 mb-3">
                             <div><label style={labelStyleLote}>Observação</label>
                               <input style={selStyleLote} value={editValeAvulsoObservacao} onChange={(e) => setEditValeAvulsoObservacao(e.target.value)} /></div>
@@ -1382,7 +1434,7 @@ export default function FolhaPagamentoView() {
                 )}
                 </Fragment>
               ))}
-              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={8} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
+              {valesAvulsos && !valesAvulsosOrdenados.length && <tr><td colSpan={9} style={{ color: "var(--text-muted)", fontSize: "0.85rem" }}>{valesAvulsos.length ? "Nenhum vale para os filtros escolhidos." : "Nenhum vale de empreitada/contrato/diária lançado ainda."}</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1466,13 +1518,22 @@ const FORMAS_VALE_AVULSO = [
   { value: "transferencia", label: "Transferência" }, { value: "desconto_proximo_pagamento", label: "Descontar do próximo pagamento" },
 ];
 
+// Espelha `_validar_conta_vale`/`_validar_conta_vale_avulso` (backend): a
+// conta bancária só é obrigatória quando o dinheiro sai AGORA (dinheiro/pix/
+// transferência) — "desconto_integral_folha"/"desconto_proximo_pagamento" não
+// movimentam banco nenhum na hora do vale.
+const contaObrigatoriaVale = (forma: string) => forma !== "desconto_integral_folha";
+const contaObrigatoriaValeAvulso = (forma: string) => forma !== "desconto_proximo_pagamento";
+
 /**
  * Vale de funcionário — só o formulário de lançamento. A lista de parcelas
  * geradas não aparece mais aqui: ela vira a expansão da folha listada (na
  * competência em que a parcela é aplicada), por decisão explícita do
  * usuário — ver `_detalhe_folha` no backend.
  */
-function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]; onLancado: () => void }) {
+function ValeFuncionarioSection({
+  pessoas, contasCorrentes, onLancado,
+}: { pessoas: PessoaFolha[]; contasCorrentes: ContaCorrenteCadastro[]; onLancado: () => void }) {
   const [pessoaId, setPessoaId] = useState("");
   const [valorTotal, setValorTotal] = useState("");
   const [formaPagamento, setFormaPagamento] = useState("dinheiro");
@@ -1481,6 +1542,7 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
   const [competenciaInicio, setCompetenciaInicio] = useState(() => new Date().toISOString().slice(0, 7));
   const [observacao, setObservacao] = useState("");
   const [numeroDocumentoPagamento, setNumeroDocumentoPagamento] = useState("");
+  const [contaCorrenteId, setContaCorrenteId] = useState("");
   const [salvando, setSalvando] = useState(false);
   const [msg, setMsg] = useState<{ tipo: "erro" | "sucesso"; texto: string } | null>(null);
 
@@ -1489,15 +1551,20 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
     if (!pessoaId) { setMsg({ tipo: "erro", texto: "Selecione a pessoa." }); return; }
     if (!valorTotal || parseFloat(valorTotal) <= 0) { setMsg({ tipo: "erro", texto: "Informe o valor do vale." }); return; }
     if (!parcelas || Number(parcelas) < 1) { setMsg({ tipo: "erro", texto: "Informe ao menos 1 parcela." }); return; }
+    if (contaObrigatoriaVale(formaPagamento) && !contaCorrenteId) {
+      setMsg({ tipo: "erro", texto: "Selecione a conta bancária de onde sai o vale." }); return;
+    }
     setSalvando(true);
     try {
       await criarVale({
         pessoa_id: Number(pessoaId), valor_total: parseFloat(valorTotal), forma_pagamento: formaPagamento,
         data_pagamento: dataPagamento, parcelas: Number(parcelas), competencia_inicio: competenciaInicio,
-        observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined, confirmar,
+        observacao: observacao || undefined, numero_documento_pagamento: numeroDocumentoPagamento || undefined,
+        conta_corrente_id: contaObrigatoriaVale(formaPagamento) && contaCorrenteId ? Number(contaCorrenteId) : undefined,
+        confirmar,
       });
       setMsg({ tipo: "sucesso", texto: "Vale lançado — o desconto aparecerá na expansão da folha de cada competência afetada." });
-      setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento("");
+      setPessoaId(""); setValorTotal(""); setParcelas("1"); setObservacao(""); setNumeroDocumentoPagamento(""); setContaCorrenteId("");
       onLancado();
     } catch (e: any) {
       if (e.status === 409 && e.detail?.competencias_excedidas) {
@@ -1545,6 +1612,15 @@ function ValeFuncionarioSection({ pessoas, onLancado }: { pessoas: PessoaFolha[]
         <div><label style={labelStyleLote}>Observação</label>
           <input style={selStyleLote} value={observacao} onChange={(e) => setObservacao(e.target.value)} /></div>
       </div>
+      {contaObrigatoriaVale(formaPagamento) && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">
+          <div><label style={labelStyleLote}>Conta bancária</label>
+            <select style={selStyleLote} value={contaCorrenteId} onChange={(e) => setContaCorrenteId(e.target.value)}>
+              <option value="">Selecione…</option>
+              {contasCorrentes.map((c) => <option key={c.id} value={c.id}>{c.rotulo}</option>)}
+            </select></div>
+        </div>
+      )}
       {msg?.tipo === "erro" ? (
         <p style={{ color: "var(--red)", fontSize: "0.85rem", marginBottom: "0.75rem" }}>{msg.texto}</p>
       ) : (

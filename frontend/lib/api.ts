@@ -1342,7 +1342,10 @@ export async function fetchVales() {
 }
 export async function criarVale(dados: {
   pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
-  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string;
+  // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
+  // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale.
+  conta_corrente_id?: number; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1358,7 +1361,8 @@ export async function criarVale(dados: {
 }
 export async function atualizarVale(valeId: number, dados: {
   pessoa_id: number; valor_total: number; forma_pagamento: string; data_pagamento: string;
-  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string; confirmar?: boolean;
+  parcelas: number; competencia_inicio: string; observacao?: string; numero_documento_pagamento?: string;
+  conta_corrente_id?: number; confirmar?: boolean;
 }) {
   const res = await authFetch(`${API}/cadastro/vales/${valeId}`, {
     method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1628,6 +1632,9 @@ export async function fetchRescisoes(): Promise<RegistroRescisao[]> {
 export async function criarValeAvulso(dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
+  // Conta bancária de onde sai o vale — obrigatória quando a forma de pagamento
+  // implica saída de caixa agora (dinheiro/pix/transferência); ver _validar_conta_vale_avulso.
+  conta_corrente_id?: number;
 }) {
   const res = await authFetch(`${API}/cadastro/vale-avulso`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
@@ -1648,6 +1655,7 @@ export async function fetchValesAvulsos() {
 export async function atualizarValeAvulso(valeId: number, dados: {
   origem_tipo: "empreitada" | "contrato" | "diaria"; origem_id: number; valor: number;
   forma_pagamento: string; data_pagamento: string; observacao?: string;
+  conta_corrente_id?: number;
   acao?: "conceder" | "redistribuir_igual" | "redistribuir_livre";
   valores_itens?: Record<number, number>; confirmar?: boolean;
 }) {
@@ -3397,7 +3405,14 @@ export async function fetchCustoSafra(safraId: number) {
 }
 
 // ── Contas correntes (Configurações > Parâmetros financeiros) ──
-export async function fetchContasCorrentes() {
+// Traz id + rótulo legível de cada conta — usado sempre que o formulário
+// precisa gravar o vínculo com a conta (conta_corrente_id), e não só exibir
+// o texto (diferente de `fetchOpcoesFinanceiro().contas_bancarias`, que só
+// devolve rótulos em texto, sem id).
+export type ContaCorrenteCadastro = {
+  id: number; banco: string; agencia: string; numero_conta: string; ativo: boolean; rotulo: string;
+};
+export async function fetchContasCorrentes(): Promise<ContaCorrenteCadastro[]> {
   const res = await authFetch(`${API}/financeiro/contas-correntes`, { cache: "no-store" });
   if (!res.ok) throw new Error(`Contas correntes error: ${res.status}`);
   return res.json();

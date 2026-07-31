@@ -19,9 +19,10 @@ from sqlmodel import Session, select
 from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
-    ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, Pessoa, Usuario, ValeFuncionario, ValeParcela,
+    ContaCorrente, ContaGerencial, DecimoTerceiro, FeriasFuncionario, FolhaPagamento, Pessoa, Usuario, ValeFuncionario,
+    ValeParcela,
 )
-from fazenda.api.routers.financeiro import _proximo_numero_lancamento
+from fazenda.api.routers.financeiro import _proximo_numero_lancamento, rotulo_conta_corrente
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.folha_rh import calcular_decimo_terceiro, calcular_ferias, calcular_rescisao
 from fazenda.rules.parametros import (
@@ -1163,6 +1164,11 @@ class ValeIn(BaseModel):
     competencia_inicio: str  # "AAAA-MM"
     observacao: str | None = None
     numero_documento_pagamento: str | None = None  # nº do documento do pagamento, p/ controle de extrato
+    # Conta bancária da fazenda de onde sai o vale — obrigatória quando o
+    # dinheiro realmente sai AGORA (forma_pagamento "dinheiro"/"pix"/
+    # "transferencia"); irrelevante para "desconto_integral_folha" (nesse
+    # caso não há saída de caixa nenhuma a registrar — ver criar_vale).
+    conta_corrente_id: int | None = None
     confirmar: bool = False  # true para prosseguir mesmo ultrapassando 40% do salário
 
 
@@ -1219,6 +1225,100 @@ def _vale_competencia_paga(session: Session, pessoa_id: int, competencias: list[
     return None
 
 
+def _validar_conta_vale(
+    session: Session, forma_pagamento: str, conta_corrente_id: int | None, fazenda_id: int | None,
+) -> ContaCorrente | None:
+    """Resolve e valida a conta bancária de um vale de funcionário —
+    obrigatória só quando o dinheiro sai AGORA (dinheiro/pix/transferência);
+    "desconto_integral_folha" não movimenta banco nenhum na hora do vale (o
+    efeito é só reduzir o líquido da folha futura), então não se aplica."""
+    if forma_pagamento == "desconto_integral_folha":
+        return None
+    if not conta_corrente_id:
+        raise HTTPException(status_code=400, detail="Selecione a conta bancária de onde sai o vale.")
+    conta = session.get(ContaCorrente, conta_corrente_id)
+    if not conta or (fazenda_id is not None and conta.fazenda_id != fazenda_id):
+        raise HTTPException(status_code=404, detail="Conta bancária não encontrada")
+    return conta
+
+
+def _sincronizar_conta_vale(
+    session: Session, vale: ValeFuncionario, pessoa: Pessoa, conta: Optional[ContaCorrente],
+    numero_documento_pagamento: Optional[str], fazenda_id: Optional[int],
+) -> None:
+    """
+    Cria (ou, numa edição, atualiza) o lançamento (ContaGerencial) que
+    representa a SAÍDA de caixa do vale — espelha `criar_folha_pagamento`,
+    só que já nasce PAGO: o vale é entregue ao funcionário no ato, não é uma
+    conta a pagar futura (mesmo padrão de `registrar_pagamento_diaria`, em
+    rh_contratos.py).
+
+    NÃO há duplicidade de valor no extrato, e isso é intencional: a folha de
+    pagamento lança o valor LÍQUIDO (já com o vale descontado — ver
+    `FolhaPagamento.valor_vale`/`valor_liquido`). Antes desta função existir,
+    o dinheiro do vale saía do caixa/banco no ato e não aparecia em lugar
+    nenhum do Financeiro — este lançamento é exatamente o que faltava para
+    fechar esse furo. Quando a folha for paga depois, ela paga só o
+    restante (líquido menor), então vale + líquido da folha = valor bruto —
+    o vale nunca é contado duas vezes. NÃO remova este lançamento achando
+    que é bug de duplicidade.
+
+    Quando `conta` é None (forma_pagamento == "desconto_integral_folha"), não
+    há saída de caixa nenhuma a registrar: nenhum ContaGerencial é criado, e,
+    se o vale tinha um lançamento de uma edição anterior (mudou de forma de
+    pagamento), ele é removido.
+    """
+    conta_existente = None
+    if vale.numero_lancamento_gerado:
+        conta_existente = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+        ).first()
+
+    if conta is None:
+        if conta_existente:
+            session.delete(conta_existente)
+        vale.numero_lancamento_gerado = None
+        session.add(vale)
+        return
+
+    ano, mes = (int(x) for x in vale.competencia_inicio.split("-"))
+    descricao = f"Vale — {pessoa.nome} ({vale.competencia_inicio})"
+    if conta_existente:
+        conta_existente.descricao = descricao
+        conta_existente.fornecedor_cliente = pessoa.nome
+        conta_existente.data_vencimento = vale.data_pagamento
+        conta_existente.data_competencia = date(ano, mes, 1)
+        conta_existente.valor_total = vale.valor_total
+        conta_existente.data_pagamento = vale.data_pagamento
+        conta_existente.valor_pago = vale.valor_total
+        conta_existente.conta_bancaria = rotulo_conta_corrente(conta)
+        conta_existente.forma_pagamento = vale.forma_pagamento
+        conta_existente.numero_documento_pagamento = numero_documento_pagamento
+        session.add(conta_existente)
+    else:
+        numero_lancamento = _proximo_numero_lancamento(session, vale.data_pagamento.year)
+        vale.numero_lancamento_gerado = numero_lancamento
+        session.add(vale)
+        session.add(ContaGerencial(
+            numero_lancamento=numero_lancamento,
+            descricao=descricao,
+            data_vencimento=vale.data_pagamento,
+            data_competencia=date(ano, mes, 1),
+            fornecedor_cliente=pessoa.nome,
+            tipo_documento="Vale de funcionário",
+            centro_custo="Pecuária Leiteira",
+            valor_total=vale.valor_total,
+            parcela_num=1, parcela_total=1,
+            tipo="despesa", origem="auto",
+            data_pagamento=vale.data_pagamento,
+            valor_pago=vale.valor_total,
+            conta_bancaria=rotulo_conta_corrente(conta),
+            forma_pagamento=vale.forma_pagamento,
+            numero_documento_pagamento=numero_documento_pagamento,
+            fazenda_id=fazenda_id,
+        ))
+
+
 @router.get("/vales")
 def listar_vales(
     session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
@@ -1256,6 +1356,7 @@ def criar_vale(
         raise HTTPException(status_code=400, detail="Valor do vale deve ser positivo")
     if dados.parcelas < 1:
         raise HTTPException(status_code=400, detail="Informe ao menos 1 parcela")
+    conta = _validar_conta_vale(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
     competencias = _competencias_do_vale(dados.competencia_inicio, dados.parcelas)
     valor_parcela = round(dados.valor_total / dados.parcelas, 2)
@@ -1291,7 +1392,8 @@ def criar_vale(
     vale = ValeFuncionario(
         pessoa_id=dados.pessoa_id, valor_total=dados.valor_total, forma_pagamento=dados.forma_pagamento,
         data_pagamento=dados.data_pagamento, parcelas=dados.parcelas, competencia_inicio=dados.competencia_inicio,
-        observacao=dados.observacao, numero_documento_pagamento=dados.numero_documento_pagamento, usuario_id=user.id,
+        observacao=dados.observacao, numero_documento_pagamento=dados.numero_documento_pagamento,
+        conta_corrente_id=conta.id if conta else None, usuario_id=user.id,
         fazenda_id=fazenda_id,
     )
     session.add(vale)
@@ -1301,6 +1403,11 @@ def criar_vale(
         session.add(ValeParcela(
             vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor, fazenda_id=fazenda_id,
         ))
+    session.commit()
+
+    # Gera (quando aplicável) o lançamento que faltava no extrato para a
+    # saída de caixa do vale — ver `_sincronizar_conta_vale`.
+    _sincronizar_conta_vale(session, vale, pessoa, conta, dados.numero_documento_pagamento, fazenda_id)
     session.commit()
 
     # Efeito imediato: se já existir uma folha (não paga) para alguma das
@@ -1338,6 +1445,7 @@ def atualizar_vale(
             status_code=400,
             detail="Cadastre o salário base da pessoa (Configurações > Cadastro > Pessoas) antes de editar um vale.",
         )
+    conta = _validar_conta_vale(session, dados.forma_pagamento, dados.conta_corrente_id, fazenda_id)
 
     pessoa_id_antigo = vale.pessoa_id
     parcelas_atuais = session.exec(select(ValeParcela).where(ValeParcela.vale_id == vale_id)).all()
@@ -1386,6 +1494,7 @@ def atualizar_vale(
     vale.competencia_inicio = dados.competencia_inicio
     vale.observacao = dados.observacao
     vale.numero_documento_pagamento = dados.numero_documento_pagamento
+    vale.conta_corrente_id = conta.id if conta else None
     session.add(vale)
     for p in parcelas_atuais:
         session.delete(p)
@@ -1395,6 +1504,11 @@ def atualizar_vale(
         session.add(ValeParcela(
             vale_id=vale.id, pessoa_id=dados.pessoa_id, competencia=competencia, valor=valor, fazenda_id=fazenda_id,
         ))
+    session.commit()
+
+    # Mantém o lançamento gerado (ContaGerencial) da saída de caixa do vale
+    # em sincronia com a edição — cria/atualiza/remove conforme a mudança.
+    _sincronizar_conta_vale(session, vale, pessoa, conta, dados.numero_documento_pagamento, fazenda_id)
     session.commit()
 
     if dados.pessoa_id == pessoa_id_antigo:
@@ -1570,6 +1684,15 @@ def excluir_vale(
             status_code=400,
             detail=f"Vale já aplicado na folha paga de {competencia_paga} não pode ser excluído.",
         )
+    # Remove também o lançamento (ContaGerencial) gerado para a saída de
+    # caixa do vale — sem isso, excluir o vale deixaria um lançamento órfão
+    # no extrato, sem vale nenhum por trás dele.
+    if vale.numero_lancamento_gerado:
+        conta_gerada = session.exec(
+            select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale.numero_lancamento_gerado)
+        ).first()
+        if conta_gerada:
+            session.delete(conta_gerada)
     for p in parcelas:
         session.delete(p)
     session.delete(vale)

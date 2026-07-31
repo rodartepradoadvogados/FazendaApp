@@ -12,7 +12,18 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Estoque, PlanoContaGerencial, SeedFlag
+from fazenda.models import ContaCorrente, Estoque, PlanoContaGerencial, SeedFlag
+
+
+def _criar_conta_corrente(engine) -> int:
+    """Conta bancária da fazenda usada nos testes de vale de funcionário —
+    todo vale que sai em dinheiro/pix/transferência agora exige uma."""
+    with Session(engine) as s:
+        conta = ContaCorrente(banco="Banco do Brasil", agencia="0001-2", numero_conta="12345-6")
+        s.add(conta)
+        s.commit()
+        s.refresh(conta)
+        return conta.id
 
 
 @pytest.fixture
@@ -560,9 +571,11 @@ class TestFolhaPagamento:
         c, engine = client
         pessoa_id = self._pessoa(c)
         c.put(f"/cadastro/pessoas/{pessoa_id}", json={"nome": "Funcionário Teste", "tipos": ["Funcionário"], "salario_base": 3000.0})
+        conta_id = _criar_conta_corrente(engine)
         c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 150.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-06-10", "parcelas": 1, "competencia_inicio": "2026-07",
+            "conta_corrente_id": conta_id,
         })
         c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-07", "valor_bruto": 2000.0,
@@ -736,21 +749,82 @@ class TestValeFuncionario:
     def test_cria_vale_parcelado_com_arredondamento_na_ultima_parcela(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 100.0, "forma_pagamento": "pix",
             "data_pagamento": "2026-01-10", "parcelas": 3, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         parcelas = r.json()["parcelas_detalhe"]
         assert [p["competencia"] for p in parcelas] == ["2026-02", "2026-03", "2026-04"]
         assert round(sum(p["valor"] for p in parcelas), 2) == 100.0
 
+    def test_rejeita_vale_em_dinheiro_sem_conta_bancaria(self, client):
+        """Vale que sai em dinheiro/pix/transferência precisa de uma conta
+        bancária vinculada — sem isso não há como aparecer no extrato."""
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "pix",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 400
+
+    def test_vale_desconto_integral_folha_nao_exige_conta_nem_gera_lancamento(self, client):
+        """"desconto_integral_folha" não movimenta banco nenhum na hora do
+        vale (o efeito é só reduzir o líquido da folha futura) — não exige
+        conta bancária e não deve gerar ContaGerencial nenhuma."""
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "desconto_integral_folha",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["numero_lancamento_gerado"] is None
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            assert s.exec(select(ContaGerencial)).first() is None
+
+    def test_vale_gera_lancamento_ja_pago_com_conta_bancaria_no_extrato(self, client):
+        c, engine = client
+        pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
+        r = c.post("/cadastro/vales", json={
+            "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "pix",
+            "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
+        })
+        assert r.status_code == 200, r.text
+        corpo = r.json()
+        assert corpo["numero_lancamento_gerado"]
+        assert corpo["conta_corrente_id"] == conta_id
+
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta_gerencial = s.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == corpo["numero_lancamento_gerado"])
+            ).first()
+        assert conta_gerencial is not None
+        assert conta_gerencial.valor_total == 300.0
+        assert conta_gerencial.valor_pago == 300.0  # nasce já pago — o vale é entregue no ato
+        assert conta_gerencial.data_pagamento == date(2026, 1, 10)
+        assert conta_gerencial.conta_bancaria == "Banco do Brasil · Agência 0001-2 · Conta corrente 12345-6"
+        assert conta_gerencial.tipo == "despesa"
+
+        # E aparece no extrato (GET /financeiro/lancamentos).
+        lancamentos = c.get("/financeiro/lancamentos").json()["lancamentos"]
+        assert any(l["numero_lancamento"] == corpo["numero_lancamento_gerado"] for l in lancamentos)
+
     def test_alerta_quando_ultrapassa_quarenta_por_cento_do_salario(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=1000.0)  # limite = 400
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         assert r.status_code == 409
         detalhe = r.json()["detail"]
@@ -759,15 +833,18 @@ class TestValeFuncionario:
         r2 = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02", "confirmar": True,
+            "conta_corrente_id": conta_id,
         })
         assert r2.status_code == 200
 
     def test_parcela_de_vale_e_aplicada_automaticamente_na_folha(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
         c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         r = c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
@@ -788,9 +865,11 @@ class TestValeFuncionario:
     def test_atualiza_vale_recalcula_parcelas_e_folha(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         }).json()
         folha = c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
@@ -800,6 +879,7 @@ class TestValeFuncionario:
         r = c.put(f"/cadastro/vales/{vale['id']}", json={
             "pessoa_id": pessoa_id, "valor_total": 600.0, "forma_pagamento": "pix",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         assert r.json()["valor_total"] == 600.0
@@ -810,6 +890,16 @@ class TestValeFuncionario:
         alvo = next(f for f in folha2 if f["id"] == folha["id"])
         assert alvo["valor_vale"] == 600.0
         assert alvo["valor_liquido"] == 1400.0
+
+        # O lançamento gerado para o vale também é sincronizado com a edição.
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            conta_gerencial = s.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == r.json()["numero_lancamento_gerado"])
+            ).first()
+        assert conta_gerencial.valor_total == 600.0
+        assert conta_gerencial.valor_pago == 600.0
+        assert conta_gerencial.forma_pagamento == "pix"
 
     def test_atualiza_vale_inexistente_404(self, client):
         c, engine = client
@@ -822,27 +912,33 @@ class TestValeFuncionario:
     def test_atualiza_vale_reaplica_alerta_quarenta_por_cento(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=1000.0)  # limite = 400
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         }).json()
         r = c.put(f"/cadastro/vales/{vale['id']}", json={
             "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         assert r.status_code == 409
         r2 = c.put(f"/cadastro/vales/{vale['id']}", json={
             "pessoa_id": pessoa_id, "valor_total": 500.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02", "confirmar": True,
+            "conta_corrente_id": conta_id,
         })
         assert r2.status_code == 200
 
     def test_bloqueia_edicao_e_exclusao_de_vale_ja_pago(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         }).json()
         folha = c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
@@ -855,6 +951,7 @@ class TestValeFuncionario:
         r = c.put(f"/cadastro/vales/{vale['id']}", json={
             "pessoa_id": pessoa_id, "valor_total": 400.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         })
         assert r.status_code == 400
 
@@ -864,14 +961,24 @@ class TestValeFuncionario:
     def test_exclui_vale_reverte_desconto_na_folha_nao_paga(self, client):
         c, engine = client
         pessoa_id = self._pessoa(c, salario_base=3000.0)
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vales", json={
             "pessoa_id": pessoa_id, "valor_total": 300.0, "forma_pagamento": "dinheiro",
             "data_pagamento": "2026-01-10", "parcelas": 1, "competencia_inicio": "2026-02",
+            "conta_corrente_id": conta_id,
         }).json()
         folha = c.post("/cadastro/folha-pagamento", json={
             "pessoa_id": pessoa_id, "competencia": "2026-02", "valor_bruto": 2000.0,
         }).json()
         assert folha["valor_vale"] == 300.0
+
+        # Guarda o número do lançamento do VALE antes de excluir — é ele que
+        # tem de sumir do extrato. O lançamento da FOLHA é outro documento e
+        # continua existindo, então não dá para checar "sobrou zero lançamento".
+        with Session(engine) as s:
+            from fazenda.models import ValeFuncionario
+            numero_lancamento_vale = s.get(ValeFuncionario, vale["id"]).numero_lancamento_gerado
+        assert numero_lancamento_vale, "vale pago em dinheiro deveria ter gerado lançamento"
 
         r = c.delete(f"/cadastro/vales/{vale['id']}")
         assert r.status_code == 200
@@ -883,6 +990,14 @@ class TestValeFuncionario:
         alvo = next(f for f in folha2 if f["id"] == folha["id"])
         assert alvo["valor_vale"] == 0.0
         assert alvo["valor_liquido"] == 2000.0
+
+        # E o lançamento gerado para o vale some junto — sem órfão no extrato.
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            orfao = s.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == numero_lancamento_vale)
+            ).first()
+            assert orfao is None
 
     def test_exclui_vale_inexistente_404(self, client):
         c, engine = client
@@ -1295,9 +1410,10 @@ class TestValeAvulso:
                 {"data_vencimento": "2026-09-05", "valor": 1500.0},
             ],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20",
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20", "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         dados = r.json()
@@ -1311,6 +1427,13 @@ class TestValeAvulso:
                 ContaGerencial.numero_lancamento == parcelas[0]["numero_lancamento_gerado"]
             )).first()
             assert conta.valor_total == 1000.0
+            # O lançamento gerado para o VALE em si (saída de caixa imediata,
+            # diferente da parcela abatida acima) também existe e já nasce pago.
+            vale_conta = s.exec(select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == dados["vale"]["numero_lancamento_gerado"]
+            )).first()
+            assert vale_conta.valor_total == 500.0
+            assert vale_conta.valor_pago == 500.0
 
     def test_abate_etapa_pendente_de_empreitada_por_etapa(self, client):
         c, engine = client
@@ -1322,9 +1445,10 @@ class TestValeAvulso:
                 {"nome": "Etapa 2", "valor": 2000.0},
             ],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 800.0,
-            "forma_pagamento": "pix", "data_pagamento": "2026-07-20",
+            "forma_pagamento": "pix", "data_pagamento": "2026-07-20", "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         etapas = sorted(r.json()["origem"]["etapas"], key=lambda e: e["ordem"])
@@ -1341,9 +1465,10 @@ class TestValeAvulso:
                 {"data_vencimento": "2026-09-10", "valor": 2000.0},
             ],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "contrato", "origem_id": contrato["id"], "valor": 500.0,
-            "forma_pagamento": "transferencia", "data_pagamento": "2026-07-20",
+            "forma_pagamento": "transferencia", "data_pagamento": "2026-07-20", "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         parcelas = sorted(r.json()["origem"]["parcelas"], key=lambda p: p["data_vencimento"])
@@ -1356,9 +1481,10 @@ class TestValeAvulso:
         diaria = c.post("/cadastro/diarias", json={
             "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": inicio.isoformat(),
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         r = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "diaria", "origem_id": diaria["id"], "valor": 200.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(), "conta_corrente_id": conta_id,
         })
         assert r.status_code == 200
         dados = r.json()["origem"]
@@ -1373,9 +1499,10 @@ class TestValeAvulso:
         diaria = c.post("/cadastro/diarias", json={
             "pessoa_id": pessoa_id, "valor_diaria": 100.0, "data_inicio": date.today().isoformat(),
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "diaria", "origem_id": diaria["id"], "valor": 50.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(),
+            "forma_pagamento": "dinheiro", "data_pagamento": date.today().isoformat(), "conta_corrente_id": conta_id,
         })
         r = c.get(f"/cadastro/vale-avulso?origem_tipo=diaria&origem_id={diaria['id']}")
         assert r.status_code == 200
@@ -1421,9 +1548,10 @@ class TestValeAvulso:
             "pessoa_id": pessoa_id, "descricao": "Roçagem relatório", "valor_total": 3000.0, "tipo_pagamento": "mensal",
             "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24", "conta_corrente_id": conta_id,
         })
         r = c.get("/cadastro/vale-avulso/todos")
         assert r.status_code == 200
@@ -1437,14 +1565,16 @@ class TestValeAvulso:
             "pessoa_id": pessoa_id, "descricao": "Roçagem edição", "valor_total": 3000.0, "tipo_pagamento": "mensal",
             "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24", "conta_corrente_id": conta_id,
         }).json()["vale"]
 
         r = c.put(f"/cadastro/vale-avulso/{vale['id']}", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 500.0,
             "forma_pagamento": "pix", "data_pagamento": "2026-07-25", "observacao": "corrigido",
+            "conta_corrente_id": conta_id,
             # valor mudou (200 -> 500): endpoint pede confirmação explícita
             # (409 sem isso) antes de reverter/reaplicar o abatimento.
             "confirmar": True,
@@ -1459,6 +1589,15 @@ class TestValeAvulso:
         assert parcelas_ordenadas[0]["valor"] == 1000.0  # 1500 - 500 (não 1500-200-500)
         assert parcelas_ordenadas[1]["valor"] == 1500.0
 
+        # O lançamento gerado para o vale em si também foi sincronizado.
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            vale_conta = s.exec(select(ContaGerencial).where(
+                ContaGerencial.numero_lancamento == r.json()["vale"]["numero_lancamento_gerado"]
+            )).first()
+        assert vale_conta.valor_total == 500.0
+        assert vale_conta.forma_pagamento == "pix"
+
     def test_excluir_vale_avulso_reverte_valor(self, client):
         c, engine = client
         pessoa_id = c.post("/cadastro/pessoas", json={"nome": "Empreiteiro Exclusao", "tipos": ["Empreiteiro"]}).json()["id"]
@@ -1466,10 +1605,12 @@ class TestValeAvulso:
             "pessoa_id": pessoa_id, "descricao": "Roçagem exclusão", "valor_total": 3000.0, "tipo_pagamento": "mensal",
             "parcelas": [{"data_vencimento": "2026-08-05", "valor": 1500.0}, {"data_vencimento": "2026-09-05", "valor": 1500.0}],
         }).json()
+        conta_id = _criar_conta_corrente(engine)
         vale = c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 200.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24",
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-24", "conta_corrente_id": conta_id,
         }).json()["vale"]
+        assert vale["numero_lancamento_gerado"]
 
         r = c.delete(f"/cadastro/vale-avulso/{vale['id']}")
         assert r.status_code == 200
@@ -1482,6 +1623,14 @@ class TestValeAvulso:
 
         r2 = c.get("/cadastro/vale-avulso/todos")
         assert all(v["id"] != vale["id"] for v in r2.json())
+
+        # O lançamento gerado para o vale em si também foi removido — sem
+        # órfão no extrato.
+        with Session(engine) as s:
+            from fazenda.models import ContaGerencial
+            assert s.exec(
+                select(ContaGerencial).where(ContaGerencial.numero_lancamento == vale["numero_lancamento_gerado"])
+            ).first() is None
 
 
 class TestEditarERedistribuirParcelas:
@@ -1573,9 +1722,10 @@ class TestEditarERedistribuirParcelas:
         empreitada = self._empreitada(c)
         parcelas = sorted(empreitada["parcelas"], key=lambda p: p["data_vencimento"])
         # Simula um vale que abateu desproporcionalmente a 1ª parcela.
+        conta_id = _criar_conta_corrente(engine)
         c.post("/cadastro/vale-avulso", json={
             "origem_tipo": "empreitada", "origem_id": empreitada["id"], "valor": 700.0,
-            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20",
+            "forma_pagamento": "dinheiro", "data_pagamento": "2026-07-20", "conta_corrente_id": conta_id,
         })
         r = c.post(f"/cadastro/empreitadas/{empreitada['id']}/parcelas/redistribuir")
         assert r.status_code == 200
