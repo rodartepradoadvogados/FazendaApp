@@ -187,6 +187,13 @@ class ParcelaIn(BaseModel):
     # Linha digitável/número do boleto DESTA parcela — opcional, preenchido
     # manualmente ou extraído automaticamente ao importar o boleto.
     numero_boleto: Optional[str] = None
+    # Baixa já no nascimento da parcela — opcional; uma parcela sem esses
+    # campos nasce em aberto (contas a pagar/receber), como hoje.
+    data_pagamento: Optional[date] = None
+    valor_pago: Optional[float] = None
+    conta_bancaria: Optional[str] = None
+    forma_pagamento: Optional[str] = None
+    numero_documento_pagamento: Optional[str] = None
 
 
 class ItemIn(BaseModel):
@@ -1359,14 +1366,30 @@ def criar_lancamento(
     if dados.parcelas:
         total_parcelas = len(dados.parcelas)
         for i, p in enumerate(dados.parcelas, start=1):
-            criados.append(ContaGerencial(
+            # Regra do boleto no nível do lançamento (item 4): se o usuário
+            # preencheu dados.numero_boleto E parcelou, ele vale como boleto
+            # da 1ª parcela — nunca duplicado nas demais. Se a própria 1ª
+            # parcela já veio com numero_boleto (o front já faz essa migração
+            # antes de enviar), não sobrescreve.
+            numero_boleto = p.numero_boleto
+            if i == 1 and not numero_boleto and dados.numero_boleto:
+                numero_boleto = dados.numero_boleto
+            conta = ContaGerencial(
                 **campos_comuns,
                 data_vencimento=p.data_vencimento,
                 valor_total=p.valor,
                 parcela_num=i,
                 parcela_total=total_parcelas,
-                numero_boleto=p.numero_boleto,
-            ))
+                numero_boleto=numero_boleto,
+            )
+            if p.data_pagamento:
+                conta.data_pagamento = p.data_pagamento
+                conta.valor_pago = p.valor_pago
+                conta.conta_bancaria = p.conta_bancaria
+                conta.numero_documento_pagamento = p.numero_documento_pagamento
+                conta.forma_pagamento = p.forma_pagamento
+                conta.desconto_acrescimo = round((p.valor_pago or 0) - p.valor, 2)
+            criados.append(conta)
     else:
         registro = ContaGerencial(
             **campos_comuns,
