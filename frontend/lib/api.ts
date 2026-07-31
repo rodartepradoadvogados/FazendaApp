@@ -1899,10 +1899,16 @@ export async function fetchSugestoesMovimentacao() {
   return res.json();
 }
 
+// Resposta real do backend (fazenda/api/routers/movimentacoes.py `mover_animais`):
+// `movidos` conta quantos animais tiveram o lote de fato alterado;
+// `nao_encontrados` lista números que não existem (fazenda_id errado, digitado
+// errado etc.) — usado para não reportar "movido com sucesso" quando na
+// verdade ninguém foi movido.
+export type ResultadoMovimentacao = { movidos: number; nao_encontrados: string[] };
 export async function criarMovimentacao(dados: {
   data_movimento: string; hora_movimento?: string; motivo?: string; observacao?: string;
   responsavel?: string; lote_destino_codigo: string; animais: string[];
-}) {
+}): Promise<ResultadoMovimentacao> {
   const res = await authFetch(`${API}/movimentacoes/mover`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });
@@ -3184,7 +3190,8 @@ export async function criarSecagem(dados: {
   if (!res.ok) { const d = await res.json().catch(() => ({})); throw new Error(d.detail || "Erro ao lançar secagem"); }
   return res.json();
 }
-export async function sugestaoLoteEvento(dados: { numero_matriz: string; categoria_abrev: string; del_dias?: number | null; data_nasc?: string | null }) {
+export type LoteSugeridoEvento = { codigo: string; nome: string; rotulo: string };
+export async function sugestaoLoteEvento(dados: { numero_matriz: string; categoria_abrev: string; del_dias?: number | null; data_nasc?: string | null }): Promise<{ lote_sugerido: LoteSugeridoEvento | null }> {
   const res = await authFetch(`${API}/producao/sugestao-lote-evento`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(dados),
   });

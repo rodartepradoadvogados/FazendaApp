@@ -161,3 +161,29 @@ export function MobAviso({ tipo, children }: { tipo: "ok" | "offline" | "erro"; 
     </p>
   );
 }
+
+/**
+ * Pop-up de confirmação no padrão visual do app (overlay + cartão --mob-*,
+ * botões Confirmar/Cancelar grandes) — usado quando uma ação sugere um efeito
+ * colateral (ex.: mover um animal de lote) que precisa de "sim" explícito do
+ * usuário antes de acontecer. Clique fora do cartão equivale a Cancelar.
+ */
+export function MobConfirmModal({ titulo, children, onConfirmar, onCancelar, confirmando, textoConfirmar = "Confirmar", textoCancelar = "Cancelar" }: {
+  titulo: string; children: ReactNode; onConfirmar: () => void; onCancelar: () => void;
+  confirmando?: boolean; textoConfirmar?: string; textoCancelar?: string;
+}) {
+  return (
+    <div role="presentation" onClick={onCancelar}
+      style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.55)", display: "flex", alignItems: "center", justifyContent: "center", zIndex: 200, padding: "1rem" }}>
+      <div role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}
+        style={{ width: "100%", maxWidth: 440, background: "var(--mob-surface)", border: "1px solid var(--mob-border)", borderRadius: 18, padding: "1.1rem 1.1rem 1.2rem", boxShadow: "var(--mob-sombra)" }}>
+        <h2 style={{ fontSize: "1.02rem", fontWeight: 800, margin: "0 0 0.5rem", color: "var(--mob-text)" }}>{titulo}</h2>
+        <div style={{ fontSize: "0.9rem", color: "var(--mob-text)", lineHeight: 1.45, marginBottom: "1.1rem" }}>{children}</div>
+        <div style={{ display: "flex", gap: "0.6rem" }}>
+          <button type="button" className="mob-btn-2" onClick={onCancelar} disabled={confirmando} style={{ flex: 1 }}>{textoCancelar}</button>
+          <button type="button" className="mob-btn" onClick={onConfirmar} disabled={confirmando} style={{ flex: 1 }}>{confirmando ? "Movendo…" : textoConfirmar}</button>
+        </div>
+      </div>
+    </div>
+  );
+}

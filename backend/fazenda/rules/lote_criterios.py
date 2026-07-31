@@ -216,26 +216,47 @@ def animal_atende_criterios(lote, animal: dict, hoje: date, dados: dict) -> bool
 # RESTRITIVOS: continuam filtrando em E lógico quando preenchidos, mas
 # sozinhos não fazem o lote gerar sugestão — evita, por exemplo, marcar só a
 # categoria "vaca" e o sistema sugerir o rebanho inteiro de vacas pra lá.
+# `pre_parto` fica do lado GERADOR, e não junto dos restritivos: ao contrário
+# de "categoria" ou "categoria_manejo_ids" (que sozinhos poderiam abranger
+# metade do rebanho), a flag já delimita uma janela numérica específica e
+# estreita (`dias_para_parto` entre 0 e `pre_parto_max()`, tipicamente ~21-30
+# dias) — o mesmo tipo de critério que `del_min`/`dias_para_parto_max` já
+# fazem sozinhos. Um lote "Pré-parto" com só essa flag marcada precisa gerar
+# sugestão (é o uso normal da tela de cadastro), não ficar mudo até alguém
+# preencher um `dias_para_parto_max` redundante com o que a flag já expressa.
 _CAMPOS_GERADORES_SUGESTAO = [
     "status_lactacao", "situacao_reprodutiva", "peso_min", "peso_max",
     "del_min", "del_max", "producao_min", "producao_max",
     "dias_para_parto_min", "dias_para_parto_max", "dias_gestacao_min", "dias_gestacao_max",
     "dias_desde_servico_min", "dias_desde_servico_max",
-    "idade_dias_min", "idade_dias_max",
+    "idade_dias_min", "idade_dias_max", "pre_parto",
 ]
 
 
 def lote_tem_criterio(lote) -> bool:
     if getattr(lote, "excluir_da_sugestao", False):
         return False
-    return any(getattr(lote, campo, None) for campo in _CAMPOS_GERADORES_SUGESTAO)
+    for campo in _CAMPOS_GERADORES_SUGESTAO:
+        valor = getattr(lote, campo, None)
+        if campo == "pre_parto":
+            # Flag booleana: só conta quando marcada — `False`/`None` não é
+            # critério nenhum aqui (diferente dos campos numéricos abaixo).
+            if valor:
+                return True
+        elif valor is not None:
+            # `is not None`, não truthy puro: um limite numérico em 0 (ex.:
+            # idade_dias_min=0, del_min=0) é um critério real preenchido, não
+            # "vazio" — `any(getattr(...))` tratava 0 como falsy e descartava
+            # esses lotes da sugestão silenciosamente.
+            return True
+    return False
 
 
 def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[str]:
     """Descreve, em texto, os critérios GERADORES do `lote` que o animal atende —
     chamado só depois que `animal_atende_criterios` já confirmou o atendimento,
     então cada critério preenchido abaixo necessariamente já passou. Campos
-    restritivos (categorias, pre_parto, em_tratamento, novilhas_inseminadas,
+    restritivos (categorias, em_tratamento, novilhas_inseminadas,
     novilhas_gestantes, categoria_manejo_ids — ver `_CAMPOS_GERADORES_SUGESTAO`)
     não entram aqui: eles filtram o resultado, mas não são o motivo da sugestão."""
     numero = animal["numero"]
@@ -265,6 +286,9 @@ def _motivos_atendimento(lote, animal: dict, hoje: date, dados: dict) -> list[st
 
     if (lote.dias_para_parto_min is not None or lote.dias_para_parto_max is not None) and dpp is not None:
         motivos.append(f"Dias para o parto: {dpp}")
+
+    if lote.pre_parto and dpp is not None:
+        motivos.append(f"Pré-parto: faltam {dpp} dia(s)")
 
     if (lote.dias_gestacao_min is not None or lote.dias_gestacao_max is not None) and ctx["dias_gestacao"] is not None:
         motivos.append(f"Dias de gestação: {ctx['dias_gestacao']}")

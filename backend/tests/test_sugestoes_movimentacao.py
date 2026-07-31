@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
-from fazenda.models import Animal, CategoriaManejo, Lote, Parto, Secagem
+from fazenda.models import Animal, CategoriaManejo, Lote, Parto, Secagem, Servico
 
 
 @pytest.fixture
@@ -145,29 +145,37 @@ class TestSugestoes:
 
         r = c.get("/movimentacoes/sugestoes")
         sug = next(s for s in r.json()["sugestoes"] if s["numero_matriz"] == "104")
-        # Motivo combinado (nível da sugestão) e por lote sugerido — ambos
-        # devem mencionar os critérios que efetivamente bateram (peso e categoria).
+        # Motivo combinado (nível da sugestão) e por lote sugerido — só o
+        # critério GERADOR que bateu (peso) entra no motivo; "categorias" é
+        # restritivo (filtra, mas não é o "porquê" da sugestão — ver
+        # `_CAMPOS_GERADORES_SUGESTAO` em lote_criterios.py) e não aparece.
         assert sug["motivo"] is not None and "Peso" in sug["motivo"]
         lote_sugerido = next(l for l in sug["lotes_sugeridos"] if l["codigo"] == "02")
-        assert lote_sugerido["motivo"] is not None and "Peso" in lote_sugerido["motivo"] and "Categoria" in lote_sugerido["motivo"]
+        assert lote_sugerido["motivo"] is not None and "Peso" in lote_sugerido["motivo"] and "Categoria" not in lote_sugerido["motivo"]
 
     def test_lote_sem_criterio_preenchido_para_aquele_campo_nao_aparece_no_motivo(self, client):
         c, engine = client
         with Session(engine) as s:
-            # Lote só filtra por categoria — peso não é critério aqui, então
-            # não deve aparecer no motivo mesmo que o animal tenha peso registrado.
-            s.add(Lote(codigo="03", nome="Novilhas", categorias="novilha"))
-            s.add(Animal(numero="105", categoria_abrev="Novilha", sexo="F", grupo_primario="01 - Sem lote", ativo=True))
+            # "categorias" sozinho não gera sugestão (é restritivo — ver
+            # `_CAMPOS_GERADORES_SUGESTAO`), então o lote precisa de um critério
+            # GERADOR de verdade (idade) para entrar na sugestão; peso não é
+            # critério nenhum aqui, então não deve aparecer no motivo mesmo que
+            # o animal tenha peso registrado, e "Categoria" nunca aparece no
+            # motivo (restritivo, filtra mas não é o "porquê").
+            s.add(Lote(codigo="03", nome="Novilhas", categorias="novilha", idade_dias_min=0))
+            from datetime import date, timedelta
+            s.add(Animal(numero="105", categoria_abrev="Novilha", sexo="F", grupo_primario="01 - Sem lote",
+                          data_nasc=date.today() - timedelta(days=300), ativo=True))
             s.commit()
             from fazenda.models import PesagemCorporal
-            from datetime import date
             s.add(PesagemCorporal(numero_matriz="105", data_pesagem=date.today(), peso_kg=280))
             s.commit()
 
         r = c.get("/movimentacoes/sugestoes")
         sug = next(s for s in r.json()["sugestoes"] if s["numero_matriz"] == "105")
         assert "Peso" not in (sug["motivo"] or "")
-        assert "Categoria" in (sug["motivo"] or "")
+        assert "Categoria" not in (sug["motivo"] or "")
+        assert "Idade" in (sug["motivo"] or "")
 
 
 class TestCriteriosAoVivo:
@@ -233,7 +241,11 @@ class TestCriteriosAoVivo:
             s.add(cat)
             s.commit()
             s.refresh(cat)
-            s.add(Lote(codigo="07", nome="Recria alta", categoria_manejo_ids=str(cat.id)))
+            # `categoria_manejo_ids` sozinho não gera sugestão (é restritivo —
+            # ver `_CAMPOS_GERADORES_SUGESTAO`); `idade_dias_min=0` é o critério
+            # GERADOR que faz o lote participar, e o vínculo de categoria segue
+            # restringindo em E lógico normalmente.
+            s.add(Lote(codigo="07", nome="Recria alta", categoria_manejo_ids=str(cat.id), idade_dias_min=0))
             # 300 dias de vida -> classifica em "Recria alta"; 100 dias -> não.
             from datetime import date, timedelta
             s.add(Animal(numero="434", categoria_abrev="Novilha", sexo="F", grupo_primario="01 - Sem lote",
@@ -246,3 +258,59 @@ class TestCriteriosAoVivo:
         sugeridos = {s["numero_matriz"] for s in r.json()["sugestoes"]}
         assert "434" in sugeridos
         assert "435" not in sugeridos
+
+    def test_lote_inativo_nunca_e_sugerido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Lote 02 bateria no critério (peso >= 300kg) mas está inativo —
+            # não pode ser sugerido nem contado em lotes_com_criterio.
+            s.add(Lote(codigo="01", nome="Recém-chegadas"))
+            s.add(Lote(codigo="02", nome="Aptas (desativado)", peso_min=300, ativo=False))
+            s.add(Animal(numero="436", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Recém-chegadas", ativo=True))
+            s.commit()
+
+        with Session(engine) as s:
+            from fazenda.models import PesagemCorporal
+            from datetime import date
+            s.add(PesagemCorporal(numero_matriz="436", data_pesagem=date.today(), peso_kg=350))
+            s.commit()
+
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.status_code == 200
+        d = r.json()
+        assert d["lotes_com_criterio"] == 0
+        assert not any(s["numero_matriz"] == "436" for s in d["sugestoes"])
+
+
+class TestPreParto:
+    """Gatilho de "faltam ~30 dias para o parto" -> sugestão de mudar a vaca
+    para o lote de pré-parto (lote.pre_parto=True, janela de pre_parto_max()
+    dias antes do parto previsto — ver fazenda.rules.parametros)."""
+
+    def test_vaca_a_30_dias_do_parto_previsto_e_sugerida_para_pre_parto(self, client):
+        c, engine = client
+        from datetime import date, timedelta
+        from fazenda.rules.parametros import gestacao_dias_referencia, pre_parto_max
+
+        # Confirma o parâmetro padrão documentado na tarefa (30 dias).
+        assert pre_parto_max() == 30
+
+        # dias_para_parto() = gestacao_dias_referencia() - dias_gestacao. Serviço
+        # datado para deixar a vaca a 28 dias do parto previsto (dentro da janela
+        # de pré-parto de 0 a 30 dias, e dentro dos "~25-30 dias" pedidos).
+        dias_gestacao = gestacao_dias_referencia() - 28
+        data_servico = date.today() - timedelta(days=dias_gestacao)
+
+        with Session(engine) as s:
+            s.add(Lote(codigo="09", nome="Pré-parto", pre_parto=True))
+            s.add(Animal(numero="900", categoria_abrev="Vaca", sexo="F", grupo_primario="01 - Sem lote",
+                         sit_rep="Ges.", ativo=True))
+            s.add(Servico(numero_matriz="900", data_servico=data_servico, diagnostico="POSITIVO"))
+            s.commit()
+
+        r = c.get("/movimentacoes/sugestoes")
+        assert r.status_code == 200
+        d = r.json()
+        sug = next((s for s in d["sugestoes"] if s["numero_matriz"] == "900"), None)
+        assert sug is not None, f"Vaca a 28 dias do parto não apareceu nas sugestões: {d}"
+        assert any(l["codigo"] == "09" for l in sug["lotes_sugeridos"])

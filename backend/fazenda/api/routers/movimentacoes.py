@@ -153,7 +153,7 @@ def sugestoes_movimentacao(
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
     hoje = date.today()
-    query_lotes = select(Lote)
+    query_lotes = select(Lote).where(Lote.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
     lotes = session.exec(query_lotes).all()
@@ -258,6 +258,11 @@ def mover_animais(
     destino = session.exec(query_destino).first()
     if not destino:
         raise HTTPException(status_code=404, detail="Lote de destino não encontrado")
+    if not destino.ativo:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Lote {_rotulo(destino.codigo, destino.nome)} está inativo — reative-o ou escolha outro destino",
+        )
     rotulo_destino = _rotulo(destino.codigo, destino.nome)
 
     movidos = 0
