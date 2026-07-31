@@ -19,6 +19,7 @@ from fazenda.models import (
     LancamentoAnexo, LancamentoItem, ManutencaoPatrimonio, MovimentoEstoque, Patrimonio, Pessoa, PlanoContaGerencial, Sanidade, SeedFlag, Servico,
     TipoDocumento, Usuario,
 )
+from fazenda.rules import estoque_baixa
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
 from fazenda.rules.email import enviar_email
 from fazenda.rules.centro_custo import CENTROS_CANONICOS, MAPA_CENTRO_CUSTO, mapear_centro_custo
@@ -1393,16 +1394,43 @@ def criar_lancamento(
     session.commit()
     for c in criados:
         session.refresh(c)
+    for it in itens_criados:
+        session.refresh(it)
 
     if dados.pedido_id:
         from fazenda.api.routers.pedidos import atualizar_status_por_lancamento
         atualizar_status_por_lancamento(session, dados.pedido_id, valor_liquido)
+
+    # Compra de produto estocável dá entrada automática no estoque — só para
+    # despesa e só quando NÃO está vinculada a um Pedido (nesse caso a
+    # entrada física já é lançada manualmente via POST /estoque/movimentar
+    # quando a mercadoria chega; dar entrada aqui também duplicaria a
+    # contagem). Item não encontrado ou não-estocável: melhor esforço,
+    # segue sem erro (a nota fiscal é o que importa, o estoque é acessório).
+    avisos_estoque: list[str] = []
+    if dados.tipo == "despesa" and dados.pedido_id is None:
+        data_movimento = dados.data_emissao or data_competencia or date.today()
+        usuario_id = user.id if isinstance(user, Usuario) else None
+        for item_in, item_criado in zip(dados.itens, itens_criados):
+            if item_in.tipo_item != "produto" or not item_in.quantidade or item_in.quantidade <= 0:
+                continue
+            estoque_item = estoque_baixa.resolver_item(session, fazenda_id=fazenda_id, produto=item_in.produto)
+            if estoque_item is None or estoque_item.estocavel is False:
+                continue
+            avisos_estoque += estoque_baixa.movimentar(
+                session, item=estoque_item, quantidade=item_in.quantidade, unidade=estoque_item.unidade,
+                data=data_movimento, fazenda_id=fazenda_id, movimento="Entrada de compra",
+                observacao=f"Entrada por compra — lançamento {numero_lancamento}",
+                usuario_id=usuario_id, origem_tipo="compra_financeiro", origem_id=item_criado.id, sinal=+1,
+            )
+        session.commit()
 
     return {
         "numero_lancamento": numero_lancamento,
         "ids": [c.id for c in criados],
         "valor_bruto": valor_bruto,
         "valor_liquido": valor_liquido,
+        "avisos_estoque": avisos_estoque,
     }
 
 

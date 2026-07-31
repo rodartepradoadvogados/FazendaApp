@@ -35,3 +35,61 @@ jobs:
           python-version: "3.12"
       - run: pip install "alembic>=1.14" sqlmodel
       - run: python backend/scripts/check_alembic_heads.py
+
+  # Mitigacao pra janela documentada acima: "Require branches to be up to
+  # date before merging" fecharia o buraco de verdade, mas exige GitHub Pro
+  # (branch protection nao esta disponivel em repositorio privado no plano
+  # gratuito — confirmado via `gh api .../branches/main/protection`, 403
+  # "Upgrade to GitHub Pro or make this repository public"). Essa e uma
+  # decisao de assinatura, nao de codigo — enquanto nao for tomada, este job
+  # reduz o estrago: assim que o `push: main` acima flagra duas cabecas
+  # (dois PRs mergeados quase juntos, cada um com uma migracao irma), ele
+  # gera o merge automaticamente (`alembic merge heads`, comando OFFLINE —
+  # so cria o arquivo de versao, nunca conecta no banco nem roda env.py) e
+  # abre um PR pronto pra revisar e mergear. Troca "descobrir a producao
+  # caida" por "aprovar um PR de 1 arquivo em minutos".
+  alembic-auto-fix:
+    name: Gera PR de merge automatico das cabecas
+    needs: alembic-heads
+    if: failure() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install "alembic>=1.14" sqlmodel
+      - name: Gerar migracao de merge e abrir PR
+        working-directory: backend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          BRANCH="fix/alembic-merge-heads-${{ github.run_id }}"
+          git checkout -b "$BRANCH"
+          alembic merge heads -m "auto-merge: cabecas concorrentes (CI)"
+          git add alembic/versions/
+          git commit -m "Alembic: merge automático de cabeças concorrentes (CI)
+
+          Gerado pelo job alembic-auto-fix após o push em main detectar mais
+          de uma cabeça de migração — provavelmente dois PRs mergeados quase
+          ao mesmo tempo, cada um com uma migração irmã do mesmo down_revision.
+
+          Revise antes de aprovar: confira se as duas migrações realmente não
+          conflitam de verdade (ex.: duas colunas com o mesmo nome na mesma
+          tabela) — nesse caso o merge sozinho não basta, precisa de ajuste manual."
+          git push origin "$BRANCH"
+          python ../backend/scripts/check_alembic_heads.py
+          gh pr create \
+            --title "Alembic: merge automático de cabeças concorrentes (gerado por CI)" \
+            --body "Duas migrações concorrentes chegaram em \`main\` com o mesmo \`down_revision\` — o deploy vai falhar até isso ser corrigido (\`alembic upgrade head\` aborta com cabeças múltiplas). Este PR foi gerado automaticamente pelo job \`alembic-auto-fix\` do CI para restaurar uma única cabeça.
+
+          **Revise antes de aprovar** — o merge automático normalmente é seguro, mas confira se as duas migrações realmente não conflitam de verdade (mesma coluna, mesmo nome, tabelas diferentes com relação implícita etc.).
+
+          🤖 Gerado automaticamente pelo workflow \`ci.yml\` (job \`alembic-auto-fix\`)." \
+            --base main \
+            --head "$BRANCH"

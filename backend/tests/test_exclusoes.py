@@ -18,15 +18,18 @@ from fazenda.models import (
     ControleLeiteiro,
     Doenca,
     Estoque,
+    EstoqueSemen,
     EventoSanitario,
     FolhaPagamento,
     Fornecedor,
     Lote,
     MotivoMovimentacao,
+    MovimentoEstoque,
     Parto,
     Pessoa,
     PrincipioAtivo,
     ProtocoloSanitario,
+    ProtocoloSanitarioAplicacao,
     ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento,
     Sanidade,
@@ -523,3 +526,142 @@ class TestFluxoAprovacaoOperador:
         c, _ = client
         r = c.post("/exclusoes/pendentes/9999/rejeitar", json={})
         assert r.status_code == 404
+
+
+class TestEstornoDeEstoqueNaExclusao:
+    """A exclusão (fluxo admin de /exclusoes/confirmar) apagava o registro que
+    deu baixa em estoque sem nunca devolver nada — o estoque ficava "fantasma
+    a menos". Estes testes provam que a exclusão agora estorna, usando os
+    fluxos reais de baixa (protocolo sanitário, protocolo IATF, inseminação e
+    aplicação avulsa de Sanidade) em vez de fabricar MovimentoEstoque na mão."""
+
+    def _etapa(self, dia=1, produto="Vacina X", dosagem=10.0, unidade="ml"):
+        return {"dia": dia, "produto": produto, "dosagem": dosagem, "unidade": unidade, "via": "Intramuscular"}
+
+    def test_exclui_protocolo_sanitario_lancamento_devolve_estoque(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Estoque(nome="Vacina X", quantidade=100.0, unidade="ml"))
+            s.commit()
+
+        protocolo_id = c.post("/cadastro/protocolos-sanitarios", json={
+            "nome": "Protocolo teste", "etapas": [self._etapa()],
+        }).json()["id"]
+        lanc = c.post("/sanidade/protocolos/lancamentos", json={
+            "protocolo_id": protocolo_id, "numeros_matriz": ["700"], "data_inicio": "2026-01-01",
+        }).json()
+        lancamento_id = lanc["lancamentos"][0]["id"]
+
+        eventos = c.get("/agenda/", params={"data": "2025-12-01", "dias": 60}).json()["eventos"]
+        alvo = next(e for e in eventos if e["id"].startswith("protocolo_sanitario_"))
+        c.post("/agenda/realizados", json={"evento_id": alvo["id"]})
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Estoque).where(Estoque.nome == "Vacina X")).first().quantidade == 90.0
+            assert s.exec(select(ProtocoloSanitarioAplicacao)).first().realizada is True
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_sanitario_lancamento", "id": str(lancamento_id)})
+        assert r.status_code == 200, r.text
+        assert r.json()["avisos"] == []
+
+        with _sessao(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Vacina X")).first()
+            assert item.quantidade == 100.0
+            assert s.exec(select(ProtocoloSanitarioLancamento)).first() is None
+            assert s.exec(select(ProtocoloSanitarioAplicacao)).first() is None
+            assert s.exec(select(Sanidade)).first() is None
+            # Não duplo-estorna: uma baixa (10ml) revertida uma única vez —
+            # não duas (o mirror de Sanidade também estava na lista de alvos).
+            estornos = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.movimento == "Entrada de ajuste")).all()
+            assert len(estornos) == 1
+            assert estornos[0].quantidade == 10.0
+
+    def test_exclui_protocolo_iatf_lancamento_devolve_hormonio(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Estoque(nome="SincroCP", quantidade=100.0, unidade="ml"))
+            s.commit()
+
+        r_lanc = c.post("/reproducao/protocolo-iatf", json={
+            "animais": ["700"], "data_d0": "2026-07-08", "protocolo": "IATF teste",
+            "hormonios": [{"dia": 0, "produto": "SincroCP", "dose": 1, "unidade": "ml", "via": "Intramuscular"}],
+        })
+        lancamento_id = r_lanc.json()["lancamento_id"]
+
+        eventos = c.get("/agenda/", params={"data": "2026-07-08", "dias": 30}).json()["eventos"]
+        d0 = next(e for e in eventos if e.get("tipo") == "protocolo_iatf" and e["dia"] == 0)
+        c.post("/agenda/realizados", json={"evento_id": d0["id"]})
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Estoque).where(Estoque.nome == "SincroCP")).first().quantidade == 99.0
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "protocolo_iatf_lancamento", "id": str(lancamento_id)})
+        assert r.status_code == 200, r.text
+        assert r.json()["avisos"] == []
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Estoque).where(Estoque.nome == "SincroCP")).first().quantidade == 100.0
+
+    def test_exclui_servico_devolve_dose_de_semen(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Animal(numero="700", ativo=True))
+            s.add(EstoqueSemen(touro_nome="Coors", tipo="convencional", doses=30))
+            s.commit()
+
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-08", "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+        assert r.status_code == 200, r.text
+        servico_id = r.json()["id"]
+
+        with _sessao(engine) as s:
+            assert s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first().doses == 29
+
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "servico", "id": str(servico_id)})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["avisos"] == []
+
+        with _sessao(engine) as s:
+            assert s.exec(select(EstoqueSemen).where(EstoqueSemen.touro_nome == "Coors")).first().doses == 30
+            assert s.exec(select(Servico).where(Servico.id == servico_id)).first() is None
+
+    def test_exclui_sanidade_direto_pelo_painel_de_exclusoes_devolve_estoque(self, client):
+        """Bypass fechado: antes, só o DELETE /sanidade/aplicacoes/{id} estornava —
+        excluir a mesma Sanidade pelo painel de Exclusões (/exclusoes/confirmar)
+        apagava sem devolver nada ao estoque."""
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Estoque(nome="Antibiótico avulso", quantidade=50.0, unidade="ml"))
+            s.commit()
+
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-01-01", "animais": ["700"],
+            "itens": [{"produto": "Antibiótico avulso", "quantidade": 10.0, "unidade": "ml"}],
+        })
+        assert r.status_code == 200, r.text
+        sanidade_id = r.json()["sanidade_ids"][0]
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Estoque).where(Estoque.nome == "Antibiótico avulso")).first().quantidade == 40.0
+
+        r2 = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id)})
+        assert r2.status_code == 200, r2.text
+        assert r2.json()["avisos"] == []
+
+        with _sessao(engine) as s:
+            assert s.exec(select(Estoque).where(Estoque.nome == "Antibiótico avulso")).first().quantidade == 50.0
+            assert s.get(Sanidade, sanidade_id) is None
+
+    def test_exclui_registro_sem_baixa_nao_quebra_nem_gera_aviso(self, client):
+        c, engine = client
+        with _sessao(engine) as s:
+            s.add(Sanidade(numero_matriz="700", produto="Produto nunca cadastrado no estoque", data_aplicacao=date(2026, 1, 1)))
+            s.commit()
+            sanidade_id = s.exec(select(Sanidade)).first().id
+
+        r = c.post("/exclusoes/confirmar", json={"tipo": "sanidade", "id": str(sanidade_id)})
+        assert r.status_code == 200
+        assert r.json()["avisos"] == []
+        with _sessao(engine) as s:
+            assert s.get(Sanidade, sanidade_id) is None

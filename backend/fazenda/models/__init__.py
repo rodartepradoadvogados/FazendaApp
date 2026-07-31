@@ -195,6 +195,9 @@ from .protocolo_customizado import (
     ProtocoloCustomizadoLancamento,
     ProtocoloCustomizadoAplicacao,
 )
+from .idempotencia import (
+    IdempotenciaChave,
+)
 from .sistema import (
     SeedFlag,
     ParametroFazenda,
@@ -242,6 +245,7 @@ __all__ = [
     "ProtocoloCustomizado",
     "ProtocoloCustomizadoEtapa",
     "ProtocoloCustomizadoLancamento",
+    "IdempotenciaChave",
     "ProtocoloCustomizadoAplicacao",
     "Animal",
     "Lote",

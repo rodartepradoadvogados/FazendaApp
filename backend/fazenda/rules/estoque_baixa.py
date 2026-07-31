@@ -120,30 +120,29 @@ def devolver(
     )
 
 
-def baixar_dose_semen(
+def _movimentar_dose_semen(
     session: Session, *, touro: EstoqueSemen, doses: float, data: date, fazenda_id: int | None,
-    usuario_id: int | None = None, observacao: str, origem_tipo: str | None = None, origem_id: int | None = None,
+    usuario_id: int | None, observacao: str, origem_tipo: str | None, origem_id: int | None,
+    movimento: str, sinal: int,
 ) -> list[str]:
-    """Desconta `doses` de `touro.doses` e — diferente do comportamento antigo
-    de `_baixar_dose_semen` (reproducao.py) — grava um MovimentoEstoque, para a
-    baixa deixar rastro no histórico/RMCA. Se existir um item de `Estoque`
-    espelhado (`Estoque.estoque_semen_id == touro.id`), mantém os dois em
-    sincronia — o mesmo espelhamento que `_criar_movimento_estoque`
-    (estoque.py) já faz no sentido inverso (compra de sêmen -> Estoque)."""
-    touro.doses = (touro.doses or 0) - doses
+    """Aplica `sinal * doses` a `touro.doses` e grava o MovimentoEstoque
+    correspondente — base compartilhada de `baixar_dose_semen` (sinal=-1) e
+    `devolver_dose_semen` (sinal=+1, usada para estornar uma baixa de dose,
+    ex.: exclusão do Serviço/IA que a gerou — ver rotas/exclusoes.py)."""
+    touro.doses = (touro.doses or 0) + sinal * doses
     touro.atualizado_em = datetime.utcnow()
     session.add(touro)
 
     item_espelho = session.exec(select(Estoque).where(Estoque.estoque_semen_id == touro.id)).first()
     if item_espelho is not None:
-        item_espelho.quantidade = (item_espelho.quantidade or 0) - doses
+        item_espelho.quantidade = (item_espelho.quantidade or 0) + sinal * doses
         if item_espelho.estoque_minimo is not None:
             item_espelho.abaixo_minimo = item_espelho.quantidade < item_espelho.estoque_minimo
         item_espelho.atualizado_em = datetime.utcnow()
         session.add(item_espelho)
 
     session.add(MovimentoEstoque(
-        nome_item=touro.touro_nome, movimento="Aplicação", quantidade=abs(doses), unidade="dose",
+        nome_item=touro.touro_nome, movimento=movimento, quantidade=abs(doses), unidade="dose",
         data_movimento=data, observacao=observacao, usuario_id=usuario_id, fazenda_id=fazenda_id,
         estoque_id=item_espelho.id if item_espelho is not None else None,
         origem_tipo=origem_tipo, origem_id=origem_id,
@@ -156,3 +155,31 @@ def baixar_dose_semen(
             f'Registre a entrada/compra que faltou.'
         )
     return avisos
+
+
+def baixar_dose_semen(
+    session: Session, *, touro: EstoqueSemen, doses: float, data: date, fazenda_id: int | None,
+    usuario_id: int | None = None, observacao: str, origem_tipo: str | None = None, origem_id: int | None = None,
+) -> list[str]:
+    """Desconta `doses` de `touro.doses` e — diferente do comportamento antigo
+    de `_baixar_dose_semen` (reproducao.py) — grava um MovimentoEstoque, para a
+    baixa deixar rastro no histórico/RMCA. Se existir um item de `Estoque`
+    espelhado (`Estoque.estoque_semen_id == touro.id`), mantém os dois em
+    sincronia — o mesmo espelhamento que `_criar_movimento_estoque`
+    (estoque.py) já faz no sentido inverso (compra de sêmen -> Estoque)."""
+    return _movimentar_dose_semen(
+        session, touro=touro, doses=doses, data=data, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        observacao=observacao, origem_tipo=origem_tipo, origem_id=origem_id, movimento="Aplicação", sinal=-1,
+    )
+
+
+def devolver_dose_semen(
+    session: Session, *, touro: EstoqueSemen, doses: float, data: date, fazenda_id: int | None,
+    usuario_id: int | None = None, observacao: str, origem_tipo: str | None = None, origem_id: int | None = None,
+) -> list[str]:
+    """Devolve `doses` a `touro.doses` — estorno de `baixar_dose_semen`, usado
+    quando o Serviço/IA que gerou a baixa é excluído (ver rotas/exclusoes.py)."""
+    return _movimentar_dose_semen(
+        session, touro=touro, doses=doses, data=data, fazenda_id=fazenda_id, usuario_id=usuario_id,
+        observacao=observacao, origem_tipo=origem_tipo, origem_id=origem_id, movimento="Entrada de ajuste", sinal=+1,
+    )
