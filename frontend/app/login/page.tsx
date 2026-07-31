@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
@@ -121,7 +121,15 @@ function Hero() {
   // dentro do app Capacitor (celular pessoal do funcionário); desmarcada por
   // padrão no site (pode ser um computador compartilhado da fazenda).
   const [manterConectado, setManterConectado] = useState(false);
-  useEffect(() => { ehApp().then(setManterConectado); }, []);
+  // ehApp() é assíncrona (import dinâmico do Capacitor) — se o usuário
+  // digitar e submeter o formulário rápido demais (autofill + Enter), o
+  // efeito abaixo pode não ter resolvido ainda e "manterConectado" ficaria
+  // falso mesmo dentro do app. Só usamos esse estado como valor padrão pra
+  // exibir a checkbox já marcada; o valor de verdade enviado no login (ver
+  // `entrar`) é recalculado na hora, a menos que o usuário já tenha mexido
+  // manualmente na checkbox (ver `tocouCheckbox`).
+  const tocouCheckbox = useRef(false);
+  useEffect(() => { ehApp().then((app) => { if (!tocouCheckbox.current) setManterConectado(app); }); }, []);
   // Piloto conservador de multi-fazenda: só aparece quando o login devolve
   // mais de uma fazenda vinculada ao mesmo usuário (ver POST /auth/login).
   const [fazendasParaEscolher, setFazendasParaEscolher] = useState<FazendaAtual[] | null>(null);
@@ -133,25 +141,32 @@ function Hero() {
   const [erroEsqueci, setErroEsqueci] = useState<string | null>(null);
   const [carregandoEsqueci, setCarregandoEsqueci] = useState(false);
 
-  const irParaDestino = () => {
+  const irParaDestino = async () => {
     // Vínculo de contador: não tem acesso ao resto do sistema (nem ao app
     // móvel) — vai direto para o Painel do Contador, ignorando "next".
     if (ehContador()) { router.replace("/contador"); return; }
     // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
     const next = new URLSearchParams(window.location.search).get("next");
-    router.replace(next && next.startsWith("/") ? next : "/");
+    if (next && next.startsWith("/")) { router.replace(next); return; }
+    // Sem "next": dentro do app nativo a raiz é /app (casca mobile) — nunca
+    // o site desktop completo (ver capacitor.config.ts). Só o botão
+    // proposital "Site completo" do Menu do app deve levar ao "/" de verdade.
+    router.replace((await ehApp()) ? "/app" : "/");
   };
 
   const entrar = async (e: React.FormEvent) => {
     e.preventDefault();
     setErro(null); setCarregando(true);
     try {
-      const data = await login(username.trim(), senha, manterConectado);
+      // Recalcula na hora se o usuário nunca mexeu na checkbox — fecha a
+      // corrida com o efeito assíncrono acima (ver comentário em manterConectado).
+      const manter = tocouCheckbox.current ? manterConectado : await ehApp();
+      const data = await login(username.trim(), senha, manter);
       if (data.selecao_fazenda_necessaria) {
         setFazendasParaEscolher(data.fazendas_disponiveis || []);
         return;
       }
-      irParaDestino();
+      await irParaDestino();
     } catch (err: any) {
       setErro(err.message || "Falha no login");
     } finally {
@@ -163,7 +178,7 @@ function Hero() {
     setEscolhendoFazenda(true); setErro(null);
     try {
       await selecionarFazenda(fazendaId);
-      irParaDestino();
+      await irParaDestino();
     } catch (err: any) {
       setErro(err.message || "Não foi possível selecionar a fazenda");
       setEscolhendoFazenda(false);
@@ -289,7 +304,7 @@ function Hero() {
                   </button>
                 </div>
                 <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.8rem", color: "var(--text-muted)", cursor: "pointer" }}>
-                  <input type="checkbox" checked={manterConectado} onChange={(e) => setManterConectado(e.target.checked)} />
+                  <input type="checkbox" checked={manterConectado} onChange={(e) => { tocouCheckbox.current = true; setManterConectado(e.target.checked); }} />
                   Manter conectado neste aparelho
                 </label>
                 {erro && <p style={{ color: "var(--red)", fontSize: "0.82rem" }}>{erro}</p>}

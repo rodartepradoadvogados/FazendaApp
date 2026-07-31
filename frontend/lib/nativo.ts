@@ -140,3 +140,62 @@ export async function removerPushNativo(): Promise<void> {
     await removerTokenFcm();
   } catch { /* best-effort — logout não pode travar por causa disso */ }
 }
+
+// ── Cópia de segurança da sessão (@capacitor/preferences) ──
+// "Manter conectado neste aparelho" promete não pedir login de novo (ver
+// comentário em backend/fazenda/auth.py::TOKEN_VALIDADE_LONGA_S) — mas o
+// token só vivia no localStorage da WebView, que o Android pode limpar sem
+// avisar (atualização do componente WebView do sistema, "liberar espaço"
+// etc.), sem que o app seja desinstalado nem o usuário peça. @capacitor/
+// preferences grava em SharedPreferences nativo, bem mais durável. O
+// localStorage continua sendo a fonte de verdade (é nele que getToken() e
+// todo o resto do app lêem, de forma síncrona); isto é só uma cópia restaurada
+// na abertura do app quando o localStorage aparece vazio (ver AuthShell).
+const CHAVE_SESSAO_TOKEN = "token";
+const CHAVE_SESSAO_USUARIO = "usuario";
+const CHAVE_SESSAO_FAZENDA = "fazenda_atual";
+
+/** Grava a sessão atual na cópia nativa — chamado só quando "Manter conectado"
+ *  está marcado (ver lib/api.ts::login/selecionarFazenda). Best-effort, nunca
+ *  trava o login por causa disso. Não faz nada fora do app nativo. */
+export async function salvarSessaoNativa(token: string, usuario: unknown, fazendaAtual: unknown | null): Promise<void> {
+  if (!(await ehApp())) return;
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    await Preferences.set({ key: CHAVE_SESSAO_TOKEN, value: token });
+    await Preferences.set({ key: CHAVE_SESSAO_USUARIO, value: JSON.stringify(usuario ?? null) });
+    if (fazendaAtual) await Preferences.set({ key: CHAVE_SESSAO_FAZENDA, value: JSON.stringify(fazendaAtual) });
+    else await Preferences.remove({ key: CHAVE_SESSAO_FAZENDA });
+  } catch { /* best-effort */ }
+}
+
+/** Restaura a cópia nativa da sessão para dentro do localStorage — chamado
+ *  uma vez na abertura do app (ver AuthShell), só quando o localStorage está
+ *  vazio. Não faz nada fora do app nativo. */
+export async function restaurarSessaoNativa(): Promise<void> {
+  if (!(await ehApp())) return;
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    const { value: token } = await Preferences.get({ key: CHAVE_SESSAO_TOKEN });
+    if (!token) return;
+    localStorage.setItem(CHAVE_SESSAO_TOKEN, token);
+    localStorage.setItem("manter_conectado", "1"); // só existe cópia nativa para sessões "manter conectado"
+    const { value: usuario } = await Preferences.get({ key: CHAVE_SESSAO_USUARIO });
+    if (usuario) localStorage.setItem(CHAVE_SESSAO_USUARIO, usuario);
+    const { value: fazenda } = await Preferences.get({ key: CHAVE_SESSAO_FAZENDA });
+    if (fazenda) localStorage.setItem(CHAVE_SESSAO_FAZENDA, fazenda);
+  } catch { /* best-effort */ }
+}
+
+/** Limpa a cópia nativa da sessão — chamado no logout (ver lib/api.ts::logout),
+ *  senão o próximo login com "Manter conectado" restauraria a sessão antiga
+ *  neste mesmo aparelho. Não faz nada fora do app nativo. */
+export async function limparSessaoNativa(): Promise<void> {
+  if (!(await ehApp())) return;
+  try {
+    const { Preferences } = await import("@capacitor/preferences");
+    await Preferences.remove({ key: CHAVE_SESSAO_TOKEN });
+    await Preferences.remove({ key: CHAVE_SESSAO_USUARIO });
+    await Preferences.remove({ key: CHAVE_SESSAO_FAZENDA });
+  } catch { /* best-effort */ }
+}
