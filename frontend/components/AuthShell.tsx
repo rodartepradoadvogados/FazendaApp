@@ -30,14 +30,24 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
   // login — só um "trinco" pra não checar duas vezes (localStorage já
   // populado na 1ª passada não precisa de nova tentativa nas seguintes).
   const [hidratado, setHidratado] = useState(false);
+  // Estamos dentro do app nativo (Capacitor) OU do PWA instalado? Detecção
+  // única (ver lib/nativo.ts::ehAppOuPwa) — usada só para destinoRaiz abaixo.
+  // Path-based (ehApp) não bastava: um push pode abrir uma rota fora de /app
+  // (/financeiro, /estoque etc. — ver lib/nativo.ts::rotaDoApp) e, se a
+  // permissão falhar logo em seguida, o bounce caía no "/" desktop mesmo
+  // rodando dentro do app/PWA.
+  const [dentroDoApp, setDentroDoApp] = useState(false);
+  useEffect(() => {
+    import("@/lib/nativo").then(({ ehAppOuPwa }) => ehAppOuPwa()).then(setDentroDoApp).catch(() => {});
+  }, []);
 
   // O app móvel (/app) tem casca própria (barra inferior, sem sidebar).
   const ehApp = path.startsWith("/app");
-  // Dentro do app nativo, qualquer navegação "para a raiz" (sessão expirada,
-  // página sem permissão etc.) deve cair no /app (casca mobile), nunca no
-  // site desktop completo — só o botão proposital "Site completo" do Menu
-  // (app/app/menu/page.tsx) deve levar ao "/" de verdade.
-  const destinoRaiz = ehApp ? "/app" : "/";
+  // Dentro do app nativo/PWA, qualquer navegação "para a raiz" (sessão
+  // expirada, página sem permissão etc.) deve cair no /app (casca mobile),
+  // nunca no site desktop completo — só o botão proposital "Site completo"
+  // do Menu (app/app/menu/page.tsx) deve levar ao "/" de verdade.
+  const destinoRaiz = (ehApp || dentroDoApp) ? "/app" : "/";
 
   // Se o localStorage está vazio dentro do app nativo, tenta restaurar a
   // sessão da cópia nativa (@capacitor/preferences) antes de decidir "checando"

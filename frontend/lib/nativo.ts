@@ -19,6 +19,21 @@ export async function ehApp(): Promise<boolean> {
   return c?.Capacitor?.isNativePlatform() ?? false;
 }
 
+/** true dentro do app nativo (Capacitor) OU do PWA instalado em modo
+ *  standalone (mesma detecção de components/mobile/InstalarApp.tsx) — os
+ *  dois casos em que a UI deve usar a casca mobile (/app) em qualquer
+ *  navegação "para a raiz" (login, sessão expirada, sem permissão etc.),
+ *  nunca o site desktop completo (/). Diferente de ehApp(): não decide
+ *  acesso a plugin nativo nenhum, só qual casca mostrar — por isso cobre
+ *  também o PWA, que ehApp() sozinho não vê (Capacitor.isNativePlatform()
+ *  é false fora do app Android). */
+export async function ehAppOuPwa(): Promise<boolean> {
+  if (typeof window === "undefined") return false;
+  const standalone = window.matchMedia("(display-mode: standalone)").matches
+    || (window.navigator as unknown as { standalone?: boolean }).standalone === true;
+  return standalone || ehApp();
+}
+
 /** Esconde a splash nativa assim que a tela carregou de verdade — a config
  *  (capacitor.config.ts) já tem um teto de segurança (launchAutoHide) caso
  *  isto nunca rode. Não faz nada fora do app nativo. */
