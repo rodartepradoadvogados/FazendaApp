@@ -465,12 +465,35 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
   const [editId, setEditId] = useState<number | null>(null);
   const [editVals, setEditVals] = useState<{ data: string; produto: string; dose: string; unidade: string; via: string; responsavel: string; obs: string }>({ data: "", produto: "", dose: "", unidade: "", via: "", responsavel: "", obs: "" });
   const [ocupado, setOcupado] = useState<number | null>(null);
-  const [produtosCatalogo, setProdutosCatalogo] = useState<string[]>([]);
+  const [produtosCatalogo, setProdutosCatalogo] = useState<{ nome: string; quantidade: number | null; unidade: string | null }[]>([]);
+  const [soComEstoque, setSoComEstoque] = useState(false);
   const admin = ehAdmin();
 
   useEffect(() => {
-    fetchMedicamentos({ incluir_sem_estoque: true }).then((m: any[]) => setProdutosCatalogo(m.map((x) => x.nome))).catch(() => setProdutosCatalogo([]));
+    fetchMedicamentos({ incluir_sem_estoque: true })
+      .then((m: any[]) => setProdutosCatalogo(m.map((x) => ({ nome: x.nome, quantidade: x.quantidade, unidade: x.unidade }))))
+      .catch(() => setProdutosCatalogo([]));
   }, []);
+
+  // Opções do filtro = união dos produtos que APARECEM nas aplicações carregadas
+  // com o catálogo da farmácia (que traz o saldo). Sem a primeira parte, uma
+  // aplicação antiga de produto já removido do estoque ficaria impossível de
+  // filtrar; sem a segunda, não dava para escolher um produto ainda não usado.
+  // `quantidade === null` = produto que não está no catálogo de estoque atual.
+  const catalogoFiltrado = useMemo(() => {
+    const porNome = new Map(produtosCatalogo.map((p) => [p.nome, p]));
+    for (const r of regs || []) {
+      if (r.produto && !porNome.has(r.produto)) porNome.set(r.produto, { nome: r.produto, quantidade: null, unidade: null });
+    }
+    const lista = Array.from(porNome.values());
+    const visiveis = soComEstoque ? lista.filter((p) => (p.quantidade ?? 0) > 0) : lista;
+    return visiveis.sort((a, b) => a.nome.localeCompare(b.nome, "pt-BR"));
+  }, [produtosCatalogo, regs, soComEstoque]);
+  // Se o produto selecionado sumir da lista ao marcar o checkbox, limpa o filtro para não deixar seleção invisível.
+  useEffect(() => {
+    if (soComEstoque && buscaProd && !catalogoFiltrado.some((p) => p.nome === buscaProd)) setBuscaProd("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [soComEstoque]);
 
   // Cada aba busca só o que é dela — legado/importado (natureza=null) conta
   // como curativo (ver Sanidade.natureza).
@@ -573,7 +596,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
       (!fCat || a.categoria === fCat) &&
       (!ini || (a.data ? a.data >= ini : false)) &&
       (!fim || (a.data ? a.data <= fim : false)) &&
-      (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
+      (!buscaProd || a.produto === buscaProd) &&
       (animaisSel.size === 0 || animaisSel.has(a.numero)) &&
       (lotesSel.length === 0 || selDosLotes.has(a.numero)) &&
       (categoriasAnimalSel.length === 0 || selDasCategorias.has(a.numero)) &&
@@ -587,7 +610,7 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
     if (!regs || (!ini && !fim)) return 0;
     return regs.filter((a) =>
       (!fCat || a.categoria === fCat) &&
-      (!buscaProd || a.produto.toLowerCase().includes(buscaProd.toLowerCase())) &&
+      (!buscaProd || a.produto === buscaProd) &&
       (animaisSel.size === 0 || animaisSel.has(a.numero)) &&
       (lotesSel.length === 0 || selDosLotes.has(a.numero)) &&
       (categoriasAnimalSel.length === 0 || selDasCategorias.has(a.numero)) &&
@@ -628,7 +651,19 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Até</label>
               <input type="date" style={selStyle} value={fim} onChange={(e) => setFim(e.target.value)} /></div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Produto</label>
-              <div style={{ position: "relative" }}><Search size={13} style={{ position: "absolute", left: 8, top: 9, color: "var(--text-muted)" }} /><input style={{ ...selStyle, paddingLeft: "1.6rem" }} value={buscaProd} onChange={(e) => setBuscaProd(e.target.value)} placeholder="ex.: Ivermectina" /></div></div>
+              <select style={selStyle} value={buscaProd} onChange={(e) => setBuscaProd(e.target.value)}>
+                <option value="">Todos</option>
+                {!catalogoFiltrado.some((p) => p.nome === buscaProd) && buscaProd && <option value={buscaProd}>{buscaProd}</option>}
+                {catalogoFiltrado.map((p) => (
+                  <option key={p.nome} value={p.nome}>
+                    {p.nome}{p.quantidade == null ? "" : ` — ${p.quantidade > 0 ? `${p.quantidade}${p.unidade ? ` ${p.unidade}` : ""}` : "sem estoque"}`}
+                  </option>
+                ))}
+              </select>
+              <label title="Mostrar no seletor apenas produtos com saldo em estoque" style={{ display: "flex", alignItems: "center", gap: "0.4rem", fontSize: "0.7rem", color: "var(--text-muted)", cursor: "pointer", marginTop: "0.3rem" }}>
+                <input type="checkbox" checked={soComEstoque} onChange={(e) => setSoComEstoque(e.target.checked)} /> Só com saldo em estoque
+              </label>
+            </div>
             <div><label style={{ fontSize: "0.7rem", color: "var(--text-muted)" }}>Animal(is)</label>
               <AnimalPickerModal
                 animais={animaisDeAplic} selecionados={animaisSel} onToggle={(n) => setAnimaisSel((p) => { const s = new Set(p); s.has(n) ? s.delete(n) : s.add(n); return s; })}
@@ -766,8 +801,8 @@ function AplicacoesView({ natureza = "curativo", autoEditarId = null }: { nature
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Produto</label>
                                 <select style={inp} value={editVals.produto} onChange={(e) => setEditVals((s) => ({ ...s, produto: e.target.value }))}>
                                   <option value="">Selecione...</option>
-                                  {!produtosCatalogo.includes(editVals.produto) && editVals.produto && <option value={editVals.produto}>{editVals.produto}</option>}
-                                  {produtosCatalogo.map((p) => <option key={p} value={p}>{p}</option>)}
+                                  {!produtosCatalogo.some((p) => p.nome === editVals.produto) && editVals.produto && <option value={editVals.produto}>{editVals.produto}</option>}
+                                  {produtosCatalogo.map((p) => <option key={p.nome} value={p.nome}>{p.nome}</option>)}
                                 </select></div>
                               <div><label style={{ fontSize: "0.68rem", color: "var(--text-muted)" }}>Dose</label>
                                 <input type="number" step="any" style={inp} value={editVals.dose} onChange={(e) => setEditVals((s) => ({ ...s, dose: e.target.value }))} /></div>

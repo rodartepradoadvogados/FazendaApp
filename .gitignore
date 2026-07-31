@@ -1,7 +1,16 @@
 # Ignorar banco local e ambientes virtuais
+# O backend roda com CWD na raiz do projeto (ver .claude/launch.json), então o
+# SQLite de desenvolvimento nasce AQUI, não dentro de backend/ — sem estas duas
+# linhas o banco local (com os dados da fazenda) entrava no commit por acidente.
+/fazenda.db
+/*.db
 backend/fazenda.db
 backend/*.db
 backend/.env
+
+# Configuração local do Claude Code (pessoal, específica da máquina)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock
 
 # Python
 __pycache__/

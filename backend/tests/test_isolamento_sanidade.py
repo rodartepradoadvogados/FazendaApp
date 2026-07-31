@@ -30,8 +30,8 @@ from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
 from fazenda.models import (
-    AgendamentoPesagem, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, Doenca, EventoSanitario,
-    ExameDefinicao, ExameResultado, Fazenda, ProtocoloSanitario, ProtocoloSanitarioEtapa, Sanidade,
+    AgendamentoPesagem, CalendarioSanitario, ContratoFazenda, ContratoFazendaModulo, Doenca, Estoque, EventoSanitario,
+    ExameDefinicao, ExameResultado, Fazenda, MovimentoEstoque, ProtocoloSanitario, ProtocoloSanitarioEtapa, Sanidade,
 )
 from fazenda.models.planos import MODULOS_COMERCIAIS
 
@@ -104,6 +104,14 @@ def client(monkeypatch):
         )
         s.add(exame_resultado)
 
+        # Item de estoque exclusivo da fazenda #2 — usado por
+        # TestEstoqueBaixaIsolada para garantir que a fazenda #1 nunca consegue
+        # baixar (nem pelo nome, nem pelo estoque_id) o item alheio.
+        estoque_f2 = Estoque(
+            nome="Item Exclusivo F2", fazenda_id=2, quantidade=100.0, unidade="ml", estoque_inicializado=True,
+        )
+        s.add(estoque_f2)
+
         s.commit()
         s.refresh(cal)
         s.refresh(sanidade)
@@ -112,6 +120,7 @@ def client(monkeypatch):
         s.refresh(etapa)
         s.refresh(agendamento)
         s.refresh(exame_resultado)
+        s.refresh(estoque_f2)
 
         ids = {
             "evento_sanitario_id": ev.id,
@@ -123,6 +132,7 @@ def client(monkeypatch):
             "etapa_id": etapa.id,
             "agendamento_id": agendamento.id,
             "exame_resultado_id": exame_resultado.id,
+            "estoque_f2_id": estoque_f2.id,
         }
 
     def _get_session_override():
@@ -472,3 +482,63 @@ class TestLancamentosProtocoloIsolados:
         r = c.get("/sanidade/protocolos/lancamentos")
         assert r.status_code == 200
         assert lancamento_id not in {l["id"] for l in r.json()}
+
+
+# ---------------------------------------------------------------------------
+# Baixa de estoque (fazenda.rules.estoque_baixa) — item de outra fazenda nunca
+# é baixado, nem pelo nome nem pelo estoque_id do frasco.
+# ---------------------------------------------------------------------------
+class TestEstoqueBaixaIsolada:
+    def test_baixa_por_nome_nao_atinge_item_de_outra_fazenda(self, client):
+        c, engine, ids = client
+        _como_fazenda(1)
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-01-10", "animais": ["9001"],
+            "itens": [{"produto": "Item Exclusivo F2", "quantidade": 10.0, "unidade": "ml"}],
+        })
+        assert r.status_code == 200, r.text
+        # Não achou o item (é de outra fazenda) — registra a aplicação mas avisa,
+        # não baixa nada.
+        assert any("não está no estoque" in a for a in r.json()["avisos"])
+        with Session(engine) as s:
+            assert s.get(Estoque, ids["estoque_f2_id"]).quantidade == 100.0
+
+    def test_baixa_por_estoque_id_de_outra_fazenda_e_ignorada(self, client):
+        """Um `estoque_id` de outro tenant não pode ser usado para baixar
+        estoque alheio — resolver_item ignora o id e cai na busca por nome
+        (que também falha, pois o nome só existe na fazenda #2)."""
+        c, engine, ids = client
+        _como_fazenda(1)
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-01-10", "animais": ["9001"],
+            "itens": [{
+                "produto": "Item Exclusivo F2", "quantidade": 10.0, "unidade": "ml",
+                "estoque_id": ids["estoque_f2_id"],
+            }],
+        })
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            assert s.get(Estoque, ids["estoque_f2_id"]).quantidade == 100.0
+            # Nenhum MovimentoEstoque foi gravado contra o item da fazenda #2.
+            movs = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == ids["estoque_f2_id"])).all()
+            assert movs == []
+
+    def test_mesma_fazenda_consegue_baixar_pelo_estoque_id(self, client):
+        c, engine, ids = client
+        _como_fazenda(2)
+        r = c.post("/sanidade/aplicacoes", json={
+            "data_aplicacao": "2026-01-10", "animais": ["9002"],
+            "itens": [{
+                "produto": "Item Exclusivo F2", "quantidade": 10.0, "unidade": "ml",
+                "estoque_id": ids["estoque_f2_id"],
+            }],
+        })
+        assert r.status_code == 200, r.text
+        assert r.json()["avisos"] == []
+        with Session(engine) as s:
+            item = s.get(Estoque, ids["estoque_f2_id"])
+            assert item.quantidade == 90.0
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.estoque_id == ids["estoque_f2_id"])).first()
+            assert mov is not None
+            assert mov.fazenda_id == 2
+            assert mov.origem_tipo == "sanidade"

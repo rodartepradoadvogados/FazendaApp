@@ -503,6 +503,7 @@ def _criar_movimento_estoque(
         pedido_id=dados.pedido_id,
         pedido_item_id=dados.pedido_item_id,
         fazenda_id=fazenda_id,
+        estoque_id=item.id,
     ))
     session.commit()
     session.refresh(item)

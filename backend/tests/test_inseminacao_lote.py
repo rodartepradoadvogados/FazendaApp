@@ -12,7 +12,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal, EstoqueSemen, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, Servico
+from fazenda.models import Animal, EstoqueSemen, MovimentoEstoque, ProtocoloIatfAplicacao, ProtocoloIatfLancamento, Servico
 
 
 @pytest.fixture
@@ -238,6 +238,20 @@ class TestDescontoDoseSemen:
         })
         assert r.status_code == 200
         assert r.json()["criados"] == 1
+
+    def test_desconto_grava_movimento_de_estoque(self, client):
+        # Antes, _baixar_dose_semen descontava EstoqueSemen.doses sem gravar
+        # MovimentoEstoque nenhum — a baixa não deixava rastro (ver auditoria).
+        c, engine = client
+        r = c.post("/reproducao/servico", json={
+            "numero_matriz": "700", "data_servico": "2026-07-08", "tipo_servico": "IA", "reprodutor": "Coors",
+        })
+        assert r.status_code == 200, r.text
+        with Session(engine) as s:
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Coors")).first()
+            assert mov is not None
+            assert mov.quantidade == 1
+            assert mov.origem_tipo == "ia_semen"
 
 
 class TestSemenDisponivel:

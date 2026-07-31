@@ -20,10 +20,11 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     AlimentacaoEstado, Alimento, Animal, CategoriaAlimento, Dieta, DietaItemProgramado, DietaLancamento,
-    DietaRegistroReal, Estoque, IngredienteMS, Lote, MovimentoEstoque, Usuario,
+    DietaRegistroReal, Estoque, IngredienteMS, Lote, Usuario,
 )
 from fazenda.rules.alimentacao import calcular_consumo, calcular_necessidade_mensal, _codigo_grupo
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios
+from fazenda.rules import estoque_baixa
 from fazenda.rules.farmacia import pode_baixar_estoque
 
 # Nº de tratos por dia (fornecimentos). Hoje são 2.
@@ -140,17 +141,24 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
     estoque_por_alimento, _ = _estoque_por_alimento(session, fazenda_id)
 
     itens_baixados = []
+    avisos: list[str] = []
     for item in consumo_total:
+        # Resolução própria (não usa estoque_baixa.resolver_item): além do
+        # nome, cai no vínculo via cadastro de Alimento quando o nome do
+        # ingrediente do plano não bate direto com nenhum Estoque.nome (mesma
+        # resolução usada na necessidade mensal).
         query_estoque_item = select(Estoque).where(Estoque.nome == item["ingrediente"])
         if fazenda_id is not None:
             query_estoque_item = query_estoque_item.where(Estoque.fazenda_id == fazenda_id)
         estoque_item = session.exec(query_estoque_item).first()
         if not estoque_item:
-            # Sem item de Estoque com o mesmo nome — tenta pelo vínculo via
-            # cadastro de Alimento (mesma resolução usada na necessidade mensal).
             candidatos = estoque_por_alimento.get((item["ingrediente"] or "").strip().lower())
             if candidatos:
                 estoque_item = session.get(Estoque, candidatos[0]["id"])
+        # Ingrediente de dieta sem item de Estoque casado (comum — nem todo
+        # ingrediente do plano é fisicamente controlado) não gera aviso: essa
+        # baixa roda sozinha a cada acesso à tela, sem ação do usuário para
+        # reagir a um aviso por ingrediente não cadastrado.
         if not estoque_item or not item["consumo_dia"] or estoque_item.estocavel is False:
             continue
         # Gatilho de comunicação: só deduz insumo cujo estoque inicial/primeira
@@ -158,21 +166,16 @@ def _dar_baixa_automatica(session: Session, fazenda_id: int | None) -> dict:
         if not pode_baixar_estoque(estoque_item):
             continue
         baixa = round(item["consumo_dia"] * dias, 2)
-        estoque_item.quantidade = round((estoque_item.quantidade or 0) - baixa, 2)
-        if estoque_item.estoque_minimo is not None:
-            estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-        estoque_item.atualizado_em = datetime.utcnow()
-        session.add(estoque_item)
-        session.add(MovimentoEstoque(
-            nome_item=estoque_item.nome, movimento="Saída de ajuste", quantidade=baixa,
-            unidade=estoque_item.unidade, data_movimento=hoje,
+        avisos.extend(estoque_baixa.movimentar(
+            session, item=estoque_item, quantidade=baixa, unidade=estoque_item.unidade, data=hoje,
+            fazenda_id=fazenda_id, movimento="Saída de ajuste",
             observacao=f"Baixa automática da Alimentação — {dias} dia(s) desde a última baixa",
-            fazenda_id=fazenda_id,
+            origem_tipo="alimentacao", produto=item["ingrediente"],
         ))
         itens_baixados.append({"ingrediente": item["ingrediente"], "baixa": baixa})
 
     session.commit()
-    return {"dias_deduzidos": dias, "ultima_data_deducao": hoje.isoformat(), "itens": itens_baixados}
+    return {"dias_deduzidos": dias, "ultima_data_deducao": hoje.isoformat(), "itens": itens_baixados, "avisos": avisos}
 
 
 @router.get("/")

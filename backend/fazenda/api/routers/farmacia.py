@@ -164,17 +164,28 @@ def excluir_marca(
 @router.get("/apresentacoes")
 def listar_apresentacoes(
     principio_ativo_id: int | None = None, produto: str | None = None, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> list[dict]:
     """Apresentações (frascos/potes) em estoque de um princípio — alimenta o menu
     "qual frasco você está usando?" no lançamento da aplicação. Pode filtrar pelo
-    princípio ou pelo nome de um produto (deriva o princípio dele)."""
+    princípio ou pelo nome de um produto (deriva o princípio dele).
+
+    Restrito à fazenda atual: sem o filtro, o menu listava os frascos de TODAS as
+    fazendas, expondo o estoque de uma cliente para outra."""
+    fazenda_id = fazenda_id_seguro(fazenda_id)
     pa_id = principio_ativo_id
     if pa_id is None and produto:
-        item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
+        query_produto = select(Estoque).where(Estoque.nome == produto)
+        if fazenda_id is not None:
+            query_produto = query_produto.where(Estoque.fazenda_id == fazenda_id)
+        item = session.exec(query_produto).first()
         pa_id = item.principio_ativo_id if item else None
     if pa_id is None:
         return []
-    itens = session.exec(select(Estoque).where(Estoque.principio_ativo_id == pa_id).order_by(Estoque.nome)).all()
+    query_itens = select(Estoque).where(Estoque.principio_ativo_id == pa_id)
+    if fazenda_id is not None:
+        query_itens = query_itens.where(Estoque.fazenda_id == fazenda_id)
+    itens = session.exec(query_itens.order_by(Estoque.nome)).all()
     return [
         {
             "estoque_id": it.id, "nome": it.nome, "marca": it.laboratorio,

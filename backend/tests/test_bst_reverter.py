@@ -13,7 +13,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine, select
 
 import fazenda.database as database
-from fazenda.models import Animal
+from fazenda.models import Animal, Estoque, MovimentoEstoque
 
 
 @pytest.fixture
@@ -107,3 +107,30 @@ class TestReverterBst:
             animal = s.exec(select(Animal).where(Animal.numero == "300")).first()
             assert animal.excluir_bst is True
             assert animal.aguardando_nova_aplicacao_bst is False
+
+
+class TestBstGravaMovimentoEstoque:
+    """Antes, aplicar_bst_lote baixava Estoque.quantidade sem gravar
+    MovimentoEstoque nenhum — a baixa ficava invisível no histórico e no custo
+    físico do RMCA (ver auditoria em fazenda.rules.estoque_baixa)."""
+
+    def test_aplicar_bst_grava_movimento_com_fazenda_estoque_e_origem(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Estoque(nome="Lactotropin", quantidade=50.0, unidade="ml", estoque_inicializado=True))
+            s.commit()
+
+        r = c.post("/agenda/bst/aplicar", json={
+            "numeros_matriz": ["300"], "data_aplicacao": date.today().isoformat(),
+            "produto": "Lactotropin", "dose": 3.0, "unidade": "ml", "aplicado": True,
+        })
+        assert r.status_code == 200, r.text
+
+        with Session(engine) as s:
+            item = s.exec(select(Estoque).where(Estoque.nome == "Lactotropin")).first()
+            assert item.quantidade == 47.0
+            mov = s.exec(select(MovimentoEstoque).where(MovimentoEstoque.nome_item == "Lactotropin")).first()
+            assert mov is not None
+            assert mov.quantidade == 3.0
+            assert mov.estoque_id == item.id
+            assert mov.origem_tipo == "bst"

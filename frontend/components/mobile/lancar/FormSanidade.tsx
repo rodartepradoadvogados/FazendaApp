@@ -17,7 +17,10 @@ import {
 } from "./comum";
 
 type Protocolo = { id: number; nome: string; eh_mastite?: boolean };
-type EventoPrev = { id: number; nome: string; categoria_preventiva: string | null };
+type EventoPrev = {
+  id: number; nome: string; categoria_preventiva: string | null;
+  produto_padrao?: string | null; dose_padrao?: number | null; unidade_padrao?: string | null;
+};
 const CLASSIF_MASTITE = ["clinica", "subclinica", "ambiental"];
 // Separador usado para guardar mais de uma categoria-alvo no mesmo campo de
 // texto único do banco — mesmo padrão do site (ver SEP_CATEGORIAS em app/lancamentos/page.tsx).
@@ -69,7 +72,7 @@ export function FormSanidade({ animais, animalFixado }: { animais: Animal[]; ani
     return (
       <>
         <MobVoltar titulo={TITULOS_PREV[tipoPrev]} onVoltar={() => setTipoPrev(null)} />
-        {tipoPrev === "aplicacao" && <PreventivoAplicacao animais={animais} animalFixado={animalFixado} />}
+        {tipoPrev === "aplicacao" && <PreventivoAplicacao animais={animais} animalFixado={animalFixado} estoque={estoque.dados} />}
         {tipoPrev === "calendario" && <PreventivoCalendario estoque={estoque.dados} />}
         {tipoPrev === "bst" && <PreventivoBst />}
       </>
@@ -312,7 +315,7 @@ function CurativaForm({ tipo, animais, animalFixado, estoque }: { tipo: TipoCura
 }
 
 // ── Preventiva > Aplicação — POST /sanidade/calendario/cadastrar-preventivo ──
-function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
+function PreventivoAplicacao({ animais, animalFixado, estoque }: { animais: Animal[]; animalFixado: string | null; estoque: EstoqueItem[] }) {
   const { aviso, enviar, enviando, erroValidacao } = useEnvio();
   const [eventos, setEventos] = useState<EventoPrev[]>([]);
   const [eventoId, setEventoId] = useState("");
@@ -323,6 +326,11 @@ function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; ani
   const [modo, setModo] = useState<"animal" | "lote">("animal");
   const [animal, setAnimal] = useState(animalFixado || "");
   const [lote, setLote] = useState("");
+  // Medicamento aplicado — sempre pedido para vacina/tratamento (não para
+  // exame); pré-preenche com o padrão do evento, mas o usuário pode trocar.
+  const [produto, setProduto] = useState("");
+  const [dose, setDose] = useState("");
+  const [unidade, setUnidade] = useState("");
 
   useEffect(() => {
     fetchComCache<EventoPrev[]>("sanidade_eventos_sanitarios_ativos", () => fetchEventosSanitarios().then((d: any[]) => d.filter((e) => e.ativo)))
@@ -331,6 +339,22 @@ function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; ani
 
   const evento = eventos.find((e) => String(e.id) === eventoId);
   const ehExame = evento?.categoria_preventiva === "exame";
+  const compativeis = useMemo(() => unidadesCompativeis(estoque.find((e) => e.nome === produto)?.unidade), [estoque, produto]);
+
+  useEffect(() => {
+    const nomePadrao = evento?.produto_padrao || "";
+    const comp = unidadesCompativeis(nomePadrao ? estoque.find((e) => e.nome === nomePadrao)?.unidade : undefined);
+    setProduto(nomePadrao);
+    setDose(evento?.dose_padrao != null ? String(evento.dose_padrao) : "");
+    setUnidade(evento?.unidade_padrao && comp.includes(evento.unidade_padrao) ? evento.unidade_padrao : (comp[0] || ""));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [eventoId]);
+
+  function escolherProduto(nome: string) {
+    setProduto(nome);
+    const comp = unidadesCompativeis(estoque.find((e) => e.nome === nome)?.unidade);
+    setUnidade((u) => (comp.includes(u) ? u : (comp[0] || "")));
+  }
 
   const lotes = useMemo(() => {
     const set = new Set<string>();
@@ -345,12 +369,18 @@ function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; ani
     if (!eventoId) return erroValidacao("Selecione o evento preventivo.");
     if (!data) return erroValidacao("Informe a data de referência.");
     if (!alvo.length) return erroValidacao(modo === "animal" ? "Selecione o animal." : "Selecione o lote.");
+    if (!ehExame) {
+      if (!produto) return erroValidacao("Selecione o medicamento aplicado.");
+      if (!(Number(dose) > 0)) return erroValidacao("Informe a dose.");
+      if (!unidade) return erroValidacao("Selecione a unidade.");
+    }
     enviar(
       "/sanidade/calendario/cadastrar-preventivo",
       {
         evento_sanitario_id: Number(eventoId), categoria_alvo: modo === "lote" ? lote : undefined, data_evento: data,
         frequencia_valor: Number(freqValor) || 1, frequencia_unidade: freqUnidade,
         animais: alvo, aplicar: !ehExame, veterinario: veterinario || undefined,
+        produto: ehExame ? undefined : produto, dose: ehExame ? undefined : Number(dose), unidade: ehExame ? undefined : unidade,
       },
       `Preventivo ${evento?.nome || ""} — ${modo === "animal" ? `animal ${animal}` : `lote ${lote}`}`,
       () => { setEventoId(""); setVeterinario(""); },
@@ -378,10 +408,32 @@ function PreventivoAplicacao({ animais, animalFixado }: { animais: Animal[]; ani
           </select>
         </div>
       </MobCampo>
-      {ehExame && (
+      {ehExame ? (
         <MobCampo label="Veterinário (exame)">
           <input className="mob-input" value={veterinario} onChange={(e) => setVeterinario(e.target.value)} placeholder="ex.: Dr. Carlos" />
         </MobCampo>
+      ) : (
+        <>
+          <MobCampo label="Medicamento aplicado">
+            <select className="mob-input" value={produto} onChange={(e) => escolherProduto(e.target.value)}>
+              <option value="">Selecione o produto…</option>
+              {estoque.map((e) => (
+                <option key={e.nome} value={e.nome}>{e.nome}{e.quantidade != null ? ` (${e.quantidade} ${e.unidade || ""})` : ""}</option>
+              ))}
+            </select>
+          </MobCampo>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "0.8rem" }}>
+            <MobCampo label="Dose">
+              <input type="number" inputMode="decimal" className="mob-input" value={dose} onChange={(e) => setDose(e.target.value)} placeholder="0" />
+            </MobCampo>
+            <MobCampo label="Unidade">
+              <select className="mob-input" value={unidade} onChange={(e) => setUnidade(e.target.value)}>
+                {!unidade && <option value="">—</option>}
+                {compativeis.map((u) => <option key={u} value={u}>{u}</option>)}
+              </select>
+            </MobCampo>
+          </div>
+        </>
       )}
 
       <LinhaPills>

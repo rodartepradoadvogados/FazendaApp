@@ -15,7 +15,7 @@ from fazenda.auth import get_current_user, get_fazenda_atual_id
 from fazenda.database import get_session
 from fazenda.models import (
     Animal, AplicacaoAgendada, CalendarioSanitario, ColostragemBezerra, Doenca, Estoque, EventoRealizado,
-    EventoSanitario, ExameDefinicao, ExameResultado, MovimentoEstoque,
+    EventoSanitario, ExameDefinicao, ExameResultado,
     Parto, PrincipioAtivo, ProtocoloSanitario, ProtocoloSanitarioAplicacao, ProtocoloSanitarioEtapa,
     ProtocoloSanitarioLancamento, QualidadeLeite, Sanidade, Usuario,
 )
@@ -23,9 +23,9 @@ from fazenda.api.routers.baixas import ADescartarIn, marcar_a_descartar
 from fazenda.api.routers.cadastro import GATILHOS_EVENTO
 from fazenda.rules.auditoria import fazenda_id_seguro, mapa_usuarios, usuario_id_seguro
 from fazenda.rules.calendario_sanitario import proxima_ocorrencia
+from fazenda.rules.estoque_baixa import baixar as _estoque_baixar, devolver as _estoque_devolver, resolver_item as _resolver_item_estoque
 from fazenda.rules.eventos_sanitarios import ROTULOS_GATILHO, _datas_gatilho
-from fazenda.rules.farmacia import pode_baixar_estoque
-from fazenda.rules.unidades import pode_dar_baixa_direta, unidades_compativeis
+from fazenda.rules.unidades import unidades_compativeis
 
 RESULTADOS_EXAME = ["positivo", "negativo", "indefinido"]
 
@@ -101,9 +101,16 @@ def listar_aplicacoes(
 
 
 @router.get("/unidades-compativeis")
-def obter_unidades_compativeis(produto: str, session: Session = Depends(get_session)) -> list[str]:
+def obter_unidades_compativeis(
+    produto: str, session: Session = Depends(get_session),
+    fazenda_id: int | None = Depends(get_fazenda_atual_id),
+) -> list[str]:
     """Unidades que fazem sentido escolher para este produto, dada sua unidade de estoque."""
-    item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
+    fazenda_id = fazenda_id_seguro(fazenda_id)
+    query = select(Estoque).where(Estoque.nome == produto)
+    if fazenda_id is not None:
+        query = query.where(Estoque.fazenda_id == fazenda_id)
+    item = session.exec(query).first()
     return unidades_compativeis(item.unidade if item else None)
 
 
@@ -169,11 +176,7 @@ def registrar_aplicacao(
     for item in dados.itens:
         # Se o usuário escolheu o frasco/apresentação específico ("qual frasco?"),
         # abate dele; senão, cai no item pelo nome do produto (comportamento antigo).
-        estoque_item = None
-        if item.estoque_id is not None:
-            estoque_item = session.get(Estoque, item.estoque_id)
-        if estoque_item is None:
-            estoque_item = session.exec(select(Estoque).where(Estoque.nome == item.produto)).first()
+        estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=item.produto, estoque_id=item.estoque_id)
         compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
         if item.unidade not in compativeis:
             raise HTTPException(
@@ -200,37 +203,38 @@ def registrar_aplicacao(
             sanidade_ids.append(sanidade.id)
             criados += 1
 
-        if estoque_item and estoque_item.estocavel is False:
-            pass
-        elif estoque_item and not pode_baixar_estoque(estoque_item):
-            # Gatilho de comunicação: sem estoque inicial/primeira compra, a
-            # aplicação é registrada mas NÃO baixa (o item pede inicialização).
-            avisos.append(
-                f'Aplicação de "{item.produto}" registrada, mas sem baixa: registre o estoque inicial '
-                f'ou a primeira compra do item para começar o controle de baixas.'
-            )
-        elif estoque_item and pode_dar_baixa_direta(item.unidade, estoque_item.unidade):
-            total = item.quantidade * len(dados.animais)
-            estoque_item.quantidade = (estoque_item.quantidade or 0) - total
-            if estoque_item.estoque_minimo is not None:
-                estoque_item.abaixo_minimo = estoque_item.quantidade < estoque_item.estoque_minimo
-            estoque_item.atualizado_em = datetime.utcnow()
-            session.add(estoque_item)
-            # Sem este registro, a baixa de sanidade ficava invisível no
-            # histórico de /estoque/movimentos e no custo físico do RMCA.
-            session.add(MovimentoEstoque(
-                nome_item=estoque_item.nome, movimento="Aplicação", quantidade=total,
-                unidade=estoque_item.unidade, data_movimento=dados.data_aplicacao,
-                observacao=f"Aplicação em {len(dados.animais)} animal(is) — Sanidade",
-            ))
-        elif estoque_item and estoque_item.unidade and estoque_item.unidade != item.unidade:
-            avisos.append(
-                f'Baixa de estoque de "{item.produto}" não aplicada — cadastre a equivalência entre '
-                f'"{item.unidade}" e "{estoque_item.unidade}" (unidade de estoque do produto).'
-            )
+        total = item.quantidade * len(dados.animais)
+        avisos.extend(_estoque_baixar(
+            session, item=estoque_item, quantidade=total, unidade=item.unidade, data=dados.data_aplicacao,
+            fazenda_id=fazenda_id, observacao=f"Aplicação em {len(dados.animais)} animal(is) — Sanidade",
+            usuario_id=usuario_id_seguro(user), origem_tipo="sanidade", origem_id=sanidade_ids[-1] if sanidade_ids else None,
+            produto=item.produto,
+        ))
 
     session.commit()
     return {"criados": criados, "agendadas": 0, "avisos": avisos, "programado": False, "sanidade_ids": sanidade_ids}
+
+
+def _ajustar_estoque_por_aplicacao(
+    session: Session, produto: str | None, dose: float | None, unidade: str | None,
+    fazenda_id: int | None, sinal: int, observacao: str, origem_id: int | None = None,
+) -> list[str]:
+    """Devolve (sinal=+1) ou baixa (sinal=-1) `dose` de `produto` no estoque —
+    usado para estornar/reaplicar a baixa quando uma aplicação é editada ou
+    excluída (ver PUT/DELETE /sanidade/aplicacoes/{id}). Delega os mesmos
+    portões da baixa original (ver fazenda.rules.estoque_baixa.movimentar) —
+    sem isso um estorno criaria estoque fantasma para uma baixa que nunca
+    aconteceu. Devolve os avisos gerados (lista vazia se nada precisou avisar).
+    """
+    if not produto or dose is None or not unidade:
+        return []
+    estoque_item = _resolver_item_estoque(session, fazenda_id=fazenda_id, produto=produto)
+    fn = _estoque_devolver if sinal > 0 else _estoque_baixar
+    return fn(
+        session, item=estoque_item, quantidade=dose, unidade=unidade, data=date.today(),
+        fazenda_id=fazenda_id, observacao=observacao, origem_tipo="sanidade", origem_id=origem_id,
+        produto=produto,
+    )
 
 
 class EditarAplicacaoIn(BaseModel):
@@ -251,7 +255,9 @@ def editar_aplicacao(
     fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
     """Corrige uma aplicação diretamente na lista (produto, dose, unidade, via,
-    responsável, data, observação). Não mexe no estoque — é só ajuste do registro."""
+    responsável, data, observação). Se produto, dose ou unidade mudarem, o
+    estoque é ajustado: estorna a baixa antiga (valores atuais do registro) e
+    aplica a baixa com os valores novos — ver _ajustar_estoque_por_aplicacao."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
@@ -260,7 +266,10 @@ def editar_aplicacao(
     campos = dados.model_dump(exclude_unset=True)
     if "unidade" in campos and campos["unidade"]:
         produto = campos.get("produto", s.produto)
-        estoque_item = session.exec(select(Estoque).where(Estoque.nome == produto)).first()
+        query_item = select(Estoque).where(Estoque.nome == produto)
+        if fazenda_id is not None:
+            query_item = query_item.where(Estoque.fazenda_id == fazenda_id)
+        estoque_item = session.exec(query_item).first()
         compativeis = unidades_compativeis(estoque_item.unidade if estoque_item else None)
         if campos["unidade"] not in compativeis:
             raise HTTPException(
@@ -268,25 +277,50 @@ def editar_aplicacao(
                 detail=f'Unidade "{campos["unidade"]}" não é compatível com o produto "{produto}" (aceitas: {", ".join(compativeis)})',
             )
 
+    avisos: list[str] = []
+    # Cada linha de Sanidade é UM animal — a quantidade do ajuste de estoque é
+    # a própria dose (não multiplica por nº de animais, ao contrário da baixa
+    # em lote de registrar_aplicacao).
+    mexe_estoque = any(c in campos for c in ("produto", "dose", "unidade"))
+    if mexe_estoque:
+        _ajustar_estoque_por_aplicacao(
+            session, s.produto, s.dose, s.unidade, fazenda_id, +1,
+            f"Estorno por edição da aplicação #{s.id} — Sanidade", origem_id=s.id,
+        )
+
     for campo, valor in campos.items():
         setattr(s, campo, valor)
     s.atualizado_em = datetime.utcnow()
     session.add(s)
+
+    if mexe_estoque:
+        avisos.extend(_ajustar_estoque_por_aplicacao(
+            session, s.produto, s.dose, s.unidade, fazenda_id, -1,
+            f"Aplicação editada #{s.id} — Sanidade", origem_id=s.id,
+        ))
+
     session.commit()
     session.refresh(s)
-    return {"id": s.id, "numero": s.numero_matriz, "produto": s.produto, "dose": s.dose, "unidade": s.unidade}
+    return {
+        "id": s.id, "numero": s.numero_matriz, "produto": s.produto, "dose": s.dose, "unidade": s.unidade,
+        "avisos": avisos,
+    }
 
 
 @router.delete("/aplicacoes/{aplicacao_id}")
 def excluir_aplicacao(
     aplicacao_id: int, session: Session = Depends(get_session), fazenda_id: int | None = Depends(get_fazenda_atual_id),
 ) -> dict:
-    """Exclui uma aplicação da lista de Sanidade. O estoque não é reposto
-    automaticamente — se precisar, ajuste o estoque manualmente."""
+    """Exclui uma aplicação da lista de Sanidade e devolve a dose ao estoque
+    (mesmas condições da baixa original — ver _ajustar_estoque_por_aplicacao)."""
     s = session.get(Sanidade, aplicacao_id)
     fazenda_id = fazenda_id_seguro(fazenda_id)
     if not s or (fazenda_id is not None and s.fazenda_id != fazenda_id):
         raise HTTPException(status_code=404, detail="Aplicação não encontrada")
+    _ajustar_estoque_por_aplicacao(
+        session, s.produto, s.dose, s.unidade, fazenda_id, +1,
+        f"Estorno por exclusão da aplicação #{s.id} — Sanidade", origem_id=s.id,
+    )
     session.delete(s)
     session.commit()
     return {"excluido": True, "id": aplicacao_id}
@@ -707,6 +741,31 @@ def cadastrar_preventivo(
     dose = dados.dose if dados.dose is not None else ev.dose_padrao
     unidade = dados.unidade or ev.unidade_padrao
     via = dados.via if dados.via is not None else ev.via_padrao
+
+    # Antes, quando o evento não tinha produto/dose/unidade padrão cadastrado
+    # (e o request também não os informou), a aplicação era pulada em silêncio
+    # — a API devolvia 200 com aplicacao: null e nada era gravado/baixado.
+    # Falha explícita: só quando o usuário realmente pediu para aplicar
+    # (aplicar=True e há animais marcados) — sem animais/aplicar=False o
+    # usuário só está cadastrando/atualizando a regra do calendário, o que
+    # continua válido sem produto/dose/unidade.
+    if dados.aplicar and dados.animais:
+        faltando = []
+        if not produto:
+            faltando.append("o medicamento")
+        if dose is None:
+            faltando.append("a dose")
+        if not unidade:
+            faltando.append("a unidade")
+        if faltando:
+            texto = faltando[0] if len(faltando) == 1 else ", ".join(faltando[:-1]) + " e " + faltando[-1]
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f'Informe {texto} para registrar a aplicação de "{ev.nome}" — este evento não tem '
+                    f'medicamento padrão cadastrado.'
+                ),
+            )
 
     # 1) Regra recorrente do calendário — herda produto/dose/doença do evento
     # (ou o que foi confirmado/ajustado na hora de dar baixa). "Repetir a cada"

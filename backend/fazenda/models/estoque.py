@@ -162,6 +162,20 @@ class MovimentoEstoque(SQLModel, table=True):
     # refletir em Estoque (ver Pedido/PedidoItem).
     pedido_id: Optional[int] = Field(default=None, foreign_key="pedido.id")
     pedido_item_id: Optional[int] = Field(default=None, foreign_key="pedido_item.id")
+    # Vínculo relacional com o item de estoque (ver fazenda.rules.estoque_baixa)
+    # — até aqui o único vínculo era o TEXTO `nome_item`, que quebra se o item
+    # for renomeado. None em movimentos antigos (backfill best-effort por nome
+    # dentro da mesma fazenda, ver migração) ou quando o item não foi
+    # encontrado no momento do lançamento.
+    estoque_id: Optional[int] = Field(default=None, foreign_key="estoque.id", index=True)
+    # De onde veio esta baixa/devolução — ex.: "sanidade", "protocolo_sanitario",
+    # "iatf", "inducao", "secagem", "vacina_pre_parto", "bst", "ia_semen",
+    # "alimentacao". None = lançamento manual (POST /estoque/movimentar) ou
+    # importação de CSV.
+    origem_tipo: Optional[str] = None
+    # Id do lançamento (Sanidade, ProtocoloSanitarioAplicacao, Servico...) que
+    # gerou este movimento — junto de `origem_tipo`, dá o rastro completo.
+    origem_id: Optional[int] = None
 
 
 class EstoqueSemen(SQLModel, table=True):
