@@ -181,6 +181,21 @@ class TestMovimentacoes:
         })
         assert r.status_code == 404
 
+    def test_rejeita_lote_destino_inativo_sem_mover_silenciosamente(self, client):
+        r_lote = client.post("/lotes/", json={"codigo": "03", "nome": "Desativado", "ativo": False})
+        assert r_lote.status_code == 200
+
+        r = client.post("/movimentacoes/mover", json={
+            "data_movimento": "2026-07-08", "motivo": "Crescimento",
+            "lote_destino_codigo": "03", "animais": ["201"],
+        })
+        assert r.status_code == 400
+        assert "inativo" in r.json()["detail"].lower()
+
+        # Nada foi movido — o lote/grupo do animal continua o de origem.
+        animal = client.get("/animais/201").json()
+        assert animal["grupo_primario"] == "01 - Alta"
+
     def test_registra_historico_com_origem_e_destino(self, client):
         client.post("/movimentacoes/mover", json={
             "data_movimento": "2026-07-08", "motivo": "Parto",

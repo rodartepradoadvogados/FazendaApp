@@ -79,6 +79,52 @@ class TestSecagemInfo:
         assert r.status_code == 404
 
 
+class TestLoteDasSecasMotorDeCriterios:
+    """`_lote_das_secas` passou a usar o motor real de critérios (`animal_atende_
+    criterios`), em vez de só filtrar `status_lactacao == "seca"` e pegar o
+    primeiro sem `order_by` — cobre desempate entre 2+ lotes concorrentes,
+    `excluir_da_sugestao` e o filtro de lote ativo."""
+
+    def test_dois_lotes_de_seca_concorrentes_escolhe_o_de_del_min_mais_proximo(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Vaca com 245 dias pós-parto (Parto real). Dois lotes de seca
+            # concorrentes, ambos elegíveis pelo del_min/max — o desempate
+            # escolhe o lote cujo del_min mais se aproxima do DEL atual do
+            # animal (04: |200-245|=45; 05: |240-245|=5 -> vence o 05).
+            s.add(Animal(numero="510", raca="Girolando", ativo=True))
+            s.add(Parto(numero_matriz="510", data_parto=date.today() - timedelta(days=245)))
+            s.add(Lote(codigo="04", nome="Secas recentes", status_lactacao="seca", del_min=200, del_max=300))
+            s.add(Lote(codigo="05", nome="Secas longas", status_lactacao="seca", del_min=240, del_max=300))
+            s.commit()
+
+        r = c.get("/producao/secagem-info", params={"numero_matriz": "510"})
+        assert r.status_code == 200
+        assert r.json()["lote_sugerido"]["codigo"] == "05"
+
+    def test_excluir_da_sugestao_tira_o_lote_de_seca_da_disputa(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="511", raca="Girolando", ativo=True))
+            s.add(Lote(codigo="04", nome="Enfermaria", status_lactacao="seca", excluir_da_sugestao=True))
+            s.commit()
+
+        r = c.get("/producao/secagem-info", params={"numero_matriz": "511"})
+        assert r.status_code == 200
+        assert r.json()["lote_sugerido"] is None
+
+    def test_lote_de_seca_inativo_nunca_e_sugerido(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            s.add(Animal(numero="512", raca="Girolando", ativo=True))
+            s.add(Lote(codigo="04", nome="Secas (desativado)", status_lactacao="seca", ativo=False))
+            s.commit()
+
+        r = c.get("/producao/secagem-info", params={"numero_matriz": "512"})
+        assert r.status_code == 200
+        assert r.json()["lote_sugerido"] is None
+
+
 class TestRegistrarSecagem:
     def test_cria_registro_produtos_e_baixa_estoque(self, client):
         c, engine = client
@@ -273,6 +319,20 @@ class TestSugestaoLoteEvento:
     def test_sem_lote_configurado_retorna_nulo(self, client):
         c, _ = client
         r = c.post("/producao/sugestao-lote-evento", json={"numero_matriz": "700", "categoria_abrev": "Vaca"})
+        assert r.json()["lote_sugerido"] is None
+
+    def test_lote_inativo_nunca_e_sugerido_no_evento(self, client):
+        c, engine = client
+        with Session(engine) as s:
+            # Único lote que bateria no critério está desativado — não pode
+            # ser sugerido; sem outro candidato, a resposta é nula.
+            s.add(Lote(codigo="01", nome="BEZ 1 (0 A 30)", categorias="bezerra,bezerro", idade_dias_max=30, ativo=False))
+            s.commit()
+
+        r = c.post("/producao/sugestao-lote-evento", json={
+            "numero_matriz": "601", "categoria_abrev": "Bezerra", "data_nasc": "2026-07-08",
+        })
+        assert r.status_code == 200
         assert r.json()["lote_sugerido"] is None
 
 

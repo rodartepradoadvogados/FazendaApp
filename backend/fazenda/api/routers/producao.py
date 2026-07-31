@@ -30,7 +30,7 @@ from fazenda.rules.bonificacao_qualidade import INDICADORES_BONIFICAVEIS, calcul
 from fazenda.rules.dry_off import calcular_secagem
 from fazenda.rules import estoque_baixa
 from fazenda.rules.gestation import calcular_parto_provavel
-from fazenda.rules.lote_criterios import animal_atende_criterios, lote_tem_criterio
+from fazenda.rules.lote_criterios import _contexto_animal, _dias_pos_parto, animal_atende_criterios, lote_tem_criterio
 from fazenda.rules.planilha_modelo import gerar_modelo_xlsx
 from fazenda.rules.producao import calcular_producao
 from fazenda.rules.unidades import unidades_compativeis
@@ -913,19 +913,82 @@ def _rotulo_lote(codigo: str, nome: str) -> str:
     return f"{codigo} - {nome}"
 
 
-def _lote_das_secas(session: Session, fazenda_id: int | None = None) -> dict | None:
+def _lote_das_secas(session: Session, numero_matriz: str, fazenda_id: int | None = None) -> dict | None:
     """
-    O lote de vacas secas é o único configurado com status_lactacao="seca" —
-    não dá pra usar o motor geral de critérios aqui porque a categoria/status
-    do animal na ficha só é atualizada no próximo upload do GERAL.csv, não na
-    hora do lançamento manual de secagem.
+    Lote sugerido para a vaca secar — usa o mesmo motor de critérios real de
+    `sugestao_lote_evento` (poucas linhas abaixo), em vez de só filtrar
+    `status_lactacao == "seca"` e pegar o primeiro. O motivo original que
+    justificava evitar o motor geral aqui (a categoria/status do animal na
+    ficha só atualiza no próximo GERAL.csv) não existe mais: `_situacao_produtiva`/
+    `_dias_pos_parto` (lote_criterios.py) já priorizam Secagem/Parto reais (AO
+    VIVO, lançados pelo próprio app) sobre o texto congelado — inclusive a
+    Secagem recém-registrada em `registrar_secagem` acima, commitada antes
+    desta chamada.
+
+    Considera só lotes ativos, com status_lactacao="seca" e algum critério
+    configurado (`lote_tem_criterio`, que também respeita `excluir_da_sugestao`),
+    e exige que o animal atenda a TODOS os critérios do lote candidato (del_min/
+    max, peso, categoria_manejo_ids etc.), não só o status de lactação.
     """
-    query = select(Lote).where(Lote.status_lactacao == "seca")
+    query = select(Lote).where(Lote.status_lactacao == "seca", Lote.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query = query.where(Lote.fazenda_id == fazenda_id)
-    lote = session.exec(query).first()
-    if not lote:
+    candidatos = [l for l in session.exec(query).all() if lote_tem_criterio(l)]
+    if not candidatos:
         return None
+
+    dados_criterios = coletar_dados_criterios(session, fazenda_id)
+    animal_dict = next((a for a in dados_criterios["animais"] if a["numero"] == numero_matriz), None)
+    if animal_dict is None:
+        return None
+
+    hoje = date.today()
+    ctx_real = _contexto_animal(animal_dict, hoje, dados_criterios)
+    if ctx_real["situacao_produtiva"] != "seca":
+        # Chamado ANTES do lançamento real da secagem (GET /secagem-info) —
+        # sem nenhuma Secagem no banco ainda, o critério status_lactacao="seca"
+        # do lote candidato nunca bateria. Injeta uma Secagem sintética (só em
+        # memória, nunca persistida) datada de hoje para simular "como se ela
+        # tivesse acabado de secar agora" — mesmo padrão do Parto sintético em
+        # `sugestao_lote_evento` logo abaixo. Quando chamado DEPOIS do
+        # `POST /secagem` já ter commitado a Secagem real, este bloco nem entra
+        # (ctx_real já é "seca" com o registro real).
+        from types import SimpleNamespace
+        dados_criterios = {
+            **dados_criterios,
+            "secagens_obj_por_animal": {
+                **dados_criterios["secagens_obj_por_animal"],
+                numero_matriz: [
+                    *dados_criterios["secagens_obj_por_animal"].get(numero_matriz, []),
+                    SimpleNamespace(data_secagem=hoje),
+                ],
+            },
+        }
+
+    elegiveis = [l for l in candidatos if animal_atende_criterios(l, animal_dict, hoje, dados_criterios)]
+    if not elegiveis:
+        return None
+
+    if len(elegiveis) > 1:
+        # Desempate determinístico entre 2+ lotes "seca" elegíveis: o lote
+        # cujo del_min (dias pós-parto mínimo) mais se aproxima do DEL AO VIVO
+        # atual do animal é o passo seguinte "natural" da sequência de manejo
+        # (ex.: um lote recebe quem acabou de secar, outro quem está há mais
+        # tempo seco) — lote sem del_min configurado fica por último no
+        # desempate, e o id menor resolve qualquer empate residual.
+        ctx = _contexto_animal(animal_dict, hoje, dados_criterios)
+        dias_pos_parto = _dias_pos_parto(animal_dict, ctx)
+
+        def _chave_desempate(lote: Lote) -> tuple[float, int]:
+            if dias_pos_parto is None or lote.del_min is None:
+                distancia = float("inf")
+            else:
+                distancia = abs(lote.del_min - dias_pos_parto)
+            return (distancia, lote.id or 0)
+
+        elegiveis.sort(key=_chave_desempate)
+
+    lote = elegiveis[0]
     return {"codigo": lote.codigo, "nome": lote.nome, "rotulo": _rotulo_lote(lote.codigo, lote.nome)}
 
 
@@ -972,7 +1035,7 @@ def info_secagem(numero_matriz: str, session: Session = Depends(get_session)) ->
         "deve_secar": deve_secar,
         "motivo_exclusao": motivo_exclusao,
         "dias_gestacao": dias_gestacao,
-        "lote_sugerido": _lote_das_secas(session),
+        "lote_sugerido": _lote_das_secas(session, numero_matriz=numero_matriz),
     }
 
 
@@ -1101,7 +1164,10 @@ def registrar_secagem(
         avisos.append(f"Vacina(s) pré-parto programada(s) na Agenda para {data_vacina.strftime('%d/%m/%Y')}.")
 
     session.commit()
-    return {"criado": True, "avisos": avisos, "programado": not materializar, "lote_sugerido": _lote_das_secas(session, fazenda_id=fazenda_id)}
+    return {
+        "criado": True, "avisos": avisos, "programado": not materializar,
+        "lote_sugerido": _lote_das_secas(session, numero_matriz=dados.numero_matriz, fazenda_id=fazenda_id),
+    }
 
 
 class SugestaoLoteEventoIn(BaseModel):
@@ -1122,7 +1188,7 @@ def sugestao_lote_evento(
     mesmo que a ficha ainda não tenha sido atualizada pelo próximo GERAL.csv.
     """
     fazenda_id = fazenda_id_seguro(fazenda_id)
-    query_lotes = select(Lote)
+    query_lotes = select(Lote).where(Lote.ativo == True)  # noqa: E712
     if fazenda_id is not None:
         query_lotes = query_lotes.where(Lote.fazenda_id == fazenda_id)
     lotes = [l for l in session.exec(query_lotes).all() if lote_tem_criterio(l)]
