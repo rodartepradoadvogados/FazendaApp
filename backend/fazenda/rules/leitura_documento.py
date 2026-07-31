@@ -18,7 +18,29 @@ import os
 
 NOME_FAZENDA = "Fazenda Estreito Ponte de Pedra"
 
-MIME_ACEITOS = {"application/pdf", "image/jpeg", "image/png", "image/webp", "image/gif"}
+# Precisa ser um ID de modelo que exista no catálogo atual da Claude API —
+# "claude-opus-4-8" (usado antes) não é válido e fazia toda leitura de
+# PDF/imagem falhar. Mesmo modelo já usado em fazenda.rules.assistente.
+MODEL = "claude-sonnet-5"
+
+# PDF/imagem aceitos pela API de visão da Claude, mais tolerância a variações
+# reais do mundo: "image/jpg" não é um media type padrão, mas câmeras/apps
+# antigos mandam assim; HEIC/HEIF (foto de iPhone) é aceito aqui só para
+# poder devolver um erro claro abaixo — a API de visão não lê esses formatos.
+MIME_ACEITOS = {
+    "application/pdf",
+    "image/jpeg", "image/jpg",
+    "image/png", "image/webp", "image/gif",
+    "image/heic", "image/heif",
+}
+
+# "image/jpg" não é um media type IANA válido — normaliza para o que a API espera.
+_MIME_NORMALIZADO = {"image/jpg": "image/jpeg"}
+
+# Formatos que MIME_ACEITOS tolera no upload (não barra na entrada) mas que a
+# API de visão não aceita diretamente — precisam de um erro específico e
+# acionável em vez de estourar como "tipo de mídia inválido" lá na API.
+_MIME_SEM_SUPORTE_NA_VISAO = {"image/heic": "HEIC", "image/heif": "HEIF"}
 
 _SCHEMA = {
     "type": "object",
@@ -200,17 +222,25 @@ def ler_documento(conteudo: bytes, mime_type: str) -> dict:
     if mime_type not in MIME_ACEITOS:
         raise ValueError(f"Tipo de arquivo não suportado: {mime_type} (aceitos: PDF, JPEG, PNG)")
 
+    if mime_type in _MIME_SEM_SUPORTE_NA_VISAO:
+        formato = _MIME_SEM_SUPORTE_NA_VISAO[mime_type]
+        raise ValueError(
+            f"Formato {formato} do iPhone não é suportado — reenvie a foto como JPEG ou PDF "
+            "(no iPhone: Ajustes > Câmera > Formatos > 'Mais Compatível')."
+        )
+
+    mime_type_normalizado = _MIME_NORMALIZADO.get(mime_type, mime_type)
     paginas = _contar_paginas_pdf(conteudo) if mime_type == "application/pdf" else None
 
     dados_b64 = base64.standard_b64encode(conteudo).decode("utf-8")
     bloco = (
         {"type": "document", "source": {"type": "base64", "media_type": "application/pdf", "data": dados_b64}}
         if mime_type == "application/pdf"
-        else {"type": "image", "source": {"type": "base64", "media_type": mime_type, "data": dados_b64}}
+        else {"type": "image", "source": {"type": "base64", "media_type": mime_type_normalizado, "data": dados_b64}}
     )
 
     resposta = _client().messages.create(
-        model="claude-opus-4-8",
+        model=MODEL,
         max_tokens=4096,
         messages=[{"role": "user", "content": [bloco, {"type": "text", "text": _montar_prompt(paginas)}]}],
         output_config={"format": {"type": "json_schema", "schema": _SCHEMA}},

@@ -14,6 +14,7 @@ from sqlmodel import Session, SQLModel, create_engine
 
 import fazenda.database as database
 from fazenda.models import ContaGerencial
+from fazenda.rules.leitura_documento import MIME_ACEITOS, MODEL, ler_documento
 
 
 def _resposta_mock(payload: dict, stop_reason: str = "end_turn"):
@@ -179,3 +180,60 @@ class TestLerDocumento:
         d = r.json()
         assert d["valor_total"] == 1200.0
         assert "valor_total_corrigido" not in d
+
+
+_PAYLOAD_MINIMO = {
+    "tipo_documento": "nota_fiscal", "fornecedor_cliente": "Fornecedor Teste",
+    "numero_documento": "1", "data_emissao": "2026-07-01", "data_pagamento": None,
+    "valor_total": 10.0, "conta_bancaria": None, "itens": [], "observacao": None,
+    "parcela_num": None, "parcela_total": None, "linha_digitavel": None,
+    "data_vencimento": None, "parcelas_detectadas": [],
+}
+
+
+class TestLerDocumentoUnitario:
+    """Testa `ler_documento` diretamente (sem passar pelo endpoint/router),
+    sempre com o cliente Anthropic mockado — nunca chama a API de verdade."""
+
+    def test_usa_o_modelo_correto(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(_PAYLOAD_MINIMO)
+            ler_documento(b"%PDF-1.4", "application/pdf")
+            _, kwargs = MockAnthropic.return_value.messages.create.call_args
+            assert kwargs["model"] == MODEL
+            # Regressão do bug: "claude-opus-4-8" não é um ID de modelo válido.
+            assert kwargs["model"] != "claude-opus-4-8"
+
+    def test_aceita_image_jpg_e_normaliza_para_image_jpeg(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        assert "image/jpg" in MIME_ACEITOS
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            MockAnthropic.return_value.messages.create.return_value = _resposta_mock(_PAYLOAD_MINIMO)
+            ler_documento(b"\xff\xd8\xff", "image/jpg")
+            _, kwargs = MockAnthropic.return_value.messages.create.call_args
+            bloco_imagem = kwargs["messages"][0]["content"][0]
+            assert bloco_imagem["source"]["media_type"] == "image/jpeg"
+
+    def test_heic_e_aceito_no_upload_mas_da_erro_claro_e_acionavel(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        assert "image/heic" in MIME_ACEITOS
+        with pytest.raises(ValueError) as exc_info:
+            ler_documento(b"fake-heic-bytes", "image/heic")
+        mensagem = str(exc_info.value)
+        assert "HEIC" in mensagem
+        assert "JPEG" in mensagem or "PDF" in mensagem
+
+    def test_heif_tambem_da_erro_claro(self, monkeypatch):
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with pytest.raises(ValueError, match="HEIF"):
+            ler_documento(b"fake-heif-bytes", "image/heif")
+
+    def test_heic_nunca_chega_a_chamar_a_api(self, monkeypatch):
+        # O erro tem que ser levantado antes de tentar mandar pro Claude —
+        # não pode "falhar de forma obscura" lá na API.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-fake")
+        with patch("anthropic.Anthropic") as MockAnthropic:
+            with pytest.raises(ValueError):
+                ler_documento(b"fake-heic-bytes", "image/heic")
+            MockAnthropic.return_value.messages.create.assert_not_called()
