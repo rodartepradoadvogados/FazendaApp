@@ -1,12 +1,13 @@
 "use client";
 import React, { useEffect, useMemo, useState } from "react";
 import { Baby, BookOpen, ExternalLink, X } from "lucide-react";
-import { criarMovimentacao, criarParto, fetchLotes, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento } from "@/lib/api";
+import { criarMovimentacao, criarParto, previewCriteriosLote, registrarColostragem, registrarPerdaPrenhez, sugestaoLoteEvento, LoteSugeridoEvento } from "@/lib/api";
 import { AnimalRow } from "@/components/AnimalModal";
 import { TabBar } from "@/components/ui";
 import { Campo, inputStyle, nota } from "@/components/lancamentos/comumForms";
 import { SelectAnimal, CATEGORIAS_ANIMAIS } from "@/components/lancamentos/_shared";
 import { PopupAborto } from "@/components/lancamentos/PopupAborto";
+import { Modal } from "@/components/Modal";
 
 const LINK_COLOSTRO = "https://altagenetics.inf.br/shared/Circulares/Informativo_formas%20de%20utiliza%C3%A7%C3%A3o%20colostro_site.pdf";
 /* ───────────────────────── Manual do colostro (modal em tela) ───────────────────────── */
@@ -169,30 +170,80 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     return diff / 60;
   })();
 
-  async function alocarSeConfirmado(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
+  // Fila de confirmações de troca de lote pendentes (mãe + cria(s)) — um
+  // pop-up de cada vez, no estilo `Modal`, em vez de sobrepor vários ou usar
+  // window.confirm nativo. `rotuloAnimal` é só o texto ("a vaca", "o
+  // bezerro", "a bezerra") usado na pergunta.
+  type PendenciaLote = { numero: string; rotuloAnimal: string; loteSugerido: LoteSugeridoEvento; motivo: string };
+  const [filaLotes, setFilaLotes] = useState<PendenciaLote[]>([]);
+  const [movendoLote, setMovendoLote] = useState(false);
+
+  // Busca a sugestão real de lote (motor de critérios do backend) para um
+  // animal num evento de vida (parto/nascimento) e decide se vale a pena
+  // perguntar: sem sugestão (nenhum lote bate nos critérios) não pergunta
+  // nada e não trava o fluxo; se a sugestão for igual ao lote atual do
+  // animal, também não pergunta (evita pop-up redundante). Retorna a
+  // pendência (para entrar na fila) ou null. Falhas na própria busca da
+  // sugestão são best-effort — só avisam no fim, não bloqueiam o parto.
+  async function prepararPendenciaLote(
+    numero: string, rotuloAnimal: string, categoriaAbrev: string,
+    extra: { del_dias?: number | null; data_nasc?: string | null },
+    loteAtualRotulo: string | null, motivo: string, falhas: string[]
+  ): Promise<PendenciaLote | null> {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
-      if (lote_sugerido && window.confirm(`Alocar o animal ${numero} no lote ${lote_sugerido.rotulo}? Ele ainda não tem lote definido.`)) {
-        await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
-        return lote_sugerido.rotulo as string;
-      }
+      if (!lote_sugerido) return null; // nenhum lote bate nos critérios — segue sem perguntar
+      if (loteAtualRotulo && lote_sugerido.rotulo === loteAtualRotulo) return null; // já está lá
+      return { numero, rotuloAnimal, loteSugerido: lote_sugerido, motivo };
     } catch (e: any) {
-      // Sugestão/alocação é best-effort — não bloqueia o parto já salvo, mas
-      // avisamos para o usuário não achar que o animal já foi movido de lote.
-      falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
+      falhas.push(`sugestão de lote para ${numero} não pôde ser calculada${e?.message ? `: ${e.message}` : ""}`);
+      return null;
     }
-    return null;
   }
 
-  // Nascimento: o bezerro cai automaticamente no lote sugerido (bezerreiro),
-  // sem perguntar — diferente da mãe, aqui não há confirmação nenhuma.
+  // Confirma o topo da fila: move de fato e SÓ reporta sucesso se a resposta
+  // do backend confirmar que o animal foi realmente movido (`movidos` >= 1 e
+  // o número não está em `nao_encontrados`) — não basta o request não ter
+  // dado erro.
+  async function confirmarTopoFila() {
+    const pend = filaLotes[0];
+    if (!pend) return;
+    setMovendoLote(true);
+    try {
+      const r = await criarMovimentacao({ data_movimento: dataParto, motivo: pend.motivo, lote_destino_codigo: pend.loteSugerido.codigo, animais: [pend.numero] });
+      const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(pend.numero);
+      if (moveuDeFato) {
+        setSucesso((s) => `${s ? `${s} ` : ""}${pend.numero} movido(a) para o lote ${pend.loteSugerido.rotulo}.`);
+      } else {
+        setErro((e) => `${e ? `${e} ` : ""}Não foi possível confirmar a movimentação de ${pend.numero} para o lote ${pend.loteSugerido.rotulo}.`);
+      }
+    } catch (e: any) {
+      setErro((prev) => `${prev ? `${prev} ` : ""}Erro ao mover ${pend.numero}: ${e?.message || "erro desconhecido"}.`);
+    } finally {
+      setMovendoLote(false);
+      setFilaLotes((f) => f.slice(1));
+    }
+  }
+  function cancelarTopoFila() {
+    setFilaLotes((f) => f.slice(1));
+  }
+
+  // Lançamento em lote (batch): aloca a cria automaticamente, sem
+  // confirmação — usado só em `salvarLote` (ver comentário lá sobre o
+  // porquê). Continua usando a sugestão real (motor de critérios), não um
+  // código fixo, e agora só reporta sucesso se o backend confirmar que a
+  // movimentação de fato aconteceu.
   async function alocarSemConfirmar(numero: string, categoriaAbrev: string, extra: { del_dias?: number | null; data_nasc?: string | null }, motivo: string, falhas: string[]) {
     try {
       const { lote_sugerido } = await sugestaoLoteEvento({ numero_matriz: numero, categoria_abrev: categoriaAbrev, ...extra });
-      if (lote_sugerido) {
-        await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
-        return lote_sugerido.rotulo as string;
+      if (!lote_sugerido) return null;
+      const r = await criarMovimentacao({ data_movimento: dataParto, motivo, lote_destino_codigo: lote_sugerido.codigo, animais: [numero] });
+      const moveuDeFato = (r.movidos ?? 0) >= 1 && !(r.nao_encontrados || []).includes(numero);
+      if (!moveuDeFato) {
+        falhas.push(`${numero} não foi movido para o lote ${lote_sugerido.rotulo} (a movimentação não foi confirmada pelo servidor)`);
+        return null;
       }
+      return lote_sugerido.rotulo as string;
     } catch (e: any) {
       falhas.push(`alocação do animal ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
     }
@@ -290,25 +341,6 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
     setSalvandoBatch(false);
   }
 
-  // Todo parto pergunta se a mãe muda para o lote 3 — independentemente de
-  // critério, ao contrário da sugestão genérica (que só age quando o animal
-  // ainda não tem lote). Confirmando, move; não confirmando, ela permanece no
-  // lote em que já estava.
-  async function confirmarMudancaLote3(numero: string, falhas: string[]) {
-    try {
-      const lotes = await fetchLotes();
-      const lote3 = (lotes as any[]).find((l) => l.codigo === "03");
-      if (!lote3) return null;
-      if (window.confirm(`Confirmar mudança de lote da vaca ${numero} para o lote 3 — ${lote3.nome}?`)) {
-        await criarMovimentacao({ data_movimento: dataParto, motivo: "Parto", lote_destino_codigo: lote3.codigo, animais: [numero] });
-        return lote3.rotulo as string;
-      }
-    } catch (e: any) {
-      falhas.push(`mudança de lote da vaca ${numero} não pôde ser feita${e?.message ? `: ${e.message}` : ""}`);
-    }
-    return null;
-  }
-
   function limparFormulario() {
     setMatriz(""); setTipoParto(""); setGemelar(false); setGemelarSexo("");
     setCriaNumero(""); setCriaSexo(""); setCriaBaixada(false);
@@ -351,14 +383,19 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
       // Efeitos colaterais do parto (alocação de lote e colostragem) são
       // complementares: não bloqueiam o parto já salvo, mas as falhas são
       // coletadas para avisar o usuário no fim, em vez de sumirem em silêncio.
+      // A troca de lote (mãe e cria(s)) nunca é automática aqui — vira uma
+      // fila de pop-ups de confirmação (ver `filaLotes`/`prepararPendenciaLote`),
+      // um por vez, mesma UX para os dois.
       const falhasEfeito: string[] = [];
-      const alocacoes: string[] = [];
-      const rotuloMae = await confirmarMudancaLote3(matriz, falhasEfeito);
-      if (rotuloMae) alocacoes.push(`${matriz} → ${rotuloMae}`);
+      const pendencias: PendenciaLote[] = [];
+      const loteAtualMae = animais.find((a) => a.numero === matriz)?.grupo_primario || null;
+      const pendMae = await prepararPendenciaLote(matriz, "a vaca", "Vaca", { del_dias: 0 }, loteAtualMae, "Parto", falhasEfeito);
+      if (pendMae) pendencias.push(pendMae);
       for (const c of r.crias_criadas as string[]) {
         const sexoCria = c === cria2Numero ? cria2Sexo : criaSexo;
-        const rotulo = await alocarSemConfirmar(c, sexoCria === "Macho" ? "Bezerro" : "Bezerra", { data_nasc: dataParto }, "Nascimento", falhasEfeito);
-        if (rotulo) alocacoes.push(`${c} → ${rotulo}`);
+        const categoriaAbrevCria = sexoCria === "Macho" ? "Bezerro" : "Bezerra";
+        const pendCria = await prepararPendenciaLote(c, sexoCria === "Macho" ? "o bezerro" : "a bezerra", categoriaAbrevCria, { data_nasc: dataParto }, null, "Nascimento", falhasEfeito);
+        if (pendCria) pendencias.push(pendCria);
       }
       // Colostragem/IgG acima descrevem só a 1ª cria (o formulário tem um único
       // bloco de colostro mesmo em parto gemelar) — grava se a cria foi criada
@@ -384,7 +421,8 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
           falhasEfeito.push(`a colostragem não pôde ser gravada${e?.message ? `: ${e.message}` : ""}`);
         }
       }
-      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${alocacoes.length ? ` Alocação: ${alocacoes.join("; ")}.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
+      setSucesso(`Parto registrado (ordem ${r.ordem_parto}).${r.crias_criadas.length ? ` Cria(s) cadastrada(s): ${r.crias_criadas.join(", ")}.` : ""}${pendencias.length ? ` ${pendencias.length} sugestão(ões) de troca de lote aguardando confirmação abaixo.` : ""}${falhasEfeito.length ? ` Atenção: ${falhasEfeito.join("; ")}.` : ""}`);
+      if (pendencias.length) setFilaLotes(pendencias);
       limparFormulario();
     } catch (e: any) {
       setErro(e.message || "Erro ao registrar parto");
@@ -661,6 +699,26 @@ export function FormParto({ animais, lotes }: { animais: AnimalRow[]; lotes: str
 
       {abortoPendente && (
         <PopupAborto numeroMatriz={abortoPendente} onFechar={() => setAbortoPendente(null)} />
+      )}
+
+      {filaLotes.length > 0 && (
+        <Modal title="Confirmar troca de lote" onClose={cancelarTopoFila} width="420px" zIndex={95}>
+          <p style={{ fontSize: "0.9rem", marginBottom: "1rem" }}>
+            Mover {filaLotes[0].rotuloAnimal} Nº <strong>{filaLotes[0].numero}</strong> para o lote{" "}
+            <strong>{filaLotes[0].loteSugerido.rotulo}</strong>?
+          </p>
+          {filaLotes.length > 1 && (
+            <p style={{ fontSize: "0.76rem", color: "var(--text-muted)", marginBottom: "0.8rem" }}>
+              Há mais {filaLotes.length - 1} confirmação(ões) de lote na fila após esta.
+            </p>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <button className="btn-ghost" onClick={cancelarTopoFila} disabled={movendoLote}>Cancelar</button>
+            <button className="btn-primary" onClick={confirmarTopoFila} disabled={movendoLote}>
+              {movendoLote ? "Movendo…" : "Confirmar"}
+            </button>
+          </div>
+        </Modal>
       )}
     </>
   );
