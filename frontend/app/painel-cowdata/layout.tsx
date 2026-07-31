@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { CowDataMark } from "@/components/brand/CowDataMark";
 import { CowDataWordmark } from "@/components/CowDataWordmark";
-import { ehApp } from "@/lib/nativo";
+import { ehAppOuPwa } from "@/lib/nativo";
 
 const COR = {
   bg: "#0a0e1a", painel: "#0d1220", borda: "#1c2438", texto: "#e8ecf5",
@@ -50,9 +50,10 @@ export default function PainelCowDataLayout({ children }: { children: React.Reac
   const [aberto, setAberto] = useState(false);
   // Chegou aqui pelo item "Painel CowData" do Menu do app (ver
   // app/app/menu/page.tsx) — "voltar à fazenda" precisa cair no /app, nunca
-  // no site desktop completo (mesma regra do AuthShell::destinoRaiz).
+  // no site desktop completo (mesma regra do AuthShell::destinoRaiz). Cobre
+  // app nativo E PWA instalado (ver lib/nativo.ts::ehAppOuPwa).
   const [voltarHref, setVoltarHref] = useState("/");
-  useEffect(() => { ehApp().then((app) => { if (app) setVoltarHref("/app"); }); }, []);
+  useEffect(() => { ehAppOuPwa().then((app) => { if (app) setVoltarHref("/app"); }); }, []);
 
   const navConteudo = (
     <>

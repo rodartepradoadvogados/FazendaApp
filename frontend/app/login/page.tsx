@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { LogIn, Loader2, Newspaper, ArrowRight, Eye, EyeOff, X } from "lucide-react";
 import { login, selecionarFazenda, fetchNoticias, verificarLoginParaResetSenha, enviarResetSenha, ehContador, type NoticiaNews, type FazendaAtual } from "@/lib/api";
-import { ehApp } from "@/lib/nativo";
+import { ehAppOuPwa } from "@/lib/nativo";
 import { Building2 } from "lucide-react";
 import { LoginWatermark } from "@/components/LoginWatermark";
 import { PublicPage } from "@/components/institucional/PublicShell";
@@ -117,11 +117,12 @@ function Hero() {
   const [carregando, setCarregando] = useState(false);
   // "Manter conectado neste aparelho": token de validade longa (90 dias) em
   // vez das 12h padrão — só pede login de novo se sair (logout), desinstalar
-  // o app (limpa o localStorage) ou desmarcar isso. Marcada por padrão
-  // dentro do app Capacitor (celular pessoal do funcionário); desmarcada por
-  // padrão no site (pode ser um computador compartilhado da fazenda).
+  // o app/PWA (limpa o localStorage) ou desmarcar isso. Marcada por padrão
+  // dentro do app Capacitor OU do PWA instalado (celular pessoal do
+  // funcionário); desmarcada por padrão no site (pode ser um computador
+  // compartilhado da fazenda).
   const [manterConectado, setManterConectado] = useState(false);
-  // ehApp() é assíncrona (import dinâmico do Capacitor) — se o usuário
+  // ehAppOuPwa() é assíncrona (import dinâmico do Capacitor) — se o usuário
   // digitar e submeter o formulário rápido demais (autofill + Enter), o
   // efeito abaixo pode não ter resolvido ainda e "manterConectado" ficaria
   // falso mesmo dentro do app. Só usamos esse estado como valor padrão pra
@@ -129,7 +130,7 @@ function Hero() {
   // `entrar`) é recalculado na hora, a menos que o usuário já tenha mexido
   // manualmente na checkbox (ver `tocouCheckbox`).
   const tocouCheckbox = useRef(false);
-  useEffect(() => { ehApp().then((app) => { if (!tocouCheckbox.current) setManterConectado(app); }); }, []);
+  useEffect(() => { ehAppOuPwa().then((app) => { if (!tocouCheckbox.current) setManterConectado(app); }); }, []);
   // Piloto conservador de multi-fazenda: só aparece quando o login devolve
   // mais de uma fazenda vinculada ao mesmo usuário (ver POST /auth/login).
   const [fazendasParaEscolher, setFazendasParaEscolher] = useState<FazendaAtual[] | null>(null);
@@ -148,10 +149,11 @@ function Hero() {
     // Volta para onde a pessoa estava tentando entrar (ex.: /app no celular).
     const next = new URLSearchParams(window.location.search).get("next");
     if (next && next.startsWith("/")) { router.replace(next); return; }
-    // Sem "next": dentro do app nativo a raiz é /app (casca mobile) — nunca
-    // o site desktop completo (ver capacitor.config.ts). Só o botão
-    // proposital "Site completo" do Menu do app deve levar ao "/" de verdade.
-    router.replace((await ehApp()) ? "/app" : "/");
+    // Sem "next": dentro do app nativo OU do PWA instalado, a raiz é /app
+    // (casca mobile) — nunca o site desktop completo (ver capacitor.config.ts
+    // e app/manifest.ts). Só o botão proposital "Site completo" do Menu do
+    // app deve levar ao "/" de verdade.
+    router.replace((await ehAppOuPwa()) ? "/app" : "/");
   };
 
   const entrar = async (e: React.FormEvent) => {
@@ -160,7 +162,7 @@ function Hero() {
     try {
       // Recalcula na hora se o usuário nunca mexeu na checkbox — fecha a
       // corrida com o efeito assíncrono acima (ver comentário em manterConectado).
-      const manter = tocouCheckbox.current ? manterConectado : await ehApp();
+      const manter = tocouCheckbox.current ? manterConectado : await ehAppOuPwa();
       const data = await login(username.trim(), senha, manter);
       if (data.selecao_fazenda_necessaria) {
         setFazendasParaEscolher(data.fazendas_disponiveis || []);

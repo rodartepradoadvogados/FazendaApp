@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { Settings, SlidersHorizontal, Upload, Layers, FileSpreadsheet, Wallet, Palette, Newspaper, CheckCheck, ExternalLink } from "lucide-react";
 import { podeModulo, ehAdmin, ehDono, podePublicarMaterias } from "@/lib/api";
 import ParametrosPage from "@/app/parametros/page";
@@ -107,7 +108,7 @@ export default function ConfiguracoesPage() {
         <h1 className="text-2xl font-bold flex items-center gap-2"><Settings size={22} style={{ color: "var(--dourado)" }} /> Configurações</h1>
       </div>
       {ehDono() && (
-        <a href="/painel-cowdata" target="_blank" rel="noopener noreferrer"
+        <Link href="/painel-cowdata"
           className="mb-4 flex items-center justify-between"
           style={{
             border: "1px solid var(--dourado)", borderRadius: "10px", padding: "0.9rem 1.1rem", textDecoration: "none",
@@ -118,10 +119,10 @@ export default function ConfiguracoesPage() {
               <ExternalLink size={16} /> Painel Mestre CowData
             </div>
             <p style={{ color: "var(--text-muted)", fontSize: "0.78rem", marginTop: "0.15rem" }}>
-              Administração da própria CowData — fazendas-clientes, assinaturas, financeiro e equipe. Abre em uma nova guia.
+              Administração da própria CowData — fazendas-clientes, assinaturas, financeiro e equipe.
             </p>
           </div>
-        </a>
+        </Link>
       )}
       <div style={{ margin: "0 -1.5rem" }}>
         {aba === "aparencia" && <div className="px-6"><AparenciaSelector variant="site" /></div>}
