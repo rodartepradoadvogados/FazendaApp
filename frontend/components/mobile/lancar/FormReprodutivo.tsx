@@ -4,8 +4,11 @@
 // desktop (/reproducao/*).
 import { useEffect, useMemo, useState } from "react";
 import { Syringe, Stethoscope, Baby, CalendarClock } from "lucide-react";
-import { MobCampo, MobAviso, MobVoltar } from "@/components/mobile/ui";
-import { fetchEstoqueSemen, fetchTouros, fetchAgendaVeterinario, LISTAS_AGENDA_VETERINARIO, type Touro, type AgendaVetResposta } from "@/lib/api";
+import { MobCampo, MobAviso, MobVoltar, MobConfirmModal } from "@/components/mobile/ui";
+import {
+  fetchEstoqueSemen, fetchTouros, fetchAgendaVeterinario, sugestaoLoteEvento, criarMovimentacao,
+  LISTAS_AGENDA_VETERINARIO, type Touro, type AgendaVetResposta,
+} from "@/lib/api";
 import { enviarOuEnfileirar, fetchComCache } from "@/lib/offline";
 import { TouroPicker, type TouroPickerItem } from "@/components/TouroPicker";
 import { useEstadosReprodutivos } from "@/lib/estadoReprodutivo";
@@ -330,14 +333,31 @@ function Diagnostico({ animais, animalFixado }: { animais: Animal[]; animalFixad
 }
 
 // ── Parto → POST /reproducao/parto ───────────────────────────────────────────
+// Após o parto ser salvo de verdade (online), sugere lote real para a MÃE
+// (del_dias=0, acabou de parir) e para a CRIA (categoria Bezerra/Bezerro,
+// data_nasc = data do parto) via sugestaoLoteEvento — mesma função do site,
+// que está sendo reescrito em paralelo para pedir confirmação nos dois casos
+// (hoje a cria era movida sem perguntar). Aqui replicamos: um pop-up por vez
+// (mãe primeiro, cria depois), nunca sobrepostos; só confirma se o usuário
+// tocar em "Confirmar", e só mostra sucesso se criarMovimentacao realmente
+// funcionar. Sugestão/alocação só roda com o parto enviado online de fato —
+// se caiu na fila offline (sem internet), não há como saber ainda se o parto
+// vai ser aceito, então pula esse passo (fica só para quando sincronizar).
+type SugestaoLoteParto = { tipo: "mae" | "cria"; numero: string; codigo: string; rotulo: string; motivo: string };
+
 function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: string | null }) {
-  const { aviso, enviar, enviando, erroValidacao } = useEnvio();
+  const { aviso, setAviso, erroValidacao } = useEnvio();
   const [matriz, setMatriz] = useState(animalFixado || "");
   const [data, setData] = useState(hoje());
   const [sexo, setSexo] = useState<"F" | "M" | "">("");
   const [brincoCria, setBrincoCria] = useState("");
+  const [salvando, setSalvando] = useState(false);
 
-  function salvar() {
+  const [filaSugestoes, setFilaSugestoes] = useState<SugestaoLoteParto[]>([]);
+  const [movendo, setMovendo] = useState(false);
+  const [avisosLote, setAvisosLote] = useState<{ tipo: "ok" | "erro"; msg: string }[]>([]);
+
+  async function salvar() {
     if (!matriz) return erroValidacao("Selecione a matriz.");
     if (!data) return erroValidacao("Informe a data do parto.");
     if (!sexo) return erroValidacao("Toque no sexo da cria (F ou M).");
@@ -347,13 +367,81 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
     const corpo = brinco
       ? { numero_matriz: matriz, data_parto: data, crias: [{ numero: brinco, sexo, nasceu_viva: true }] }
       : { numero_matriz: matriz, data_parto: data, crias: [], observacao: `Cria ${sexo === "F" ? "fêmea" : "macho"} (sem brinco informado)` };
-    enviar(
-      "/reproducao/parto",
-      corpo,
-      `Parto — matriz ${matriz} (cria ${sexo === "F" ? "fêmea" : "macho"})`,
-      () => { setSexo(""); setBrincoCria(""); },
-    );
+
+    setSalvando(true);
+    setAviso(null);
+    setAvisosLote([]);
+    setFilaSugestoes([]);
+    try {
+      const { enviado } = await enviarOuEnfileirar(
+        "/reproducao/parto", corpo,
+        `Parto — matriz ${matriz} (cria ${sexo === "F" ? "fêmea" : "macho"})`,
+      );
+      setAviso(enviado
+        ? { tipo: "ok", msg: "Lançamento salvo." }
+        : { tipo: "offline", msg: "Sem internet — guardado, será enviado automaticamente ao conectar." });
+      try { navigator.vibrate?.(enviado ? 20 : [15, 60, 15]); } catch { /* sem suporte — segue sem vibrar */ }
+
+      if (enviado) {
+        const fila: SugestaoLoteParto[] = [];
+        const matrizObj = animais.find((a) => a.numero === matriz);
+        try {
+          const { lote_sugerido } = await sugestaoLoteEvento({
+            numero_matriz: matriz,
+            categoria_abrev: matrizObj?.categoria_abrev || matrizObj?.categoria_completa || "",
+            del_dias: 0,
+          });
+          // Só pergunta se o lote sugerido for DIFERENTE do lote atual da mãe
+          // — já está lá, não há nada para confirmar.
+          if (lote_sugerido && lote_sugerido.rotulo !== matrizObj?.grupo_primario) {
+            fila.push({ tipo: "mae", numero: matriz, codigo: lote_sugerido.codigo, rotulo: lote_sugerido.rotulo, motivo: "Parto" });
+          }
+        } catch { /* sugestão é best-effort — não bloqueia o parto já salvo */ }
+
+        if (brinco) {
+          try {
+            const { lote_sugerido } = await sugestaoLoteEvento({
+              numero_matriz: brinco,
+              categoria_abrev: sexo === "F" ? "Bezerra" : "Bezerro",
+              data_nasc: data,
+            });
+            if (lote_sugerido) {
+              fila.push({ tipo: "cria", numero: brinco, codigo: lote_sugerido.codigo, rotulo: lote_sugerido.rotulo, motivo: "Nascimento" });
+            }
+          } catch { /* idem */ }
+        }
+        setFilaSugestoes(fila);
+      }
+
+      setSexo(""); setBrincoCria("");
+    } catch (e) {
+      setAviso({ tipo: "erro", msg: e instanceof Error ? e.message : "Erro ao salvar." });
+      try { navigator.vibrate?.([25, 60, 25, 60, 25]); } catch { /* sem suporte — segue sem vibrar */ }
+    } finally {
+      setSalvando(false);
+    }
   }
+
+  async function confirmarSugestaoAtual() {
+    const item = filaSugestoes[0];
+    if (!item) return;
+    setMovendo(true);
+    try {
+      await criarMovimentacao({ data_movimento: data, motivo: item.motivo, lote_destino_codigo: item.codigo, animais: [item.numero] });
+      setAvisosLote((p) => [...p, { tipo: "ok", msg: `${item.numero} movido para o lote ${item.rotulo}.` }]);
+    } catch (e) {
+      // Erro real na movimentação — não finge sucesso, mostra o problema.
+      setAvisosLote((p) => [...p, { tipo: "erro", msg: `Não foi possível mover ${item.numero} para o lote ${item.rotulo}${e instanceof Error ? `: ${e.message}` : ""}.` }]);
+    } finally {
+      setMovendo(false);
+      setFilaSugestoes((f) => f.slice(1));
+    }
+  }
+  function cancelarSugestaoAtual() {
+    setFilaSugestoes((f) => f.slice(1));
+  }
+
+  const sugestaoAtual = filaSugestoes[0];
 
   return (
     <>
@@ -372,8 +460,22 @@ function Parto({ animais, animalFixado }: { animais: Animal[]; animalFixado: str
       <MobCampo label="Brinco da cria (opcional)">
         <input className="mob-input" value={brincoCria} onChange={(e) => setBrincoCria(e.target.value)} placeholder="ex.: 4521" />
       </MobCampo>
-      <button className="mob-btn" onClick={salvar} disabled={enviando}>{enviando ? "Salvando…" : "Salvar"}</button>
+      <button className="mob-btn" onClick={salvar} disabled={salvando}>{salvando ? "Salvando…" : "Salvar"}</button>
       {aviso && <MobAviso tipo={aviso.tipo}>{aviso.msg}</MobAviso>}
+      {avisosLote.map((a, i) => <MobAviso key={i} tipo={a.tipo}>{a.msg}</MobAviso>)}
+
+      {sugestaoAtual && (
+        <MobConfirmModal
+          titulo={sugestaoAtual.tipo === "mae" ? "Mover a mãe de lote?" : "Alocar a cria em um lote?"}
+          onCancelar={cancelarSugestaoAtual}
+          onConfirmar={confirmarSugestaoAtual}
+          confirmando={movendo}
+        >
+          {sugestaoAtual.tipo === "mae"
+            ? <>A matriz <strong>{sugestaoAtual.numero}</strong> pariu agora — mover para o lote <strong>{sugestaoAtual.rotulo}</strong>?</>
+            : <>A cria <strong>{sugestaoAtual.numero}</strong> ainda não tem lote — alocar no lote <strong>{sugestaoAtual.rotulo}</strong>?</>}
+        </MobConfirmModal>
+      )}
     </>
   );
 }
