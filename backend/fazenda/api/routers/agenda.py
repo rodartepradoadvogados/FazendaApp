@@ -742,9 +742,10 @@ def calcular_agenda(
             if chave in realizados:
                 continue
             nomes_sugeridos = ", ".join(l["rotulo"] for l in s["lotes_sugeridos"])
+            lote_atual_label = s["lote_atual"] or "sem lote"
             eventos_movimentacao.append({
                 "id": chave, "data": data.isoformat(), "categoria": "Rebanho",
-                "descricao": f"Sugestão de mudança de lote — matriz {s['numero_matriz']} → {nomes_sugeridos}",
+                "descricao": f"Sugestão de mudança de lote — matriz {s['numero_matriz']}: {lote_atual_label} → {nomes_sugeridos}",
                 "numero_animal": s["numero_matriz"], "observacao": s["motivo"],
                 "fonte": "auto", "cor": "var(--dourado)", "ref": None, "tipo": "sugestao_movimentacao",
                 "lote": s["lote_atual"], "lotes_sugeridos": s["lotes_sugeridos"], "motivo": s["motivo"],

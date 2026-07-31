@@ -88,6 +88,8 @@ class TestSugestaoNaAgenda:
         eventos = r.json()["eventos"]
         alvo = next((e for e in eventos if e.get("tipo") == "sugestao_movimentacao" and e["numero_animal"] == "900"), None)
         assert alvo is not None
+        # descrição mostra lote atual E lote de destino sugerido
+        assert "01 - Recém-chegadas" in alvo["descricao"]
         assert "02" in alvo["descricao"]
         assert alvo["motivo"]
 
